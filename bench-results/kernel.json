@@ -5,6 +5,7 @@
     "cores": 14,
     "os": "macOS 27.0.1",
     "simd": "neon",
+    "forced_simd": "auto",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
     "threads": 1
   },
@@ -25,35 +26,35 @@
     "flavors": [
       {
         "flavor": "scalar",
-        "rows_per_sec": 3494187314.5765824,
-        "ns_per_row": 0.28618958,
+        "rows_per_sec": 3559283533.3093057,
+        "ns_per_row": 0.28095542,
         "matches": 12726115,
         "ratio_vs_scalar": 1.0,
-        "ratio_vs_auto": 0.5965975420908057
+        "ratio_vs_auto": 0.6251659071036963
       },
       {
         "flavor": "cpp-auto",
-        "rows_per_sec": 5856858381.164343,
-        "ns_per_row": 0.17074,
+        "rows_per_sec": 5693342347.792051,
+        "ns_per_row": 0.17564375,
         "matches": 12726115,
-        "ratio_vs_scalar": 1.6761718402249033,
+        "ratio_vs_scalar": 1.599575390527702,
         "ratio_vs_auto": 1.0
       },
       {
         "flavor": "cpp-simd",
-        "rows_per_sec": 8966029418.080482,
-        "ns_per_row": 0.11153209,
+        "rows_per_sec": 8726034709.19922,
+        "ns_per_row": 0.11459959,
         "matches": 12726115,
-        "ratio_vs_scalar": 2.565984193428098,
-        "ratio_vs_auto": 1.5308598628430616
+        "ratio_vs_scalar": 2.451626746657645,
+        "ratio_vs_auto": 1.5326734589539106
       },
       {
         "flavor": "rust-simd",
-        "rows_per_sec": 8942210695.116488,
-        "ns_per_row": 0.11182917,
+        "rows_per_sec": 8783454641.62539,
+        "ns_per_row": 0.11385042,
         "matches": 12726115,
-        "ratio_vs_scalar": 2.559167523106896,
-        "ratio_vs_auto": 1.5267930540841892
+        "ratio_vs_scalar": 2.4677591878888108,
+        "ratio_vs_auto": 1.5427589112099893
       }
     ]
   }

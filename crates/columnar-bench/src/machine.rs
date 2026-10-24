@@ -20,6 +20,14 @@ pub struct MachineSpec {
     pub os: String,
     /// The SIMD path that the kernel selected at runtime.
     pub simd: String,
+    /// The `COLUMNAR_FORCE_SIMD` override in force, if any.
+    ///
+    /// A measurement taken with an override describes whatever the override
+    /// pointed at -- under Rosetta 2, an emulator -- and not the hardware.
+    /// The harness refuses to measure with one in force, so this is
+    /// `auto` in every published artifact; it is recorded so that a reader
+    /// can check.
+    pub forced_simd: String,
     /// The Rust compiler version.
     pub rustc: String,
     /// The thread count the measurement used.
@@ -40,10 +48,40 @@ impl MachineSpec {
             cores: core_count(),
             os: os_version(),
             simd: columnar_kernels::simd_kind().name().to_owned(),
+            forced_simd: columnar_kernels::force::forced().name().to_owned(),
             rustc: rustc_version(),
             threads,
         }
     }
+}
+
+/// Why a measurement is refused when the SIMD probe has been overridden.
+///
+/// The override exists so the AVX2 path can be correctness tested on an
+/// ARM64 Mac under Rosetta 2, where the instructions execute correctly but
+/// the host's CPUID says there is no AVX2. Under Rosetta the instructions
+/// are *emulated*, so a timing taken with the override measures the
+/// translator rather than any hardware. Publishing that number would be
+/// publishing a measurement of something other than the thing being
+/// measured, so the harness declines to produce one.
+pub const FORCED_SIMD_REFUSAL: &str = "\
+refusing to measure: the SIMD probe is overridden (COLUMNAR_FORCE_SIMD).
+
+The override exists so the AVX2 path can be correctness tested on a machine
+whose CPU does not have AVX2, such as an ARM64 Mac running under Rosetta 2.
+Under an emulator the instructions are emulated, so a timing taken now
+measures the translator rather than the hardware, and publishing it would be
+publishing a number that does not mean what it appears to mean.
+
+Run the benchmark with the override unset. To check the AVX2 path's
+correctness instead, run `scripts/verify-avx2.sh`.";
+
+/// Whether the SIMD probe is currently overridden.
+///
+/// When it is, no timing taken on this machine describes real hardware.
+#[must_use]
+pub fn simd_probe_is_overridden() -> bool {
+    columnar_kernels::force::is_forced()
 }
 
 /// The CPU model, as the OS reports it.

@@ -13,7 +13,7 @@ The first increment is storage → filter → project → aggregate: the TPC-H Q
 
 ## The headline
 
-> **The comparison kernel on the Q6 predicate set: 8.8 G rows/s, 2.5× faster than a genuinely
+> **The comparison kernel on the Q6 predicate set: 8.7 G rows/s, 2.5× faster than a genuinely
 > scalar reference and 1.5× faster than what clang's auto-vectoriser produces from the same
 > loop.**
 >
@@ -32,12 +32,12 @@ disassembly. See [ADR-0006](docs/adr/0006-auto-vectorised-baseline.md).
 whether the hand-written kernel is worth its complexity. When the baseline was fixed, the
 hand-written kernel was *losing* to it — 0.84× — because it extracted two lanes to scalar
 registers every two rows. Rewriting the mask accumulation to stay in a vector register moved it to
-1.47×. The intermediate, unflattering number is in the ADR too.
+1.50×. The intermediate, unflattering number is in the ADR too.
 
 **What this is not:** this is a claim about a kernel on a query. It is not a claim that the engine
 beats DuckDB or Polars, and where it does not, [`PERF.md`](PERF.md) says so with the same
-precision — including the 1.94-second Parquet decode that makes the engine 62× slower than
-DuckDB on a one-shot query against the file. (97.5% of that gap is the engine decoding all
+precision — including the 1.92-second Parquet decode that makes the engine 63× slower than
+DuckDB on a one-shot query against the file. (97.6% of that gap is the engine decoding all
 sixteen columns when the query wants two, not the reader being slow; `PERF.md` breaks it down.)
 
 ---
@@ -72,6 +72,11 @@ empty input, the bits past the end.
 # 1. Build and check. This is the whole gate.
 just check
 
+# 1a. Compile the x86-64 half of the kernel from this ARM64 machine.
+#     The AVX2 path only builds on x86-64, so without this it rots
+#     silently. It rotted silently once already.
+just check-x86
+
 # 2. Generate the dataset. Deterministic: the same (scale factor, seed) gives
 #    byte-identical output, and the manifest records what it was.
 just dataset                      # 6,000,000 rows, 231.6 MiB, about 2.8 seconds
@@ -84,6 +89,11 @@ just bench
 
 # 5. Measure the engine against DuckDB and Polars.
 just compare
+
+# 6. Verify the AVX2 path's correctness, under Rosetta 2.
+#    Correctness only -- the benchmark refuses to measure with the
+#    override in force, because emulated timings mean nothing.
+just verify-avx2
 ```
 
 `just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, and the `polars` Python package
@@ -98,16 +108,40 @@ computed different values is not a benchmark.
 | | status |
 |---|---|
 | The comparison kernel, on AArch64 / NEON | **measured**, 5 runs, spread published |
-| The comparison kernel, on x86-64 / AVX2 | **not yet measured** — no x86-64 runner exists yet |
+| The comparison kernel, on x86-64 / AVX2 | **performance not yet measured** — no x86-64 machine exists. Its **correctness is verified**, on this ARM64 Mac, under Rosetta 2 |
 | The engine's filter, project and aggregate | **measured**, against DuckDB 2.0.0 and Polars 1.36.1 |
 | The engine's Parquet reader | **measured**, and it is the engine's weakest part |
 | Multithreading | **not implemented** — the engine is single-threaded in this increment, and so are the incumbents in the comparison |
 
-The x86-64 row is the important one. The blueprint's headline number ("AVX2 6.7× scalar" on
-EPYC/DDR5/NVMe) is **not reproducible on the machine this was built on**, and this repository does
-not publish it, does not estimate it, and does not quote it as its own. The AVX2 path is
-code-complete and wired into CI; the number does not exist yet. See
-[ADR-0002](docs/adr/0002-dual-arch-simd.md).
+The x86-64 row is the important one, and it has two halves.
+
+The blueprint's headline number ("AVX2 6.7× scalar" on EPYC/DDR5/NVMe) is **not reproducible on
+the machine this was built on**, and this repository does not publish it, does not estimate it, and
+does not quote it as its own.
+
+But "no x86-64 machine" does not have to mean "no verification". Rosetta 2 on Apple Silicon
+executes AVX2 instructions correctly while reporting no AVX2 in CPUID, so the kernel's runtime
+probe correctly hides the AVX2 path. `just verify-avx2` overrides the probe, runs the differential
+suite under the emulator, and uses a row counter to prove the AVX2 instructions actually executed
+and produced the oracle's mask, bit for bit:
+
+```
+-- with COLUMNAR_FORCE_SIMD=avx2 --
+    forced        : avx2
+    simd_kind     : avx2
+    avx2 rows     : 1024
+    matches oracle: true
+```
+
+That is a correctness claim, and only a correctness claim. Under Rosetta the instructions are
+*emulated*, so the benchmark harness **refuses to measure** while the override is in force — a
+timing taken there would measure the translator rather than any hardware. AVX2 performance numbers
+require an x86-64 machine with AVX2 and are published only from one.
+
+Finding this also exposed a defect worth naming: **the AVX2 Rust path had never been compiled by
+anyone.** It had two type errors in it. It is now gated by `just check-x86` and by CI, so that
+class of rot cannot recur. See
+[ADR-0009](docs/adr/0009-avx2-without-x86-hardware.md).
 
 ---
 
@@ -148,7 +182,7 @@ The principles that shaped the code most:
 |---|---|
 | Spec | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table |
 | Increment | storage → filter → project → aggregate (the TPC-H Q6 path) |
-| Tests | 84, all green, including the differential kernel suite |
+| Tests | 90, all green, including the differential kernel suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
-| CI | fmt, clippy (ubuntu + macos), test, the differential job, `cargo deny`, a no-committed-dataset check, and the two benchmark runners |
-| Next | the Parquet reader, the projection/aggregate fusion, the x86-64 measurement |
+| CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, and the two benchmark runners |
+| Next | the Parquet reader (the 39.3× cold gap), the projection/aggregate fusion, the x86-64 measurement |

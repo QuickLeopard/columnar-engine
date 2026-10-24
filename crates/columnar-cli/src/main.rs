@@ -158,6 +158,17 @@ fn main() -> ExitCode {
 
 /// Runs the requested subcommand.
 fn run(cli: Cli) -> Result<()> {
+    // `bench` and `compare` publish timings. Those timings must describe
+    // hardware, so they are refused when the SIMD probe has been overridden
+    // -- under Rosetta 2 the override points at an emulator. The check lives
+    // here as well as in the harness, so the CLI can say why rather than
+    // panic.
+    if matches!(cli.command, Command::Bench { .. } | Command::Compare { .. })
+        && columnar_bench::machine::simd_probe_is_overridden()
+    {
+        anyhow::bail!("{}", columnar_bench::machine::FORCED_SIMD_REFUSAL);
+    }
+
     match cli.command {
         Command::Dataset { scale_factor, seed, null_rate, output } => {
             run_dataset(scale_factor, seed, null_rate, &output)

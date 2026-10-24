@@ -26,7 +26,10 @@
 #include "comparison.h"
 #include "scalar_impl.h"
 
+#include <atomic>
 #include <cstddef>
+#include <cstdlib>
+#include <cstring>
 
 #if defined(__aarch64__) && defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -41,6 +44,17 @@
 #endif
 
 namespace {
+
+/*
+ * Rows processed by the AVX2 path.
+ *
+ * `col_simd_kind()` says which path the dispatch *would* take; this counter
+ * says the path's instructions actually ran. The difference matters when the
+ * path is reachable only through the `COLUMNAR_FORCE_SIMD` override -- which
+ * is exactly the case on an ARM64 Mac under Rosetta 2, where the CPU probe
+ * reports no AVX2 but the instructions execute correctly.
+ */
+std::atomic<uint64_t> g_avx2_rows{0};
 
 /* ------------------------------------------------------------------ */
 /* Scalar reference                                                    */
@@ -366,10 +380,90 @@ int64_t neon_f64(const double *values, uint64_t n, double th, const uint64_t *va
 /* Dispatch                                                            */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The `COLUMNAR_FORCE_SIMD` override.
+ *
+ * The probe below reports the *host* CPU's feature bits. Rosetta 2 on Apple
+ * Silicon executes AVX2 instructions correctly but reports `avx2=0`, because
+ * the host is an ARM64 chip with no AVX2 units -- so the probe would hide a
+ * path that in fact runs, and the AVX2 path could never be correctness tested
+ * on an ARM64 Mac.
+ *
+ * The override makes the path reachable for correctness testing. It is not a
+ * performance switch: under Rosetta the instructions are emulated, so any
+ * timing taken with the override measures the emulator and must never be
+ * published. Forcing `avx2` on a real x86-64 machine without AVX2 raises
+ * SIGILL, which is what "force" means.
+ *
+ * The value is read once and cached, because this sits on the dispatch path.
+ */
+inline const char *forced_simd_value() {
+    static const char *value = []() { return std::getenv("COLUMNAR_FORCE_SIMD"); }();
+    return value;
+}
+
+inline bool force_is(const char *wanted) {
+    const char *value = forced_simd_value();
+    return value != nullptr && std::strcmp(value, wanted) == 0;
+}
+
+/*
+ * The AVX2 feature probe.
+ *
+ * This used to be `__builtin_cpu_supports("avx2")`, which on Darwin expands
+ * to a call into `libcpu_indicator` -- a library that is not part of the
+ * toolchain's default link line on every machine, and that made the x86-64
+ * build fail to link. The probe is a handful of instructions, so it is
+ * written out here instead of depended upon:
+ *
+ *   1. CPUID leaf 1: ECX bit 27 (OSXSAVE) and bit 28 (AVX).
+ *   2. XGETBV: XCR0 must have the XMM (bit 1) and YMM (bit 2) states
+ *      enabled, or the OS will not save the registers across a context
+ *      switch and an AVX instruction would fault.
+ *   3. CPUID leaf 7, subleaf 0: EBX bit 5 (AVX2).
+ *
+ * The checks are the same ones the compiler's builtin performs; the
+ * difference is that this one has no link-time dependency.
+ */
+#if defined(COL_HAS_AVX2_DISPATCH)
+inline void cpuid_count(uint32_t leaf, uint32_t subleaf, uint32_t regs[4]) {
+    __asm__ volatile("cpuid"
+                     : "=a"(regs[0]), "=b"(regs[1]), "=c"(regs[2]), "=d"(regs[3])
+                     : "a"(leaf), "c"(subleaf));
+}
+
+inline uint64_t xgetbv0() {
+    uint32_t lo = 0;
+    uint32_t hi = 0;
+    __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    return (static_cast<uint64_t>(hi) << 32) | lo;
+}
+#endif /* COL_HAS_AVX2_DISPATCH */
+
 inline bool avx2_available() {
 #if defined(COL_HAS_AVX2_DISPATCH)
-    __builtin_cpu_init();
-    return __builtin_cpu_supports("avx2");
+    if (force_is("none")) {
+        return false;
+    }
+    if (force_is("avx2")) {
+        return true;
+    }
+
+    uint32_t regs[4];
+    cpuid_count(1, 0, regs);
+    const bool osxsave = (regs[2] & (1u << 27)) != 0;
+    const bool avx = (regs[2] & (1u << 28)) != 0;
+    if (!osxsave || !avx) {
+        return false;
+    }
+
+    /* XCR0 bits 1 (XMM) and 2 (YMM) must both be enabled by the OS. */
+    if ((xgetbv0() & 0x6u) != 0x6u) {
+        return false;
+    }
+
+    cpuid_count(7, 0, regs);
+    return (regs[1] & (1u << 5)) != 0;
 #else
     return false;
 #endif
@@ -460,6 +554,7 @@ int64_t col_compare_i64(const int64_t *values, uint64_t n, int32_t op, int64_t t
     COL_DISPATCH_NEON_I64(op, values, n, threshold, validity, out);
 #elif defined(COL_HAS_AVX2_DISPATCH)
     if (avx2_available()) {
+        g_avx2_rows.fetch_add(n, std::memory_order_relaxed);
         COL_DISPATCH_AVX2_I64(op, values, n, threshold, validity, out);
     }
 #endif
@@ -475,6 +570,7 @@ int64_t col_compare_f64(const double *values, uint64_t n, int32_t op, double thr
     COL_DISPATCH_NEON_F64(op, values, n, threshold, validity, out);
 #elif defined(COL_HAS_AVX2_DISPATCH)
     if (avx2_available()) {
+        g_avx2_rows.fetch_add(n, std::memory_order_relaxed);
         COL_DISPATCH_AVX2_F64(op, values, n, threshold, validity, out);
     }
 #endif
@@ -490,6 +586,10 @@ int32_t col_simd_kind(void) {
     }
 #endif
     return COL_SIMD_NONE;
+}
+
+uint64_t col_avx2_rows(void) {
+    return g_avx2_rows.load(std::memory_order_relaxed);
 }
 
 int64_t col_compare_i64_auto(const int64_t *values, uint64_t n, int32_t op, int64_t threshold,

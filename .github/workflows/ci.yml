@@ -91,6 +91,29 @@ jobs:
       - name: Run the differential suite
         run: cargo test -p columnar-kernels --test differential -- --nocapture
 
+  cross-check:
+    name: cross-compile check (x86-64 from ARM64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-apple-darwin
+      # This job exists because of a specific failure. The kernel has an
+      # x86-64 half -- the AVX2 path, in C++ and in Rust intrinsics -- and
+      # the development machine is an ARM64 MacBook. That half was never
+      # compiled by anyone, and it sat in the tree with two type errors in
+      # it, for as long as the project existed.
+      #
+      # The `ubuntu-latest` jobs above do compile it, because they are
+      # x86-64. But they only run if CI is wired to a remote, and until
+      # then the local gate is this one. `just check-x86` does the same
+      # thing on the author's machine.
+      - name: cargo check for x86_64
+        run: cargo check --workspace --all-targets --target x86_64-apple-darwin
+
   dependency-policy:
     name: dependency policy
     runs-on: ubuntu-latest

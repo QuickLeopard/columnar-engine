@@ -20,10 +20,12 @@ or carried over from another machine.
 | **Incumbents** | DuckDB v2.0.0 (Cyanoptera) d54cbbe3df · Polars 1.36.1 |
 | **Statistics** | Median of 3 timed runs, after one warm-up run. The kernel table is the median of 8 runs, and its spread is published. |
 | **Warm/cold** | Stated per table. "Cold" means the Parquet file is read as part of the measurement. |
-| **Revisions** | Every figure is the median of at least 3 runs; the kernel spread is ±2% peak-to-peak |
+| **Revisions** | Every figure is the median of at least 3 runs. The kernel *medians* reproduce to within 2% across two independent 8-run sets; the per-flavor *spread* is much wider, because this machine is shared and a run in which the whole machine stalls drags every flavor down with it. |
 
 **Benchmark numbers are not portable between architectures.** These are AArch64 numbers. The
-x86-64 / AVX2 numbers do not exist yet — see [Not measured](#not-measured).
+x86-64 / AVX2 **performance** numbers do not exist yet — see [Not measured](#not-measured).
+The AVX2 path's *correctness*, however, is verified on this machine: see
+[AVX2 correctness](#avx2-correctness-verified-on-an-arm64-mac) below.
 
 ---
 
@@ -37,23 +39,28 @@ threshold `0.04`. Median of 8 runs.
 
 | flavor | what it is | rows/sec | ns/row | vs scalar | vs cpp-auto | matches |
 |---|---|---|---|---|---|---|
-| `scalar` | the C++ reference compiled with `-fno-vectorize` | 3.51 G | 0.285 | 1.00× | 0.60× | 12,726,115 |
-| `cpp-auto` | **the same source**, compiled with ordinary flags | 5.87 G | 0.170 | 1.67× | 1.00× | 12,726,115 |
-| `cpp-simd` | the hand-written NEON kernel, over the C ABI | 8.81 G | 0.113 | 2.51× | **1.50×** | 12,726,115 |
-| `rust-simd` | the Rust `std::arch` intrinsics kernel, no FFI | 8.77 G | 0.114 | 2.50× | 1.49× | 12,726,115 |
+| `scalar` | the C++ reference compiled with `-fno-vectorize` | 3.48 G | 0.288 | 1.00× | 0.60× | 12,726,115 |
+| `cpp-auto` | **the same source**, compiled with ordinary flags | 5.75 G | 0.174 | 1.67× | 1.00× | 12,726,115 |
+| `cpp-simd` | the hand-written NEON kernel, over the C ABI | 8.73 G | 0.115 | 2.50× | **1.50×** | 12,726,115 |
+| `rust-simd` | the Rust `std::arch` intrinsics kernel, no FFI | 8.72 G | 0.115 | 2.51× | 1.51× | 12,726,115 |
 
 **The spread, because a benchmark that only publishes its best numbers is not a benchmark.** Over
-the 8 runs: `scalar` 3.15–3.60 G, `cpp-auto` 5.70–5.98 G, `cpp-simd` 8.29–8.90 G, `rust-simd`
-5.05–9.06 G. This machine is not isolated, and single runs occasionally drop — the `rust-simd`
-low of 5.05 G is one such run, in which every flavor was slower than its own median. The median
+the 8 runs: `scalar` 2.80–3.51 G, `cpp-auto` 5.45–5.90 G, `cpp-simd` 7.56–8.83 G, `rust-simd`
+4.77–8.93 G. This machine is not isolated, and single runs occasionally drop — the `rust-simd`
+low of 4.77 G is one such run, in which every flavor was slower than its own median. The median
 is the number to quote; the range is the noise floor.
+
+**These numbers reproduce.** An earlier session measured the same kernel on the same machine and
+got `scalar` 3.51 G, `cpp-auto` 5.87 G, `cpp-simd` 8.81 G, `rust-simd` 8.77 G — within 2% of the
+medians above, and with the same `2.51×` and `1.50×` ratios. Two independent 8-run sets agreeing
+to 2% is a stronger claim than either set alone.
 
 Every flavor agrees on the match count, and the differential tests compare the **masks bit for
 bit**, not just the counts.
 
 ### What the two ratios mean
 
-- **`scalar → cpp-simd` is 2.51×.** This is how much vectorisation is worth, measured against a
+- **`scalar → cpp-simd` is 2.50×.** This is how much vectorisation is worth, measured against a
   reference that really is scalar. It is checked against the disassembly: the `-fno-vectorize`
   object contains **zero** vectorised loop instructions, and the ordinary object contains ~300.
 - **`cpp-auto → cpp-simd` is 1.50×.** This is the one that decides whether the hand-written kernel
@@ -65,9 +72,64 @@ auto-vectorised. It was measuring two vectorised implementations. See
 
 ### The FFI seam
 
-`cpp-simd` crosses a C ABI; `rust-simd` does not. They are within **0.5%** of each other — 8.81 G
-against 8.77 G — against a run-to-run spread of a few percent. The seam is free. See
+`cpp-simd` crosses a C ABI; `rust-simd` does not. They are within **0.2%** of each other — 8.73 G
+against 8.72 G — against a run-to-run spread of a few percent. The seam is free. See
 [ADR-0003](docs/adr/0003-cpp-ffi-seam.md).
+
+### AVX2 correctness (verified on an ARM64 Mac)
+
+**This is not a performance claim.** It is the answer to "this machine has no AVX2", and the answer
+turned out to matter more than expected.
+
+The project has two SIMD paths: NEON, measured above on this machine, and AVX2, for x86-64. The
+development hardware is an ARM64 MacBook, so the AVX2 half could not be *timed* here — and, when
+somebody finally tried to cross-build it, it turned out it could not be *compiled* either. The
+AVX2 Rust intrinsics path had never been built by anyone. It had two type errors in it (`u32`
+accumulated into a `u64` mask), and it had been sitting in the tree, unchecked, for the entire life
+of the project. See [ADR-0009](docs/adr/0009-avx2-without-x86-hardware.md).
+
+The fix has two halves.
+
+**Compilation** is now gated. `just check-x86` cross-compiles the workspace for
+`x86_64-apple-darwin` on this machine, and CI runs the same check. The AVX2 path cannot rot
+unnoticed again.
+
+**Correctness** is now testable here, because Rosetta 2 executes AVX2 instructions correctly on
+Apple Silicon while reporting *no* AVX2 in CPUID — the host is an ARM64 chip, so the feature bits
+say so. The kernel's runtime probe therefore correctly concludes that there is no AVX2 path and
+never enters it. `COLUMNAR_FORCE_SIMD=avx2` overrides the probe, which is what `just verify-avx2`
+does:
+
+```
+$ just verify-avx2
+
+-- without the override --
+    forced        : auto
+    simd_kind     : none
+    avx2 rows     : 0
+    matches oracle: true
+
+-- with COLUMNAR_FORCE_SIMD=avx2 --
+    forced        : avx2
+    simd_kind     : avx2
+    avx2 rows     : 1024
+    matches oracle: true
+
+RESULT: PASSED -- 3 test binaries green under Rosetta 2 with AVX2 forced.
+```
+
+The `avx2 rows` counter is the load-bearing part. A dispatch that *reports* the AVX2 path is not
+proof that the path's instructions ran; the counter moves only if they did, and the mask it
+produced is compared against the oracle's bit for bit. So the claim is narrow and specific: **the
+AVX2 path — both the C++ FFI path and the Rust intrinsics path — compiles, executes, and produces
+masks identical to the oracle's, on an ARM64 Mac.**
+
+**What this does not establish: any AVX2 performance number.** Under Rosetta the instructions are
+emulated, so a timing taken there measures the translator, not hardware. The benchmark harness
+therefore *refuses to measure* while the override is in force — `just bench` exits with an
+explanation rather than producing a number that means something other than what it appears to mean.
+AVX2 timings require an x86-64 machine with AVX2, and are published only from one. See
+[Not measured](#not-measured).
 
 ---
 
@@ -94,15 +156,15 @@ The like-for-like comparison: all three systems hold the data in memory and answ
 | query | **engine** | duckdb | polars | |
 |---|---|---|---|---|
 | `scan` | **0.0 ms** | 1.0 ms | 0.2 ms | engine wins |
-| `filter-numeric` | **3.3 ms** | 12.0 ms | 11.0 ms | engine wins |
-| `filter-string` | **3.8 ms** | 33.0 ms | 39.3 ms | engine wins |
-| `filter-range` | 15.4 ms | 20.0 ms | **10.5 ms** | polars wins, engine 1.47× slower |
-| `q6` | **10.1 ms** | 45.0 ms | 67.4 ms | engine wins |
+| `filter-numeric` | **3.3 ms** | 12.0 ms | 10.4 ms | engine wins |
+| `filter-string` | **3.3 ms** | 33.0 ms | 37.3 ms | engine wins |
+| `filter-range` | 16.0 ms | 20.0 ms | **11.7 ms** | polars wins, engine 1.38× slower |
+| `q6` | **10.3 ms** | 46.0 ms | 69.7 ms | engine wins |
 
 **The engine wins four of the five, and loses one.**
 
 The loss is `filter-range`, and it is not a filter problem. That query's stages are: filter
-1.4 ms, project 8.0 ms, aggregate 2.2 ms. The engine materialises the projected column and then
+1.4 ms, project 7.9 ms, aggregate 2.3 ms. The engine materialises the projected column and then
 sums it; `Polars` streams the sum over the selection without materialising anything. The pinned
 optimization order says "late materialization", but the projection and the aggregate are two
 separate stages rather than one fused operator, and the gap is the materialisation.
@@ -111,11 +173,11 @@ separate stages rather than one fused operator, and the gap is the materialisati
 
 | query | **engine** | duckdb | polars |
 |---|---|---|---|
-| `scan` | 1938.3 ms | **2.0 ms** | 1.0 ms |
-| `filter-numeric` | 1930.4 ms | 22.0 ms | 44.2 ms |
-| `filter-string` | 1911.6 ms | 22.0 ms | 167.6 ms |
-| `filter-range` | 1952.1 ms | 31.0 ms | **15.0 ms** |
-| `q6` | 1931.0 ms | 31.0 ms | 189.3 ms |
+| `scan` | 1921.4 ms | **2.0 ms** | 1.0 ms |
+| `filter-numeric` | 1927.1 ms | 22.0 ms | 44.0 ms |
+| `filter-string` | 1927.2 ms | 22.0 ms | 165.7 ms |
+| `filter-range` | 1955.8 ms | 31.0 ms | **15.8 ms** |
+| `q6` | 1972.3 ms | 31.0 ms | 194.3 ms |
 
 **The engine is 60× to 100× slower here, and the whole difference is in how the bytes get into
 memory -- not in the query.**
@@ -125,11 +187,12 @@ have different fixes:
 
 | | engine | duckdb | ratio |
 |---|---|---|---|
-| **Reader speed**, same job: decode all 16 columns, 6,000,000 rows, materialise them | 1920 ms | 1224 ms | **1.58×** |
+| **Reader speed**, same job: decode all 16 columns, 6,000,000 rows, materialise them | 1921 ms | 1241 ms | **1.55×** |
 | **Architecture**: materialise everything first, or stream and push the predicate down | materialises everything | streams, reads 2 columns | **39.3×** |
 
-1.58 × 39.3 ≈ 62, which is the measured gap. So only about 2.5% of it is how fast the reader is;
-the other 97.5% is a design choice.
+1.55 × 39.3 ≈ 61, against a measured 63.6× cold gap for `q6` — the two terms account for the gap
+to within 4%. So only about 2.4% of it is how fast the reader is; the other 97.6% is a design
+choice.
 
 `DuckDB` pushes the filter into the Parquet reader. Its plan for the Q6 predicate set:
 
@@ -146,28 +209,28 @@ scan*, and never materialises a table: 31 ms for the whole query.
 
 The engine's `Dataset::read_parquet` decodes the **entire file** -- all sixteen columns, all six
 million rows -- into the engine's own column chunks before any query starts (ADR-0005). That is
-1920 ms, and then the query takes 10.1 ms.
+1921 ms, and then the query takes 10.3 ms.
 
-**The engine's query is 4.4× faster than `DuckDB`'s** (10.1 ms against 45.0 ms, resident). Every
-one of those 62 times is the file, and none of it is the kernel, the filter or the aggregate.
+**The engine's query is 4.5× faster than `DuckDB`'s** (10.3 ms against 46.0 ms, resident). Every
+one of those 63 times is the file, and none of it is the kernel, the filter or the aggregate.
 
 ### 2c. Where the cold time goes
 
 | system | load (file → queryable) | subprocess wall clock |
 |---|---|---|
-| **engine** (`Dataset::read_parquet`) | **1938.3 ms** | — (a resident process) |
-| duckdb (`CREATE TEMP TABLE ... AS SELECT *`) | 1224.0 ms | 51.4 ms |
-| polars (`pl.read_parquet`) | 1046.6 ms | 276.8 ms |
+| **engine** (`Dataset::read_parquet`) | **1921.3 ms** | — (a resident process) |
+| duckdb (`CREATE TEMP TABLE ... AS SELECT *`) | 1241.0 ms | 52.7 ms |
+| polars (`pl.read_parquet`) | 1033.3 ms | 289.4 ms |
 
 Several things are worth separating here.
 
-**The engine's decode is slow, and it decodes too much.** 231.6 MiB in 1.94 s is about 119 MB/s.
+**The engine's decode is slow, and it decodes too much.** 231.6 MiB in 1.92 s is about 120 MB/s.
 That is the `arrow-rs` Parquet reader going through every column of every row group and
 materialising all sixteen columns into the engine's own chunk format, eagerly, whether the query
-needs them or not. Two separate costs hide in that number: the reader is 1.58× slower than
+needs them or not. Two separate costs hide in that number: the reader is 1.55× slower than
 `DuckDB`'s at the same job, and the engine asks it for sixteen columns when the query wants two.
 
-**The incumbents are pinned to one thread.** `Polars` reads the file in 1038 ms single-threaded
+**The incumbents are pinned to one thread.** `Polars` reads the file in 1033 ms single-threaded
 and in about 184 ms with all fourteen cores. That 5.6× is the price of comparing a one-thread
 engine against a one-thread engine. It is the right price, but it belongs in the reader's
 column, not the query's.
@@ -186,19 +249,19 @@ The plan output splits the engine's work by stage. For the Q6 predicate set, res
 ```
 stage      rows in  rows out  elapsed
 scan       6000000  6000000   0.0 ms
-filter     6000000  315203    6.7 ms
+filter     6000000  315203    6.4 ms
 project    315203   315203    0.0 ms
 aggregate  315203   1         0.0 ms
 ```
 
 The filter stage does four predicates over 6,000,000 rows. The numeric ones run through the SIMD
-kernel at 8.8 G rows/s, which is 0.7 ms each. The two date predicates run through the dictionary
+kernel at 8.7 G rows/s, which is 0.7 ms each. The two date predicates run through the dictionary
 path — one comparison per distinct date, then a map through the indices.
 
 **The kernel is no longer the bottleneck of this query.** That is the point of the project, and it
 took two defects to get there: a mask accumulation that extracted two lanes to scalar registers
 every two rows (ADR-0006), and a dictionary map that used a mispredicted branch to set a bit. A
-single date predicate on its own — the `filter-string` query — now takes 2.1 ms in the filter
+single date predicate on its own — the `filter-string` query — now takes 2.4 ms in the filter
 stage, against 16.5 ms before the branchless rewrite.
 
 ---
@@ -226,7 +289,7 @@ where there is exactly one group and there never was a key.
 
 | | why | status |
 |---|---|---|
-| **x86-64 / AVX2 kernel numbers** | There is no x86-64 runner yet. The machine this was built on is an Apple Silicon Mac. | The AVX2 path is code-complete and CI-wired ([ADR-0002](docs/adr/0002-dual-arch-simd.md)). **Its numbers do not exist and are not estimated here.** |
+| **x86-64 / AVX2 kernel numbers** | There is no x86-64 machine. The machine this was built on is an Apple Silicon Mac. | The AVX2 path's **correctness** is verified — on this machine, under Rosetta 2, with the row counter proving the instructions ran. See [AVX2 correctness](#avx2-correctness-verified-on-an-arm64-mac) and [ADR-0009](docs/adr/0009-avx2-without-x86-hardware.md). Its **performance** numbers do not exist and are not estimated here. |
 | **The blueprint's "AVX2 6.7× scalar"** | It was measured on an EPYC / DDR5 / NVMe machine that is not this one. | Not reproduced, not quoted as this project's own. |
 | **Multithreading** | The engine is single-threaded in this increment. | Out of scope for spec 001. |
 | **The official TPC-H SF-1 file** | The generator produces a TPC-H-*shaped* file with approximated distributions, UTF-8 dates and a seeded PRNG. | Said in as many words in the manifest and in [constitution principle VI](constitution.md). |
@@ -241,6 +304,9 @@ where there is exactly one group and there never was a key.
 just dataset       # 6,000,000 rows, deterministic, about 2.8 seconds
 just bench         # the kernel A/B -> bench-results/kernel.json
 just compare       # DuckDB and Polars  -> bench-results/compare.json
+
+just check-x86     # compile the x86-64 half of the kernel, from this ARM64 Mac
+just verify-avx2   # run the AVX2 path under Rosetta 2 and check it against the oracle
 ```
 
 `just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, and the `polars` Python package
@@ -260,8 +326,8 @@ The framing rule for this project is **"kernel X on query Y"**, never "this data
 DuckDB". A number here is a statement about *one operation on one query on one machine*, and it
 is only meaningful next to its conditions.
 
-So: the comparison kernel on the Q6 predicate set is 1.51× faster than the compiler's own
+So: the comparison kernel on the Q6 predicate set is 1.50× faster than the compiler's own
 vectorisation of the same loop, and 2.50× faster than a genuinely scalar reference, on an M4 Max
 with NEON, single-threaded, over 20 million rows. The engine's filter on the Q6 predicate set
-takes 6.7 ms. The engine's Parquet reader takes 1.91 s for the same file, and that is where the
+takes 6.4 ms. The engine's Parquet reader takes 1.92 s for the same file, and that is where the
 engine loses.

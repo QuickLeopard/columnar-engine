@@ -30,6 +30,23 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 use columnar_core::{ComparisonOp, NullBitmap};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Rows processed by the Rust intrinsics path.
+///
+/// The C++ side has the same counter on its AVX2 path, and the two exist for
+/// the same reason: a report of "this path is live" is not the same fact as
+/// "these instructions ran". See [`crate::avx2_rows_processed`].
+static ROWS_PROCESSED: AtomicU64 = AtomicU64::new(0);
+
+/// How many rows the Rust intrinsics path has processed since the process
+/// started.
+///
+/// Zero when the path is not available, and when it has not run.
+#[must_use]
+pub fn rows_processed() -> u64 {
+    ROWS_PROCESSED.load(Ordering::Relaxed)
+}
 
 /// Operator codes as `u8`, matching `ComparisonOp::abi_code()`.
 ///
@@ -45,8 +62,30 @@ mod op {
 }
 
 /// Whether this machine can run the Rust intrinsics path.
+///
+/// The `COLUMNAR_FORCE_SIMD` override can turn this on for an ISA the CPU
+/// probe does not advertise -- which is how the AVX2 path is correctness
+/// tested on an ARM64 Mac under Rosetta 2, where the instructions execute
+/// correctly but CPUID says the host has no AVX2. See [`crate::force`].
+///
+/// An override naming an ISA this binary was not compiled for is ignored:
+/// the module for it does not exist.
 #[must_use]
 pub fn available() -> bool {
+    use crate::force::{forced, ForcedSimd};
+    match forced() {
+        ForcedSimd::Auto => native_available(),
+        ForcedSimd::None => false,
+        ForcedSimd::Neon => cfg!(target_arch = "aarch64"),
+        ForcedSimd::Avx2 => cfg!(target_arch = "x86_64"),
+    }
+}
+
+/// Whether this machine's own CPU features cover the path, with no override.
+///
+/// This is the probe as it is in production: it is what decides whether the
+/// SIMD path is safe to execute.
+fn native_available() -> bool {
     #[cfg(target_arch = "aarch64")]
     {
         // NEON is architecturally mandatory on AArch64; there is no variant
@@ -81,6 +120,7 @@ pub fn compare_i64(
     if !available() {
         return crate::oracle::compare_i64(values, op, threshold, validity, out);
     }
+    ROWS_PROCESSED.fetch_add(values.len() as u64, Ordering::Relaxed);
     #[cfg(target_arch = "aarch64")]
     {
         neon_i64(values, op, threshold, validity, out)
@@ -112,6 +152,7 @@ pub fn compare_f64(
     if !available() {
         return crate::oracle::compare_f64(values, op, threshold, validity, out);
     }
+    ROWS_PROCESSED.fetch_add(values.len() as u64, Ordering::Relaxed);
     #[cfg(target_arch = "aarch64")]
     {
         neon_f64(values, op, threshold, validity, out)
@@ -370,11 +411,10 @@ mod avx2_impl {
     pub(super) unsafe fn block_i64<const OP: u8>(values: *const i64, threshold: i64) -> u64 {
         let mut mask = 0u64;
         let mut k = 0usize;
-        // SAFETY: the caller guarantees 64 readable elements from `values`;
-        // `k` stays below 64, so the load stays in bounds.
-        let b = unsafe { _mm256_set1_epi64x(threshold) };
+        let b = _mm256_set1_epi64x(threshold);
         while k < 64 {
-            // SAFETY: as above.
+            // SAFETY: the caller guarantees 64 readable elements from `values`;
+            // `k` stays below 64, so the load stays in bounds.
             let cmp = unsafe {
                 let a = _mm256_loadu_si256(values.add(k).cast());
                 if OP == op::LT {
@@ -391,9 +431,10 @@ mod avx2_impl {
                     _mm256_xor_si256(_mm256_cmpeq_epi64(a, b), _mm256_set1_epi64x(-1))
                 }
             };
-            // SAFETY: the intrinsic operates on the value just produced.
-            let bits = unsafe { _mm256_movemask_pd(_mm256_castsi256_pd(cmp)) as u32 };
-            mask |= bits << k;
+            // `movemask` yields one bit per 64-bit lane -- four bits -- and
+            // lane `i` holds row `k + i`, so the block is four rows per step.
+            let bits = _mm256_movemask_pd(_mm256_castsi256_pd(cmp)) as u32;
+            mask |= u64::from(bits) << k;
             k += 4;
         }
         mask
@@ -409,10 +450,9 @@ mod avx2_impl {
     pub(super) unsafe fn block_f64<const OP: u8>(values: *const f64, threshold: f64) -> u64 {
         let mut mask = 0u64;
         let mut k = 0usize;
-        // SAFETY: the caller guarantees 64 readable elements from `values`.
-        let b = unsafe { _mm256_set1_pd(threshold) };
+        let b = _mm256_set1_pd(threshold);
         while k < 64 {
-            // SAFETY: as above.
+            // SAFETY: the caller guarantees 64 readable elements from `values`.
             let cmp = unsafe {
                 let a = _mm256_loadu_pd(values.add(k));
                 if OP == op::LT {
@@ -429,9 +469,8 @@ mod avx2_impl {
                     _mm256_cmp_pd(a, b, _CMP_NEQ_OQ)
                 }
             };
-            // SAFETY: the intrinsic operates on the value just produced.
-            let bits = unsafe { _mm256_movemask_pd(cmp) as u32 };
-            mask |= bits << k;
+            let bits = _mm256_movemask_pd(cmp) as u32;
+            mask |= u64::from(bits) << k;
             k += 4;
         }
         mask

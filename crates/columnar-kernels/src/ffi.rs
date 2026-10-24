@@ -129,4 +129,10 @@ unsafe extern "C" {
 
     /// Which SIMD path is live on this machine.
     pub(crate) fn col_simd_kind() -> c_int;
+
+    /// How many rows have been processed by the C++ AVX2 path.
+    ///
+    /// This is proof that the AVX2 instructions executed, not just that the
+    /// dispatch reported the path.
+    pub(crate) fn col_avx2_rows() -> u64;
 }

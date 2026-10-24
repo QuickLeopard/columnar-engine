@@ -132,6 +132,21 @@ int64_t col_compare_f64_scalar(const double *values, uint64_t n, int32_t op, dou
  */
 int32_t col_simd_kind(void);
 
+/*
+ * How many rows have been processed by the AVX2 path.
+ *
+ * This exists so that "the AVX2 path ran" is a fact rather than an
+ * inference. The dispatch reports which path it took, but a report is not
+ * proof that the path's instructions executed and produced the answer. The
+ * counter is incremented by the row count every time the AVX2 path is
+ * entered, so a test can assert that it moved and that the mask it produced
+ * still matched the oracle.
+ *
+ * It is zero on a build with no AVX2 path, and zero when the override is
+ * off on a machine whose CPU has no AVX2.
+ */
+uint64_t col_avx2_rows(void);
+
 #ifdef __cplusplus
 }
 #endif

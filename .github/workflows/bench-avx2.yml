@@ -1,20 +1,38 @@
 # The benchmark, on the AVX2 path.
 #
-# This workflow runs the kernel A/B on a **self-hosted x86-64 Linux runner**.
-# The AVX2 path cannot be measured on the GitHub-hosted runners, which are
-# x86-64 without AVX2, nor on the Apple Silicon machines, which do not have
-# AVX2 at all.
+# # Why this workflow is shaped the way it is
 #
-# To enable it:
+# The project has no x86-64 hardware. The machine it is developed on is an
+# ARM64 MacBook, so the AVX2 half of the SIMD story cannot be *timed* here.
+# The correctness half is a different matter and is handled by
+# `scripts/verify-avx2.sh`, which runs the AVX2 path under Rosetta 2 on the
+# author's own machine.
 #
-#   1. Register a runner with the labels `self-hosted`, `linux`, `x64` on this
-#      repository (or on the organisation).
-#   2. Run this workflow manually.
+# So this workflow has exactly two jobs, and neither of them invents a
+# number:
 #
-# Until a runner is registered, the AVX2 column of PERF.md is marked
-# "not yet measured" rather than estimated. Publishing an estimate for a
-# number this project cannot re-derive is exactly the failure this repository
-# exists to avoid.
+# 1. `avx2-correctness` -- builds and runs the differential suite on a real
+#    x86-64 machine, so the AVX2 path is verified against native hardware as
+#    well as against the emulator. This produces no timing.
+# 2. `avx2-ratios` -- measures the kernel A/B on a GitHub-hosted x86-64
+#    runner, and publishes **ratios only**.
+#
+# # Why ratios only
+#
+# The ratios are `scalar -> cpp-simd` and `cpp-auto -> cpp-simd`, both taken
+# from the same process, on the same machine, in the same run. Whatever the
+# runner's load, its clock and its neighbours do to the absolute numbers,
+# they do to all four flavors in the same proportion, so the ratio is far
+# more stable than the absolute figure.
+#
+# The absolute figures -- rows/sec and ns/row -- are *not* comparable to the
+# ARM numbers in `PERF.md`, because they come from different hardware. They
+# are published as ratios so that nobody has to be tempted to compare a
+# number from an Azure VM with a number from an M4 Max.
+#
+# If a self-hosted x86-64 runner is ever registered, the `avx2-ratios` job
+# will also run there and produce absolute figures that are worth
+# publishing.
 
 name: bench (AVX2)
 
@@ -31,8 +49,113 @@ on:
         default: '20000000'
 
 jobs:
-  bench:
-    name: kernel A/B on AVX2
+  avx2-correctness:
+    name: AVX2 correctness (native x86-64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Report the CPU features
+        run: |
+          {
+            echo "### cpu"
+            lscpu | grep -E '^(Architecture|Model name|Flags)' | head -3
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Report whether AVX2 is present
+        id: avx2
+        run: |
+          if grep -qm1 -w avx2 /proc/cpuinfo; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "AVX2: present" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "AVX2: **not present** on this runner -- the AVX2 path cannot run here." >> "$GITHUB_STEP_SUMMARY"
+            echo "AVX2: **not present** on this runner -- the AVX2 path cannot run here." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Run the differential suite
+        if: steps.avx2.outputs.present == 'true'
+        run: cargo test --release -p columnar-kernels --test differential -- --nocapture
+      - name: Run the differential suite (scalar only, when there is no AVX2)
+        if: steps.avx2.outputs.present != 'true'
+        run: |
+          echo "No AVX2 here: running the suite with the SIMD paths disabled, so that"
+          echo "the scalar reference and the oracle are still checked against each"
+          echo "other on this machine."
+          COLUMNAR_FORCE_SIMD=none cargo test --release -p columnar-kernels --test differential -- --nocapture
+
+  avx2-ratios:
+    name: kernel A/B on AVX2 (ratios only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Report whether AVX2 is present
+        id: avx2
+        run: |
+          if grep -qm1 -w avx2 /proc/cpuinfo; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "### AVX2" >> "$GITHUB_STEP_SUMMARY"
+            echo "This runner has no AVX2, so there is nothing to measure." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Report the machine
+        if: steps.avx2.outputs.present == 'true'
+        run: |
+          {
+            echo "### machine spec"
+            lscpu | grep -E '^(Architecture|Model name|CPU\(s\))'
+            uname -a
+            rustc --version
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Generate the dataset
+        if: steps.avx2.outputs.present == 'true'
+        run: cargo run --release -p columnar-cli -- dataset --scale-factor "${{ inputs.scale_factor }}" --seed 24001 --output data/lineitem.parquet
+      - name: Run the kernel A/B
+        if: steps.avx2.outputs.present == 'true'
+        run: cargo run --release -p columnar-cli -- bench --data data/lineitem.parquet --rows "${{ inputs.rows }}" --iterations 8 --out bench-results/avx2.json
+      - name: Publish the ratios
+        if: steps.avx2.outputs.present == 'true'
+        run: |
+          {
+            echo "### kernel A/B -- AVX2, ratios only"
+            echo ""
+            echo "The absolute rows/sec and ns/row are **not** comparable with the ARM"
+            echo "numbers in PERF.md: they come from different hardware. The ratios"
+            echo "below are, because all four flavors are measured in the same process"
+            echo "on the same machine in the same run."
+            echo ""
+            echo "| flavor | vs scalar | vs cpp-auto |"
+            echo "|---|---|---|"
+            jq -r '.kernel_ab.flavors[]
+                  | "| \(.flavor) | \(.ratio_vs_scalar * 100 | round / 100)x | \(.ratio_vs_auto * 100 | round / 100)x |"' \
+               bench-results/avx2.json
+            echo ""
+            echo "Machine: $(jq -r '.machine.cpu' bench-results/avx2.json), $(jq -r '.machine.arch' bench-results/avx2.json), $(jq -r '.machine.os' bench-results/avx2.json), $(jq -r '.machine.rustc' bench-results/avx2.json), $(jq -r '.machine.threads' bench-results/avx2.json) thread(s)."
+            echo ""
+            echo "Absolute figures from this run are in the artifact, unlabelled:"
+            echo "they describe a shared runner, and this repository does not publish them."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the results
+        if: steps.avx2.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-avx2
+          path: bench-results/
+
+  avx2-self-hosted:
+    name: kernel A/B on AVX2 (self-hosted, absolute figures)
+    # Requires a runner registered with the labels `self-hosted`, `linux`,
+    # `x64`. This project has no such machine: the development hardware is an
+    # ARM64 MacBook. The job is wired so that it starts working the moment a
+    # runner exists, and it is the only job whose absolute figures would be
+    # worth publishing.
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
@@ -42,20 +165,21 @@ jobs:
           rustup default stable
       - name: Report the machine
         run: |
-          echo "### machine spec" >> "$GITHUB_STEP_SUMMARY"
-          lscpu >> "$GITHUB_STEP_SUMMARY"
-          uname -a >> "$GITHUB_STEP_SUMMARY"
-          rustc --version >> "$GITHUB_STEP_SUMMARY"
-          grep -m1 'flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(avx2|avx512f)$' >> "$GITHUB_STEP_SUMMARY" || true
+          {
+            echo "### machine spec"
+            lscpu
+            uname -a
+            rustc --version
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Generate the dataset
-        run: cargo run --release -p columnar-cli -- dataset --scale-factor "${{ inputs.scale_factor }}" --output data/lineitem.parquet
+        run: cargo run --release -p columnar-cli -- dataset --scale-factor "${{ inputs.scale_factor }}" --seed 24001 --output data/lineitem.parquet
       - name: Run the kernel A/B
-        run: cargo run --release -p columnar-cli -- bench --data data/lineitem.parquet --rows "${{ inputs.rows }}" --out bench-results/avx2.json
+        run: cargo run --release -p columnar-cli -- bench --data data/lineitem.parquet --rows "${{ inputs.rows }}" --iterations 8 --out bench-results/avx2-self-hosted.json
       - name: Run the external comparison
         continue-on-error: true
-        run: cargo run --release -p columnar-cli -- compare --data data/lineitem.parquet --out bench-results/avx2-compare.json
+        run: cargo run --release -p columnar-cli -- compare --data data/lineitem.parquet --out bench-results/avx2-self-hosted-compare.json
       - name: Upload the results
         uses: actions/upload-artifact@v4
         with:
-          name: bench-results-avx2
+          name: bench-results-avx2-self-hosted
           path: bench-results/

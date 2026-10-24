@@ -64,6 +64,7 @@
 #![allow(clippy::indexing_slicing)]
 
 pub mod ffi;
+pub mod force;
 pub mod oracle;
 pub mod rust_simd;
 
@@ -157,6 +158,20 @@ pub fn simd_kind() -> SimdKind {
     }
 }
 
+/// How many rows the C++ AVX2 path has processed since the process started.
+///
+/// [`simd_kind`] says which path the dispatch takes; this says the path's
+/// instructions actually ran. The distinction matters when the path is
+/// reachable only through the `COLUMNAR_FORCE_SIMD` override -- see
+/// [`force`]. It is zero on a build with no AVX2 path, and on a machine
+/// whose CPU has no AVX2 when the override is off.
+#[must_use]
+pub fn avx2_rows_processed() -> u64 {
+    // SAFETY: `col_avx2_rows` takes no arguments, reads no pointers and
+    // touches no global state beyond an atomic counter.
+    unsafe { ffi::col_avx2_rows() }
+}
+
 /// The flavors that can actually run on this machine, most-preferred first.
 ///
 /// [`Flavor::Scalar`] and [`Flavor::CppAuto`] are always present -- they are
@@ -164,6 +179,10 @@ pub fn simd_kind() -> SimdKind {
 /// [`Flavor::CppSimd`] is present when the C++ side reports a live SIMD
 /// path. [`Flavor::RustSimd`] is present when this machine can run the Rust
 /// intrinsics path.
+///
+/// The `COLUMNAR_FORCE_SIMD` override can make a path available that the CPU
+/// probe would hide -- see [`force`]. It is for correctness testing, not for
+/// measurement.
 #[must_use]
 pub fn available() -> Vec<Flavor> {
     let mut flavors = Vec::with_capacity(4);

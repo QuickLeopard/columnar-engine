@@ -18,6 +18,16 @@ build:
 # Build and run everything: format check, lint, tests.
 check: fmt lint test
 
+# Compile the x86-64 half of the kernel from this ARM64 machine.
+#
+# The AVX2 path -- in C++ and in the Rust intrinsics -- only compiles on
+# x86-64. It sat in the tree, uncompiled and wrong, because the development
+# machine is an ARM64 MacBook and nothing else checked it. This recipe is
+# the local gate that catches that class of rot.
+check-x86:
+    @rustup target list --installed | grep -qx x86_64-apple-darwin || rustup target add x86_64-apple-darwin
+    cargo check --workspace --all-targets --target x86_64-apple-darwin
+
 # Check formatting.
 fmt:
     cargo fmt --all -- --check
@@ -34,6 +44,18 @@ test:
 # project's headline claim.
 differential:
     cargo test -p columnar-kernels --test differential -- --nocapture
+
+# Verify the AVX2 path's correctness on this machine, via Rosetta 2.
+#
+# This is the answer to "this machine has no AVX2". Rosetta 2 executes AVX2
+# instructions correctly but reports no AVX2 in CPUID, so the probe would
+# otherwise hide the path. The override reaches it, and the row counter
+# proves the instructions ran.
+#
+# This checks correctness, never performance: under Rosetta the instructions
+# are emulated, and `bench` refuses to run with the override in force.
+verify-avx2:
+    ./scripts/verify-avx2.sh
 
 # Check the dependency policy.
 deny:

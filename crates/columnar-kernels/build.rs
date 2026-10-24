@@ -32,6 +32,23 @@
 //! wearing a runtime-dispatch hat.
 
 fn main() {
+    // Keep the C++ objects' deployment target in step with the Rust target's.
+    //
+    // Without this, `cc` builds the objects for the SDK's own version (27.0 on
+    // this machine) while rustc links against the target's default minimum
+    // (10.12 for x86_64, 11.0 for aarch64). The linker then warns that the
+    // object "was built for newer 'macOS' version ... than being linked", and
+    // the binary claims a deployment target it does not honour.
+    //
+    // Setting the environment variable is how `cc` is told what to do; it is
+    // read when the compiler is invoked, which is below.
+    if let Ok(target) = std::env::var("TARGET") {
+        if target.ends_with("-apple-darwin") {
+            let minimum = if target.starts_with("aarch64") { "11.0" } else { "10.12" };
+            std::env::set_var("MACOSX_DEPLOYMENT_TARGET", minimum);
+        }
+    }
+
     let mut build = cc::Build::new();
     build
         .cpp(true)

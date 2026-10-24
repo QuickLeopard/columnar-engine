@@ -70,10 +70,14 @@ The 62× decomposes into two independent parts, because they have different fixe
 
 1.58 × 39.3 ≈ 62.
 
+> These are the figures this decision rested on. A later measurement on the same machine gave
+> 1921 ms / 1241 ms / 1972 ms against DuckDB's 31 ms — a 1.55× reader-speed ratio, the same 39.3×
+> architectural factor, and a 63.6× cold gap. The ratio and the conclusion do not change; the
+> current figures are in [`PERF.md`](../../PERF.md).
+
 So **97.5% of the gap is the eager decode and only 2.5% is how fast `arrow-rs` is.** Reading
 every column is the cost; the reader's speed is almost beside the point. `DuckDB`'s plan for the
 same query shows the difference:
-
 ```
 ╭─ Parquet Scan ──────────────╮
 │ Function: PARQUET_SCAN      │

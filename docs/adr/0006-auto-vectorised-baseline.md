@@ -134,6 +134,11 @@ the median is reported and the spread is given so that the reader can see the no
 | `cpp-simd` (hand-written NEON) | 8.81 G | 0.113 | 2.51× | **1.50×** |
 | `rust-simd` (Rust intrinsics) | 8.77 G | 0.114 | 2.50× | 1.49× |
 
+> These are the figures this decision rested on, and an ADR is a record rather than a live
+> dashboard. A later 8-run set on the same machine reproduced them to within 2% — 3.48 G, 5.75 G,
+> 8.73 G, 8.72 G, with the same 2.50× and 1.50× ratios. The current figures are in
+> [`PERF.md`](../../PERF.md); the decision this ADR records does not change.
+
 All four flavors agree on 12,726,115 matching rows, and the differential tests compare the
 masks bit for bit, not just the counts.
 
@@ -147,7 +152,8 @@ removing two instructions per two rows.
 small and local, and the effect is 1.79× on the kernel — far too large to be noise. The
 measurement is on AArch64 only; the AVX2 path has the same structure (it uses `_mm256_movemask_pd`,
 which extracts directly and never had the problem) but its numbers are not yet measured, because
-there is no x86-64 runner yet.
+there is no x86-64 machine. Its *correctness* has since been verified, on an ARM64 Mac under
+Rosetta 2 — see [ADR-0009](0009-avx2-without-x86-hardware.md).
 
 ## Revisit when
 

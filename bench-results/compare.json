@@ -5,6 +5,7 @@
     "cores": 14,
     "os": "macOS 27.0.1",
     "simd": "neon",
+    "forced_simd": "auto",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
     "threads": 1
   },
@@ -30,9 +31,9 @@
       "comparator": "duckdb",
       "mode": "resident",
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
-      "load_ms": 1214.0,
+      "load_ms": 1220.0,
       "query_ms": 1.0,
-      "elapsed_ms": 1266.7512080000001,
+      "elapsed_ms": 1268.841292,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n6000000",
       "result_value": 6000000.0,
       "iterations": 3
@@ -42,9 +43,9 @@
       "comparator": "polars",
       "mode": "resident",
       "version": "polars 1.36.1",
-      "load_ms": 1029.641,
-      "query_ms": 0.182,
-      "elapsed_ms": 1127.505083,
+      "load_ms": 1028.305,
+      "query_ms": 0.181,
+      "elapsed_ms": 1128.108833,
       "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 6000000 │\n└─────────┘",
       "result_value": 6000000.0,
       "iterations": 3
@@ -56,7 +57,7 @@
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
       "load_ms": 0.0,
       "query_ms": 2.0,
-      "elapsed_ms": 21.559333,
+      "elapsed_ms": 21.956291999999998,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n6000000",
       "result_value": 6000000.0,
       "iterations": 3
@@ -67,8 +68,8 @@
       "mode": "cold",
       "version": "polars 1.36.1",
       "load_ms": 0.0,
-      "query_ms": 1.047,
-      "elapsed_ms": 88.5175,
+      "query_ms": 1.026,
+      "elapsed_ms": 88.558625,
       "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 6000000 │\n└─────────┘",
       "result_value": 6000000.0,
       "iterations": 3
@@ -78,9 +79,9 @@
       "comparator": "duckdb",
       "mode": "resident",
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
-      "load_ms": 1221.0,
+      "load_ms": 1214.0,
       "query_ms": 12.0,
-      "elapsed_ms": 1280.623167,
+      "elapsed_ms": 1275.850792,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n3817685",
       "result_value": 3817685.0,
       "iterations": 3
@@ -90,9 +91,9 @@
       "comparator": "polars",
       "mode": "resident",
       "version": "polars 1.36.1",
-      "load_ms": 998.627,
-      "query_ms": 11.03,
-      "elapsed_ms": 1113.7771249999998,
+      "load_ms": 1025.238,
+      "query_ms": 10.4,
+      "elapsed_ms": 1136.5474159999999,
       "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 3817685 │\n└─────────┘",
       "result_value": 3817685.0,
       "iterations": 3
@@ -104,7 +105,7 @@
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
       "load_ms": 0.0,
       "query_ms": 22.0,
-      "elapsed_ms": 42.082875,
+      "elapsed_ms": 41.79725,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n3817685",
       "result_value": 3817685.0,
       "iterations": 3
@@ -115,8 +116,8 @@
       "mode": "cold",
       "version": "polars 1.36.1",
       "load_ms": 0.0,
-      "query_ms": 44.227,
-      "elapsed_ms": 133.557458,
+      "query_ms": 44.008,
+      "elapsed_ms": 133.822375,
       "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 3817685 │\n└─────────┘",
       "result_value": 3817685.0,
       "iterations": 3
@@ -126,9 +127,9 @@
       "comparator": "duckdb",
       "mode": "resident",
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
-      "load_ms": 1224.0,
+      "load_ms": 1235.0,
       "query_ms": 33.0,
-      "elapsed_ms": 1310.4342500000002,
+      "elapsed_ms": 1316.689208,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n4265647",
       "result_value": 4265647.0,
       "iterations": 3
@@ -138,9 +139,9 @@
       "comparator": "polars",
       "mode": "resident",
       "version": "polars 1.36.1",
-      "load_ms": 1046.594,
-      "query_ms": 39.34,
-      "elapsed_ms": 1185.2052500000002,
+      "load_ms": 1032.621,
+      "query_ms": 37.299,
+      "elapsed_ms": 1178.387334,
       "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 4265647 │\n└─────────┘",
       "result_value": 4265647.0,
       "iterations": 3
@@ -152,7 +153,7 @@
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
       "load_ms": 0.0,
       "query_ms": 22.0,
-      "elapsed_ms": 43.018958000000005,
+      "elapsed_ms": 42.10725,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n4265647",
       "result_value": 4265647.0,
       "iterations": 3
@@ -163,8 +164,8 @@
       "mode": "cold",
       "version": "polars 1.36.1",
       "load_ms": 0.0,
-      "query_ms": 167.605,
-      "elapsed_ms": 263.205875,
+      "query_ms": 165.662,
+      "elapsed_ms": 257.485542,
       "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 4265647 │\n└─────────┘",
       "result_value": 4265647.0,
       "iterations": 3
@@ -174,9 +175,9 @@
       "comparator": "duckdb",
       "mode": "resident",
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
-      "load_ms": 1208.0,
+      "load_ms": 1234.0,
       "query_ms": 20.0,
-      "elapsed_ms": 1277.363292,
+      "elapsed_ms": 1302.112333,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\nsum(l_quantity)\n55559443.879999444",
       "result_value": 55559443.879999444,
       "iterations": 3
@@ -186,9 +187,9 @@
       "comparator": "polars",
       "mode": "resident",
       "version": "polars 1.36.1",
-      "load_ms": 1017.847,
-      "query_ms": 10.461,
-      "elapsed_ms": 1129.619791,
+      "load_ms": 1033.31,
+      "query_ms": 11.652,
+      "elapsed_ms": 1149.351125,
       "result": "shape: (1, 1)\n┌────────────┐\n│ l_quantity │\n│ ---        │\n│ f64        │\n╞════════════╡\n│ 5.5559e7   │\n└────────────┘",
       "result_value": 55559443.879999995,
       "iterations": 3
@@ -200,7 +201,7 @@
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
       "load_ms": 0.0,
       "query_ms": 31.0,
-      "elapsed_ms": 51.185042,
+      "elapsed_ms": 52.663583,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\nsum(l_quantity)\n55559443.879999444",
       "result_value": 55559443.879999444,
       "iterations": 3
@@ -211,8 +212,8 @@
       "mode": "cold",
       "version": "polars 1.36.1",
       "load_ms": 0.0,
-      "query_ms": 15.049,
-      "elapsed_ms": 102.698333,
+      "query_ms": 15.8,
+      "elapsed_ms": 108.358458,
       "result": "shape: (1, 1)\n┌────────────┐\n│ l_quantity │\n│ ---        │\n│ f64        │\n╞════════════╡\n│ 5.5559e7   │\n└────────────┘",
       "result_value": 55559443.88000001,
       "iterations": 3
@@ -222,9 +223,9 @@
       "comparator": "duckdb",
       "mode": "resident",
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
-      "load_ms": 1219.0,
-      "query_ms": 45.0,
-      "elapsed_ms": 1312.92775,
+      "load_ms": 1241.0,
+      "query_ms": 46.0,
+      "elapsed_ms": 1332.752917,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n315203",
       "result_value": 315203.0,
       "iterations": 3
@@ -234,9 +235,9 @@
       "comparator": "polars",
       "mode": "resident",
       "version": "polars 1.36.1",
-      "load_ms": 1014.444,
-      "query_ms": 67.444,
-      "elapsed_ms": 1178.001375,
+      "load_ms": 1013.221,
+      "query_ms": 69.7,
+      "elapsed_ms": 1184.1868749999999,
       "result": "shape: (1, 1)\n┌────────┐\n│ len    │\n│ ---    │\n│ u32    │\n╞════════╡\n│ 315203 │\n└────────┘",
       "result_value": 315203.0,
       "iterations": 3
@@ -248,7 +249,7 @@
       "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
       "load_ms": 0.0,
       "query_ms": 31.0,
-      "elapsed_ms": 51.351375,
+      "elapsed_ms": 52.172875,
       "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n315203",
       "result_value": 315203.0,
       "iterations": 3
@@ -259,8 +260,8 @@
       "mode": "cold",
       "version": "polars 1.36.1",
       "load_ms": 0.0,
-      "query_ms": 189.304,
-      "elapsed_ms": 276.838667,
+      "query_ms": 194.35,
+      "elapsed_ms": 289.406792,
       "result": "shape: (1, 1)\n┌────────┐\n│ len    │\n│ ---    │\n│ u32    │\n╞════════╡\n│ 315203 │\n└────────┘",
       "result_value": 315203.0,
       "iterations": 3
@@ -270,9 +271,9 @@
     {
       "query": "scan",
       "sql": "SELECT count(*) FROM lineitem",
-      "elapsed_ms": 0.031833,
-      "load_ms": 1938.312208,
-      "cold_ms": 1938.345458,
+      "elapsed_ms": 0.032125,
+      "load_ms": 1921.274084,
+      "cold_ms": 1921.382292,
       "result": "[Group { key: [], values: [Int(6000000)] }]",
       "result_value": 6000000.0,
       "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nproject    6000000  6000000   0.0 ms\naggregate  6000000  1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
@@ -280,42 +281,42 @@
     {
       "query": "filter-numeric",
       "sql": "SELECT count(*) FROM lineitem WHERE l_discount >= 0.04",
-      "elapsed_ms": 3.311792,
-      "load_ms": 1927.050083,
-      "cold_ms": 1930.442458,
+      "elapsed_ms": 3.2818330000000002,
+      "load_ms": 1923.851708,
+      "cold_ms": 1927.133541,
       "result": "[Group { key: [], values: [Int(3817685)] }]",
       "result_value": 3817685.0,
-      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  3817685   3.4 ms\nproject    3817685  3817685   0.0 ms\naggregate  3817685  1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
+      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  3817685   3.2 ms\nproject    3817685  3817685   0.0 ms\naggregate  3817685  1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
     },
     {
       "query": "filter-string",
       "sql": "SELECT count(*) FROM lineitem WHERE l_shipdate >= '1994-01-01'",
-      "elapsed_ms": 3.833375,
-      "load_ms": 1907.8095830000002,
-      "cold_ms": 1911.6429580000001,
+      "elapsed_ms": 3.262958,
+      "load_ms": 1923.973208,
+      "cold_ms": 1927.2031240000001,
       "result": "[Group { key: [], values: [Int(4265647)] }]",
       "result_value": 4265647.0,
-      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  4265647   3.8 ms\nproject    4265647  4265647   0.0 ms\naggregate  4265647  1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
+      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  4265647   3.5 ms\nproject    4265647  4265647   0.0 ms\naggregate  4265647  1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
     },
     {
       "query": "filter-range",
       "sql": "SELECT sum(l_quantity) FROM lineitem WHERE l_discount >= 0.04 AND l_discount <= 0.07",
-      "elapsed_ms": 15.374166,
-      "load_ms": 1936.873834,
-      "cold_ms": 1952.121251,
+      "elapsed_ms": 16.047458,
+      "load_ms": 1939.7155000000002,
+      "cold_ms": 1955.7629580000003,
       "result": "[Group { key: [], values: [Float(55559443.879999444)] }]",
       "result_value": 55559443.879999444,
-      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  2178861   3.4 ms\nproject    2178861  2178861   9.2 ms\naggregate  2178861  1         2.6 ms\nmaterialised columns: l_quantity\nestimated memory: 139.5 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
+      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  2178861   4.1 ms\nproject    2178861  2178861   9.8 ms\naggregate  2178861  1         2.2 ms\nmaterialised columns: l_quantity\nestimated memory: 139.5 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
     },
     {
       "query": "q6",
       "sql": "SELECT count(*) FROM lineitem WHERE l_discount >= 0.04 AND l_discount <= 0.07 AND l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01'",
-      "elapsed_ms": 10.143541,
-      "load_ms": 1920.0444169999998,
-      "cold_ms": 1930.9513339999999,
+      "elapsed_ms": 10.295333,
+      "load_ms": 1961.7347920000002,
+      "cold_ms": 1972.2914170000001,
       "result": "[Group { key: [], values: [Int(315203)] }]",
       "result_value": 315203.0,
-      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  315203    10.0 ms\nproject    315203   315203    0.0 ms\naggregate  315203   1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
+      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  315203    10.3 ms\nproject    315203   315203    0.0 ms\naggregate  315203   1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
     }
   ]
 }

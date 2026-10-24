@@ -104,6 +104,11 @@ impl KernelAb {
     ///
     /// Panics if the flavors disagree on the number of matching rows, or if
     /// the measured baseline is not slower than zero.
+    ///
+    /// It also panics if the SIMD probe is overridden -- see
+    /// [`crate::machine::FORCED_SIMD_REFUSAL`]. A timing taken with an
+    /// override describes an emulator rather than hardware, so this refuses
+    /// to produce one.
     #[must_use]
     pub fn measure(
         column: &str,
@@ -112,6 +117,11 @@ impl KernelAb {
         threshold: f64,
         iterations: usize,
     ) -> Self {
+        assert!(
+            !crate::machine::simd_probe_is_overridden(),
+            "{}",
+            crate::machine::FORCED_SIMD_REFUSAL
+        );
         let iterations = iterations.max(1);
         let mut buffer = vec![0u64; values.len().div_ceil(64)];
 

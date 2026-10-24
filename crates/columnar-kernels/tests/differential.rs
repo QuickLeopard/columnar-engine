@@ -239,3 +239,79 @@ fn no_bit_is_set_beyond_the_end_of_the_input() {
         }
     }
 }
+
+/// A forced SIMD path must actually have executed.
+///
+/// This is the test that makes the `COLUMNAR_FORCE_SIMD` override worth
+/// having. The differential suite above compares every available flavour
+/// against the oracle -- but if the override silently failed to take effect,
+/// the "AVX2" flavour would actually be the scalar fallback, and the suite
+/// would be comparing the scalar reference against itself and proving
+/// nothing at all.
+///
+/// So the check is not "the dispatch says AVX2". It is: the row counters
+/// moved, the mask still matches the oracle, and therefore the instructions
+/// ran and produced the right answer.
+///
+/// On an ARM64 Mac under Rosetta 2 this is the only way the AVX2 path can
+/// be exercised at all, because CPUID reports no AVX2 on the host.
+#[test]
+fn a_forced_simd_path_actually_executed() {
+    use columnar_kernels::force::{forced, ForcedSimd};
+
+    let requested = forced();
+    if requested == ForcedSimd::Auto {
+        // Nothing forced; the probe governs. The counters are then expected
+        // to be zero on a machine with no SIMD path, and non-zero on one
+        // with -- but that is not this test's business.
+        return;
+    }
+
+    let values: Vec<f64> = (0..256).map(|i| f64::from(i % 11)).collect();
+    let mut expected = vec![0u64; values.len().div_ceil(64)];
+    let expected_count = oracle::compare_f64(&values, ComparisonOp::GtEq, 5.0, None, &mut expected);
+
+    #[cfg(target_arch = "x86_64")]
+    if requested == ForcedSimd::Avx2 {
+        let cpp_before = columnar_kernels::avx2_rows_processed();
+        let rust_before = columnar_kernels::rust_simd::rows_processed();
+
+        let mut actual = vec![0u64; values.len().div_ceil(64)];
+        let count =
+            compare_f64_into(Flavor::CppSimd, &values, ComparisonOp::GtEq, 5.0, None, &mut actual);
+        assert_eq!(actual, expected, "the forced C++ AVX2 path disagreed with the oracle");
+        assert_eq!(count, expected_count);
+        assert!(
+            columnar_kernels::avx2_rows_processed() > cpp_before,
+            "the C++ AVX2 path reported itself live but processed no rows"
+        );
+
+        let mut actual = vec![0u64; values.len().div_ceil(64)];
+        let count =
+            compare_f64_into(Flavor::RustSimd, &values, ComparisonOp::GtEq, 5.0, None, &mut actual);
+        assert_eq!(actual, expected, "the forced Rust AVX2 path disagreed with the oracle");
+        assert_eq!(count, expected_count);
+        assert!(
+            columnar_kernels::rust_simd::rows_processed() > rust_before,
+            "the Rust AVX2 path reported itself live but processed no rows"
+        );
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    if requested == ForcedSimd::Neon {
+        let before = columnar_kernels::rust_simd::rows_processed();
+        let mut actual = vec![0u64; values.len().div_ceil(64)];
+        let count =
+            compare_f64_into(Flavor::RustSimd, &values, ComparisonOp::GtEq, 5.0, None, &mut actual);
+        assert_eq!(actual, expected, "the forced NEON path disagreed with the oracle");
+        assert_eq!(count, expected_count);
+        assert!(columnar_kernels::rust_simd::rows_processed() > before);
+    }
+
+    if requested == ForcedSimd::None {
+        assert!(
+            !flavors().contains(&Flavor::RustSimd),
+            "COLUMNAR_FORCE_SIMD=none but the Rust intrinsics path was still offered"
+        );
+    }
+}
