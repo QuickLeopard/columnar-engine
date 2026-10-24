@@ -1,0 +1,28 @@
+[package]
+name = "columnar-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Benchmark harness and external comparison driver"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+columnar-core = { workspace = true }
+columnar-kernels = { workspace = true }
+columnar-engine = { workspace = true }
+columnar-testdata = { workspace = true }
+criterion = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

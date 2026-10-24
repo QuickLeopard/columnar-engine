@@ -1,0 +1,26 @@
+[package]
+name = "columnar-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Core vocabulary of the columnar engine: types, encodings, null bitmaps, selection vectors"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Intentionally none. `columnar-core` is the vocabulary every other crate
+# speaks, and a vocabulary that depends on a framework is not a vocabulary.
+#
+# The one exception that was considered and rejected: `serde`. Deriving
+# Serialize on these types would make it easy to accidentally serialise a
+# column chunk in a format that is not the engine's canonical encoding --
+# exactly the class of bug that makes a replay hash unstable across toolchain
+# versions. See constitution Principle IV.

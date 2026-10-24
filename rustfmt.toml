@@ -1,0 +1,26 @@
+# 100 columns is wider than rustfmt's 79-char default but narrower than the
+# 120 used by most web projects. Rationale: the hot-path code in
+# columnar-kernels is full of inline match arms and guard expressions that
+# balloon past 80 columns purely because of indentation nesting. Widening to
+# 100 lets those stay on one line and stops rustfmt from re-flowing the
+# numeric constants in the kernel's operator tables, which makes diffs in the
+# SIMD code far easier to review line by line.
+max_width = 100
+
+# Must match `[workspace.package] edition`. A mismatch here makes rustfmt
+# parse constructs differently from cargo, which produces "fixes" that break
+# the build.
+edition = "2021"
+
+# "Max" collapses every width heuristic to `max_width`, i.e. one consistent
+# line-length rule instead of a dozen interacting heuristics.
+use_small_heuristics = "Max"
+
+# Unix newlines only. Keeps diffs clean across the ubuntu/macos CI matrix and
+# matches every other config file in this repo.
+newline_style = "Unix"
+
+# No unstable options here, on purpose. CI runs `cargo fmt` on stable, which
+# ignores unstable options and warns once per crate; nightly ignores them too
+# unless `unstable_features = true` is set. Two toolchains reading one config
+# but applying different rules is a trap, so this file is stable-only.

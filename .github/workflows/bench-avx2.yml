@@ -1,0 +1,61 @@
+# The benchmark, on the AVX2 path.
+#
+# This workflow runs the kernel A/B on a **self-hosted x86-64 Linux runner**.
+# The AVX2 path cannot be measured on the GitHub-hosted runners, which are
+# x86-64 without AVX2, nor on the Apple Silicon machines, which do not have
+# AVX2 at all.
+#
+# To enable it:
+#
+#   1. Register a runner with the labels `self-hosted`, `linux`, `x64` on this
+#      repository (or on the organisation).
+#   2. Run this workflow manually.
+#
+# Until a runner is registered, the AVX2 column of PERF.md is marked
+# "not yet measured" rather than estimated. Publishing an estimate for a
+# number this project cannot re-derive is exactly the failure this repository
+# exists to avoid.
+
+name: bench (AVX2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      scale_factor:
+        description: 'TPC-H scale factor for the dataset'
+        required: true
+        default: '1'
+      rows:
+        description: 'Rows in the kernel A/B'
+        required: true
+        default: '20000000'
+
+jobs:
+  bench:
+    name: kernel A/B on AVX2
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Report the machine
+        run: |
+          echo "### machine spec" >> "$GITHUB_STEP_SUMMARY"
+          lscpu >> "$GITHUB_STEP_SUMMARY"
+          uname -a >> "$GITHUB_STEP_SUMMARY"
+          rustc --version >> "$GITHUB_STEP_SUMMARY"
+          grep -m1 'flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(avx2|avx512f)$' >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Generate the dataset
+        run: cargo run --release -p columnar-cli -- dataset --scale-factor "${{ inputs.scale_factor }}" --output data/lineitem.parquet
+      - name: Run the kernel A/B
+        run: cargo run --release -p columnar-cli -- bench --data data/lineitem.parquet --rows "${{ inputs.rows }}" --out bench-results/avx2.json
+      - name: Run the external comparison
+        continue-on-error: true
+        run: cargo run --release -p columnar-cli -- compare --data data/lineitem.parquet --out bench-results/avx2-compare.json
+      - name: Upload the results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-avx2
+          path: bench-results/

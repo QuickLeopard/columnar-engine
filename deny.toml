@@ -1,0 +1,118 @@
+# cargo-deny configuration.
+#
+# Rationale for a portfolio project: `cargo deny` is the cheapest way to show
+# that dependency *policy* is a first-class engineering concern and not an
+# afterthought. Every exception below is deliberate and carries a comment.
+
+# ---------------------------------------------------------------------------
+# Multiple versions of the same crate: allowed, but must stay visible.
+# ---------------------------------------------------------------------------
+[bans]
+# "warn" not "deny": the Arrow and Parquet stacks legitimately pull two
+# versions of some transitive crates. We want the list printed so it can be
+# reviewed, but we do not want to spend our own engineering time deduplicating
+# someone else's graph.
+multiple-versions = "warn"
+# A wildcard version requirement means "whatever is newest at resolve time",
+# which makes builds non-reproducible over time. For a project whose headline
+# property is determinism, that is not acceptable.
+wildcards = "deny"
+# Nothing is denied by name. See the `rand` note below for why the one ban
+# this file used to carry was not expressible as a graph rule.
+deny = []
+# Skipped lints: skip nothing here on purpose -- we want `bans` fully applied.
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# `rand`: not banned by the graph, denied by a test.
+# ---------------------------------------------------------------------------
+# The policy is real and it is not optional: the dataset generator must be
+# reproducible from a seed alone, and `rand`'s stream is not version-stable
+# across releases. So the generator implements splitmix64 + xoshiro256** by
+# hand, and no crate in this workspace may depend on `rand`.
+#
+# It is NOT expressible as `bans.deny = [{ name = "rand" }]`. cargo-deny
+# matches the whole transitive graph, and `rand` is in it exactly once:
+#
+#   * `proptest` -> `rand`, and `proptest` is a **dev-dependency** of
+#     `columnar-kernels`, used to generate the random inputs the differential
+#     tests compare the five kernel implementations on.
+#
+# A test harness that generates random test inputs is not the thing the policy
+# is about. The thing the policy is about is our own manifests, and a
+# property of our own manifests belongs in a test rather than in a graph
+# matcher -- see `the_workspace_never_declares_a_dependency_on_rand` in
+# `crates/columnar-core/tests/dependency_policy.rs`.
+#
+# If `rand` ever enters the *production* graph, the test fails and the
+# multiple-versions lint warns about it. That is the moment to decide
+# deliberately, rather than to have the decision made by a comment nobody
+# re-reads.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Licences.
+# ---------------------------------------------------------------------------
+[licenses]
+# Permissive, single-license-compatible set. "MIT OR Apache-2.0" is what this
+# project itself ships under, so anything in this list is safe to vendor and
+# relicense inside the same binary without a legal review.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unlicense",
+    # `CC0-1.0` is a public-domain dedication, used here by `tiny-keccak`
+    # under `ahash`, which the Arrow stack pulls in. It is a licence with no
+    # obligations attached, so it is in the same category as the rest of this
+    # list.
+    "CC0-1.0",
+]
+# Unknown licence text must be a human decision, never a silent pass. A crate
+# whose licence text cannot be parsed confidently is refused.
+confidence-threshold = 0.8
+unused-allowed-license = "warn"
+
+# This workspace publishes nothing, so unpublished-crate licence assertions are
+# not meaningful here.
+[licenses.private]
+ignore = true
+
+# ---------------------------------------------------------------------------
+# Advisories.
+# ---------------------------------------------------------------------------
+[advisories]
+# Ignore nothing by default -- an unrecognised advisory class should be
+# visible rather than silently accepted.
+#
+# One exception, and it is a real one:
+#
+#   * RUSTSEC-2024-0436 -- `paste` is no longer maintained.
+#
+# `paste` is a build-time proc-macro dependency of `parquet`, which is a
+# core dependency of the Parquet reader and of the dataset writer. It is not
+# compiled into the shipped binary and it has no known vulnerability; the
+# advisory is about the crate not being maintained any more. Removing it would
+# mean dropping the Arrow/Parquet stack, which is not on the table. The
+# alternative -- an unmaintained build-time macro in the dependency graph -- is
+# accepted deliberately, with this comment as the record.
+ignore = ["RUSTSEC-2024-0436"]
+
+# ---------------------------------------------------------------------------
+# Dependency sources.
+# ---------------------------------------------------------------------------
+[sources]
+# Only crates.io. A git dependency is an unpinned moving target by default and
+# a supply-chain hole by design; deny it unless someone explicitly changes
+# this policy.
+unknown-registry = "deny"
+unknown-git = "deny"
+# Optional convenience mirrors for air-gapped/offline builds are deliberately
+# NOT listed: a mirror is a second source of truth, and this policy ships with
+# crates.io only. Add one here with a comment if that ever changes.
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

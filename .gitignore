@@ -1,0 +1,29 @@
+# Rust build artefacts.
+/target
+**/*.rs.bk
+
+# Generated datasets. A dataset is a function of (scale_factor, seed) and is
+# reproducible from `just dataset`; it is never committed.
+/data
+*.parquet
+*.manifest.json
+
+# Criterion output.
+/target/criterion
+
+# Comparator binaries. DuckDB's official CLI is a 66 MB binary and Polars is
+# a Python package; neither belongs in the repository. `tools/polars-run.py`
+# and `tools/polars-version.py` are the parts that matter and they are
+# checked in. See `docs/adr/0007-comparator-pinning.md`.
+/tools/bin/
+
+# `cargo install --root <dir>` writes a local registry here. It is cargo's
+# bookkeeping, not the project's.
+.crates.toml
+.crates2.json
+
+# Editor and OS noise.
+.DS_Store
+.idea/
+.vscode/
+*.swp

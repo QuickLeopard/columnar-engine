@@ -1,0 +1,321 @@
+{
+  "machine": {
+    "cpu": "Apple M4 Max",
+    "arch": "aarch64",
+    "cores": 14,
+    "os": "macOS 27.0.1",
+    "simd": "neon",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "threads": 1
+  },
+  "dataset": {
+    "path": "data/lineitem.parquet",
+    "rows": 6000000,
+    "bytes": 242857841,
+    "scale_factor": 1,
+    "seed": 24001,
+    "null_rate": 0.0
+  },
+  "kernel_ab": {
+    "rows": 0,
+    "iterations": 0,
+    "column": "",
+    "operator": "",
+    "threshold": 0.0,
+    "flavors": []
+  },
+  "external": [
+    {
+      "query": "scan",
+      "comparator": "duckdb",
+      "mode": "resident",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 1214.0,
+      "query_ms": 1.0,
+      "elapsed_ms": 1266.7512080000001,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n6000000",
+      "result_value": 6000000.0,
+      "iterations": 3
+    },
+    {
+      "query": "scan",
+      "comparator": "polars",
+      "mode": "resident",
+      "version": "polars 1.36.1",
+      "load_ms": 1029.641,
+      "query_ms": 0.182,
+      "elapsed_ms": 1127.505083,
+      "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 6000000 │\n└─────────┘",
+      "result_value": 6000000.0,
+      "iterations": 3
+    },
+    {
+      "query": "scan",
+      "comparator": "duckdb",
+      "mode": "cold",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 0.0,
+      "query_ms": 2.0,
+      "elapsed_ms": 21.559333,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n6000000",
+      "result_value": 6000000.0,
+      "iterations": 3
+    },
+    {
+      "query": "scan",
+      "comparator": "polars",
+      "mode": "cold",
+      "version": "polars 1.36.1",
+      "load_ms": 0.0,
+      "query_ms": 1.047,
+      "elapsed_ms": 88.5175,
+      "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 6000000 │\n└─────────┘",
+      "result_value": 6000000.0,
+      "iterations": 3
+    },
+    {
+      "query": "filter-numeric",
+      "comparator": "duckdb",
+      "mode": "resident",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 1221.0,
+      "query_ms": 12.0,
+      "elapsed_ms": 1280.623167,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n3817685",
+      "result_value": 3817685.0,
+      "iterations": 3
+    },
+    {
+      "query": "filter-numeric",
+      "comparator": "polars",
+      "mode": "resident",
+      "version": "polars 1.36.1",
+      "load_ms": 998.627,
+      "query_ms": 11.03,
+      "elapsed_ms": 1113.7771249999998,
+      "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 3817685 │\n└─────────┘",
+      "result_value": 3817685.0,
+      "iterations": 3
+    },
+    {
+      "query": "filter-numeric",
+      "comparator": "duckdb",
+      "mode": "cold",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 0.0,
+      "query_ms": 22.0,
+      "elapsed_ms": 42.082875,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n3817685",
+      "result_value": 3817685.0,
+      "iterations": 3
+    },
+    {
+      "query": "filter-numeric",
+      "comparator": "polars",
+      "mode": "cold",
+      "version": "polars 1.36.1",
+      "load_ms": 0.0,
+      "query_ms": 44.227,
+      "elapsed_ms": 133.557458,
+      "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 3817685 │\n└─────────┘",
+      "result_value": 3817685.0,
+      "iterations": 3
+    },
+    {
+      "query": "filter-string",
+      "comparator": "duckdb",
+      "mode": "resident",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 1224.0,
+      "query_ms": 33.0,
+      "elapsed_ms": 1310.4342500000002,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n4265647",
+      "result_value": 4265647.0,
+      "iterations": 3
+    },
+    {
+      "query": "filter-string",
+      "comparator": "polars",
+      "mode": "resident",
+      "version": "polars 1.36.1",
+      "load_ms": 1046.594,
+      "query_ms": 39.34,
+      "elapsed_ms": 1185.2052500000002,
+      "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 4265647 │\n└─────────┘",
+      "result_value": 4265647.0,
+      "iterations": 3
+    },
+    {
+      "query": "filter-string",
+      "comparator": "duckdb",
+      "mode": "cold",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 0.0,
+      "query_ms": 22.0,
+      "elapsed_ms": 43.018958000000005,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n4265647",
+      "result_value": 4265647.0,
+      "iterations": 3
+    },
+    {
+      "query": "filter-string",
+      "comparator": "polars",
+      "mode": "cold",
+      "version": "polars 1.36.1",
+      "load_ms": 0.0,
+      "query_ms": 167.605,
+      "elapsed_ms": 263.205875,
+      "result": "shape: (1, 1)\n┌─────────┐\n│ len     │\n│ ---     │\n│ u32     │\n╞═════════╡\n│ 4265647 │\n└─────────┘",
+      "result_value": 4265647.0,
+      "iterations": 3
+    },
+    {
+      "query": "filter-range",
+      "comparator": "duckdb",
+      "mode": "resident",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 1208.0,
+      "query_ms": 20.0,
+      "elapsed_ms": 1277.363292,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\nsum(l_quantity)\n55559443.879999444",
+      "result_value": 55559443.879999444,
+      "iterations": 3
+    },
+    {
+      "query": "filter-range",
+      "comparator": "polars",
+      "mode": "resident",
+      "version": "polars 1.36.1",
+      "load_ms": 1017.847,
+      "query_ms": 10.461,
+      "elapsed_ms": 1129.619791,
+      "result": "shape: (1, 1)\n┌────────────┐\n│ l_quantity │\n│ ---        │\n│ f64        │\n╞════════════╡\n│ 5.5559e7   │\n└────────────┘",
+      "result_value": 55559443.879999995,
+      "iterations": 3
+    },
+    {
+      "query": "filter-range",
+      "comparator": "duckdb",
+      "mode": "cold",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 0.0,
+      "query_ms": 31.0,
+      "elapsed_ms": 51.185042,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\nsum(l_quantity)\n55559443.879999444",
+      "result_value": 55559443.879999444,
+      "iterations": 3
+    },
+    {
+      "query": "filter-range",
+      "comparator": "polars",
+      "mode": "cold",
+      "version": "polars 1.36.1",
+      "load_ms": 0.0,
+      "query_ms": 15.049,
+      "elapsed_ms": 102.698333,
+      "result": "shape: (1, 1)\n┌────────────┐\n│ l_quantity │\n│ ---        │\n│ f64        │\n╞════════════╡\n│ 5.5559e7   │\n└────────────┘",
+      "result_value": 55559443.88000001,
+      "iterations": 3
+    },
+    {
+      "query": "q6",
+      "comparator": "duckdb",
+      "mode": "resident",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 1219.0,
+      "query_ms": 45.0,
+      "elapsed_ms": 1312.92775,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n315203",
+      "result_value": 315203.0,
+      "iterations": 3
+    },
+    {
+      "query": "q6",
+      "comparator": "polars",
+      "mode": "resident",
+      "version": "polars 1.36.1",
+      "load_ms": 1014.444,
+      "query_ms": 67.444,
+      "elapsed_ms": 1178.001375,
+      "result": "shape: (1, 1)\n┌────────┐\n│ len    │\n│ ---    │\n│ u32    │\n╞════════╡\n│ 315203 │\n└────────┘",
+      "result_value": 315203.0,
+      "iterations": 3
+    },
+    {
+      "query": "q6",
+      "comparator": "duckdb",
+      "mode": "cold",
+      "version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+      "load_ms": 0.0,
+      "query_ms": 31.0,
+      "elapsed_ms": 51.351375,
+      "result": "WARNING:\nThe 'enable_object_cache' setting is deprecated and will be removed in a future release.\ncount_star()\n315203",
+      "result_value": 315203.0,
+      "iterations": 3
+    },
+    {
+      "query": "q6",
+      "comparator": "polars",
+      "mode": "cold",
+      "version": "polars 1.36.1",
+      "load_ms": 0.0,
+      "query_ms": 189.304,
+      "elapsed_ms": 276.838667,
+      "result": "shape: (1, 1)\n┌────────┐\n│ len    │\n│ ---    │\n│ u32    │\n╞════════╡\n│ 315203 │\n└────────┘",
+      "result_value": 315203.0,
+      "iterations": 3
+    }
+  ],
+  "engine_queries": [
+    {
+      "query": "scan",
+      "sql": "SELECT count(*) FROM lineitem",
+      "elapsed_ms": 0.031833,
+      "load_ms": 1938.312208,
+      "cold_ms": 1938.345458,
+      "result": "[Group { key: [], values: [Int(6000000)] }]",
+      "result_value": 6000000.0,
+      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nproject    6000000  6000000   0.0 ms\naggregate  6000000  1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
+    },
+    {
+      "query": "filter-numeric",
+      "sql": "SELECT count(*) FROM lineitem WHERE l_discount >= 0.04",
+      "elapsed_ms": 3.311792,
+      "load_ms": 1927.050083,
+      "cold_ms": 1930.442458,
+      "result": "[Group { key: [], values: [Int(3817685)] }]",
+      "result_value": 3817685.0,
+      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  3817685   3.4 ms\nproject    3817685  3817685   0.0 ms\naggregate  3817685  1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
+    },
+    {
+      "query": "filter-string",
+      "sql": "SELECT count(*) FROM lineitem WHERE l_shipdate >= '1994-01-01'",
+      "elapsed_ms": 3.833375,
+      "load_ms": 1907.8095830000002,
+      "cold_ms": 1911.6429580000001,
+      "result": "[Group { key: [], values: [Int(4265647)] }]",
+      "result_value": 4265647.0,
+      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  4265647   3.8 ms\nproject    4265647  4265647   0.0 ms\naggregate  4265647  1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
+    },
+    {
+      "query": "filter-range",
+      "sql": "SELECT sum(l_quantity) FROM lineitem WHERE l_discount >= 0.04 AND l_discount <= 0.07",
+      "elapsed_ms": 15.374166,
+      "load_ms": 1936.873834,
+      "cold_ms": 1952.121251,
+      "result": "[Group { key: [], values: [Float(55559443.879999444)] }]",
+      "result_value": 55559443.879999444,
+      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  2178861   3.4 ms\nproject    2178861  2178861   9.2 ms\naggregate  2178861  1         2.6 ms\nmaterialised columns: l_quantity\nestimated memory: 139.5 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
+    },
+    {
+      "query": "q6",
+      "sql": "SELECT count(*) FROM lineitem WHERE l_discount >= 0.04 AND l_discount <= 0.07 AND l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01'",
+      "elapsed_ms": 10.143541,
+      "load_ms": 1920.0444169999998,
+      "cold_ms": 1930.9513339999999,
+      "result": "[Group { key: [], values: [Int(315203)] }]",
+      "result_value": 315203.0,
+      "plan_output": "optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate\nstage      rows in  rows out  elapsed\nscan       6000000  6000000   0.0 ms\nfilter     6000000  315203    10.0 ms\nproject    315203   315203    0.0 ms\naggregate  315203   1         0.0 ms\nmaterialised columns: (none)\nestimated memory: 93.0 MiB (budget 256.0 MiB)\nkernel flavor: cpp-simd"
+    }
+  ]
+}

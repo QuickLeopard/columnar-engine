@@ -1,0 +1,182 @@
+# Columnar Engine -- workspace root.
+#
+# Virtual workspace: no root package, only members + shared configuration.
+# Everything that more than one crate needs to agree on (versions, lints,
+# metadata) lives here so that a version bump is a one-line change and cannot
+# drift between crates.
+#
+# Crate dependency direction (enforced by review, not by the compiler):
+#
+#   columnar-core       no dependencies on anything else in this workspace
+#          |            types, encodings, null bitmaps, selection vectors
+#          |
+#          +--> columnar-kernels    comparison kernels (C++ FFI + Rust intrinsics)
+#          |            ^
+#          |            |
+#          +--> columnar-engine ----+
+#          |            |            |
+#          |            v            v
+#          |      columnar-testdata  columnar-bench
+#          |            ^                 ^
+#          |            |                 |
+#          +------------+-----------------+
+#                       |
+#                       v
+#                 columnar-cli
+#
+# `columnar-core` is the vocabulary. Everything else is an implementation of it.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/columnar-core",
+    "crates/columnar-kernels",
+    "crates/columnar-engine",
+    "crates/columnar-testdata",
+    "crates/columnar-bench",
+    "crates/columnar-cli",
+]
+
+# ---------------------------------------------------------------------------
+# Shared package metadata (inherited by every member)
+# ---------------------------------------------------------------------------
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# Pinned deliberately, and deliberately *older* than the toolchain in use here.
+# The published numbers in this repository were measured on the pinned
+# toolchain; a floor that lets newer compilers in is fine, but the numbers in
+# PERF.md are only meaningful against the exact toolchain recorded there.
+rust-version = "1.82"
+license = "MIT OR Apache-2.0"
+authors = ["Columnar Engine contributors"]
+repository = "https://github.com/QuickLeopard/columnar-engine"
+homepage = "https://github.com/QuickLeopard/columnar-engine"
+description = "Vectorized columnar query engine with SIMD comparison kernels"
+readme = "README.md"
+keywords = ["database", "columnar", "simd", "query-engine", "duckdb"]
+categories = ["database-implementations", "algorithms"]
+
+# ---------------------------------------------------------------------------
+# Shared lints (inherited by every member via `[lints] workspace = true`)
+# ---------------------------------------------------------------------------
+
+[workspace.lints.rust]
+# Forces an explicit `unsafe {}` block even inside an `unsafe fn`.
+# columnar-kernels is the only crate that should need this, but the rule is
+# workspace-wide so that an `unsafe fn` added elsewhere cannot inherit an
+# enclosing unsafe context by accident.
+unsafe_op_in_unsafe_fn = "deny"
+# A public type you cannot `{:?}` is a type you cannot debug under a
+# differential test.
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# Pedantic catches the "suspicious but compiles" patterns that matter when the
+# hot path crosses an FFI seam and a bit-packed validity mask.
+pedantic = { level = "warn", priority = -1 }
+all = { level = "warn", priority = -1 }
+# These are correctness signals for this codebase specifically.
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_precision_loss = "warn"
+# Float comparison is *not* used for correctness in this engine -- aggregate
+# results are compared bit-exactly -- but the comparison kernel itself must
+# not branch on float equality to decide a match, because NaN would silently
+# select the wrong rows.
+float_cmp = "warn"
+indexing_slicing = "warn"
+too_many_arguments = "warn"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+similar_names = "allow"
+
+# ---------------------------------------------------------------------------
+# Shared dependency versions
+# ---------------------------------------------------------------------------
+
+[workspace.dependencies]
+# --- internal crates -------------------------------------------------------
+columnar-core = { path = "crates/columnar-core", version = "0.1.0" }
+columnar-kernels = { path = "crates/columnar-kernels", version = "0.1.0" }
+columnar-engine = { path = "crates/columnar-engine", version = "0.1.0" }
+columnar-testdata = { path = "crates/columnar-testdata", version = "0.1.0" }
+columnar-bench = { path = "crates/columnar-bench", version = "0.1.0" }
+
+# --- correctness -----------------------------------------------------------
+# The correctness net for the comparison kernels: the scalar Rust oracle and
+# the C++/SIMD kernels must agree bit-for-bit on every generated input.
+proptest = "1.5"
+
+# --- serialisation ---------------------------------------------------------
+# serde is used for the bench harness's machine-readable JSON results and for
+# the dataset manifest. It is deliberately NOT used on the column data path --
+# the engine's data structures are hand-decoded so the hot path stays
+# allocation-free and so the on-disk format is explicit.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
+
+# --- error handling --------------------------------------------------------
+thiserror = "2.0"
+anyhow = "1.0" # binaries and the bench harness only; never in columnar-core.
+
+# --- Parquet I/O -----------------------------------------------------------
+# Only the I/O boundary uses Parquet. The engine's internal representation
+# (column chunks, encodings, batches) is its own, and nothing above the
+# reader knows Parquet exists -- see ADR-0005.
+parquet = { version = "54", default-features = false, features = ["arrow", "snap"] }
+arrow = { version = "54", default-features = false }
+
+# --- C++ FFI seam ----------------------------------------------------------
+# Builds the comparison kernel. The `cc` crate drives the host C++ compiler;
+# no cmake is required, which keeps the build to a single toolchain.
+cc = "1"
+
+# --- benchmarking ----------------------------------------------------------
+# criterion is the statistical harness. Chosen over iai because criterion
+# gives the Mann-Whitney significance test the perf gate needs, not just
+# nanosecond timing.
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# --- dev tooling -----------------------------------------------------------
+# Global allocator shim used by the harness to count allocations on the
+# filter/aggregate path, so "zero-alloc steady state" is measured rather than
+# asserted.
+libmimalloc-sys = { version = "0.1", features = ["local_dynamic_tls"] }
+
+# --- CLI -------------------------------------------------------------------
+clap = { version = "4", features = ["derive"] }
+
+# ---------------------------------------------------------------------------
+# Build profiles
+# ---------------------------------------------------------------------------
+
+[profile.release]
+# Fat LTO across the whole dependency graph. The comparison kernel is called
+# across the FFI seam and the operators are small enough that cross-crate
+# inlining measurably moves the filter stage.
+lto = "fat"
+# One codegen unit: full cross-function optimisation.
+codegen-units = 1
+# The kernel is a leaf call with no unwinding to do; aborting keeps the FFI
+# boundary honest, because a panic must never unwind across `extern "C"`.
+panic = "abort"
+# Keep symbols: the hot path is profiled on real release binaries.
+debug = 1
+
+[profile.bench]
+# Benchmarks inherit release wholesale. If these drifted apart, every
+# published number would describe a build that does not exist.
+inherits = "release"
+
+[profile.dev]
+# Optimisation stays on in dev. The hot path is a hand-written C++ kernel with
+# intrinsics; an unoptimised build hides the class of problem we are trying
+# to catch.
+opt-level = 1

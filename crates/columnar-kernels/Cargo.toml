@@ -1,0 +1,25 @@
+[package]
+name = "columnar-kernels"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "SIMD comparison kernels for the columnar engine, with a C++ FFI seam and a Rust intrinsics path"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+columnar-core = { workspace = true }
+
+[build-dependencies]
+cc = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

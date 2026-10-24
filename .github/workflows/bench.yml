@@ -1,0 +1,55 @@
+# The benchmark, on the NEON path.
+#
+# This workflow runs the kernel A/B on a GitHub-hosted macOS runner, which is
+# an Apple Silicon machine -- so it exercises the NEON path.
+#
+# It is `workflow_dispatch` only, deliberately. A shared runner is a noisy
+# machine and a number measured on one is not a number this repository is
+# willing to publish. The numbers in PERF.md come from the runner described
+# in that file, not from CI.
+#
+# The AVX2 counterpart is `bench-avx2.yml`, which needs a self-hosted x86-64
+# runner.
+
+name: bench (NEON)
+
+on:
+  workflow_dispatch:
+    inputs:
+      scale_factor:
+        description: 'TPC-H scale factor for the dataset'
+        required: true
+        default: '1'
+      rows:
+        description: 'Rows in the kernel A/B'
+        required: true
+        default: '20000000'
+
+jobs:
+  bench:
+    name: kernel A/B on NEON
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Generate the dataset
+        run: cargo run --release -p columnar-cli -- dataset --scale-factor "${{ inputs.scale_factor }}" --output data/lineitem.parquet
+      - name: Run the kernel A/B
+        run: cargo run --release -p columnar-cli -- bench --data data/lineitem.parquet --rows "${{ inputs.rows }}" --out bench-results/neon.json
+      - name: Run the external comparison
+        continue-on-error: true
+        run: cargo run --release -p columnar-cli -- compare --data data/lineitem.parquet --out bench-results/neon-compare.json
+      - name: Upload the results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-neon
+          path: bench-results/
+      - name: Print the machine spec
+        run: |
+          echo "### machine spec" >> "$GITHUB_STEP_SUMMARY"
+          sysctl -n machdep.cpu.brand_string >> "$GITHUB_STEP_SUMMARY"
+          sw_vers >> "$GITHUB_STEP_SUMMARY"
+          rustc --version >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,25 @@
+[package]
+name = "columnar-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Vectorized operators, Parquet ingestion and the query pipeline"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+columnar-core = { workspace = true }
+columnar-kernels = { workspace = true }
+parquet = { workspace = true }
+arrow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

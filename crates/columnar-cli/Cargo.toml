@@ -1,0 +1,25 @@
+[package]
+name = "columnar-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Command line interface for the columnar engine"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+columnar-core = { workspace = true }
+columnar-kernels = { workspace = true }
+columnar-engine = { workspace = true }
+columnar-testdata = { workspace = true }
+columnar-bench = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
