@@ -17,8 +17,9 @@ The first increment is storage → filter → project → aggregate: the TPC-H Q
 > scalar reference and 1.5× faster than what clang's auto-vectoriser produces from the same
 > loop.**
 >
-> Apple M4 Max, aarch64, NEON, one thread. Full conditions and the two other baselines are in
-> [`PERF.md`](PERF.md).
+> Apple M4 Max, aarch64, NEON, one thread for the headline table; the thread-count sweep runs
+> the same file at 1, 2, 4, 6, 8 and 14 threads. Full conditions and the two other baselines
+> are in [`PERF.md`](PERF.md).
 
 Two things are deliberate about that sentence.
 
@@ -49,21 +50,40 @@ $ just compare
 cold · read the Parquet file and answer in one go
 query          engine   engine-lazy   duckdb   polars
 --------------------------------------------------------
-scan        1202.6           0.1      2.0      1.0
-filter-numeric     1245.5          21.1     22.0     45.4
-filter-string      1211.5          31.9     23.0    171.3
-filter-range       1328.1         101.7     33.0     17.0
-q6          1267.8          89.1     32.0    191.1
+scan        1317.9           0.1      2.0      1.1
+filter-numeric     1302.1          22.5     23.0     45.9
+filter-string      1315.3          30.9     22.0    164.0
+filter-range       1312.5          95.4     31.0     15.5
+q6          1316.8          84.4     32.0    188.6
 ```
 
-**The lazy path is 14.2× faster than the eager one on `q6`**, and it beats Polars on every cold
-query except `filter-range`. It beats DuckDB on `filter-numeric` — narrowly, 21.1 ms against
-22.0 ms, inside DuckDB's own spread — and on `scan`. On `q6` it is 2.8× behind, and that 2.8×
-is not pruning: DuckDB prunes nothing on this file either (its own plan says `Row Groups Scanned:
-6 / 6`, and the file has no page index). It is **threads**: DuckDB gets 3.3× from fourteen cores
-on the identical query, 32.0 ms to 10.0 ms, and this engine has one. The reader-speed term is
-closed — the engine's full-file decode is now *ahead* of DuckDB's. Measured and attributed in
+**The lazy path is 15.6× faster than the eager one on `q6`**, and it beats Polars on every cold
+query except `filter-range`. It beats DuckDB on `filter-numeric` — narrowly, 22.5 ms against
+23.0 ms, inside DuckDB's own spread — and on `scan`. On `q6` it is 2.6× behind, and that gap is
+not pruning: DuckDB prunes nothing on this file either (its own plan says `Row Groups Scanned:
+6 / 6`, and the file has no page index). It is **threads**. Measured and attributed in
 [`PERF.md`](PERF.md), not glossed.
+
+**And the engine now has threads too.** The read splits the file's row groups across the workers
+and merges them back in the file's order, so the answer does not depend on the scheduler. On the
+identical query, with the incumbents at the identical thread count:
+
+```
+$ just sweep
+threads   workers     engine   engine-scan     duckdb     polars
+---------------------------------------------------------------
+      1        1      82.8          82.8       32.0      195.3
+      2        2      44.2          44.2       21.0      104.4
+      4        4      30.8          30.8       15.0       69.9
+      6        6      16.2          16.2       10.0       39.5
+```
+
+**The engine gets 5.1× from six workers, against DuckDB's 3.2× from six.** The gap on `q6` cold
+narrows from **2.6× at one thread to 1.6× at six**. The engine's curve is steeper because its
+query is almost entirely scan, and the scan is the part that parallelises; the operators are still
+single-threaded, and that is stated rather than hidden. The parallelism is capped by the file's
+**six row groups**, so the curve is flat past six — the ceiling is the file's, not the machine's.
+See [ADR-0011](docs/adr/0011-parallel-decode.md).
 
 **The pushdown runs the engine's own comparison kernel**, over Arrow's raw value slice — so the
 pushdown and the filter are no longer two implementations that have to be made to agree. They are
@@ -71,7 +91,7 @@ one implementation. That took the pushdown from 42.9 ms to 6.1 ms on `q6`, and i
 equivalence is now structural rather than merely tested. See
 [ADR-0010](docs/adr/0010-pushdown-equivalence.md).
 
-**The eager path got faster too** — 1921 ms to 1203 ms — because the two paths now share one
+**The eager path got faster too** — 1921 ms to 1318 ms — because the two paths now share one
 decode function, and that function stopped copying a dictionary column's distinct values out of
 every batch. The lazy path never paid that cost; the eager path paid it 5,860 times over.
 Putting the copy back and re-measuring gives 1890 ms, so the 1.60× is a measurement rather than
@@ -97,12 +117,15 @@ crates/
                      C++ NEON/AVX2, Rust intrinsics -- all agreeing bit for bit
   columnar-testdata  a seeded, reproducible TPC-H-shaped `lineitem` generator
   columnar-engine    filter -> project -> aggregate, with late materialisation
-  columnar-bench     the kernel A/B, the machine spec, the external comparison driver
-  columnar-cli       dataset / query / bench / compare
+  columnar-bench     the kernel A/B, the machine spec, the external comparison driver,
+                     the performance gate, the thread-count sweep
+  columnar-cli       dataset / query / bench / compare / gate / sweep
 docs/adr/            the decision record
 specs/001-columnar-core/  the spec, the plan, the tasks
 specs/002-lazy-columnar-scan/  the lazy scan: the plan, the pushdown, the equivalence test
 specs/003-kernel-pushdown/  the pushdown runs the engine's own kernel
+specs/004-performance-gates/  the regression gate and the budget gate
+specs/005-parallel-decode/  the parallel read, and the order it preserves
 ```
 
 **One predicate, five implementations, one answer.** The comparison kernel is the project. There
@@ -164,7 +187,9 @@ computed different values is not a benchmark.
 | The comparison kernel, on x86-64 / AVX2 | **performance not yet measured** — no x86-64 machine exists. Its **correctness is verified**, on this ARM64 Mac, under Rosetta 2 |
 | The engine's filter, project and aggregate | **measured**, against DuckDB 2.0.0 and Polars 1.36.1 |
 | The engine's Parquet reader | **measured**, in two modes: eager (all sixteen columns) and lazy (two of sixteen, with the predicates pushed in) |
-| Multithreading | **not implemented** — the engine is single-threaded in this increment, and so are the incumbents in the comparison |
+| The **read** under several thread counts | **measured** — the engine and both incumbents, at the same thread counts, on the same file: [`PERF.md` §2e](PERF.md#2e-the-thread-count-sweep) |
+| Multithreading of the **operators** | **not implemented** — the read is parallel over row groups; the filter, the project and the aggregate still run on one thread |
+| The **eager** path's decode | **not parallel** — the lazy path's read is; the eager path is the one the resident comparison uses |
 
 The x86-64 row is the important one, and it has two halves.
 
@@ -236,10 +261,10 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep |
 | Increment | storage → filter → project → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 130, all green, including the differential kernel suite, the lazy-scan differential suite, the performance-gate suite and the x86-64 cross-check |
+| Tests | 142, all green, including the differential kernel suite, the lazy-scan differential suite, the performance-gate suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |
-| Next | parallel decode, the projection/aggregate fusion, the x86-64 measurement |
+| Next | the arithmetic aggregate over columns (the real Q6), the parallel operators, the x86-64 measurement |

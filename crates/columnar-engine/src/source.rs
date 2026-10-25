@@ -179,16 +179,104 @@ impl ParquetSource {
     /// The dataset that comes back holds the columns in the order given, and
     /// only the rows that survived the pushed-down predicates.
     ///
+    /// `threads` is how many threads to read with. One thread is the same
+    /// path this method always took. More than one splits the file's **row
+    /// groups** across the threads -- a row group is decoded independently of
+    /// every other one -- and merges the parts afterwards.
+    ///
+    /// The merged dataset holds the file's rows in the file's order, whatever
+    /// order the threads finish in. That is a correctness requirement and
+    /// not a preference: `SUM` is not associative, so a dataset ordered by
+    /// completion would make the engine's answer depend on the scheduler.
+    ///
     /// # Errors
     ///
     /// Returns [`DatasetError::Io`] if the file cannot be read, and
-    /// [`DatasetError::Parquet`] if the file is not one the reader
-    /// understands.
+    /// [`DatasetError::Parquet`] if it is not one the reader understands.
     pub fn read(
         &self,
         columns: &[usize],
         pushdown: &PushdownPlan,
         flavor: Flavor,
+        threads: usize,
+    ) -> Result<Dataset, DatasetError> {
+        let workers = self.worker_count(threads);
+        if workers == 1 {
+            return self.read_row_groups(columns, pushdown, flavor, None);
+        }
+        self.read_parallel(columns, pushdown, flavor, workers, self.row_groups)
+    }
+
+    /// The file's row group count.
+    ///
+    /// This is the **cap** on the read's parallelism: the read splits the
+    /// file's row groups across the threads, so a file with six row groups
+    /// cannot be read by more than six threads at a time, however many cores
+    /// the machine has. A reader looking at a flat curve past this point
+    /// should know that the ceiling is the file's, not the engine's.
+    #[must_use]
+    pub fn worker_count(&self, threads: usize) -> usize {
+        threads.min(self.row_groups).max(1)
+    }
+
+    /// Reads the file with several threads.
+    ///
+    /// The row groups are split into contiguous blocks, one per thread, and
+    /// the parts are merged **in block order**. Contiguous blocks are what
+    /// makes the merge order the file's order without any sorting.
+    fn read_parallel(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        flavor: Flavor,
+        workers: usize,
+        row_groups: usize,
+    ) -> Result<Dataset, DatasetError> {
+        let per_worker = row_groups.div_ceil(workers);
+        let blocks: Vec<Vec<usize>> = (0..workers)
+            .map(|worker| {
+                let start = worker * per_worker;
+                let end = (start + per_worker).min(row_groups);
+                (start..end).collect()
+            })
+            .filter(|block: &Vec<usize>| !block.is_empty())
+            .collect();
+
+        // Each thread writes its own part, and the parts are joined **in
+        // block order**. Joining in order is what makes the merged dataset
+        // hold the file's rows in the file's order, without any sorting and
+        // without any shared mutable state.
+        let parts = std::thread::scope(|scope| -> Result<Vec<Dataset>, DatasetError> {
+            let handles: Vec<_> = blocks
+                .iter()
+                .map(|block| {
+                    let source = self;
+                    scope.spawn(move || {
+                        source.read_row_groups(columns, pushdown, flavor, Some(block.clone()))
+                    })
+                })
+                .collect();
+
+            let mut parts = Vec::with_capacity(handles.len());
+            for handle in handles {
+                let part = handle
+                    .join()
+                    .map_err(|_| DatasetError::Parquet("a read thread panicked".to_owned()))?;
+                parts.push(part?);
+            }
+            Ok(parts)
+        })?;
+        crate::dataset::merge(&parts)
+    }
+
+    /// Reads the given row groups -- or all of them, when `row_groups` is
+    /// `None`.
+    fn read_row_groups(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        flavor: Flavor,
+        row_groups: Option<Vec<usize>>,
     ) -> Result<Dataset, DatasetError> {
         let file = File::open(&self.path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
@@ -210,6 +298,9 @@ impl ParquetSource {
         };
 
         let mut builder = builder.with_projection(mask).with_batch_size(READER_BATCH_ROWS);
+        if let Some(row_groups) = row_groups {
+            builder = builder.with_row_groups(row_groups);
+        }
         if let Some(filter) = filter {
             builder = builder.with_row_filter(filter);
         }

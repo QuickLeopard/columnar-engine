@@ -97,13 +97,31 @@ bench data="data/lineitem.parquet" rows="20000000" iterations="5" out="bench-res
 
 # Run the external comparison against DuckDB and Polars.
 #
-# Both incumbents are pinned to one thread, because the engine is
-# single-threaded in this increment. See ADR-0007.
+# Both incumbents are pinned to one thread, because this is the like-for-like
+# *single-threaded* comparison. See ADR-0007 and its amendment in ADR-0011:
+# the thread-count sweep is the second table, and `just sweep` produces it.
 #
 # Publish a table from this: run it at least three times, keep the reports,
 # and derive the medians with `just medians`.
 compare data="data/lineitem.parquet" iterations="3" threads="1" out="bench-results/compare.json":
     cargo run --release -p columnar-cli -- compare --data {{data}} --iterations {{iterations}} --threads {{threads}} --out {{out}}
+
+# Sweep the thread count: the engine and both incumbents, at the same thread
+# counts, on the same file.
+#
+# This is the second table, not a replacement for the first. The headline
+# comparison stays pinned to one thread, because that is the like-for-like
+# single-threaded claim; this one shows how each system's number moves with
+# the thread count, so the reader sees the shape of the curve and not only its
+# endpoint.
+#
+# The engine's parallelism is capped by the file's row groups, so the report
+# records both the thread count asked for and the workers that ran.
+#
+# Publish a table from this too: run it at least three times, keep the
+# reports, and derive the medians with `just medians`.
+sweep data="data/lineitem.parquet" query="q6" threads="1,2,4,6,8,14" iterations="3" out="bench-results/scaling.json":
+    cargo run --release -p columnar-cli -- sweep --data {{data}} --query {{query}} --threads {{threads}} --iterations {{iterations}} --out {{out}}
 
 # The performance gate: measure the kernel and compare it against the stored
 # baseline.

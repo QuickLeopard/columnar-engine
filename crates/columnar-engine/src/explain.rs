@@ -60,6 +60,12 @@ pub struct PlanOutput {
     /// aggregated is absent from this list, because its bytes were never
     /// fetched.
     pub columns_read: Vec<String>,
+    /// How many threads the read used.
+    ///
+    /// A number measured with one thread and a number measured with eight
+    /// are not comparable, and a reader should not have to guess which one
+    /// they are looking at.
+    pub threads: usize,
     /// What the pushed-down predicates cost.
     ///
     /// The pushdown runs inside the reader, so its cost is otherwise folded
@@ -119,6 +125,7 @@ impl fmt::Display for PlanOutput {
                 self.materialised_columns.join(", ")
             }
         )?;
+        writeln!(f, "read threads: {}", self.threads)?;
         writeln!(
             f,
             "columns read: {}",

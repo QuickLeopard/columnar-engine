@@ -38,8 +38,10 @@ pub mod gate;
 pub mod kernel_ab;
 pub mod machine;
 pub mod result;
+pub mod scaling;
 
 pub use external::{Comparator, ExternalComparison, ExternalQuery, Mode};
 pub use kernel_ab::{KernelAb, KernelFlavorResult};
 pub use machine::MachineSpec;
 pub use result::BenchReport;
+pub use scaling::{ScalingPoint, ScalingReport};

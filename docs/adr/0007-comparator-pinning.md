@@ -104,8 +104,31 @@ the Parquet reader and read only the columns they need. That difference is repor
 hidden, but it means the cold comparison is really a comparison of two different designs, and the
 blueprint's own framing rule -- "kernel X on query Y" -- is the honest one to read it by.
 
+## Amendment — the engine is no longer single-threaded
+
+**Amended 2026-10-25 by spec 005.** The decision to pin both incumbents to one thread was made
+because the engine was single-threaded, and it was right to: a comparison of a one-thread engine
+against a fourteen-thread one is not a comparison of the same work. That reason has expired.
+
+**The headline comparison stays pinned to one thread.** `just compare` still runs the engine and
+both incumbents at one thread, and that table is unchanged. It is the like-for-like
+*single-threaded* comparison, and it is still a true claim.
+
+**A second table is published alongside it: the thread-count sweep.** The engine and both
+incumbents, at the same thread counts, on the same file, in the same harness. The symmetry that
+mattered under ADR-0007 still holds — the incumbents run at the engine's thread count at every
+point — but there is now more than one thread count to be symmetric about.
+
+One thing does change in the reader's understanding, and it is worth stating plainly: a one-thread
+table on its own understates `DuckDB`, because `DuckDB` uses every core by default. On this file
+and this query, `DuckDB` takes 32.0 ms at one thread and 10.0 ms at fourteen. The engine's
+one-thread figure and the sweep's figures are both published, so the reader can see the whole
+picture rather than the flattering half of it.
+
+See [ADR-0011](0011-parallel-decode.md) and `PERF.md` §2e.
+
 ## Revisit when
 
 - The engine learns to read only the columns a query needs, at which point the cold comparison
-  becomes a comparison of engines rather than of architectures.
+  becomes a comparison of engines rather than of architectures. **Done in spec 002.**
 - The x86-64 runner is available and the comparators are re-measured there.

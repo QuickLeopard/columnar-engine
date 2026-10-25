@@ -150,3 +150,103 @@ fn the_dataset_was_generated() {
     let bytes = std::fs::metadata(path).expect("the dataset's size is readable").len();
     assert!(bytes > 200_000_000, "the dataset is smaller than the published file");
 }
+
+/// The file has several row groups, so the parallel path can engage at all.
+///
+/// The parallel read splits the file's **row groups** across the threads. A
+/// file with one row group therefore has one worker however many threads are
+/// asked for, and every parallel test below would be testing the
+/// single-threaded path under the parallel path's name.
+///
+/// This is checked rather than assumed, because the check is the only thing
+/// that makes the tests below mean anything.
+#[test]
+fn the_dataset_has_several_row_groups() {
+    let path = dataset();
+    let source = ParquetSource::open(path).expect("the source can be opened");
+    let row_groups = source.row_groups();
+    assert!(
+        row_groups > 1,
+        "the file has {row_groups} row group(s), so the parallel path cannot engage"
+    );
+}
+
+/// Every built-in query must give the same answer at every thread count.
+///
+/// This is the requirement that makes parallel decode **safe** rather than
+/// merely fast. `SUM` is not associative, so a parallel read that ordered its
+/// rows by *completion* rather than by *position* would make the engine's
+/// answer depend on the scheduler: the same query would return different
+/// bits on different runs, and a user could not tell a correct answer from
+/// an incorrect one.
+///
+/// So the answers have to be identical -- the single-threaded one, the
+/// parallel ones, and the eager path's. Over every built-in query, on the
+/// real file.
+#[test]
+fn every_builtin_query_agrees_at_every_thread_count() {
+    let path = dataset();
+
+    for definition in QUERIES {
+        // The eager path: the reference answer, computed from the whole file
+        // in one go.
+        let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
+        let eager = execute(&(definition.plan)(), &dataset, &ExecOptions::default())
+            .expect("the eager path answers the query");
+
+        let source = ParquetSource::open(path).expect("the source can be opened");
+        let single = execute_on(&(definition.plan)(), &source, &ExecOptions::default())
+            .expect("the lazy path answers the query");
+
+        assert_eq!(
+            single.groups,
+            eager.groups,
+            "`{}`: the lazy and the eager path disagreed",
+            definition.query.name()
+        );
+
+        // More threads than the file has row groups, so the cap is exercised
+        // as well as the split.
+        for threads in [2, 3, 4, 6, 8, 14] {
+            let options = ExecOptions { threads: Some(threads), ..ExecOptions::default() };
+            let parallel = execute_on(&(definition.plan)(), &source, &options)
+                .expect("the parallel query runs");
+
+            assert_eq!(
+                parallel.groups,
+                single.groups,
+                "`{}`: the answer differs at {threads} threads",
+                definition.query.name()
+            );
+            assert_eq!(
+                parallel.plan_output.threads,
+                threads.min(source.row_groups()),
+                "`{}`: the plan output does not report the thread count",
+                definition.query.name()
+            );
+        }
+    }
+}
+
+/// The sum is the same integer, bit for bit, at every thread count.
+///
+/// The sum is an integer sum, so "the same" is not a matter of tolerance: it
+/// is the same `i64`. A parallel read that reordered the rows would not
+/// change an integer sum -- but it would change a *floating-point* one, and
+/// this is the cheapest place to hold the order honest.
+#[test]
+fn the_sum_is_bit_for_bit_the_same_at_every_thread_count() {
+    let path = dataset();
+    let definition = definition(BuiltinQuery::FilterRange);
+
+    let source = ParquetSource::open(path).expect("the source can be opened");
+    let single =
+        execute_on(&(definition.plan)(), &source, &ExecOptions::default()).expect("the query runs");
+
+    for threads in [2, 4, 8, 14] {
+        let options = ExecOptions { threads: Some(threads), ..ExecOptions::default() };
+        let parallel =
+            execute_on(&(definition.plan)(), &source, &options).expect("the parallel query runs");
+        assert_eq!(parallel.groups, single.groups, "the sum differs at {threads} threads");
+    }
+}

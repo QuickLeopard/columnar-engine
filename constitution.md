@@ -103,6 +103,11 @@ the machine it was measured on.
 - **MUST**: the external comparison run both incumbents in the *same* harness, against the *same*
   file, with the thread count pinned and the plan cache disabled. A comparison where DuckDB runs
   with its default thread count and this engine runs with one is not a comparison.
+- **MUST**: when the engine is itself multi-threaded, the **symmetry** extend to every thread
+  count published. Publishing a single-threaded comparison alone is not a symmetric comparison
+  once the engine has threads: it flatters the engine, because the incumbents use every core by
+  default. A published thread-count sweep MUST therefore run the engine and every incumbent at
+  the *same* thread count at every point of the sweep.
 - **MUST**: the harness record the CPU model, the SIMD path in use, the toolchain, and the cache
   state alongside every result.
 
@@ -121,8 +126,11 @@ the machine it was measured on.
 Anything not implemented MUST be written down as out of scope, with the reason.
 
 - **MUST**: every spec carry a Scope section listing what is explicitly excluded.
-- **MUST**: known simplifications (no SQL parser, single-threaded execution, `Utf8` dates, no
+- **MUST**: known simplifications (no SQL parser, single-threaded *operators*, `Utf8` dates, no
   decimal type) be stated on the README, not buried in a design document.
+- **MUST**: a limit that is not the implementation's own be named as such. The parallel read is
+  capped by the **file's row groups**, not by the machine's cores, and a published curve that
+  flattens must say which of the two it is.
 
 ### VIII. Unsafe Is a Last Resort, and Always Documented
 
@@ -157,6 +165,10 @@ These are the standards any change must hold or improve. They are the floor.
   A statistical gate MUST also carry a **practical threshold**, set from a measurement of the
   machine's own run-to-run drift, because a sensitive test on a shared machine finds the machine's
   drift every time — and a gate that fires on the machine is a gate nobody runs.
+- **Order-preserving parallelism**: a parallel read MUST return the file's rows in the file's
+  order, and MUST be bit-identical to the single-threaded read. `SUM` is not associative, so a
+  read that ordered its rows by *completion* rather than by *position* would make the answer
+  depend on the scheduler — and an answer that depends on the scheduler is not an answer.
 
 ---
 
@@ -203,9 +215,32 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.2.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
+**Version**: 1.3.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
 
 ### Amendment history
+
+**1.3.0 — 2026-10-25 — symmetry extends to every thread count, and the parallel read has an
+order.** The engine's read is now parallel over the file's row groups (spec 005), so the rule that
+the incumbents be pinned to the engine's thread count can no longer be satisfied by pinning
+everything to one thread and calling it done: a one-thread table on its own flatters the engine,
+because the incumbents use every core by default.
+
+*Rationale*: the constitution asked for symmetry, and symmetry is a property of the *comparison*,
+not of one table. The engine gets 5.1× from six workers against DuckDB's 3.2×, and the `q6` cold
+gap narrows from 2.6× to 1.6× — a fact that a one-thread table alone would have hidden, in the
+engine's favour. Two requirements are added: the symmetry MUST extend to every thread count
+published, and a published curve that flattens MUST name whether the cap is the implementation's
+or the file's. A third is added to the Performance Standards: a parallel read MUST preserve the
+file's row order and be bit-identical to the single-threaded one, because `SUM` is not
+associative and an answer that depends on the scheduler is not an answer.
+*Principles touched*: V and VII are extended, not changed; this adds one Performance Standard.
+Neither I, III nor IV is touched, so it is a MINOR bump.
+*Migration plan*: the thread-count sweep is published as `PERF.md` §2e, derived from
+`bench-results/scaling-run{1,2,3}.json` by the same script that derives the headline table. The
+headline table was re-measured under the new code, because the published lazy `q6` figure was
+89.1 ms and the same measurement now gives 84.4 ms — the incumbents' figures did not move, so the
+difference was the harness's ordering and not the machine. Both numbers are published and the
+difference is explained rather than quietly overwritten.
 
 **1.1.0 — 2026-10-25 — repeated runs, published medians.** Added a performance standard
 requiring that a published timing be the median of at least three full runs, that the raw reports

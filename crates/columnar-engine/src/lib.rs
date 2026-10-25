@@ -29,11 +29,14 @@
 //!
 //! The following are **explicitly out of scope**, not deferred silently:
 //!
-//! - **Morsel-driven parallelism.** This milestone is single-threaded: one
-//!   plan runs on one thread, end to end. The operators take a `&Dataset` and
-//!   return owned values, so the data path is already shaped for a future
-//!   morsel loop, but no morsel driver, no task pool and no per-thread
-//!   scheduling exist yet.
+//! - **Morsel-driven parallelism.** The **read** is parallel: the file's row
+//!   groups are split across the threads, decoded independently, and merged
+//!   back in the file's order. The **operators** are not: the filter, the
+//!   project and the aggregate run on one thread. The operators take a
+//!   `&Dataset` and return owned values, so the data path is already shaped
+//!   for a future morsel loop, but no morsel driver, no task pool and no
+//!   per-thread scheduling exist yet. See [spec
+//!   005](../../../specs/005-parallel-decode/spec.md).
 //! - **A SQL parser.** See above.
 //! - **Spilling.** The memory budget is a pre-flight check, not a mechanism:
 //!   a plan whose estimated working set exceeds the budget is rejected before
@@ -122,6 +125,18 @@ pub struct ExecOptions {
     pub memory_budget: MemoryBudget,
     /// Which kernel flavor to use. `None` means "the fastest available".
     pub flavor: Option<Flavor>,
+    /// How many threads to read the file with. `None` means one.
+    ///
+    /// This is the **read**'s thread count. The operators are single-threaded
+    /// in this increment, and the headline comparison pins every system to
+    /// one thread so the comparison is like-for-like, so the default is one.
+    ///
+    /// The read splits the file's **row groups** across the threads -- a row
+    /// group is decoded independently of every other one -- and merges the
+    /// parts back together afterwards. The rows come back in the file's order
+    /// whatever this is set to, so the answer does not depend on the
+    /// scheduler.
+    pub threads: Option<usize>,
 }
 
 /// Executes `plan` over `dataset`.
@@ -162,7 +177,7 @@ pub fn execute(
         pushdown_metrics: PushdownMetrics::default(),
     };
 
-    run_pipeline(&resolved, dataset, options, scan, report, estimate)
+    run_pipeline(&resolved, dataset, options, scan, report, estimate, 1)
 }
 
 /// Executes `plan` over a Parquet file, reading only what the plan needs.
@@ -199,22 +214,30 @@ pub fn execute_on(
     // run the same kernel over the same values.
     let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
 
+    // How many threads will *actually* read. The read splits the file's row
+    // groups across the threads, so a file with six row groups has six
+    // workers however many threads are asked for. The plan output reports
+    // this number rather than the requested one, because a plan that claims
+    // fourteen threads and used six is a plan that is telling a lie.
+    let workers = source.worker_count(options.threads.unwrap_or(1));
+
+    // The budget is checked **before** the read. The estimate is made from
+    // the file's schema and its row count, so a plan that does not fit is
+    // refused having read nothing at all -- and it accounts for the parallel
+    // read's peak, which holds two copies of the read set rather than one.
+    let estimate = memory::estimate_lazy_read(source, &decision.read, workers);
+    if estimate > options.memory_budget.bytes {
+        return Err(EngineError::Memory(MemoryError::BudgetExceeded));
+    }
+
     let scan_started = std::time::Instant::now();
-    let dataset = source.read(&decision.read, &decision.pushdown, flavor)?;
+    let dataset = source.read(&decision.read, &decision.pushdown, flavor, workers)?;
     let scan_elapsed = scan_started.elapsed();
 
     // Every index the plan holds is a column of the *file*; the dataset holds
     // only the read set, so the indices have to move.
     let mapping = build_mapping(&decision.read, source.column_count());
     let effective = resolved.remap(&mapping);
-
-    // The estimate is checked against the file's row count rather than the
-    // surviving rows: the peak of the working set is during the read, when
-    // every row of the file is still in flight.
-    let estimate = memory::estimate_resolved_at(&effective, &dataset, source.rows());
-    if estimate > options.memory_budget.bytes {
-        return Err(EngineError::Memory(MemoryError::BudgetExceeded));
-    }
 
     let scan = StageStats {
         stage: "scan".to_owned(),
@@ -229,7 +252,7 @@ pub fn execute_on(
         pushdown_metrics: decision.pushdown.metrics(),
     };
 
-    run_pipeline(&effective, &dataset, options, scan, report, estimate)
+    run_pipeline(&effective, &dataset, options, scan, report, estimate, workers)
 }
 
 /// The columns whose bytes were fetched from the file.
@@ -364,6 +387,7 @@ struct ScanReport {
 }
 
 /// Runs the pipeline over an already-resolved plan.
+#[allow(clippy::too_many_arguments)]
 fn run_pipeline(
     resolved: &plan::ResolvedPlan,
     dataset: &Dataset,
@@ -371,6 +395,7 @@ fn run_pipeline(
     scan: StageStats,
     report: ScanReport,
     estimate: usize,
+    workers: usize,
 ) -> Result<AggregateResult, EngineError> {
     let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
     let total_rows = dataset.len();
@@ -448,6 +473,7 @@ fn run_pipeline(
         pushed_down: report.pushed_down,
         columns_read: report.columns_read,
         pushdown_metrics: report.pushdown_metrics,
+        threads: workers,
     };
 
     Ok(AggregateResult { groups, stages, plan_output })

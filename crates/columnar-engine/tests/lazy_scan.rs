@@ -30,7 +30,8 @@ use arrow::datatypes::{DataType, Field, Int32Type, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use columnar_core::{ComparisonOp, Predicate, ScalarValue};
 use columnar_engine::{
-    execute, execute_on, Aggregate, AggregateSpec, Dataset, ExecOptions, ParquetSource, QueryPlan,
+    execute, execute_on, Aggregate, AggregateSpec, Dataset, ExecOptions, ParquetSource,
+    PushdownPlan, QueryPlan,
 };
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -84,6 +85,109 @@ fn write(path: &Path, batch: &RecordBatch) {
         .expect("the arrow writer accepts the batch");
     writer.write(batch).expect("the batch can be written");
     writer.close().expect("the file can be closed");
+}
+
+/// Writes a Parquet file holding **one row group per batch**.
+///
+/// This is what makes the parallel path reachable at all. The parallel read
+/// splits the file's *row groups* across the threads, so a file with one row
+/// group has one worker however many threads are asked for: a test written
+/// against such a file would be testing the single-threaded path under the
+/// parallel path's name, and it would pass whether the parallel path worked
+/// or not.
+fn write_row_groups(path: &Path, batches: &[RecordBatch]) {
+    let first = batches.first().expect("there is at least one batch");
+    let rows = first.num_rows();
+    let properties = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_dictionary_enabled(true)
+        // One row group per batch: the writer flushes the current row group
+        // when it already holds this many rows.
+        .set_max_row_group_size(rows)
+        .build();
+    let file = File::create(path).expect("the temporary file can be created");
+    let mut writer = ArrowWriter::try_new(file, first.schema(), Some(properties))
+        .expect("the arrow writer accepts the batch");
+    for batch in batches {
+        writer.write(batch).expect("the batch can be written");
+    }
+    writer.close().expect("the file can be closed");
+}
+
+/// Three batches of eight rows, with NULLs, NaNs and a dictionary column.
+///
+/// The three groups differ in their values, so a merge that put them in the
+/// wrong order would be visible in the answer.
+fn three_row_group_batches() -> Vec<RecordBatch> {
+    (0..3)
+        .map(|group| {
+            let base = i64::from(group * 8);
+            let discount = floats(&[
+                Some(0.02),
+                Some(0.05),
+                None,
+                Some(f64::NAN),
+                Some(0.07),
+                None,
+                Some(0.04),
+                Some(0.09),
+            ]);
+            let shipdate = dictionary(&[
+                Some("1993-01-01"),
+                Some("1994-01-01"),
+                Some("1994-06-01"),
+                None,
+                Some("1995-01-01"),
+                Some("1994-12-31"),
+                Some("1996-03-03"),
+                Some("1993-06-06"),
+            ]);
+            let quantity = integers(
+                &(0..8).map(|row| Some(base + i64::from(row))).collect::<Vec<Option<i64>>>(),
+            );
+            RecordBatch::try_new(schema(), vec![discount, shipdate, quantity])
+                .expect("the batch matches the schema")
+        })
+        .collect()
+}
+
+/// The rows of a column, resolved.
+///
+/// A dictionary-encoded column is resolved to its strings, so the comparison
+/// is about the **values** and not about which dictionary happened to hold
+/// them: two reads can number their dictionaries differently and still be
+/// holding the same data.
+///
+/// A NULL row is `None`.
+fn resolved_rows(chunk: &columnar_core::ColumnChunk) -> Vec<Option<String>> {
+    use columnar_core::Encoding;
+
+    let values: Vec<String> = match &chunk.encoding {
+        Encoding::Int64 { values } => values.iter().map(ToString::to_string).collect(),
+        Encoding::Float64 { values } => values.iter().map(ToString::to_string).collect(),
+        Encoding::Utf8 { values } => values.clone(),
+        Encoding::Int64Dict { dict, indices } => indices
+            .iter()
+            .map(|index| {
+                let position = usize::try_from(*index).expect("the index is not negative");
+                dict.get(position).expect("the index is in range").to_string()
+            })
+            .collect(),
+        Encoding::Utf8Dict { dict, indices } => indices
+            .iter()
+            .map(|index| {
+                let position = usize::try_from(*index).expect("the index is not negative");
+                dict.get(position).expect("the index is in range").clone()
+            })
+            .collect(),
+        other => panic!("the comparison does not know the `{other:?}` encoding"),
+    };
+
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| if chunk.validity.is_valid(row) { Some(value) } else { None })
+        .collect()
 }
 
 /// A dictionary column over the given values.
@@ -320,6 +424,144 @@ fn the_two_paths_agree_at_the_block_boundaries() {
 
         let plan = count_plan("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.05));
         both_paths(&file.path, &plan);
+    }
+}
+
+/// The parallel path and the single-threaded path agree, exactly.
+///
+/// This is the requirement that makes parallel decode safe rather than
+/// merely fast. `SUM` is not associative, so a parallel read that ordered its
+/// rows by *completion* rather than by *position* would make the engine's
+/// answer depend on the scheduler, and the same query would return different
+/// bits on different runs.
+///
+/// So the two paths must produce the same answer, down to the last bit, for
+/// every thread count.
+///
+/// The file has **three row groups**, because the parallel read splits the
+/// row groups: a file with one row group has one worker however many threads
+/// are asked for, and this test would then be testing the single-threaded
+/// path under the parallel path's name.
+#[test]
+fn the_parallel_path_agrees_with_the_single_threaded_one() {
+    let file = TempFile::new("parallel");
+    write_row_groups(&file.path, &three_row_group_batches());
+
+    let plan = QueryPlan {
+        filter: vec![
+            Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.02)),
+            Predicate::new(
+                "l_shipdate",
+                ComparisonOp::Lt,
+                ScalarValue::Utf8("1995-01-01".to_owned()),
+            ),
+        ],
+        projection: Vec::new(),
+        aggregate: Some(AggregateSpec {
+            group_by: Vec::new(),
+            aggregates: vec![Aggregate::Sum { column: "l_quantity".to_owned() }],
+        }),
+    };
+
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    assert_eq!(
+        source.row_groups(),
+        3,
+        "the file does not have three row groups, so the parallel path never engages"
+    );
+
+    let single = execute_on(&plan, &source, &ExecOptions::default()).expect("the query runs");
+    for threads in [2, 3, 4, 8] {
+        let options = ExecOptions { threads: Some(threads), ..ExecOptions::default() };
+        let parallel = execute_on(&plan, &source, &options).expect("the parallel query runs");
+
+        assert_eq!(
+            parallel.groups, single.groups,
+            "the parallel answer differs at {threads} threads"
+        );
+        assert_eq!(
+            parallel.plan_output.threads,
+            threads.min(source.row_groups()),
+            "the plan output does not report the thread count"
+        );
+    }
+}
+
+/// The parallel read holds the same rows, in the same order, as the
+/// single-threaded one.
+///
+/// The aggregate answer above cannot see the **order** of the rows: summing
+/// a column does not care which row came first. So this test compares the
+/// datasets themselves, row by row, with the dictionary resolved.
+///
+/// The order is the thing that is at stake. A parallel read that merged its
+/// parts in *completion* order -- fastest thread first, rather than first
+/// row group first -- would produce a dataset whose rows were in the wrong
+/// order, and every answer computed from it would be a lie about a file
+/// whose rows have an order.
+#[test]
+fn the_parallel_read_holds_the_same_rows_in_the_same_order() {
+    let file = TempFile::new("parallel-rows");
+    write_row_groups(&file.path, &three_row_group_batches());
+
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    assert_eq!(
+        source.row_groups(),
+        3,
+        "the file does not have three row groups, so the parallel path never engages"
+    );
+
+    let pushdown = PushdownPlan::new();
+    let flavor = columnar_kernels::best();
+
+    let single = source.read(&[0, 1, 2], &pushdown, flavor, 1).expect("the read runs");
+    assert_eq!(single.len(), 24, "the read did not return every row");
+
+    for threads in [2, 3, 4, 8] {
+        let parallel = source.read(&[0, 1, 2], &pushdown, flavor, threads).expect("the read runs");
+
+        assert_eq!(parallel.len(), single.len(), "the parallel read has a different row count");
+        for name in single.column_names() {
+            let left = single.chunk(&name).expect("the column is there");
+            let right = parallel.chunk(&name).expect("the column is there");
+            assert_eq!(
+                resolved_rows(right),
+                resolved_rows(left),
+                "the parallel read holds different rows in `{name}` at {threads} threads"
+            );
+        }
+    }
+}
+
+/// The parallel path reads the same rows in the same order.
+///
+/// The groups are checked above; this checks the *rows*, through a plan that
+/// aggregates a dictionary-encoded column, where the order of the rows is
+/// visible in the answer.
+#[test]
+fn the_parallel_path_reads_the_rows_in_the_files_order() {
+    let file = TempFile::new("parallel-order");
+    write_row_groups(&file.path, &three_row_group_batches());
+
+    let plan = QueryPlan {
+        filter: Vec::new(),
+        projection: Vec::new(),
+        aggregate: Some(AggregateSpec {
+            group_by: vec!["l_shipdate".to_owned()],
+            aggregates: vec![Aggregate::Sum { column: "l_quantity".to_owned() }],
+        }),
+    };
+
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    let single = execute_on(&plan, &source, &ExecOptions::default()).expect("the query runs");
+
+    for threads in [2, 4, 8] {
+        let options = ExecOptions { threads: Some(threads), ..ExecOptions::default() };
+        let parallel = execute_on(&plan, &source, &options).expect("the parallel query runs");
+        assert_eq!(
+            parallel.groups, single.groups,
+            "the parallel groups differ at {threads} threads"
+        );
     }
 }
 

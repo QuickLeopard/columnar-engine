@@ -25,6 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
+SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 DOCS = [ROOT / "PERF.md", ROOT / "README.md"]
 
 # (document, label, figure as it appears in the prose)
@@ -43,6 +44,19 @@ CHECKS = [
     ("README.md", "polars q6 cold", "polars", "-", "cold", "q6", 1),
 ]
 
+# (document, label, thread count, system, places)
+#
+# The sweep is the second table, and its headline is the **engine at its
+# cap** against **DuckDB at the same thread count**. Those are the two
+# figures a reader is most likely to quote, and the two that would be most
+# misleading if they drifted away from the reports.
+SCALING_CHECKS = [
+    ("PERF.md", "sweep engine q6 at 6 threads", 6, "engine", 1),
+    ("PERF.md", "sweep duckdb q6 at 6 threads", 6, "duckdb", 1),
+    ("PERF.md", "sweep engine q6 at 1 thread", 1, "engine", 1),
+    ("PERF.md", "sweep duckdb q6 at 1 thread", 1, "duckdb", 1),
+]
+
 
 def collect(runs: list[dict]) -> dict[tuple[str, str, str, str], list[float]]:
     out: dict[tuple[str, str, str, str], list[float]] = {}
@@ -55,6 +69,22 @@ def collect(runs: list[dict]) -> dict[tuple[str, str, str, str], list[float]]:
         for entry in run.get("external", []):
             key = (entry["comparator"], "-", entry["mode"], entry["query"])
             out.setdefault(key, []).append(entry["query_ms"])
+    return out
+
+
+def collect_scaling(runs: list[dict]) -> dict[int, dict[str, list[float]]]:
+    out: dict[int, dict[str, list[float]]] = {}
+    for run in runs:
+        for point in run.get("points", []):
+            threads = point["threads"]
+            for key, field in (
+                ("engine", "engine_ms"),
+                ("duckdb", "duckdb_ms"),
+                ("polars", "polars_ms"),
+            ):
+                value = point.get(field)
+                if value is not None:
+                    out.setdefault(threads, {}).setdefault(key, []).append(value)
     return out
 
 
@@ -87,6 +117,28 @@ def main() -> int:
             )
         else:
             print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+    if SCALING_REPORTS:
+        scaling_runs = []
+        for path in SCALING_REPORTS:
+            with path.open() as handle:
+                scaling_runs.append(json.load(handle))
+        sweep = collect_scaling(scaling_runs)
+
+        for doc, label, threads, system, places in SCALING_CHECKS:
+            values = sweep.get(threads, {}).get(system)
+            if not values:
+                failures.append(f"{doc}: no figure for {label} in the sweep reports")
+                continue
+            figure = statistics.median(values)
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
 
     if failures:
         print()

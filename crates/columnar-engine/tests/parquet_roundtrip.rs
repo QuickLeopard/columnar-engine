@@ -227,8 +227,11 @@ fn the_round_trip_answers_a_query() {
         }),
     };
 
-    let options =
-        ExecOptions { memory_budget: MemoryBudget::default(), flavor: Some(Flavor::Scalar) };
+    let options = ExecOptions {
+        memory_budget: MemoryBudget::default(),
+        flavor: Some(Flavor::Scalar),
+        ..ExecOptions::default()
+    };
     let result = execute(&plan, &dataset, &options).expect("the plan runs");
 
     // The expected sums, computed from the same rule the data was built

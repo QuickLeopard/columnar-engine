@@ -9,6 +9,9 @@
 
 ## 1. The problem, measured
 
+> The figures in this section are the ones that were on the table when this spec was written. §8
+> records what the work actually produced, including a headline figure that moved.
+
 Spec 003 left one number, and it is the last big one.
 
 The lazy path's cold `q6` query takes **89.1 ms**. DuckDB's takes **32.0 ms** on the same file,
@@ -128,3 +131,55 @@ machine, on one file.
 | R6, R7, R8 | **V.** The Comparison Is Reproducible by a Stranger — and fair, which means symmetric. |
 | R9 | The performance standards: the per-query working set is bounded by a declared budget. |
 | R10 | **VII.** Explicit Scope, No Silent Deferral — the addition changes nothing that already worked. |
+
+---
+
+## 8. The outcome
+
+**Measured, on the same file, on the same machine, in the same three runs as the headline table.**
+
+| threads | the engine's workers | **engine** (lazy `q6` cold) | duckdb | polars |
+|---|---|---|---|---|
+| 1 | 1 | 82.8 ms | 32.0 ms | 195.3 ms |
+| 2 | 2 | 44.2 ms | 21.0 ms | 104.4 ms |
+| 4 | 4 | 30.8 ms | 15.0 ms | 69.9 ms |
+| 6 | 6 | **16.2 ms** | **10.0 ms** | 39.5 ms |
+| 8 | 6 | 16.4 ms | 10.0 ms | 38.7 ms |
+| 14 | 6 | 16.2 ms | 10.0 ms | 38.6 ms |
+
+**The engine gets 5.1× from six workers; DuckDB gets 3.2×.** The `q6` cold gap narrows from
+**2.6× at one thread to 1.6× at six**. The engine's curve is steeper because the parallel part is
+a larger fraction of its work: its query is almost entirely scan, and the scan is what
+parallelises. The operators do not.
+
+**The curve is flat past six because the file has six row groups.** The read splits row groups, so
+six is the ceiling whatever the machine has, and the sweep report records the threads asked for
+and the workers that ran, side by side.
+
+### Two things the work found that the spec did not ask for
+
+**The merge's validity concatenation was wrong.** `NullBitmap::concat` copied only the *complete*
+words of the first mask and dropped its last, partial word — which is exactly the word the second
+mask's bits land in. Every NULL in the first part of a merged chunk was silently lost: a row the
+engine believed had a value when it did not. The unit test in `columnar-core` found it before the
+code was committed, and the concatenation is now pinned against a single mask over the same rows
+at every combination of word alignment.
+
+**The equivalence tests did not test what they claimed to.** They wrote a single batch, so the
+file had one row group, so the parallel read had one worker: the tests were exercising the
+single-threaded path under the parallel path's name, and would have passed whether the parallel
+path worked or not. They now write a file with three row groups, and they compare the **rows**,
+not only the answer — because a sum does not care which row came first. Reversing the merge order
+in the source leaves the aggregate-level tests passing and fails only the row-level one, which is
+why that test exists.
+
+### The headline figure moved, and it is published as having moved
+
+The pinned table's lazy `q6` figure was **89.1 ms**; the same measurement now gives **84.4 ms**.
+The incumbents' figures did not move — DuckDB's stayed at 32.0 ms — so the difference was not the
+machine. It is the harness's ordering: the comparison measures the *eager* path first and the
+*lazy* path second, so the lazy measurement runs after a 231 MiB decode has churned the allocator
+and the page cache. The sweep measures the lazy path on its own and gets 82.8 ms.
+
+Both numbers are published, the difference is explained, and the pinned table was re-measured
+rather than left to drift. See `PERF.md` §2e and [ADR-0011](../../docs/adr/0011-parallel-decode.md).

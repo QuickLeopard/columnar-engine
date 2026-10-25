@@ -496,3 +496,143 @@ pub fn disable_decode_counting() {
 pub fn decode_counts() -> HashMap<String, usize> {
     DECODE_COUNTS.with(|counts| counts.borrow().clone().unwrap_or_default())
 }
+
+/// Merges several datasets, in order, into one.
+///
+/// This is what a parallel read needs: each thread produces a partial dataset
+/// over its own row groups, and the parts come back together in the file's
+/// row-group order.
+///
+/// **The order is not negotiable.** `SUM` is not associative, so a dataset
+/// whose rows were ordered by *completion* rather than by *position* would
+/// make the engine's answer depend on the scheduler, and the same query would
+/// return different bits on different runs. The merged dataset therefore
+/// holds the rows in the order the parts were given, and a parallel read
+/// gives its parts in row-group order.
+///
+/// # Errors
+///
+/// Returns [`DatasetError::Parquet`] if two parts disagree about a column's
+/// encoding, or if a part holds an encoding this merge does not know how to
+/// combine.
+pub fn merge(parts: &[Dataset]) -> Result<Dataset, DatasetError> {
+    let Some(first) = parts.first() else {
+        return Ok(Dataset::with_rows(Vec::new(), 0));
+    };
+    if parts.len() == 1 {
+        return Ok(first.clone());
+    }
+
+    let column_count = first.chunks.len();
+    let mut chunks = Vec::with_capacity(column_count);
+    for column in 0..column_count {
+        let mut merged: Option<ColumnChunk> = None;
+        for part in parts {
+            let chunk = part.chunks.get(column).ok_or_else(|| {
+                DatasetError::Parquet(format!(
+                    "a part of the merge has {} columns where the first has {column_count}",
+                    part.chunks.len()
+                ))
+            })?;
+            merged = Some(match merged {
+                None => chunk.clone(),
+                Some(previous) => merge_chunk(&previous, chunk)?,
+            });
+        }
+        chunks.push(merged.unwrap_or_else(|| first.chunks[column].clone()));
+    }
+
+    let rows = parts.iter().map(Dataset::len).sum();
+    Ok(Dataset::with_rows(chunks, rows))
+}
+
+/// Merges two chunks of the same column.
+fn merge_chunk(left: &ColumnChunk, right: &ColumnChunk) -> Result<ColumnChunk, DatasetError> {
+    let name = left.name.clone();
+    let validity = left.validity.concat(&right.validity);
+    let encoding = match (&left.encoding, &right.encoding) {
+        (Encoding::Int64 { values: left_values }, Encoding::Int64 { values: right_values }) => {
+            let mut values = left_values.clone();
+            values.extend_from_slice(right_values);
+            Encoding::Int64 { values }
+        }
+        (Encoding::Float64 { values: left_values }, Encoding::Float64 { values: right_values }) => {
+            let mut values = left_values.clone();
+            values.extend_from_slice(right_values);
+            Encoding::Float64 { values }
+        }
+        (Encoding::Utf8 { values: left_values }, Encoding::Utf8 { values: right_values }) => {
+            let mut values = left_values.clone();
+            values.extend(right_values.iter().cloned());
+            Encoding::Utf8 { values }
+        }
+        (
+            Encoding::Utf8Dict { dict: left_dict, indices: left_indices },
+            Encoding::Utf8Dict { dict: right_dict, indices: right_indices },
+        ) => {
+            let (dict, indices) =
+                merge_dictionary(left_dict, left_indices, right_dict, right_indices);
+            Encoding::Utf8Dict { dict, indices }
+        }
+        (left, right) => {
+            return Err(DatasetError::Parquet(format!(
+                "cannot merge a `{}` column with a `{}` one",
+                left.name(),
+                right.name()
+            )))
+        }
+    };
+    Ok(ColumnChunk::new(name, encoding, validity))
+}
+
+/// Merges two dictionary-encoded string columns.
+///
+/// The two dictionaries may hold different distinct values, so the second
+/// one's entries are looked up in the first one's and remapped. A value the
+/// first dictionary does not hold is added to it, once, and every row that
+/// used it is repointed.
+///
+/// This is the same operation the engine performs per batch when it merges a
+/// file's row groups into one dictionary. Doing it once, at the end, is the
+/// same work with the same answer.
+fn merge_dictionary(
+    left_dict: &[String],
+    left_indices: &[i32],
+    right_dict: &[String],
+    right_indices: &[i32],
+) -> (Vec<String>, Vec<i32>) {
+    let mut dict = left_dict.to_vec();
+    // The lookup owns its keys, because the dictionary it points into grows
+    // as values are added.
+    let mut lookup: HashMap<String, usize> = HashMap::with_capacity(dict.len());
+    for (index, value) in dict.iter().enumerate() {
+        lookup.insert(value.clone(), index);
+    }
+
+    let mut indices = left_indices.to_vec();
+    indices.reserve(right_indices.len());
+    for &key in right_indices {
+        // A negative or out-of-range index is a corrupt chunk. It cannot
+        // happen from this engine's own reader, and silently mapping it to
+        // some other value would turn a corrupt file into a wrong answer.
+        let Ok(position) = usize::try_from(key) else {
+            panic!("dictionary index {key} is negative");
+        };
+        let Some(value) = right_dict.get(position) else {
+            panic!(
+                "dictionary index {key} is out of range for a {} entry dictionary",
+                right_dict.len()
+            );
+        };
+        let slot = if let Some(&slot) = lookup.get(value.as_str()) {
+            slot
+        } else {
+            let slot = dict.len();
+            lookup.insert(value.clone(), slot);
+            dict.push(value.clone());
+            slot
+        };
+        indices.push(i32::try_from(slot).expect("a dictionary slot fits in 32 bits"));
+    }
+    (dict, indices)
+}

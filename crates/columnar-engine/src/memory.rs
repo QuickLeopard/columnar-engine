@@ -24,10 +24,25 @@
 //!
 //! The estimate is an upper bound, not a prediction. It is meant to fail
 //! early and loudly, not to be accurate to the byte.
+//!
+//! ## The lazy path's estimate is a *pre-flight* one
+//!
+//! The eager path's dataset is already in memory when the plan runs, so its
+//! estimate is made over the dataset. The lazy path's dataset does not exist
+//! yet, so its estimate is made over the **file**: its schema and its row
+//! count. That estimate is computed and checked *before* the read, so a plan
+//! that does not fit the budget is refused having read nothing at all.
+//!
+//! The estimate also accounts for the **read's own peak**, which is where the
+//! thread count shows up. A single-threaded read decodes straight into one
+//! dataset and holds one copy of it. A parallel read holds every thread's part
+//! at once -- which is one copy between them -- and then holds the merged
+//! result as well, so it holds **two**. See [`estimate_lazy_read`].
 
-use columnar_core::Encoding;
+use columnar_core::{DataType, Encoding};
 
 use crate::plan::{QueryPlan, ResolvedPlan};
+use crate::source::ParquetSource;
 use crate::Dataset;
 
 /// The default memory budget: 256 MiB.
@@ -123,4 +138,77 @@ fn column_bytes(chunk: &columnar_core::ColumnChunk, rows: usize) -> usize {
     };
     let validity = rows.div_ceil(8);
     rows.saturating_mul(value_width).saturating_add(validity)
+}
+
+/// Estimates the working set of a **lazy** read of `source`, in bytes.
+///
+/// This is the pre-flight estimate: it is made from the file's schema and its
+/// row count, before a single row is read, so a plan that does not fit the
+/// budget is refused having done no work.
+///
+/// `read` names the file's root columns the read will fetch -- the plan's
+/// materialised columns plus the ones the reader needs for a predicate it
+/// did not push down. The dataset the read produces holds exactly those
+/// columns.
+///
+/// `threads` is the read's thread count, and it decides the **peak**:
+///
+/// - **One thread.** The reader decodes straight into one dataset, so the
+///   read holds one copy of the columns.
+/// - **More than one.** Every thread's part is alive at once -- one copy
+///   between them -- and the merge then holds the merged result as well, so
+///   the read holds **two** copies. That second copy is the price of the
+///   parallel path, and a budget that did not account for it would let a
+///   query through that the machine cannot hold.
+///
+/// The row count used is the **file's**, not the number of rows that survive
+/// the pushed-down predicates, because the peak is during the read: every row
+/// of the file is still in flight then. The estimate is an upper bound.
+#[must_use]
+pub fn estimate_lazy_read(source: &ParquetSource, read: &[usize], threads: usize) -> usize {
+    let rows = source.rows();
+    if rows == 0 {
+        return 0;
+    }
+
+    let mut dataset = 0usize;
+    for &index in read {
+        let width = source.columns().get(index).map_or(8, |column| type_width(column.data_type));
+        dataset =
+            dataset.saturating_add(rows.saturating_mul(width).saturating_add(rows.div_ceil(8)));
+    }
+
+    let mut bytes = dataset.saturating_mul(read_copies(threads));
+
+    // The filter's match mask and the selection vector it becomes.
+    bytes = bytes.saturating_add(rows.div_ceil(8).saturating_mul(2));
+
+    // The aggregate hash table: one entry per group, bounded by the rows.
+    bytes = bytes.saturating_add(rows.saturating_mul(GROUP_ENTRY_BYTES));
+
+    bytes
+}
+
+/// How many copies of the read set the read holds at once.
+///
+/// One thread decodes into one dataset and holds one copy. A parallel read
+/// holds every part at once and then the merged result, so it holds two.
+fn read_copies(threads: usize) -> usize {
+    if threads <= 1 {
+        1
+    } else {
+        2
+    }
+}
+
+/// The width of one value of a column of the given type.
+///
+/// A dictionary-encoded string column is a `utf8` column to the engine, and
+/// costs the same as one: the dictionary is shared by the whole column, and
+/// the per-row cost is the index.
+fn type_width(data_type: DataType) -> usize {
+    match data_type {
+        DataType::Int64 | DataType::Float64 => 8,
+        DataType::Utf8 => STRING_HEADER_BYTES,
+    }
 }

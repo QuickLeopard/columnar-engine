@@ -90,6 +90,49 @@ impl NullBitmap {
         Self { words: vec![0; Self::words_for(len)], len, null_count: len }
     }
 
+    /// Concatenates two masks.
+    ///
+    /// The second mask's rows continue the first's, so a first mask that does
+    /// not end on a word boundary has the second one's bits **shifted** into
+    /// place. That shift is the whole reason this is a method and not two
+    /// `extend` calls: the bits are packed, not aligned, and a mask
+    /// concatenated at the wrong offset describes different rows.
+    ///
+    /// The result is canonical: the padding bits of the last word are clear,
+    /// so two concatenations that describe the same rows compare equal.
+    #[must_use]
+    pub fn concat(&self, other: &Self) -> Self {
+        let total = self.len + other.len();
+        let mut words = vec![0u64; Self::words_for(total)];
+
+        // The first mask's own words, **in full**. The last of them may be a
+        // partial word, and it is exactly the word the second mask's bits
+        // land in -- so copying only the complete words would drop it, and
+        // the second mask's rows would land on the wrong ones.
+        words[..self.words.len()].copy_from_slice(&self.words);
+
+        let base = self.len / 64;
+        let shift = self.len % 64;
+        if shift == 0 {
+            for (index, &word) in other.words.iter().enumerate() {
+                words[base + index] |= word;
+            }
+        } else {
+            // The second mask starts mid-word: each of its words splits
+            // across two of the result's.
+            for (index, &word) in other.words.iter().enumerate() {
+                let low = word & ((1u64 << (64 - shift)) - 1);
+                let high = word >> (64 - shift);
+                words[base + index] |= low << shift;
+                if let Some(slot) = words.get_mut(base + index + 1) {
+                    *slot |= high;
+                }
+            }
+        }
+
+        Self::from_words(&words, total)
+    }
+
     /// Number of rows this mask describes.
     #[must_use]
     pub const fn len(&self) -> usize {
@@ -228,5 +271,104 @@ mod tests {
         let bitmap = NullBitmap::with_nulls(8, &[2, 5]);
         let rows: Vec<usize> = bitmap.valid_rows().collect();
         assert_eq!(rows, vec![0, 1, 3, 4, 6, 7]);
+    }
+
+    #[test]
+    fn concat_of_two_empty_masks_is_empty() {
+        let empty = NullBitmap::all_valid(0);
+        let joined = empty.concat(&empty);
+        assert_eq!(joined.len(), 0);
+        assert_eq!(joined.null_count(), 0);
+        assert_eq!(joined.words(), &[] as &[u64]);
+    }
+
+    #[test]
+    fn concat_puts_the_second_masks_rows_after_the_firsts() {
+        // The first mask ends mid-word, so the second mask's bits have to be
+        // shifted into place rather than simply appended.
+        let left = NullBitmap::with_nulls(5, &[1]);
+        let right = NullBitmap::with_nulls(3, &[0]);
+        let joined = left.concat(&right);
+
+        assert_eq!(joined.len(), 8);
+        assert_eq!(joined.null_count(), 2);
+        assert!(!joined.is_valid(1), "the first mask's NULL moved");
+        assert!(!joined.is_valid(5), "the second mask's NULL did not land on row 5");
+        assert!(joined.is_valid(0));
+        assert!(joined.is_valid(2));
+        assert!(joined.is_valid(4));
+        assert!(joined.is_valid(6));
+        assert!(joined.is_valid(7));
+    }
+
+    #[test]
+    fn concat_at_a_word_boundary_needs_no_shift() {
+        let left = NullBitmap::with_nulls(64, &[63]);
+        let right = NullBitmap::with_nulls(64, &[0]);
+        let joined = left.concat(&right);
+
+        assert_eq!(joined.len(), 128);
+        assert_eq!(joined.null_count(), 2);
+        assert!(!joined.is_valid(63));
+        assert!(!joined.is_valid(64));
+        assert!(joined.is_valid(65));
+        assert!(joined.is_valid(127));
+    }
+
+    #[test]
+    fn concat_is_the_same_as_one_mask_over_the_same_rows() {
+        // The property the parallel merge relies on: concatenating the parts
+        // must describe exactly the rows the single mask describes.
+        for left_len in [0usize, 1, 63, 64, 65, 127, 128, 129] {
+            for right_len in [0usize, 1, 63, 64, 65] {
+                let left_nulls: Vec<usize> = (0..left_len).filter(|row| row % 3 == 0).collect();
+                let right_nulls: Vec<usize> = (0..right_len).filter(|row| row % 5 == 0).collect();
+                let left = NullBitmap::with_nulls(left_len, &left_nulls);
+                let right = NullBitmap::with_nulls(right_len, &right_nulls);
+
+                let joined = left.concat(&right);
+                assert_eq!(joined.len(), left_len + right_len);
+
+                let mut expected = left_nulls.clone();
+                expected.extend(right_nulls.iter().map(|row| row + left_len));
+                assert_eq!(
+                    joined.null_count(),
+                    expected.len(),
+                    "left {left_len}, right {right_len}"
+                );
+                for row in 0..(left_len + right_len) {
+                    assert_eq!(
+                        joined.is_valid(row),
+                        !expected.contains(&row),
+                        "row {row} differs, left {left_len}, right {right_len}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn concat_is_associative() {
+        let a = NullBitmap::with_nulls(37, &[0, 36]);
+        let b = NullBitmap::with_nulls(11, &[10]);
+        let c = NullBitmap::with_nulls(80, &[79, 0]);
+
+        assert_eq!(a.concat(&b).concat(&c), a.concat(&b.concat(&c)));
+    }
+
+    #[test]
+    fn concat_produces_a_canonical_mask() {
+        // The padding bits of the last word must be clear, so two masks
+        // describing the same rows compare equal. Here the result is 63 rows
+        // long, so bit 63 is padding and has to be clear.
+        let left = NullBitmap::with_nulls(3, &[1]);
+        let right = NullBitmap::with_nulls(60, &[59]);
+        let joined = left.concat(&right);
+
+        assert_eq!(joined.len(), 63);
+        assert_eq!(joined.words().len(), 1);
+        assert_eq!(joined.words()[0] & (1u64 << 63), 0, "the padding bits are not clear");
+        assert!(!joined.is_valid(1), "the first mask's NULL moved");
+        assert!(!joined.is_valid(62), "the second mask's NULL did not land on row 62");
     }
 }

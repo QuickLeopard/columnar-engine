@@ -27,6 +27,7 @@ use columnar_bench::{
     kernel_ab::KernelAb,
     machine::MachineSpec,
     result::{BenchReport, DatasetReport, EngineQueryResult},
+    scaling::{ScalingPoint, ScalingReport},
 };
 use columnar_core::ComparisonOp;
 use columnar_engine::{Dataset, ExecOptions};
@@ -82,6 +83,14 @@ enum Command {
         /// a cold number: there is no resident form.
         #[arg(long)]
         lazy: bool,
+        /// How many threads to read the file with.
+        ///
+        /// The read splits the file's row groups across the threads and merges
+        /// the parts back in the file's order, so the answer does not depend
+        /// on the thread count. One is the default, and one is what the
+        /// headline comparison runs at.
+        #[arg(long, default_value_t = 1)]
+        threads: usize,
     },
 
     /// The kernel A/B: every flavor, on the real data.
@@ -156,6 +165,32 @@ enum Command {
         #[arg(long, default_value = "bench-results/compare.json")]
         out: PathBuf,
     },
+
+    /// Sweep the thread count: this engine and both incumbents, at the same
+    /// thread counts, on the same file.
+    ///
+    /// This is the **second** table, not a replacement for the first. The
+    /// headline comparison stays pinned to one thread, because that is the
+    /// like-for-like claim. This one shows how each system's number moves
+    /// with the thread count, so the reader can see the shape of the curve
+    /// and not only its endpoint.
+    Sweep {
+        /// The Parquet file to read.
+        #[arg(long, default_value = "data/lineitem.parquet")]
+        data: PathBuf,
+        /// Which query to sweep.
+        #[arg(long, value_enum, default_value_t = BuiltinQueryArg::Q6)]
+        query: BuiltinQueryArg,
+        /// The thread counts to sweep, comma separated.
+        #[arg(long, default_value = "1,2,4,8,14")]
+        threads: String,
+        /// How many timed runs to make per system, per thread count.
+        #[arg(long, default_value_t = 5)]
+        iterations: usize,
+        /// Where to write the JSON report.
+        #[arg(long, default_value = "bench-results/scaling.json")]
+        out: PathBuf,
+    },
 }
 
 /// The builtin queries, as command line values.
@@ -198,13 +233,18 @@ fn main() -> ExitCode {
 
 /// Runs the requested subcommand.
 fn run(cli: Cli) -> Result<()> {
-    // `bench` and `compare` publish timings. Those timings must describe
-    // hardware, so they are refused when the SIMD probe has been overridden
-    // -- under Rosetta 2 the override points at an emulator. The check lives
-    // here as well as in the harness, so the CLI can say why rather than
-    // panic.
-    if matches!(cli.command, Command::Bench { .. } | Command::Compare { .. } | Command::Gate { .. })
-        && columnar_bench::machine::simd_probe_is_overridden()
+    // `bench`, `compare` and `sweep` publish timings. Those timings must
+    // describe hardware, so they are refused when the SIMD probe has been
+    // overridden -- under Rosetta 2 the override points at an emulator. The
+    // check lives here as well as in the harness, so the CLI can say why
+    // rather than panic.
+    if matches!(
+        cli.command,
+        Command::Bench { .. }
+            | Command::Compare { .. }
+            | Command::Gate { .. }
+            | Command::Sweep { .. }
+    ) && columnar_bench::machine::simd_probe_is_overridden()
     {
         anyhow::bail!("{}", columnar_bench::machine::FORCED_SIMD_REFUSAL);
     }
@@ -213,8 +253,8 @@ fn run(cli: Cli) -> Result<()> {
         Command::Dataset { scale_factor, seed, null_rate, output } => {
             run_dataset(scale_factor, seed, null_rate, &output)
         }
-        Command::Query { data, query, iterations, lazy } => {
-            run_query(&data, query, iterations, lazy)
+        Command::Query { data, query, iterations, lazy, threads } => {
+            run_query(&data, query, iterations, lazy, threads)
         }
         Command::Bench { data, rows, iterations, column, threshold, out } => {
             run_bench(&data, rows, iterations, &column, threshold, &out)
@@ -243,6 +283,9 @@ fn run(cli: Cli) -> Result<()> {
         Command::Compare { data, iterations, threads, out } => {
             run_compare(&data, iterations, threads, &out)
         }
+        Command::Sweep { data, query, threads, iterations, out } => {
+            run_sweep(&data, query, &threads, iterations, &out)
+        }
     }
 }
 
@@ -268,7 +311,13 @@ fn run_dataset(scale_factor: u32, seed: u64, null_rate: f64, output: &Path) -> R
 }
 
 /// Runs one query and prints its plan output.
-fn run_query(data: &Path, query: BuiltinQueryArg, iterations: usize, lazy: bool) -> Result<()> {
+fn run_query(
+    data: &Path,
+    query: BuiltinQueryArg,
+    iterations: usize,
+    lazy: bool,
+    threads: usize,
+) -> Result<()> {
     {
         {
             let builtin = BuiltinQuery::from(query);
@@ -282,6 +331,8 @@ fn run_query(data: &Path, query: BuiltinQueryArg, iterations: usize, lazy: bool)
                 // The lazy path opens the file and reads it during the query.
                 // The open is timed separately, because it is the only part
                 // that happens before the query starts.
+                let options =
+                    ExecOptions { threads: Some(threads.max(1)), ..ExecOptions::default() };
                 let mut opens = Vec::with_capacity(iterations.max(1));
                 for _ in 0..iterations.max(1) {
                     let open_started = std::time::Instant::now();
@@ -290,12 +341,9 @@ fn run_query(data: &Path, query: BuiltinQueryArg, iterations: usize, lazy: bool)
                     opens.push(open_started.elapsed().as_secs_f64() * 1000.0);
 
                     let started = std::time::Instant::now();
-                    let result = columnar_engine::execute_on(
-                        &(definition.plan)(),
-                        &source,
-                        &ExecOptions::default(),
-                    )
-                    .context("the query failed")?;
+                    let result =
+                        columnar_engine::execute_on(&(definition.plan)(), &source, &options)
+                            .context("the query failed")?;
                     timings.push(started.elapsed().as_secs_f64() * 1000.0);
                     last = Some(result);
                 }
@@ -508,6 +556,176 @@ fn run_compare(data: &Path, iterations: usize, threads: usize, out: &Path) -> Re
     Ok(())
 }
 
+/// Sweeps the thread count: this engine and both incumbents, at the same
+/// thread counts, on the same file.
+///
+/// This is the **second** table. The headline comparison stays pinned to one
+/// thread -- that is the like-for-like claim, and it is unchanged. This one
+/// shows how each system's number moves with the thread count, so a reader
+/// sees the shape of the curve and not only its endpoint.
+///
+/// Two rules keep it a comparison rather than three measurements:
+///
+/// - **Every system runs at the same thread count.** Principle V requires
+///   symmetry: the incumbents are pinned to the engine's thread count at
+///   every point of the sweep, exactly as the headline comparison pins them
+///   to one.
+/// - **Every system runs on the same file, in the same harness, cold.** The
+///   engine's number is the lazy path's, because the lazy path is the one
+///   that reads the file during the query -- which is what the incumbents'
+///   cold numbers do.
+///
+/// The answers are cross-checked at every point. A sweep that published
+/// timings for systems computing different answers would be a sweep of
+/// nothing.
+fn run_sweep(
+    data: &Path,
+    query: BuiltinQueryArg,
+    threads: &str,
+    iterations: usize,
+    out: &Path,
+) -> Result<()> {
+    let counts = parse_thread_counts(threads)?;
+    let builtin = BuiltinQuery::from(query);
+    let definition = QUERIES.iter().find(|q| q.query == builtin).context("unknown query")?;
+
+    let dataset = Dataset::read_parquet(data)
+        .with_context(|| format!("could not read {}", data.display()))?;
+    let source = columnar_engine::ParquetSource::open(data)
+        .with_context(|| format!("could not open {}", data.display()))?;
+    let row_groups = source.row_groups();
+
+    let mut points = Vec::with_capacity(counts.len());
+    let mut reference: Option<String> = None;
+
+    for count in &counts {
+        // The engine.
+        let (_open_ms, engine_ms, engine_scan_ms, engine_result) =
+            measure_engine_lazy_at(definition, data, iterations, *count)?;
+
+        // The engine's answer at this thread count has to be the same as at
+        // every other one. The rows come back in the file's order whatever
+        // the thread count is, so any difference is a defect and not a
+        // rounding error.
+        let rendered = format!("{:?}", engine_result.groups);
+        match &reference {
+            None => reference = Some(rendered.clone()),
+            Some(expected) if *expected != rendered => {
+                anyhow::bail!(
+                    "the engine computed different answers at {count} threads: {rendered} against {expected}"
+                );
+            }
+            Some(_) => {}
+        }
+
+        // The incumbents, at the same thread count.
+        let mut incumbents = Vec::new();
+        for comparator in [Comparator::DuckDb, Comparator::Polars] {
+            let query_sql = ExternalQuery::new(
+                definition.query.name(),
+                definition.sql_for(comparator, external::Mode::Cold, data),
+            );
+            match external::run(
+                comparator,
+                external::Mode::Cold,
+                &query_sql,
+                data,
+                *count,
+                iterations,
+            ) {
+                Ok(outcome) => {
+                    if let (Some(ours), Some(theirs)) = (
+                        engine_result
+                            .groups
+                            .first()
+                            .and_then(|group| group.values.first())
+                            .and_then(|value| match value {
+                                columnar_engine::AggregateValue::Int(v) => Some(*v as f64),
+                                columnar_engine::AggregateValue::Float(v) => Some(*v),
+                                columnar_engine::AggregateValue::Null => None,
+                            }),
+                        outcome.result_value,
+                    ) {
+                        let tolerance = 1e-9 * ours.abs().max(1.0);
+                        if (ours - theirs).abs() > tolerance {
+                            anyhow::bail!(
+                                "{} computed {theirs} at {count} threads, the engine computed {ours}",
+                                comparator.name()
+                            );
+                        }
+                    }
+                    incumbents.push((comparator.name(), outcome.query_ms));
+                }
+                Err(error) => {
+                    eprintln!("skipping {} at {count} threads: {error}", comparator.name());
+                }
+            }
+        }
+
+        let duckdb_ms =
+            incumbents.iter().find(|(name, _)| *name == "duckdb").map_or(f64::NAN, |(_, ms)| *ms);
+        let polars_ms =
+            incumbents.iter().find(|(name, _)| *name == "polars").map_or(f64::NAN, |(_, ms)| *ms);
+
+        points.push(ScalingPoint {
+            threads: *count,
+            workers: source.worker_count(*count),
+            engine_ms,
+            engine_scan_ms,
+            duckdb_ms,
+            polars_ms,
+        });
+
+        println!(
+            "{count:>3} threads ({:>2} workers) \u{b7} engine {engine_ms:.1} ms \u{b7} scan {engine_scan_ms:.1} ms \u{b7} duckdb {duckdb_ms:.1} ms \u{b7} polars {polars_ms:.1} ms",
+            source.worker_count(*count)
+        );
+    }
+
+    let report = ScalingReport {
+        machine: MachineSpec::capture(counts.first().copied().unwrap_or(1)),
+        dataset: dataset_report(data, &dataset),
+        query: definition.query.name().to_owned(),
+        sql: definition.sql_for_display(),
+        mode: "cold".to_owned(),
+        row_groups,
+        points,
+    };
+    report
+        .write_json(out)
+        .with_context(|| format!("could not write the report to {}", out.display()))?;
+    println!();
+    println!("{}", report.render());
+    println!("report written to {}", out.display());
+    Ok(())
+}
+
+/// Parses a comma-separated list of thread counts.
+///
+/// A count of zero is refused: zero threads would mean no read at all, and a
+/// sweep that contained one would be a sweep of a different query.
+fn parse_thread_counts(text: &str) -> Result<Vec<usize>> {
+    let mut counts = Vec::new();
+    for part in text.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let count: usize =
+            trimmed.parse().with_context(|| format!("`{trimmed}` is not a thread count"))?;
+        if count == 0 {
+            anyhow::bail!("a thread count of zero would mean no read at all");
+        }
+        counts.push(count);
+    }
+    if counts.is_empty() {
+        anyhow::bail!("no thread counts to sweep");
+    }
+    counts.sort_unstable();
+    counts.dedup();
+    Ok(counts)
+}
+
 /// Measures the engine on one query, both ways.
 ///
 /// The eager path is measured the way the incumbents are: once with the data
@@ -645,17 +863,38 @@ fn measure_engine_lazy(
     data: &Path,
     iterations: usize,
 ) -> Result<(f64, f64, columnar_engine::AggregateResult)> {
+    let (open_ms, total_ms, _scan_ms, result) =
+        measure_engine_lazy_at(definition, data, iterations, 1)?;
+    Ok((open_ms, total_ms, result))
+}
+
+/// Measures the engine on one query, the lazy way, at a given thread count.
+///
+/// Returns `(open ms, the whole query ms, the scan stage ms, the result)`.
+///
+/// The **scan stage** is reported alongside the total because the scan is
+/// where the parallelism is. A reader who sees the total fall while the scan
+/// does not knows immediately that the parallelism went somewhere other than
+/// where they hoped.
+fn measure_engine_lazy_at(
+    definition: &QueryDefinition,
+    data: &Path,
+    iterations: usize,
+    threads: usize,
+) -> Result<(f64, f64, f64, columnar_engine::AggregateResult)> {
     let iterations = iterations.max(1);
+    let options = ExecOptions { threads: Some(threads.max(1)), ..ExecOptions::default() };
 
     // Warm-up: the first open pays for the page cache.
     {
         let source = columnar_engine::ParquetSource::open(data)
             .with_context(|| format!("could not open {}", data.display()))?;
-        let _ = columnar_engine::execute_on(&(definition.plan)(), &source, &ExecOptions::default());
+        let _ = columnar_engine::execute_on(&(definition.plan)(), &source, &options);
     }
 
     let mut opens = Vec::with_capacity(iterations);
     let mut totals = Vec::with_capacity(iterations);
+    let mut scans = Vec::with_capacity(iterations);
     let mut result = None;
 
     for _ in 0..iterations {
@@ -665,17 +904,30 @@ fn measure_engine_lazy(
         let open_ms = open_started.elapsed().as_secs_f64() * 1000.0;
 
         let query_started = std::time::Instant::now();
-        let value =
-            columnar_engine::execute_on(&(definition.plan)(), &source, &ExecOptions::default())
-                .context("the query failed")?;
+        let value = columnar_engine::execute_on(&(definition.plan)(), &source, &options)
+            .context("the query failed")?;
         let query_ms = query_started.elapsed().as_secs_f64() * 1000.0;
 
         opens.push(open_ms);
         totals.push(query_ms);
+        scans.push(scan_stage_ms(&value));
         result = Some(value);
     }
 
-    Ok((median(&opens), median(&totals), result.context("no result")?))
+    Ok((median(&opens), median(&totals), median(&scans), result.context("no result")?))
+}
+
+/// The engine's scan stage, in milliseconds.
+///
+/// The scan stage is the read: the Parquet decode, the pushed-down
+/// predicates and the merge. It is the stage the thread count acts on.
+fn scan_stage_ms(result: &columnar_engine::AggregateResult) -> f64 {
+    result
+        .plan_output
+        .stages
+        .iter()
+        .find(|stage| stage.stage == "scan")
+        .map_or(0.0, |stage| stage.elapsed.as_secs_f64() * 1000.0)
 }
 
 /// The median of a set of samples.

@@ -43,7 +43,11 @@ fn int_dataset(columns: &[(&str, Vec<i64>)]) -> Dataset {
 
 /// The scalar options, so a test never depends on what the machine can run.
 fn scalar() -> ExecOptions {
-    ExecOptions { memory_budget: MemoryBudget::default(), flavor: Some(Flavor::Scalar) }
+    ExecOptions {
+        memory_budget: MemoryBudget::default(),
+        flavor: Some(Flavor::Scalar),
+        ..ExecOptions::default()
+    }
 }
 
 /// Runs a body with the decode counter on.
@@ -368,8 +372,11 @@ fn a_plan_over_the_budget_is_rejected_before_it_does_any_work() {
         aggregate: Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
     };
 
-    let options =
-        ExecOptions { memory_budget: MemoryBudget { bytes: 1 }, flavor: Some(Flavor::Scalar) };
+    let options = ExecOptions {
+        memory_budget: MemoryBudget { bytes: 1 },
+        flavor: Some(Flavor::Scalar),
+        ..ExecOptions::default()
+    };
 
     let (result, counts) = counting(|| execute(&plan, &dataset, &options));
 
