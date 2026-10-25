@@ -11,6 +11,7 @@
 use std::fmt;
 
 use crate::plan::OPTIMIZATION_ORDER;
+use crate::pushdown::PushdownMetrics;
 
 /// Per-stage execution statistics, in execution order.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +60,12 @@ pub struct PlanOutput {
     /// aggregated is absent from this list, because its bytes were never
     /// fetched.
     pub columns_read: Vec<String>,
+    /// What the pushed-down predicates cost.
+    ///
+    /// The pushdown runs inside the reader, so its cost is otherwise folded
+    /// into the scan stage. This separates the two halves of the scan: the
+    /// reader's decode, and the comparison. They have different fixes.
+    pub pushdown_metrics: PushdownMetrics,
 }
 
 impl fmt::Display for PlanOutput {
@@ -130,6 +137,17 @@ impl fmt::Display for PlanOutput {
                 self.pushed_down.join(", ")
             }
         )?;
+        if self.pushdown_metrics.rows_evaluated > 0 {
+            let ps = self.pushdown_metrics.ps_per_row();
+            writeln!(
+                f,
+                "pushdown cost: {:.1} ms over {} rows ({}.{:02} ps/row)",
+                self.pushdown_metrics.predicate_time().as_secs_f64() * 1000.0,
+                self.pushdown_metrics.rows_evaluated,
+                ps / 1000,
+                ps % 1000
+            )?;
+        }
         writeln!(
             f,
             "estimated memory: {} (budget {})",

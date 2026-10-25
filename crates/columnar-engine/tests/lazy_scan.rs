@@ -372,6 +372,43 @@ fn a_predicate_on_an_unread_column_is_pushed_down() {
     );
 }
 
+/// The scan reports what the pushdown cost, and over how many rows.
+///
+/// The pushdown runs *inside* the reader, so without this the scan's elapsed
+/// time is a total that says nothing about which half of the work it was.
+/// A total is not an explanation, and this project does not publish one.
+#[test]
+fn the_scan_reports_what_the_pushdown_cost() {
+    let file = TempFile::new("pushdown-cost");
+    write(&file.path, &edge_case_batch());
+
+    let plan =
+        count_plan("l_shipdate", ComparisonOp::Lt, ScalarValue::Utf8("1995-01-01".to_owned()));
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    let result = execute_on(&plan, &source, &ExecOptions::default()).expect("the query runs");
+
+    let metrics = result.plan_output.pushdown_metrics;
+    assert!(metrics.rows_evaluated > 0, "the pushdown evaluated no rows: {metrics:?}");
+    assert!(metrics.batches > 0, "the pushdown evaluated no batches: {metrics:?}");
+    assert!(metrics.ps_per_row() > 0, "the pushdown reported no time per row: {metrics:?}");
+}
+
+/// The eager path pushes nothing, so it reports no pushdown cost.
+#[test]
+fn the_eager_path_reports_no_pushdown_cost() {
+    let file = TempFile::new("eager-no-pushdown");
+    write(&file.path, &edge_case_batch());
+
+    let plan =
+        count_plan("l_shipdate", ComparisonOp::Lt, ScalarValue::Utf8("1995-01-01".to_owned()));
+    let dataset = Dataset::read_parquet(&file.path).expect("the dataset can be read");
+    let result = execute(&plan, &dataset, &ExecOptions::default()).expect("the query runs");
+
+    let metrics = result.plan_output.pushdown_metrics;
+    assert_eq!(metrics.rows_evaluated, 0, "the eager path pushed something: {metrics:?}");
+    assert_eq!(metrics.batches, 0, "the eager path pushed something: {metrics:?}");
+}
+
 /// A plan that aggregates a column reads that column, and pushes the
 /// predicate that is not on it.
 #[test]

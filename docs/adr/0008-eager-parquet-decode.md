@@ -120,8 +120,8 @@ has two ways to read a file:
   the plan needs, and pushes the plan's predicates into the Parquet reader.
 
 The measurement this ADR recorded is the measurement the lazy path was built to remove. On the
-TPC-H `lineitem` file, Q6's cold query went from **1181 ms to 121 ms**, and the gap against
-DuckDB's cold 32 ms from **36.9× to 3.8×**. (Medians of three full runs; the derivation is in
+TPC-H `lineitem` file, Q6's cold query went from **1181 ms to 89 ms**, and the gap against
+DuckDB's cold 32 ms from **39.6× to 2.8×**. (Medians of three full runs; the derivation is in
 `PERF.md` and the raw reports are in `bench-results/`.)
 
 The eager path got faster too, as a side effect: the two paths now share one decode function, and

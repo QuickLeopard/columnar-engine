@@ -76,7 +76,7 @@ pub use memory::{MemoryBudget, MemoryError};
 pub use operators::aggregate::{AggregateResult, AggregateValue, Group};
 pub use operators::filter::FilterStats;
 pub use plan::{Aggregate, AggregateSpec, QueryPlan};
-pub use pushdown::PushdownPlan;
+pub use pushdown::{PushdownMetrics, PushdownPlan};
 pub use source::{ParquetSource, SourceColumn};
 
 /// Everything that can go wrong while executing a plan.
@@ -156,7 +156,11 @@ pub fn execute(
         elapsed: std::time::Duration::ZERO,
     };
 
-    let report = ScanReport { pushed_down: Vec::new(), columns_read: dataset.column_names() };
+    let report = ScanReport {
+        pushed_down: Vec::new(),
+        columns_read: dataset.column_names(),
+        pushdown_metrics: PushdownMetrics::default(),
+    };
 
     run_pipeline(&resolved, dataset, options, scan, report, estimate)
 }
@@ -191,8 +195,12 @@ pub fn execute_on(
     let resolved = plan.resolve_against(source)?;
     let decision = decide_scan(&resolved, source);
 
+    // The same flavor the filter would use, so the pushdown and the filter
+    // run the same kernel over the same values.
+    let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
+
     let scan_started = std::time::Instant::now();
-    let dataset = source.read(&decision.read, &decision.pushdown)?;
+    let dataset = source.read(&decision.read, &decision.pushdown, flavor)?;
     let scan_elapsed = scan_started.elapsed();
 
     // Every index the plan holds is a column of the *file*; the dataset holds
@@ -218,6 +226,7 @@ pub fn execute_on(
     let report = ScanReport {
         pushed_down: decision.pushdown_descriptions(),
         columns_read: source.column_names(&fetched_columns(&decision)),
+        pushdown_metrics: decision.pushdown.metrics(),
     };
 
     run_pipeline(&effective, &dataset, options, scan, report, estimate)
@@ -350,6 +359,8 @@ struct ScanReport {
     pushed_down: Vec<String>,
     /// The columns that were read from the file.
     columns_read: Vec<String>,
+    /// What the pushed-down predicates cost.
+    pushdown_metrics: PushdownMetrics,
 }
 
 /// Runs the pipeline over an already-resolved plan.
@@ -436,6 +447,7 @@ fn run_pipeline(
         kernel_flavor: operators::flavor_name(flavor).to_owned(),
         pushed_down: report.pushed_down,
         columns_read: report.columns_read,
+        pushdown_metrics: report.pushdown_metrics,
     };
 
     Ok(AggregateResult { groups, stages, plan_output })

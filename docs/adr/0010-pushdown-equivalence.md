@@ -67,25 +67,33 @@ The pushdown:
 
 **Accept the cost: no page-level pruning.** The `ArrowPredicate` path evaluates the predicate over the decoded batch, so the reader fetches the pages of the predicate's column. The engine does not prune, and does not pretend to.
 
-**What this cost turned out to be: nothing, on this file.** The cost was initially published as
-the cause of the remaining cold gap against DuckDB. That was wrong, and DuckDB's own plan says
-so: `Row Groups Scanned: 6 / 6`, `Data Read: 12.3 MB`. DuckDB prunes nothing here either,
-because the file has no page index — the generator writes `EnabledStatistics::Chunk` — so there
-is no page for either system to skip. Both systems read the same 12.3 MB and both decode every
-page of the two columns.
-
-The decision still stands on its own terms: the row-format predicate computes a different
-function, and that is a correctness problem, not a performance one. But the *performance* reason
-for preferring it turns out not to exist on this dataset, and the ADR should say so rather than
-borrow credit for a gap that has another cause. The real cause is measured in `PERF.md` §2c: the
-engine has one thread where DuckDB uses fourteen, and DuckDB gets 3.3× from that on this exact
-query.
-
-The row-format predicate remains available for a future increment — but if it is used, it will be
-for the reason that it prunes *where a page index exists*, not because this file would have
-benefited.
-
 **Then check the equivalence, rather than assert it.** The differential test in `crates/columnar-engine/tests/lazy_scan.rs` answers every operator, against NULLs, NaNs, a NaN threshold, a dictionary column and a plain UTF-8 column, over row counts of 0, 1, 2, 63, 64, 65, 127, 128, 129, 191, 192 and 193 — the boundaries of the 64-row block the kernel works in — and requires the lazy path and the eager path to agree, row for row, every time. `crates/columnar-cli/tests/lazy_scan.rs` does the same over the real generated file with the real Q6 plan.
+
+## Amendment — the pushdown now runs the engine's kernel
+
+**Amended 2026-10-25 by spec 003.** The decision above stands, and the reasoning behind it is
+now *stronger* than it was.
+
+The first version of the pushdown implemented the engine's rules in the pushdown module: its own
+`compare_f64`, its own NULL handling, its own NaN rule. It agreed with the filter because a
+differential test held it there. That is a weaker guarantee than it looks: two implementations
+of the same function, kept in agreement by a test.
+
+**The pushdown now runs the engine's own comparison kernel**, over Arrow's raw value slice, with
+the same flavor the filter would have used. The pushdown's float comparison is **deleted**. The
+module no longer contains a float comparison of its own, so there is nothing left to drift.
+
+The equivalence argument therefore changes shape. It used to be:
+
+> the pushdown implements the engine's rules, and a differential test holds it to them.
+
+It is now:
+
+> for numeric columns the pushdown **is** the filter's comparison code.
+
+The differential test is not weakened — it still runs, over every operator and every edge — but
+it now checks two paths that share a function, rather than two paths that have to be made to
+agree. See [spec 003](../../specs/003-kernel-pushdown/spec.md).
 
 ## Consequences
 
@@ -97,8 +105,16 @@ benefited.
 
 **Bad, and accepted.**
 
-- **No page-level pruning.** DuckDB reads the pages its predicates exclude; the engine reads all the pages of the columns it needs. On the TPC-H `lineitem` file this is part of the remaining difference, and `PERF.md` measures it rather than describing it.
-- **The predicate is evaluated over decoded Arrow arrays**, one row at a time. The engine's SIMD comparison kernel works on the engine's own chunk format, so it cannot be used here without first converting the column — which would cost more than the scalar comparison saves. The pushdown is therefore scalar, and the filter that runs behind it (when a predicate is not pushed) is not.
+- **No page-level pruning.** The engine reads all the pages of the columns it needs. DuckDB
+  prunes pages using the column index — *where one exists*. On the TPC-H `lineitem` file there
+  is none: the generator writes `EnabledStatistics::Chunk`, and DuckDB's own plan says
+  `Row Groups Scanned: 6 / 6`, `Data Read: 12.3 MB`. Both systems read the same bytes and
+  neither prunes anything, so this is **not** the gap between them. See `PERF.md` §2c.
+- **The predicate is evaluated over decoded Arrow arrays.** It used to be evaluated one row at a
+  time, in Rust, which was 6.4× slower than the engine's own filter on the same four predicates
+  over the same six million rows. **Amended by spec 003:** it now runs the engine's kernel over
+  Arrow's raw value slice, so it is the same comparison code the filter runs. The string path
+  is still scalar, because the kernel is numeric.
 
 **Neutral.**
 

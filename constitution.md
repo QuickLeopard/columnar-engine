@@ -34,6 +34,11 @@ implementations of it exist in this repository, and they MUST agree bit for bit,
 | Rust SIMD | `columnar-kernels/src/rust_simd.rs` | measures what the FFI seam costs |
 | C++ SIMD fallback | inside the C++ dispatch | the no-SIMD-machine path |
 
+The pushdown into the Parquet reader is **not** a sixth implementation. It runs the same kernel
+the filter runs, over the reader's own value slice, so that the two paths cannot disagree by
+construction. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md) and
+[spec 003](specs/003-kernel-pushdown/spec.md).
+
 - **MUST**: every implementation agree with the oracle, bit for bit, on every input.
 - **MUST**: this be **machine-checked in CI** by a differential test suite, not asserted in prose.
 - **MUST**: the C++ scalar reference be **branchless** and compute the same predicate as the SIMD

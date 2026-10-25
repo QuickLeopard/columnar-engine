@@ -41,6 +41,15 @@
 //! dictionary path does. Comparing 2,500 distinct dates once is not the same
 //! work as comparing 6,000,000 dates, and the engine would not accept a
 //! pushdown that quietly did the second.
+//!
+//! # What the pushdown costs
+//!
+//! The pushdown runs *inside* the Parquet reader, so its cost is otherwise
+//! invisible: it is part of the scan stage's elapsed time, and nothing says
+//! how much of that is the reader's decode and how much is the predicate. The
+//! two have different fixes -- one is a faster reader, the other a faster
+//! comparison -- so the engine measures them apart. [`PushdownMetrics`] is that
+//! measurement, and the plan output prints it.
 
 use arrow::array::{
     Array, BooleanArray, DictionaryArray, Float64Array, Int64Array, LargeStringArray, StringArray,
@@ -49,10 +58,85 @@ use arrow::buffer::{BooleanBuffer, Buffer};
 use arrow::datatypes::Int32Type;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use columnar_core::{ComparisonOp, DataType, ScalarValue};
+use columnar_core::{ComparisonOp, DataType, NullBitmap, ScalarValue};
+use columnar_kernels::Flavor;
 use parquet::arrow::arrow_reader::ArrowPredicate;
 use parquet::arrow::ProjectionMask;
 use parquet::schema::types::SchemaDescriptor;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+/// What the pushed-down predicates cost.
+///
+/// The pushdown is invisible in the scan stage's elapsed time: it is part of
+/// it, because it runs inside the reader. These numbers separate the two
+/// halves, because they have different fixes. A slower decode is a reader
+/// problem; a slower comparison is a kernel problem.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PushdownMetrics {
+    /// The time spent evaluating the predicates.
+    pub predicate_ns: u64,
+    /// The number of rows the predicates were evaluated over.
+    pub rows_evaluated: u64,
+    /// The number of batches the predicates were evaluated over.
+    pub batches: u64,
+}
+
+impl PushdownMetrics {
+    /// The time spent evaluating the predicates.
+    #[must_use]
+    pub fn predicate_time(&self) -> Duration {
+        Duration::from_nanos(self.predicate_ns)
+    }
+
+    /// The mean time per row the predicates were evaluated over, in
+    /// picoseconds.
+    ///
+    /// Integer arithmetic, deliberately: this is a diagnostic, and a float
+    /// would only add a rounding question to a figure that is already an
+    /// average over millions of rows.
+    ///
+    /// Zero when no row was evaluated, rather than a division by zero.
+    #[must_use]
+    pub fn ps_per_row(&self) -> u64 {
+        if self.rows_evaluated == 0 {
+            return 0;
+        }
+        self.predicate_ns.saturating_mul(1_000) / self.rows_evaluated
+    }
+}
+
+/// The accumulator the predicates write into.
+///
+/// The reader owns the batch it hands a predicate, so the counter is shared
+/// rather than owned. It is interior-mutable and lock-free: the predicates run
+/// on the reader's thread, and the totals are read once, after the read.
+#[derive(Debug, Default)]
+struct PushdownCounter {
+    predicate_ns: AtomicU64,
+    rows_evaluated: AtomicU64,
+    batches: AtomicU64,
+}
+
+impl PushdownCounter {
+    /// Records one predicate evaluation.
+    fn record(&self, elapsed: Duration, rows: u64) {
+        let nanos = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+        self.predicate_ns.fetch_add(nanos, Ordering::Relaxed);
+        self.rows_evaluated.fetch_add(rows, Ordering::Relaxed);
+        self.batches.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The totals so far.
+    fn snapshot(&self) -> PushdownMetrics {
+        PushdownMetrics {
+            predicate_ns: self.predicate_ns.load(Ordering::Relaxed),
+            rows_evaluated: self.rows_evaluated.load(Ordering::Relaxed),
+            batches: self.batches.load(Ordering::Relaxed),
+        }
+    }
+}
 
 /// A predicate that has been checked against the file's schema and can be
 /// evaluated inside the Parquet reader.
@@ -113,10 +197,23 @@ impl Pushdown {
 }
 
 /// The set of predicates to push into one read.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct PushdownPlan {
     /// The predicates, in the order the engine will apply them.
     predicates: Vec<Pushdown>,
+    /// Where the predicates report what they cost.
+    counter: Arc<PushdownCounter>,
+}
+
+/// Two plans are equal when they push the same predicates.
+///
+/// The cost counter is instrumentation, not part of the plan: it changes as
+/// the predicates run, and two plans that push the same predicates are the
+/// same plan.
+impl PartialEq for PushdownPlan {
+    fn eq(&self, other: &Self) -> bool {
+        self.predicates == other.predicates
+    }
 }
 
 impl PushdownPlan {
@@ -154,6 +251,14 @@ impl PushdownPlan {
         self.predicates.iter_mut().find(|predicate| predicate.column == column)
     }
 
+    /// What the pushed-down predicates have cost so far.
+    ///
+    /// Zero before the read, and the measurement after it.
+    #[must_use]
+    pub fn metrics(&self) -> PushdownMetrics {
+        self.counter.snapshot()
+    }
+
     /// Builds the reader's row filter.
     ///
     /// Each predicate gets its own projection mask over the single column it
@@ -163,6 +268,7 @@ impl PushdownPlan {
     pub fn to_row_filter(
         &self,
         descriptor: &SchemaDescriptor,
+        flavor: Flavor,
     ) -> parquet::arrow::arrow_reader::RowFilter {
         let predicates: Vec<Box<dyn ArrowPredicate>> = self
             .predicates
@@ -173,6 +279,8 @@ impl PushdownPlan {
                     projection,
                     name: predicate.name.clone(),
                     comparisons: predicate.comparisons.clone(),
+                    flavor,
+                    counter: Arc::clone(&self.counter),
                 }) as Box<dyn ArrowPredicate>
             })
             .collect();
@@ -200,6 +308,14 @@ impl MatchMask {
     /// An empty mask over `len` rows.
     fn new(len: usize) -> Self {
         Self { words: vec![0u64; len.div_ceil(64)], len }
+    }
+
+    /// A mask over `len` rows, from bit-packed words.
+    ///
+    /// The words are LSB-first, which is the layout the kernel writes and the
+    /// layout Arrow's boolean buffer uses, so no conversion is needed.
+    fn from_words(words: Vec<u64>, len: usize) -> Self {
+        Self { words, len }
     }
 
     /// Sets the bit for `row`.
@@ -230,6 +346,10 @@ struct EnginePredicate {
     name: String,
     /// The comparisons on this column, `AND`ed.
     comparisons: Vec<Comparison>,
+    /// Which kernel flavor evaluates the comparisons.
+    flavor: Flavor,
+    /// Where the evaluation reports what it cost.
+    counter: Arc<PushdownCounter>,
 }
 
 impl ArrowPredicate for EnginePredicate {
@@ -239,7 +359,10 @@ impl ArrowPredicate for EnginePredicate {
 
     fn evaluate(&mut self, batch: RecordBatch) -> Result<BooleanArray, ArrowError> {
         let column = find_column(&batch, &self.name)?;
-        evaluate(column.as_ref(), &self.comparisons)
+        let started = std::time::Instant::now();
+        let result = evaluate(column.as_ref(), &self.comparisons, self.flavor);
+        self.counter.record(started.elapsed(), u64::try_from(column.len()).unwrap_or(u64::MAX));
+        result
     }
 }
 
@@ -261,21 +384,26 @@ fn find_column<'a>(
 /// engine's semantics.
 ///
 /// The result has no nulls: `false` means the row does not match.
-fn evaluate(column: &dyn Array, comparisons: &[Comparison]) -> Result<BooleanArray, ArrowError> {
+fn evaluate(
+    column: &dyn Array,
+    comparisons: &[Comparison],
+    flavor: Flavor,
+) -> Result<BooleanArray, ArrowError> {
     // A NaN threshold matches nothing, for every operator. That is decided
-    // once, here, rather than once per row.
+    // once, here, rather than once per row. The kernel knows the rule too,
+    // but deciding it here keeps the answer independent of the flavor.
     if comparisons.iter().any(|comparison| is_nan_threshold(&comparison.threshold)) {
         return Ok(MatchMask::new(column.len()).into_array());
     }
 
     if let Some(array) = column.as_any().downcast_ref::<Int64Array>() {
-        return evaluate_int64(array, comparisons);
+        return evaluate_int64(array, comparisons, flavor);
     }
     if let Some(array) = column.as_any().downcast_ref::<Float64Array>() {
-        return evaluate_float64(array, comparisons);
+        return evaluate_float64(array, comparisons, flavor);
     }
     if let Some(array) = column.as_any().downcast_ref::<DictionaryArray<Int32Type>>() {
-        return evaluate_dictionary(array, comparisons);
+        return evaluate_dictionary(array, comparisons, flavor);
     }
     if let Some(array) = column.as_any().downcast_ref::<StringArray>() {
         return evaluate_string(array, comparisons);
@@ -291,91 +419,172 @@ fn evaluate(column: &dyn Array, comparisons: &[Comparison]) -> Result<BooleanArr
 }
 
 /// Evaluates the comparisons over an integer column.
+///
+/// The comparisons run through the **engine's own kernel**, over Arrow's raw
+/// value slice. That is not only an optimisation: it is what makes the
+/// pushdown and the filter the *same function*. The kernel's contract **is**
+/// the engine's comparison semantics -- a NULL never matches, a NaN never
+/// matches, `-0.0` and `+0.0` compare equal -- and the filter already runs
+/// it. A pushdown running its own comparisons could agree with the filter
+/// only by luck; this one cannot disagree with it at all.
 fn evaluate_int64(
     array: &Int64Array,
     comparisons: &[Comparison],
+    flavor: Flavor,
 ) -> Result<BooleanArray, ArrowError> {
-    let mut mask = MatchMask::new(array.len());
-    let has_nulls = array.null_count() > 0;
-    for row in 0..array.len() {
-        if has_nulls && array.is_null(row) {
-            continue;
+    let rows = array.len();
+    let validity = validity_of(array);
+    let mut mask = vec![0u64; rows.div_ceil(64)];
+    let mut first = true;
+    for comparison in comparisons {
+        let ScalarValue::Int64(bound) = comparison.threshold else {
+            return Err(mismatch(&array, comparison.threshold.data_type()));
+        };
+        let mut word = vec![0u64; rows.div_ceil(64)];
+        columnar_kernels::compare_i64_into(
+            flavor,
+            array.values(),
+            comparison.op,
+            bound,
+            validity.as_ref(),
+            &mut word,
+        );
+        if first {
+            mask.copy_from_slice(&word);
+            first = false;
+        } else {
+            and_words(&mut mask, &word);
         }
-        let value = array.value(row);
-        let mut matched = true;
-        for comparison in comparisons {
-            let ScalarValue::Int64(bound) = comparison.threshold else {
-                return Err(mismatch(&array, comparison.threshold.data_type()));
-            };
-            if !compare_i64(value, comparison.op, bound) {
-                matched = false;
-                break;
-            }
-        }
-        mask.set(row, matched);
     }
-    Ok(mask.into_array())
+    Ok(MatchMask::from_words(mask, rows).into_array())
 }
 
 /// Evaluates the comparisons over a floating-point column.
+///
+/// See [`evaluate_int64`] for why this runs the kernel rather than a
+/// comparison of its own. The NaN rule comes with it: a comparison involving
+/// a NaN value or a NaN threshold never matches, for every operator.
 fn evaluate_float64(
     array: &Float64Array,
     comparisons: &[Comparison],
+    flavor: Flavor,
 ) -> Result<BooleanArray, ArrowError> {
-    let mut mask = MatchMask::new(array.len());
-    let has_nulls = array.null_count() > 0;
-    for row in 0..array.len() {
-        if has_nulls && array.is_null(row) {
-            continue;
+    let rows = array.len();
+    let validity = validity_of(array);
+    let mut mask = vec![0u64; rows.div_ceil(64)];
+    let mut first = true;
+    for comparison in comparisons {
+        let ScalarValue::Float64(bound) = comparison.threshold else {
+            return Err(mismatch(&array, comparison.threshold.data_type()));
+        };
+        let mut word = vec![0u64; rows.div_ceil(64)];
+        columnar_kernels::compare_f64_into(
+            flavor,
+            array.values(),
+            comparison.op,
+            bound,
+            validity.as_ref(),
+            &mut word,
+        );
+        if first {
+            mask.copy_from_slice(&word);
+            first = false;
+        } else {
+            and_words(&mut mask, &word);
         }
-        let value = array.value(row);
-        let mut matched = true;
-        for comparison in comparisons {
-            let ScalarValue::Float64(bound) = comparison.threshold else {
-                return Err(mismatch(&array, comparison.threshold.data_type()));
-            };
-            if !compare_f64(value, comparison.op, bound) {
-                matched = false;
-                break;
+    }
+    Ok(MatchMask::from_words(mask, rows).into_array())
+}
+
+/// The conjunction of two match masks.
+fn and_words(mask: &mut [u64], other: &[u64]) {
+    for (kept, computed) in mask.iter_mut().zip(other.iter()) {
+        *kept &= computed;
+    }
+}
+
+/// The validity of an Arrow array, in the engine's layout.
+///
+/// Arrow's null buffer and the engine's `NullBitmap` are both bit-packed and
+/// LSB-first, with a set bit meaning "this row holds a value", so the common
+/// case is a straight copy. Arrow's buffer may start at a bit offset, which
+/// the engine's does not, so an offset buffer is shifted down into place.
+fn validity_of(array: &dyn Array) -> Option<NullBitmap> {
+    let nulls = array.nulls()?;
+    let len = nulls.len();
+    let buffer = nulls.inner();
+    let offset = buffer.offset();
+    let bytes = buffer.values();
+    let mut words = vec![0u64; NullBitmap::words_for(len)];
+    if offset % 8 == 0 {
+        // Arrow packs a bitmap into `u64` words in little-endian byte order,
+        // and the buffer is a whole number of *bytes* rather than of words --
+        // a small array's null buffer is one byte long. The words are
+        // assembled here.
+        let start = offset / 8;
+        for (index, chunk) in bytes[start.min(bytes.len())..].chunks(8).enumerate() {
+            let mut buffer = [0u8; 8];
+            buffer[..chunk.len()].copy_from_slice(chunk);
+            words[index] = u64::from_le_bytes(buffer);
+        }
+    } else {
+        // A bit offset: the bits are shifted down into place, one at a time.
+        // The Parquet reader never produces one; this is the path that keeps
+        // the answer right if something else does.
+        for bit in 0..len {
+            let source = offset + bit;
+            let (byte_index, bit_index) = (source / 8, source % 8);
+            let set = bytes.get(byte_index).is_some_and(|byte| (byte >> bit_index) & 1 == 1);
+            if set {
+                words[bit / 64] |= 1u64 << (bit % 64);
             }
         }
-        mask.set(row, matched);
     }
-    Ok(mask.into_array())
+    Some(NullBitmap::from_words(&words, len))
 }
 
 /// Evaluates the comparisons over a dictionary-encoded column.
 ///
 /// One comparison per distinct value, then a map through the indices.
+///
+/// The map is branchless and accumulates a word at a time, exactly as the
+/// engine's own dictionary path does: a date column's dictionary indices run
+/// in long stretches, so a conditional bit set is a mispredicted branch every
+/// time the run ends. The engine's path was rewritten for that reason and
+/// cost 41 ms before it was fixed; the pushdown pays the same price for the
+/// same mistake if it is written the obvious way.
 fn evaluate_dictionary(
     array: &DictionaryArray<Int32Type>,
     comparisons: &[Comparison],
+    flavor: Flavor,
 ) -> Result<BooleanArray, ArrowError> {
     let distinct = string_matches(array.values().as_ref(), comparisons)?;
     let keys = array.keys();
-    let mut mask = MatchMask::new(keys.len());
-    if keys.null_count() == 0 {
-        for (row, &key) in keys.values().iter().enumerate() {
-            let matched = usize::try_from(key)
-                .ok()
-                .and_then(|index| distinct.get(index).copied())
-                .unwrap_or(false);
-            mask.set(row, matched);
+    let rows = keys.len();
+    let indices: &[i32] = keys.values();
+    let mut mask = vec![0u64; rows.div_ceil(64)];
+    for (chunk_index, chunk) in indices.chunks(64).enumerate() {
+        let mut word = 0u64;
+        for (bit, &key) in chunk.iter().enumerate() {
+            let entry = usize::try_from(key).unwrap_or(usize::MAX);
+            let matched = u64::from(distinct.get(entry).copied().unwrap_or(false));
+            word |= matched << bit;
         }
-    } else {
-        for row in 0..keys.len() {
-            if keys.is_null(row) {
-                continue;
-            }
-            let key = keys.value(row);
-            let matched = usize::try_from(key)
-                .ok()
-                .and_then(|index| distinct.get(index).copied())
-                .unwrap_or(false);
-            mask.set(row, matched);
+        if let Some(slot) = mask.get_mut(chunk_index) {
+            *slot = word;
         }
     }
-    Ok(mask.into_array())
+    // A NULL row is NULL regardless of what its dictionary entry says, so the
+    // validity mask is applied to the answer rather than to the lookup.
+    if let Some(validity) = validity_of(array) {
+        for (word_index, word) in mask.iter_mut().enumerate() {
+            if let Some(validity_word) = validity.words().get(word_index) {
+                *word &= validity_word;
+            }
+        }
+    }
+    let _ = flavor;
+    Ok(MatchMask::from_words(mask, rows).into_array())
 }
 
 /// Evaluates the comparisons over a UTF-8 column.
@@ -383,6 +592,15 @@ fn evaluate_string(
     array: &StringArray,
     comparisons: &[Comparison],
 ) -> Result<BooleanArray, ArrowError> {
+    // The threshold's type is an invariant of the predicate, so it is checked
+    // once here rather than once per row.
+    let mut bounds = Vec::with_capacity(comparisons.len());
+    for comparison in comparisons {
+        let ScalarValue::Utf8(bound) = &comparison.threshold else {
+            return Err(mismatch(&array, comparison.threshold.data_type()));
+        };
+        bounds.push((comparison.op, bound.as_str()));
+    }
     let mut mask = MatchMask::new(array.len());
     let has_nulls = array.null_count() > 0;
     for row in 0..array.len() {
@@ -391,11 +609,8 @@ fn evaluate_string(
         }
         let value = array.value(row);
         let mut matched = true;
-        for comparison in comparisons {
-            let ScalarValue::Utf8(bound) = &comparison.threshold else {
-                return Err(mismatch(&array, comparison.threshold.data_type()));
-            };
-            if !compare_str(value, comparison.op, bound) {
+        for (op, bound) in &bounds {
+            if !compare_str(value, *op, bound) {
                 matched = false;
                 break;
             }
@@ -410,6 +625,15 @@ fn evaluate_large_string(
     array: &LargeStringArray,
     comparisons: &[Comparison],
 ) -> Result<BooleanArray, ArrowError> {
+    // The threshold's type is an invariant of the predicate, so it is checked
+    // once here rather than once per row.
+    let mut bounds = Vec::with_capacity(comparisons.len());
+    for comparison in comparisons {
+        let ScalarValue::Utf8(bound) = &comparison.threshold else {
+            return Err(mismatch(&array, comparison.threshold.data_type()));
+        };
+        bounds.push((comparison.op, bound.as_str()));
+    }
     let mut mask = MatchMask::new(array.len());
     let has_nulls = array.null_count() > 0;
     for row in 0..array.len() {
@@ -418,11 +642,8 @@ fn evaluate_large_string(
         }
         let value = array.value(row);
         let mut matched = true;
-        for comparison in comparisons {
-            let ScalarValue::Utf8(bound) = &comparison.threshold else {
-                return Err(mismatch(&array, comparison.threshold.data_type()));
-            };
-            if !compare_str(value, comparison.op, bound) {
+        for (op, bound) in &bounds {
+            if !compare_str(value, *op, bound) {
                 matched = false;
                 break;
             }
@@ -467,46 +688,6 @@ fn string_matches(values: &dyn Array, comparisons: &[Comparison]) -> Result<Vec<
 /// Whether the threshold is a NaN.
 fn is_nan_threshold(threshold: &ScalarValue) -> bool {
     matches!(threshold, ScalarValue::Float64(value) if value.is_nan())
-}
-
-/// Compares two 64-bit integers.
-fn compare_i64(value: i64, op: ComparisonOp, threshold: i64) -> bool {
-    match op {
-        ComparisonOp::Lt => value < threshold,
-        ComparisonOp::LtEq => value <= threshold,
-        ComparisonOp::Gt => value > threshold,
-        ComparisonOp::GtEq => value >= threshold,
-        ComparisonOp::Eq => value == threshold,
-        ComparisonOp::Ne => value != threshold,
-    }
-}
-
-/// Compares two doubles, with the engine's NaN rule.
-///
-/// A NaN value or a NaN threshold **never matches**, for every operator
-/// including `!=`. That is stricter than IEEE-754, where `NaN != 5.0` is
-/// true, and it is the rule the comparison kernel implements.
-///
-/// The `float_cmp` suggestion is wrong here, and deliberately overridden:
-/// it suggests comparing floats "within some margin of error". In a query
-/// engine that would change what the query *means*: `WHERE x = 0.1` is an
-/// equality test on the stored bits, not a tolerance test. An epsilon
-/// comparison would silently return different rows than `DuckDB`. The same
-/// reasoning is recorded on the kernel's oracle.
-#[allow(clippy::float_cmp)]
-fn compare_f64(value: f64, op: ComparisonOp, threshold: f64) -> bool {
-    // The threshold's own NaN is settled before the loop, so it is not
-    // checked here.
-    match op {
-        // IEEE-754 already says every ordered comparison with a NaN value is
-        // false, so only `!=` needs the explicit check.
-        ComparisonOp::Lt => value < threshold,
-        ComparisonOp::LtEq => value <= threshold,
-        ComparisonOp::Gt => value > threshold,
-        ComparisonOp::GtEq => value >= threshold,
-        ComparisonOp::Eq => value == threshold,
-        ComparisonOp::Ne => !value.is_nan() && value != threshold,
-    }
 }
 
 /// Compares two strings, byte-wise, as `DuckDB`'s binary collation does.

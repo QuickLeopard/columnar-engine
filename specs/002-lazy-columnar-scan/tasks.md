@@ -91,6 +91,9 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done, and the gap is written
 - [x] The cold `q6` number falls from the eager path's **1181 ms** to the lazy path's **121 ms** —
       a **9.7×** reduction — and the gap against DuckDB's cold 32 ms from **36.9× to 3.8×**. See
       `PERF.md`; the figures are the median of three full runs, and the raw reports are committed.
+      **Superseded by spec 003**, which took the lazy path from 121 ms to **89 ms** — a 14.2×
+      reduction, and **2.8×** against DuckDB — by running the engine's own kernel in the
+      pushdown. The published figures are the later ones.
 - [x] The finding: the lazy path is now bound by the **Parquet reader**, not by the engine's
       operators. Three defects were found and fixed on the way:
   - [x] the reader decoded each predicate column twice, once per predicate;
@@ -111,8 +114,9 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done, and the gap is written
 - [ ] **Parallel decode. This is the gap.** `DuckDB` gets **3.3×** from fourteen cores on the
       identical query and file — 32.0 ms to 10.0 ms — and the engine has one thread, because the
       comparison pins both incumbents to one thread to keep it like-for-like. The reader-speed
-      term is closed (the engine's full-file decode is at parity with DuckDB's), so this is
-      almost exactly what stands between the engine and DuckDB on the cold path.
+      term is closed (the engine's full-file decode is now *ahead* of DuckDB's), so this is
+      almost exactly what stands between the engine and DuckDB on the cold path: 89.1 ms
+      against 32.0 ms, of which 3.3× is the parallelism the engine has not implemented.
 - [ ] **The lazy path materialises columns nobody reads.** The pushed predicate columns are
       built into engine chunks even when the query is `count(*)`, which needs no column at all.
       The plan output says `materialised columns: (none)` — and the reader still built two.

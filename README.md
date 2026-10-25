@@ -49,22 +49,29 @@ $ just compare
 cold · read the Parquet file and answer in one go
 query          engine   engine-lazy   duckdb   polars
 --------------------------------------------------------
-scan        1205.8           0.1      2.0      1.1
-filter-numeric     1212.8          40.4     22.0     43.8
-filter-string      1202.2          42.4     21.0    161.1
-filter-range       1220.7         129.5     31.0     15.8
-q6          1181.1         121.5     32.0    190.8
+scan        1202.6           0.1      2.0      1.0
+filter-numeric     1245.5          21.1     22.0     45.4
+filter-string      1211.5          31.9     23.0    171.3
+filter-range       1328.1         101.7     33.0     17.0
+q6          1267.8          89.1     32.0    191.1
 ```
 
-**The lazy path is 9.7× faster than the eager one on `q6`**, and it beats Polars on every cold
-query except `filter-range`. It does not beat DuckDB: the gap falls from 36.9× to 3.8×. That
-3.8× is not pruning — DuckDB prunes nothing on this file either (its own plan says `Row Groups
-Scanned: 6 / 6`, and the file has no page index). It is **threads**: DuckDB gets 3.3× from
-fourteen cores on the identical query, 32.0 ms to 10.0 ms, and this engine has one. The
-reader-speed term is closed — the engine's full-file decode is now at parity with DuckDB's.
-Measured and attributed in [`PERF.md`](PERF.md), not glossed.
+**The lazy path is 14.2× faster than the eager one on `q6`**, and it beats Polars on every cold
+query except `filter-range`. It beats DuckDB on `filter-numeric` — narrowly, 21.1 ms against
+22.0 ms, inside DuckDB's own spread — and on `scan`. On `q6` it is 2.8× behind, and that 2.8×
+is not pruning: DuckDB prunes nothing on this file either (its own plan says `Row Groups Scanned:
+6 / 6`, and the file has no page index). It is **threads**: DuckDB gets 3.3× from fourteen cores
+on the identical query, 32.0 ms to 10.0 ms, and this engine has one. The reader-speed term is
+closed — the engine's full-file decode is now *ahead* of DuckDB's. Measured and attributed in
+[`PERF.md`](PERF.md), not glossed.
 
-**The eager path got faster too** — 1921 ms to 1181 ms — because the two paths now share one
+**The pushdown runs the engine's own comparison kernel**, over Arrow's raw value slice — so the
+pushdown and the filter are no longer two implementations that have to be made to agree. They are
+one implementation. That took the pushdown from 42.9 ms to 6.1 ms on `q6`, and it is why the
+equivalence is now structural rather than merely tested. See
+[ADR-0010](docs/adr/0010-pushdown-equivalence.md).
+
+**The eager path got faster too** — 1921 ms to 1203 ms — because the two paths now share one
 decode function, and that function stopped copying a dictionary column's distinct values out of
 every batch. The lazy path never paid that cost; the eager path paid it 5,860 times over.
 Putting the copy back and re-measuring gives 1890 ms, so the 1.60× is a measurement rather than
@@ -95,6 +102,7 @@ crates/
 docs/adr/            the decision record
 specs/001-columnar-core/  the spec, the plan, the tasks
 specs/002-lazy-columnar-scan/  the lazy scan: the plan, the pushdown, the equivalence test
+specs/003-kernel-pushdown/  the pushdown runs the engine's own kernel
 ```
 
 **One predicate, five implementations, one answer.** The comparison kernel is the project. There
@@ -228,9 +236,9 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel |
 | Increment | storage → filter → project → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 109, all green, including the differential kernel suite, the lazy-scan differential suite and the x86-64 cross-check |
+| Tests | 111, all green, including the differential kernel suite, the lazy-scan differential suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Next | page-level pruning, the projection/aggregate fusion, the x86-64 measurement |

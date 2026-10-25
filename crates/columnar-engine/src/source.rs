@@ -50,6 +50,7 @@ use parquet::arrow::ProjectionMask;
 use crate::dataset::{decode_batches, Dataset, DatasetError};
 use crate::plan::ColumnSchema;
 use crate::pushdown::PushdownPlan;
+use columnar_kernels::Flavor;
 
 /// A column of a [`ParquetSource`].
 #[derive(Debug, Clone, PartialEq)]
@@ -187,6 +188,7 @@ impl ParquetSource {
         &self,
         columns: &[usize],
         pushdown: &PushdownPlan,
+        flavor: Flavor,
     ) -> Result<Dataset, DatasetError> {
         let file = File::open(&self.path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
@@ -199,8 +201,11 @@ impl ParquetSource {
         let (mask, filter) = {
             let descriptor = builder.parquet_schema();
             let mask = ProjectionMask::roots(descriptor, columns.iter().copied());
-            let filter =
-                if pushdown.is_empty() { None } else { Some(pushdown.to_row_filter(descriptor)) };
+            let filter = if pushdown.is_empty() {
+                None
+            } else {
+                Some(pushdown.to_row_filter(descriptor, flavor))
+            };
             (mask, filter)
         };
 
