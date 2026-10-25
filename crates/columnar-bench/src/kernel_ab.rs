@@ -44,6 +44,7 @@
 // which is not a number this benchmark can reach.
 #![allow(clippy::cast_precision_loss)]
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use columnar_core::ComparisonOp;
@@ -182,6 +183,73 @@ impl KernelAb {
             threshold,
             flavors: results,
         }
+    }
+
+    /// One independent sample per timed block, per flavor.
+    ///
+    /// The A/B reports one number per flavor; the performance gate needs the
+    /// *samples*, because a statistical test compares distributions and a
+    /// median of each side would throw away exactly the information the test
+    /// is about. A "block" is the same shape as one A/B measurement -- a
+    /// warm-up pass and then `iterations` timed passes -- so a block is a
+    /// stable measurement and the blocks are what vary.
+    ///
+    /// The samples are rows per second, which is the direction a regression
+    /// lies in: lower is slower.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the SIMD probe is overridden -- see
+    /// [`crate::machine::FORCED_SIMD_REFUSAL`] -- or if a block's number of
+    /// matching rows disagrees with another block's.
+    #[must_use]
+    pub fn measure_samples(
+        values: &[f64],
+        op: ComparisonOp,
+        threshold: f64,
+        iterations: usize,
+        blocks: usize,
+    ) -> BTreeMap<String, Vec<f64>> {
+        assert!(
+            !crate::machine::simd_probe_is_overridden(),
+            "{}",
+            crate::machine::FORCED_SIMD_REFUSAL
+        );
+        let iterations = iterations.max(1);
+        let blocks = blocks.max(1);
+        let mut buffer = vec![0u64; values.len().div_ceil(64)];
+
+        let mut samples: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+        for flavor in Flavor::all() {
+            let mut per_block = Vec::with_capacity(blocks);
+            let mut expected: Option<u64> = None;
+            for _ in 0..blocks {
+                let (ns_per_row, matches) =
+                    Self::time_one(values, op, threshold, iterations, flavor, &mut buffer);
+
+                // The harness checks itself: every block must agree on the
+                // number of matching rows. A flavor that computed a
+                // different predicate would otherwise publish a faster,
+                // wrong number.
+                match expected {
+                    None => expected = Some(matches),
+                    Some(previous) => assert_eq!(
+                        matches,
+                        previous,
+                        "flavor `{}` matched {matches} rows in one block and {previous} in another",
+                        flavor.name()
+                    ),
+                }
+
+                per_block.push(if ns_per_row > 0.0 {
+                    1_000_000_000.0 / ns_per_row
+                } else {
+                    f64::INFINITY
+                });
+            }
+            samples.insert(flavor.name().to_owned(), per_block);
+        }
+        samples
     }
 
     /// Times one flavor and returns (ns per row, matches).

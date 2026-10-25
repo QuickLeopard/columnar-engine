@@ -106,6 +106,41 @@ enum Command {
         out: PathBuf,
     },
 
+    /// Check the current measurement against the stored performance baseline.
+    ///
+    /// This measures the machine, so it is a command and not a test: a shared
+    /// machine is noisy, and a gate that fails at random is a gate nobody
+    /// trusts.
+    Gate {
+        /// The Parquet file to read.
+        #[arg(long, default_value = "data/lineitem.parquet")]
+        data: PathBuf,
+        /// How many rows to process per pass.
+        #[arg(long, default_value_t = 20_000_000)]
+        rows: usize,
+        /// How many timed passes to make per block.
+        #[arg(long, default_value_t = 5)]
+        iterations: usize,
+        /// How many independent blocks to measure.
+        #[arg(long, default_value_t = 32)]
+        blocks: usize,
+        /// Which column to filter.
+        #[arg(long, default_value = "l_discount")]
+        column: String,
+        /// The threshold to compare against.
+        #[arg(long, default_value_t = 0.04)]
+        threshold: f64,
+        /// The baseline to compare against.
+        #[arg(long, default_value = "bench-results/kernel-baseline.json")]
+        baseline: PathBuf,
+        /// Compare even if the baseline was measured on another machine.
+        #[arg(long, default_value_t = false)]
+        allow_different_machine: bool,
+        /// Write the current measurement here, as a new baseline.
+        #[arg(long)]
+        write_baseline: Option<PathBuf>,
+    },
+
     /// Compare this engine against `DuckDB` and `Polars` on the same file.
     Compare {
         /// The Parquet file to read.
@@ -168,7 +203,7 @@ fn run(cli: Cli) -> Result<()> {
     // -- under Rosetta 2 the override points at an emulator. The check lives
     // here as well as in the harness, so the CLI can say why rather than
     // panic.
-    if matches!(cli.command, Command::Bench { .. } | Command::Compare { .. })
+    if matches!(cli.command, Command::Bench { .. } | Command::Compare { .. } | Command::Gate { .. })
         && columnar_bench::machine::simd_probe_is_overridden()
     {
         anyhow::bail!("{}", columnar_bench::machine::FORCED_SIMD_REFUSAL);
@@ -184,6 +219,27 @@ fn run(cli: Cli) -> Result<()> {
         Command::Bench { data, rows, iterations, column, threshold, out } => {
             run_bench(&data, rows, iterations, &column, threshold, &out)
         }
+        Command::Gate {
+            data,
+            rows,
+            iterations,
+            blocks,
+            column,
+            threshold,
+            baseline,
+            allow_different_machine,
+            write_baseline,
+        } => run_gate(&GateOptions {
+            data: &data,
+            rows,
+            iterations,
+            blocks,
+            column: &column,
+            threshold,
+            baseline_path: &baseline,
+            allow_different_machine,
+            write_baseline: write_baseline.as_deref(),
+        }),
         Command::Compare { data, iterations, threads, out } => {
             run_compare(&data, iterations, threads, &out)
         }
@@ -652,5 +708,221 @@ fn dataset_report(path: &Path, dataset: &Dataset) -> DatasetReport {
         scale_factor: manifest.as_ref().map(|m| m.scale_factor),
         seed: manifest.as_ref().map(|m| m.seed),
         null_rate: manifest.as_ref().map(|m| m.null_rate),
+    }
+}
+
+/// The options the performance gate runs with.
+struct GateOptions<'a> {
+    /// The Parquet file to read.
+    data: &'a Path,
+    /// How many rows to process per pass.
+    rows: usize,
+    /// How many timed passes to make per block.
+    iterations: usize,
+    /// How many independent blocks to measure.
+    blocks: usize,
+    /// Which column to filter.
+    column: &'a str,
+    /// The threshold to compare against.
+    threshold: f64,
+    /// The baseline to compare against.
+    baseline_path: &'a Path,
+    /// Compare even if the baseline was measured on another machine.
+    allow_different_machine: bool,
+    /// Write the current measurement here, as a new baseline.
+    write_baseline: Option<&'a Path>,
+}
+
+/// Checks the current measurement against the stored performance baseline.
+///
+/// The gate measures the machine, so it is a command and not a test. It has
+/// three possible answers -- no regression, a regression, and *inconclusive* --
+/// and the third one is not a pass. A reader who sees "inconclusive" knows
+/// the gate could not tell, which is more useful than a pass that was
+/// decided by a threshold nobody examined.
+fn run_gate(options: &GateOptions<'_>) -> Result<()> {
+    let (_, values) = load_kernel_values(options.data, options.rows, options.column)?;
+    let machine = MachineSpec::capture(1);
+    let samples = KernelAb::measure_samples(
+        &values,
+        ComparisonOp::GtEq,
+        options.threshold,
+        options.iterations,
+        options.blocks,
+    );
+
+    // Writing a baseline is a deliberate act: the samples become the thing
+    // every later measurement is compared against.
+    if let Some(path) = options.write_baseline {
+        return write_baseline(path, &machine, &samples, options.blocks);
+    }
+
+    let baseline = read_baseline(options.baseline_path)?;
+    let report =
+        columnar_bench::gate::check(&samples, &baseline, &machine, options.allow_different_machine)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    print_gate_report(&report, &baseline, &machine, options.baseline_path);
+    if report.failed() {
+        anyhow::bail!("the performance gate failed");
+    }
+    Ok(())
+}
+
+/// Reads the column the kernel measures and cycles it to the row count.
+fn load_kernel_values(data: &Path, rows: usize, column: &str) -> Result<(Dataset, Vec<f64>)> {
+    let dataset = Dataset::read_parquet(data)
+        .with_context(|| format!("could not read {}", data.display()))?;
+    let chunk =
+        dataset.chunk(column).with_context(|| format!("the dataset has no column `{column}`"))?;
+    let decoded = chunk.decode();
+    let values: Vec<f64> = match &decoded.data {
+        columnar_core::BatchData::Float64(values) => values.clone(),
+        columnar_core::BatchData::Int64(values) => values.iter().map(|&v| v as f64).collect(),
+        columnar_core::BatchData::Utf8(_) => {
+            anyhow::bail!("the performance gate measures numeric columns only")
+        }
+    };
+    let values: Vec<f64> = values.iter().copied().cycle().take(rows).collect();
+    Ok((dataset, values))
+}
+
+/// Writes a new baseline from a fresh measurement.
+fn write_baseline(
+    path: &Path,
+    machine: &MachineSpec,
+    samples: &std::collections::BTreeMap<String, Vec<f64>>,
+    blocks: usize,
+) -> Result<()> {
+    let mut budgets = std::collections::BTreeMap::new();
+    for (flavor, flavor_samples) in samples {
+        let median = columnar_bench::gate::median(flavor_samples);
+        // A budget of 80% of the measured median: a floor with a little
+        // headroom for the machine's own noise, and a gate that fires when
+        // the code gets slower rather than when it gets different.
+        budgets.insert(flavor.clone(), median * 0.8);
+    }
+    let baseline = columnar_bench::gate::Baseline {
+        machine: machine.clone(),
+        alpha: 0.05,
+        samples_per_flavor: blocks,
+        flavors: samples.clone(),
+        budgets,
+        // Five per cent. Measured, not chosen: five consecutive gate runs
+        // against an unchanged baseline reported differences of 0.9% to
+        // 3.9%, and a threshold below that would fire on the machine's own
+        // drift.
+        min_relative_regression: 0.05,
+    };
+    std::fs::write(path, baseline.to_json())
+        .with_context(|| format!("could not write {}", path.display()))?;
+    println!("wrote the baseline to {}", path.display());
+    for (flavor, flavor_samples) in samples {
+        println!(
+            "  {:<10} median {:>12.3} G rows/s over {} samples",
+            flavor,
+            columnar_bench::gate::median(flavor_samples) / 1e9,
+            flavor_samples.len()
+        );
+    }
+    Ok(())
+}
+
+/// Reads the stored baseline.
+fn read_baseline(path: &Path) -> Result<columnar_bench::gate::Baseline> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("could not read {}", path.display()))?;
+    columnar_bench::gate::Baseline::from_json(&text)
+        .with_context(|| format!("could not read {}", path.display()))
+}
+
+/// Prints the gate's verdict, one line per flavor.
+fn print_gate_report(
+    report: &columnar_bench::gate::GateReport,
+    baseline: &columnar_bench::gate::Baseline,
+    machine: &MachineSpec,
+    baseline_path: &Path,
+) {
+    println!("performance gate");
+    println!("  baseline    {}", baseline_path.display());
+    println!("  alpha       {}", baseline.alpha);
+    println!(
+        "  threshold   {:.1}% -- a regression has to be this much slower, as well as significant",
+        baseline.min_relative_regression * 100.0
+    );
+    println!(
+        "  machine     {} / {} / {} ({} threads)",
+        machine.cpu, machine.arch, machine.simd, machine.threads
+    );
+    if !report.comparable {
+        println!(
+            "  WARNING     the baseline was measured on a different machine: {}",
+            report.differences.join("; ")
+        );
+    }
+    println!();
+
+    for verdict in &report.verdicts {
+        match verdict {
+            columnar_bench::gate::FlavorVerdict::NoRegression {
+                flavor,
+                current_median,
+                baseline_median,
+                p_value,
+            } => println!(
+                "  ok          {flavor:<10} {:>10.3} G rows/s vs baseline {:>10.3} (p = {p_value:.4})",
+                current_median / 1e9,
+                baseline_median / 1e9
+            ),
+            columnar_bench::gate::FlavorVerdict::Regression {
+                flavor,
+                current_median,
+                baseline_median,
+                p_value,
+                slower_by,
+            } => println!(
+                "  REGRESSION  {flavor:<10} {:>10.3} G rows/s vs baseline {:>10.3} (p = {p_value:.4}, {:.1}% slower)",
+                current_median / 1e9,
+                baseline_median / 1e9,
+                slower_by * 100.0
+            ),
+            columnar_bench::gate::FlavorVerdict::WithinNoise {
+                flavor,
+                current_median,
+                baseline_median,
+                p_value,
+                slower_by,
+            } => println!(
+                "  within noise {flavor:<10} {:>10.3} G rows/s vs baseline {:>10.3} (p = {p_value:.4}, {:.1}% slower -- under the {:.1}% threshold)",
+                current_median / 1e9,
+                baseline_median / 1e9,
+                slower_by * 100.0,
+                baseline.min_relative_regression * 100.0
+            ),
+            columnar_bench::gate::FlavorVerdict::Inconclusive { flavor, reason } => {
+                println!("  INCONCLUSIVE {flavor:<10} {reason}");
+            }
+            columnar_bench::gate::FlavorVerdict::BudgetMiss {
+                flavor,
+                current_median,
+                budget,
+            } => println!(
+                "  BUDGET MISS {flavor:<10} {:>10.3} G rows/s is below the budget of {:>10.3}",
+                current_median / 1e9,
+                budget / 1e9
+            ),
+        }
+    }
+
+    if !report.inconclusive().is_empty() {
+        println!();
+        println!("the gate could not decide for: {}", report.inconclusive().join(", "));
+    }
+    if !report.within_noise().is_empty() {
+        println!();
+        println!(
+            "statistically different, but within the noise floor: {}",
+            report.within_noise().join(", ")
+        );
     }
 }

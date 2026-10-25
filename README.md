@@ -238,7 +238,8 @@ The principles that shaped the code most:
 |---|---|
 | Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel |
 | Increment | storage → filter → project → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 111, all green, including the differential kernel suite, the lazy-scan differential suite and the x86-64 cross-check |
+| Tests | 130, all green, including the differential kernel suite, the lazy-scan differential suite, the performance-gate suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
-| Next | page-level pruning, the projection/aggregate fusion, the x86-64 measurement |
+| Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |
+| Next | parallel decode, the projection/aggregate fusion, the x86-64 measurement |

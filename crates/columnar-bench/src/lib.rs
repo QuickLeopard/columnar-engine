@@ -34,6 +34,7 @@
 #![allow(clippy::indexing_slicing)]
 
 pub mod external;
+pub mod gate;
 pub mod kernel_ab;
 pub mod machine;
 pub mod result;

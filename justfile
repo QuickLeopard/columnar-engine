@@ -105,6 +105,26 @@ bench data="data/lineitem.parquet" rows="20000000" iterations="5" out="bench-res
 compare data="data/lineitem.parquet" iterations="3" threads="1" out="bench-results/compare.json":
     cargo run --release -p columnar-cli -- compare --data {{data}} --iterations {{iterations}} --threads {{threads}} --out {{out}}
 
+# The performance gate: measure the kernel and compare it against the stored
+# baseline.
+#
+# This measures the machine, so it is not a `cargo test` and not a CI job: a
+# shared runner is noisy, and a gate that fails at random is a gate nobody
+# trusts. Run it on a machine that is not doing anything else.
+#
+# A regression has to be BOTH statistically significant AND more than the
+# baseline's practical threshold. The threshold is 5%, which is above the
+# machine's own run-to-run drift -- measured, not chosen; see spec 004.
+perf-gate data="data/lineitem.parquet" blocks="32":
+    cargo run --release -p columnar-cli -- gate --data {{data}} --blocks {{blocks}} --baseline bench-results/kernel-baseline.json
+
+# Rewrite the performance baseline from a fresh measurement.
+#
+# This is a deliberate act: the samples become the thing every later
+# measurement is compared against. Do it on a quiet machine.
+perf-baseline data="data/lineitem.parquet" blocks="32" out="bench-results/kernel-baseline.json":
+    cargo run --release -p columnar-cli -- gate --data {{data}} --blocks {{blocks}} --write-baseline {{out}}
+
 # Derive the published comparison table from the committed raw reports.
 #
 # The table in PERF.md is the median of three full `just compare` runs. This

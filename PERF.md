@@ -462,6 +462,41 @@ and the plan output now says which half is which.
 
 ---
 
+## 5a. The performance gate
+
+The constitution requires two gates — no statistically significant regression against a stored
+baseline, and absolute budgets met — and until spec 004 neither existed. They do now, and they
+are worth describing because of what they found.
+
+`just perf-gate` measures the kernel, 32 independent blocks of 5 timed passes each, and compares
+the samples against `bench-results/kernel-baseline.json` with a **Mann-Whitney U test**: the
+exact permutation distribution for small samples, the normal approximation with tie and
+continuity corrections for large ones. It is one-sided, in the direction "the current sample is
+slower".
+
+**The first version was statistically correct and useless.** Five consecutive runs against an
+unchanged baseline produced:
+
+| flavor | runs reporting a regression | the difference |
+|---|---|---|
+| `cpp-auto` | 5 of 5 | 1.3% – 2.3% slower |
+| `cpp-simd` | 4 of 5 | 1.7% – 3.9% slower |
+| `scalar` | 4 of 5 | 0.9% – 1.2% slower |
+| `rust-simd` | 0 of 5 | — |
+
+**Thirteen false positives in twenty checks, on code that had not changed.** The test was not
+wrong: the machine's throughput drifts by a percent or two between one moment and the next, and
+a test with 32 samples on each side detects that drift as significant every time.
+
+So a regression now has to be **both** statistically significant **and** practically significant,
+and the practical threshold is set from that measurement: **5%**, above the observed drift of
+0.9%–3.9%. With it, five consecutive runs on unchanged code produce **zero** failures, and the
+differences that remain are reported as *within the noise* rather than hidden.
+
+The gate has four answers — no regression, within the noise, regression, and **inconclusive** —
+and the last one is not a pass. It says the gate could not tell, which is more useful than a pass
+that was decided by a threshold nobody examined.
+
 ## 6. Reproducing this
 
 ```bash
@@ -473,6 +508,9 @@ just check-x86     # compile the x86-64 half of the kernel, from this ARM64 Mac
 just verify-avx2   # run the AVX2 path under Rosetta 2 and check it against the oracle
 
 python3 scripts/medians.py   # the published table, derived from the committed reports
+
+just perf-gate      # the performance gate: measure, and compare against the baseline
+just perf-baseline  # rewrite the baseline from a fresh measurement
 ```
 
 `just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, and the `polars` Python package

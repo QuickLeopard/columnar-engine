@@ -152,6 +152,11 @@ These are the standards any change must hold or improve. They are the floor.
   is wide enough to change a reader's conclusion, and a run that disagrees with the median MUST be
   published rather than dropped. The published table MUST be derivable from the committed reports
   by a checked-in script, so the prose and the evidence cannot drift apart.
+- **Gates that can say "I could not tell"**: a gate MUST distinguish *no regression*, *within the
+  noise*, *regression* and *inconclusive*. An inconclusive result MUST NOT be reported as a pass.
+  A statistical gate MUST also carry a **practical threshold**, set from a measurement of the
+  machine's own run-to-run drift, because a sensitive test on a shared machine finds the machine's
+  drift every time — and a gate that fires on the machine is a gate nobody runs.
 
 ---
 
@@ -170,7 +175,7 @@ Required gates before merge. All are automated; none are advisory.
 | Test | workspace | All tests pass. |
 | Differential | `columnar-kernels` | Every kernel implementation agrees with the oracle, bit for bit. |
 | Property tests | `columnar-core`, `columnar-kernels` | Proptest suites pass; the kernel suite covers NULL, NaN and block boundaries. |
-| Perf regression | workspace | No statistically significant regression vs. the stored baseline (Mann-Whitney, shared runners). |
+| Perf regression | workspace | No statistically significant **and** practically significant regression vs. the stored baseline (Mann-Whitney, shared runners). A regression must be slower by more than the baseline's practical threshold, which is a measured number. |
 | Perf budget | `columnar-kernels` | Absolute budgets met. **Pinned runners only.** |
 
 **Definition of done** for any task: tests written and passing, lint clean, the differential suite
@@ -198,7 +203,7 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.1.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
+**Version**: 1.2.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
 
 ### Amendment history
 
@@ -216,3 +221,20 @@ MINOR bump.
 full runs were committed as `bench-results/compare-run{1,2,3}.json`, and
 `scripts/medians.py` was added as the derivation. The kernel A/B table already published its
 median over eight runs and its spread, and is unchanged.
+
+**1.2.0 — 2026-10-25 — the performance gates exist, and they can say "I could not tell".** The
+constitution listed two gates that had never been implemented: a perf-regression gate and a
+perf-budget gate. Spec 004 implements both.
+
+*Rationale*: a constitution that lists a gate nobody implemented is a document that has stopped
+describing the project. Implementing the gates also produced a finding worth recording: the first
+version of the regression gate was statistically correct and **useless** — thirteen false
+positives in twenty checks on unchanged code, because the machine's throughput drifts by a percent
+or two between one moment and the next and a test with thirty-two samples on each side detects
+that drift every time. So the gate now requires a regression to be statistically significant
+**and** practically significant, and the practical threshold is a measured number.
+*Principles touched*: none of I–VIII; this extends the Performance Standards and the gate table
+only, so it is a MINOR bump.
+*Migration plan*: the gate is `just perf-gate`, a command rather than a test, because it measures
+the machine. The baseline is committed at `bench-results/kernel-baseline.json`. The gate table's
+regression rule gained the practical threshold; the budget rule is unchanged.
