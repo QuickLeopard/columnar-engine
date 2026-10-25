@@ -17,6 +17,10 @@
 //! repository would be a blob nobody could review, and a generator nobody
 //! could run would be worse.
 
+// The tests index into the result's groups directly. A group that is not
+// there is a test bug, and the panic says which assertion it broke.
+#![allow(clippy::indexing_slicing)]
+
 use std::path::{Path, PathBuf};
 
 use columnar_cli::queries::{BuiltinQuery, QueryDefinition, QUERIES};
@@ -140,6 +144,51 @@ fn the_scan_stage_reports_the_rows_the_reader_discarded() {
         .expect("the plan has a scan stage");
     assert_eq!(scan.rows_in, 6_000_000, "the scan did not start at the file's row count");
     assert!(scan.rows_out < scan.rows_in, "the scan discarded nothing");
+}
+
+/// The real Q6 -- the revenue query -- must give the same answer on both
+/// paths, and the same answer `DuckDB` gives.
+///
+/// The number below is `DuckDB`'s, computed on this same file:
+///
+/// ```
+/// $ duckdb -c "SELECT sum(l_extendedprice * (1 - l_discount))
+///               FROM 'data/lineitem.parquet'
+///               WHERE l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01'
+///                 AND l_discount >= 0.05 AND l_discount <= 0.07
+///                 AND l_quantity < 24;"
+/// 5526985127.480705
+/// ```
+///
+/// The engine's answer is `5526985127.48064`. The two differ in the last
+/// few digits, because a floating-point sum is not associative and the two
+/// systems sum in different orders -- and the comparison the harness makes
+/// is a relative one, for exactly that reason.
+#[test]
+fn the_real_q6_answers_what_duckdb_answers() {
+    let path = dataset();
+    let definition = definition(BuiltinQuery::Q6Revenue);
+
+    let source = ParquetSource::open(path).expect("the source can be opened");
+    let lazy = execute_on(&(definition.plan)(), &source, &ExecOptions::default())
+        .expect("the lazy path answers the query");
+
+    let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
+    let eager = execute(&(definition.plan)(), &dataset, &ExecOptions::default())
+        .expect("the eager path answers the query");
+
+    assert_eq!(lazy.groups, eager.groups, "the two paths disagree on the real Q6");
+
+    let value = match eager.groups[0].values.first() {
+        Some(columnar_engine::AggregateValue::Float(value)) => *value,
+        other => panic!("the sum is {other:?}, not a float"),
+    };
+    let duckdb = 5_526_985_127.480_705_f64;
+    let relative = (value - duckdb).abs() / duckdb.abs();
+    assert!(
+        relative < 1e-9,
+        "the engine computed {value} and DuckDB computed {duckdb}: a relative difference of {relative}"
+    );
 }
 
 /// The dataset really was generated, and it holds the whole file.

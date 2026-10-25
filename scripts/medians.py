@@ -27,7 +27,7 @@ import statistics
 import sys
 from pathlib import Path
 
-QUERIES = ["scan", "filter-numeric", "filter-string", "filter-range", "q6"]
+QUERIES = ["scan", "filter-numeric", "filter-string", "filter-range", "q6", "q6-revenue"]
 COMPARATORS = ["duckdb", "polars"]
 ENGINE_MODES = ["eager", "lazy"]
 
@@ -120,7 +120,7 @@ def collect_scaling(runs: list[dict]) -> dict[int, dict[str, list[float]]]:
     return out
 
 
-def print_scaling(runs: list[dict]) -> None:
+def print_scaling(runs: list[dict], label: str = "q6") -> None:
     """Print the thread-count sweep's medians."""
     if not runs:
         return
@@ -128,7 +128,7 @@ def print_scaling(runs: list[dict]) -> None:
     if not sweep:
         return
 
-    print(f"\n=== THREAD-COUNT SWEEP ({len(runs)} runs) ===")
+    print(f"\n=== THREAD-COUNT SWEEP, {label} ({len(runs)} runs) ===")
     print(
         f"{'threads':>8}{'workers':>9}{'engine':>26}{'engine scan':>26}"
         f"{'duckdb':>26}{'polars':>26}"
@@ -236,10 +236,14 @@ def main() -> int:
         detail = "  ".join(f"{name} {value:8.1f}" for name, value in figures.items())
         print(f"{query:<16} {detail}   best: {best}")
 
-    scaling_paths = sorted(Path("bench-results").glob("scaling-run*.json"))
-    if scaling_paths:
-        scaling_runs = [load(p) for p in scaling_paths]
-        print_scaling(scaling_runs)
+    for pattern, label in (
+        ("scaling-run*.json", "q6"),
+        ("scaling-revenue-run*.json", "q6-revenue"),
+    ):
+        scaling_paths = sorted(Path("bench-results").glob(pattern))
+        if scaling_paths:
+            scaling_runs = [load(p) for p in scaling_paths]
+            print_scaling(scaling_runs, label)
 
     return 0
 

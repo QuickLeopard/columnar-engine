@@ -50,19 +50,27 @@ $ just compare
 cold · read the Parquet file and answer in one go
 query          engine   engine-lazy   duckdb   polars
 --------------------------------------------------------
-scan        1317.9           0.1      2.0      1.1
-filter-numeric     1302.1          22.5     23.0     45.9
-filter-string      1315.3          30.9     22.0    164.0
-filter-range       1312.5          95.4     31.0     15.5
-q6          1316.8          84.4     32.0    188.6
+scan        1265.3           0.1      2.0      1.1
+filter-numeric     1252.4          19.4     22.0     43.9
+filter-string      1257.7          31.0     21.0    161.6
+filter-range       1263.8          95.8     31.0     15.1
+q6          1260.8          85.1     32.0    189.5
+q6-revenue   1270.3         144.7     68.0    194.8
 ```
 
-**The lazy path is 15.6× faster than the eager one on `q6`**, and it beats Polars on every cold
-query except `filter-range`. It beats DuckDB on `filter-numeric` — narrowly, 22.5 ms against
-23.0 ms, inside DuckDB's own spread — and on `scan`. On `q6` it is 2.6× behind, and that gap is
+**The lazy path is 14.8× faster than the eager one on `q6`**, and it beats Polars on every cold
+query except `filter-range`. It beats DuckDB on `filter-numeric` — narrowly, 19.4 ms against
+22.0 ms, inside DuckDB's own spread — and on `scan`. On `q6` it is 2.7× behind, and that gap is
 not pruning: DuckDB prunes nothing on this file either (its own plan says `Row Groups Scanned:
 6 / 6`, and the file has no page index). It is **threads**. Measured and attributed in
 [`PERF.md`](PERF.md), not glossed.
+
+**`q6-revenue` is TPC-H Q6 itself** — `sum(l_extendedprice * (1 - l_discount))` — and the engine
+runs it: 144.7 ms cold against DuckDB's 68.0 ms, and 15.1 ms resident against DuckDB's 48.0 ms.
+The arithmetic is **0.2 ms of the 142 ms**, because it is evaluated over the 110,915 rows that
+survived the filter and not over the 6,000,000 rows of the file. The query's cost is reading
+`l_extendedprice`, not computing with it. See
+[ADR-0012](docs/adr/0012-arithmetic-expression.md).
 
 **And the engine now has threads too.** The read splits the file's row groups across the workers
 and merges them back in the file's order, so the answer does not depend on the scheduler. On the
@@ -79,7 +87,7 @@ threads   workers     engine   engine-scan     duckdb     polars
 ```
 
 **The engine gets 5.1× from six workers, against DuckDB's 3.2× from six.** The gap on `q6` cold
-narrows from **2.6× at one thread to 1.6× at six**. The engine's curve is steeper because its
+narrows from **2.7× at one thread to 1.6× at six**. The engine's curve is steeper because its
 query is almost entirely scan, and the scan is the part that parallelises; the operators are still
 single-threaded, and that is stated rather than hidden. The parallelism is capped by the file's
 **six row groups**, so the curve is flat past six — the ceiling is the file's, not the machine's.
@@ -91,7 +99,7 @@ one implementation. That took the pushdown from 42.9 ms to 6.1 ms on `q6`, and i
 equivalence is now structural rather than merely tested. See
 [ADR-0010](docs/adr/0010-pushdown-equivalence.md).
 
-**The eager path got faster too** — 1921 ms to 1318 ms — because the two paths now share one
+**The eager path got faster too** — 1921 ms to 1265 ms — because the two paths now share one
 decode function, and that function stopped copying a dictionary column's distinct values out of
 every batch. The lazy path never paid that cost; the eager path paid it 5,860 times over.
 Putting the copy back and re-measuring gives 1890 ms, so the 1.60× is a measurement rather than
@@ -126,6 +134,7 @@ specs/002-lazy-columnar-scan/  the lazy scan: the plan, the pushdown, the equiva
 specs/003-kernel-pushdown/  the pushdown runs the engine's own kernel
 specs/004-performance-gates/  the regression gate and the budget gate
 specs/005-parallel-decode/  the parallel read, and the order it preserves
+specs/006-arithmetic-aggregate/  the arithmetic aggregate, and the real Q6
 ```
 
 **One predicate, five implementations, one answer.** The comparison kernel is the project. There
@@ -186,6 +195,7 @@ computed different values is not a benchmark.
 | The comparison kernel, on AArch64 / NEON | **measured**, 5 runs, spread published |
 | The comparison kernel, on x86-64 / AVX2 | **performance not yet measured** — no x86-64 machine exists. Its **correctness is verified**, on this ARM64 Mac, under Rosetta 2 |
 | The engine's filter, project and aggregate | **measured**, against DuckDB 2.0.0 and Polars 1.36.1 |
+| The engine's **arithmetic aggregate** | **measured** — the real TPC-H Q6, `sum(l_extendedprice * (1 - l_discount))`, against the same SQL on the same file |
 | The engine's Parquet reader | **measured**, in two modes: eager (all sixteen columns) and lazy (two of sixteen, with the predicates pushed in) |
 | The **read** under several thread counts | **measured** — the engine and both incumbents, at the same thread counts, on the same file: [`PERF.md` §2e](PERF.md#2e-the-thread-count-sweep) |
 | Multithreading of the **operators** | **not implemented** — the read is parallel over row groups; the filter, the project and the aggregate still run on one thread |
@@ -251,9 +261,12 @@ The principles that shaped the code most:
   drivers are checked in; the dataset is a function of a seed.
 - **VI. The Dataset Is Named Honestly.** It is *not* the official TPC-H SF-1 file, and the
   manifest says so in as many words.
-- **VII. Explicit Scope, No Silent Deferral.** The Q6 comparison uses Q6's predicate with
-  `count(*)`, because this increment's aggregate sums a column and does not evaluate arithmetic
-  over columns. That limitation is written down, not hidden.
+- **VII. Explicit Scope, No Silent Deferral.** The real Q6 — `sum(l_extendedprice * (1 -
+  l_discount))` — is now measured, beside the `count(*)` query that was measured before it, so the
+  cost of the arithmetic is a **difference between two published numbers** rather than an
+  assertion. What is *not* measured is stated in [`PERF.md` §5](PERF.md#5-not-measured): the
+  arithmetic is not vectorised, the operators are not parallel, and the eager path's decode is not
+  parallel.
 
 ---
 
@@ -261,9 +274,9 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep |
-| Increment | storage → filter → project → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 142, all green, including the differential kernel suite, the lazy-scan differential suite, the performance-gate suite and the x86-64 cross-check |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 |
+| Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
+| Tests | 165, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the performance-gate suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |

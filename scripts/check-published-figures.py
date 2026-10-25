@@ -42,6 +42,10 @@ CHECKS = [
     ("README.md", "eager q6 cold", "engine", "eager", "cold", "q6", 1),
     ("README.md", "duckdb q6 cold", "duckdb", "-", "cold", "q6", 1),
     ("README.md", "polars q6 cold", "polars", "-", "cold", "q6", 1),
+    ("PERF.md", "lazy q6-revenue cold", "engine", "lazy", "cold", "q6-revenue", 1),
+    ("PERF.md", "duckdb q6-revenue cold", "duckdb", "-", "cold", "q6-revenue", 1),
+    ("PERF.md", "polars q6-revenue cold", "polars", "-", "cold", "q6-revenue", 1),
+    ("README.md", "lazy q6-revenue cold", "engine", "lazy", "cold", "q6-revenue", 1),
 ]
 
 # (document, label, thread count, system, places)

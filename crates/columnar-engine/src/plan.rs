@@ -21,7 +21,7 @@
 //! top of every plan output. A pinned order is worth more than a clever one:
 //! it is checkable.
 
-use columnar_core::{ComparisonOp, DataType, Predicate, ScalarValue};
+use columnar_core::{ArithOp, ComparisonOp, DataType, Expr, Predicate, ScalarValue};
 
 use crate::{Dataset, EngineError};
 
@@ -53,10 +53,18 @@ pub trait ColumnSchema {
 /// The aggregate functions the engine supports.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Aggregate {
-    /// SUM of a column. NULL values are skipped, as in SQL.
+    /// SUM of an expression. NULL values are skipped, as in SQL.
+    ///
+    /// The expression may be a plain column -- `Sum { expr: Expr::column(..) }`
+    /// -- or an arithmetic expression over columns, which is what TPC-H's Q6
+    /// needs: `sum(l_extendedprice * (1 - l_discount))`.
+    ///
+    /// The expression is evaluated over the rows that survived the filter, into
+    /// a column, and that column is what is summed. The aggregate operator
+    /// does not know the difference.
     Sum {
-        /// The column to sum.
-        column: String,
+        /// The expression to sum.
+        expr: Expr,
     },
     /// COUNT of a non-NULL value in a column.
     Count {
@@ -182,10 +190,9 @@ fn resolve_aggregate(
     let mut aggregates = Vec::with_capacity(spec.aggregates.len());
     for aggregate in &spec.aggregates {
         let function = match aggregate {
-            Aggregate::Sum { column } => {
-                let index = column_index(schema, column)?;
-                require_numeric(schema, index, column, "SUM")?;
-                ResolvedAggregateFn::Sum { column: index }
+            Aggregate::Sum { expr } => {
+                let resolved = resolve_expr(expr, schema)?;
+                ResolvedAggregateFn::Sum { expr: resolved }
             }
             Aggregate::Count { column } => {
                 let index = column_index(schema, column)?;
@@ -207,6 +214,152 @@ fn resolve_aggregate(
     }
 
     Ok(ResolvedAggregate { spec: spec.clone(), group_by, aggregates })
+}
+
+/// Resolves an expression's column names to indices, and type-checks it.
+///
+/// The expression is checked **before** anything is read, so an expression
+/// naming a column the file does not have is a plan error rather than a
+/// surprise half way through a scan.
+///
+/// The type rules are the narrow ones the predicate follows: an `int64` in a
+/// `float64` expression is widened, a `float64` in an `int64` expression is
+/// not, and a `utf8` column is not a number at all.
+fn resolve_expr(expr: &Expr, schema: &dyn ColumnSchema) -> Result<ResolvedExpr, EngineError> {
+    match expr {
+        Expr::Constant(value) => match value {
+            ScalarValue::Int64(_) | ScalarValue::Float64(_) => {
+                Ok(ResolvedExpr::Constant(value.clone()))
+            }
+            ScalarValue::Utf8(text) => Err(EngineError::TypeMismatch(format!(
+                "the expression's constant `{text}` is a string, and an arithmetic expression computes a number"
+            ))),
+        },
+        Expr::Column(name) => {
+            let index = column_index(schema, name)?;
+            match schema.column_type(index) {
+                DataType::Int64 | DataType::Float64 => {
+                    Ok(ResolvedExpr::Column { index, data_type: schema.column_type(index) })
+                }
+                DataType::Utf8 => Err(EngineError::TypeMismatch(format!(
+                    "the expression reads the utf8 column `{name}`, and an arithmetic expression computes a number"
+                ))),
+            }
+        }
+        Expr::Binary { op, left, right } => {
+            let left = resolve_expr(left, schema)?;
+            let right = resolve_expr(right, schema)?;
+            let left_type = left.data_type();
+            let right_type = right.data_type();
+            // `5 / 2` is `2` in PostgreSQL and `2.5` in DuckDB. The engine
+            // refuses integer division rather than pick a side.
+            if *op == ArithOp::Div && left_type != DataType::Float64 && right_type != DataType::Float64 {
+                return Err(EngineError::TypeMismatch(
+                    "division requires a float64 operand: `5 / 2` is 2 in PostgreSQL and 2.5 in DuckDB, and the engine refuses to pick a side"
+                        .to_owned(),
+                ));
+            }
+            Ok(ResolvedExpr::Binary {
+                op: *op,
+                left: Box::new(left),
+                right: Box::new(right),
+            })
+        }
+        Expr::Negate(inner) => {
+            Ok(ResolvedExpr::Negate(Box::new(resolve_expr(inner, schema)?)))
+        }
+    }
+}
+
+/// An expression whose column names have been resolved to indices.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedExpr {
+    /// A literal value.
+    Constant(ScalarValue),
+    /// A reference to a column, by index.
+    Column {
+        /// The column's index.
+        index: usize,
+        /// The column's type.
+        ///
+        /// The type is carried here rather than looked up again, because the
+        /// expression's type has to be known to evaluate it, and the schema
+        /// the expression was resolved against is not available at that point.
+        data_type: DataType,
+    },
+    /// An arithmetic operation over two expressions.
+    Binary {
+        /// The operator.
+        op: ArithOp,
+        /// The left operand.
+        left: Box<ResolvedExpr>,
+        /// The right operand.
+        right: Box<ResolvedExpr>,
+    },
+    /// The negation of an expression.
+    Negate(Box<ResolvedExpr>),
+}
+
+impl ResolvedExpr {
+    /// The expression's type.
+    ///
+    /// `int64` only when every operand is `int64`, and `float64` otherwise.
+    #[must_use]
+    pub fn data_type(&self) -> DataType {
+        match self {
+            Self::Constant(value) => value.data_type(),
+            Self::Column { data_type, .. } => *data_type,
+            Self::Binary { left, right, .. } => {
+                if left.data_type() == DataType::Float64 || right.data_type() == DataType::Float64 {
+                    DataType::Float64
+                } else {
+                    DataType::Int64
+                }
+            }
+            Self::Negate(inner) => inner.data_type(),
+        }
+    }
+
+    /// The columns the expression reads.
+    #[must_use]
+    pub fn columns(&self) -> Vec<usize> {
+        let mut columns: Vec<usize> = Vec::new();
+        self.collect_columns(&mut columns);
+        columns
+    }
+
+    /// Collects the columns the expression reads.
+    fn collect_columns(&self, columns: &mut Vec<usize>) {
+        match self {
+            Self::Constant(_) => {}
+            Self::Column { index, .. } => {
+                if !columns.contains(index) {
+                    columns.push(*index);
+                }
+            }
+            Self::Binary { left, right, .. } => {
+                left.collect_columns(columns);
+                right.collect_columns(columns);
+            }
+            Self::Negate(inner) => inner.collect_columns(columns),
+        }
+    }
+
+    /// Maps this expression's column indices onto a subset of the columns.
+    fn remap(&self, mapping: &[Option<usize>]) -> ResolvedExpr {
+        match self {
+            Self::Constant(value) => Self::Constant(value.clone()),
+            Self::Column { index, data_type } => {
+                Self::Column { index: remap_index(mapping, *index), data_type: *data_type }
+            }
+            Self::Binary { op, left, right } => Self::Binary {
+                op: *op,
+                left: Box::new(left.remap(mapping)),
+                right: Box::new(right.remap(mapping)),
+            },
+            Self::Negate(inner) => Self::Negate(Box::new(inner.remap(mapping))),
+        }
+    }
 }
 
 /// Resolves the projection's columns. An empty projection stays empty; it
@@ -245,7 +398,7 @@ fn materialised_columns(
             push(column);
         }
         for function in &aggregate.aggregates {
-            if let Some(column) = function.column() {
+            for column in function.columns() {
                 push(column);
             }
         }
@@ -362,10 +515,10 @@ fn remap_index(mapping: &[Option<usize>], index: usize) -> usize {
 /// One resolved aggregate function.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedAggregateFn {
-    /// SUM of a column.
+    /// SUM of an expression.
     Sum {
-        /// The index of the summed column.
-        column: usize,
+        /// The expression to sum, with its columns resolved.
+        expr: ResolvedExpr,
     },
     /// COUNT of a column's non-NULL values.
     Count {
@@ -387,22 +540,23 @@ pub enum ResolvedAggregateFn {
 }
 
 impl ResolvedAggregateFn {
-    /// The column the aggregate reads, if it reads one.
+    /// The columns the aggregate reads.
+    ///
+    /// A `SUM` over an expression reads every column the expression reads;
+    /// the other functions read exactly one.
     #[must_use]
-    pub const fn column(&self) -> Option<usize> {
+    pub fn columns(&self) -> Vec<usize> {
         match self {
-            Self::Sum { column }
-            | Self::Count { column }
-            | Self::Min { column }
-            | Self::Max { column } => Some(*column),
-            Self::CountStar => None,
+            Self::Sum { expr } => expr.columns(),
+            Self::Count { column } | Self::Min { column } | Self::Max { column } => vec![*column],
+            Self::CountStar => Vec::new(),
         }
     }
 
-    /// Maps this function's column index onto a subset of the columns.
+    /// Maps this function's column indices onto a subset of the columns.
     fn remap(&self, mapping: &[Option<usize>]) -> ResolvedAggregateFn {
         match self {
-            Self::Sum { column } => Self::Sum { column: remap_index(mapping, *column) },
+            Self::Sum { expr } => Self::Sum { expr: expr.remap(mapping) },
             Self::Count { column } => Self::Count { column: remap_index(mapping, *column) },
             Self::Min { column } => Self::Min { column: remap_index(mapping, *column) },
             Self::Max { column } => Self::Max { column: remap_index(mapping, *column) },

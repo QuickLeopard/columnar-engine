@@ -223,7 +223,9 @@ fn the_round_trip_answers_a_query() {
         projection: vec![],
         aggregate: Some(AggregateSpec {
             group_by: vec!["l_returnflag".to_owned()],
-            aggregates: vec![Aggregate::Sum { column: "l_extendedprice".to_owned() }],
+            aggregates: vec![Aggregate::Sum {
+                expr: columnar_core::Expr::column("l_extendedprice"),
+            }],
         }),
     };
 

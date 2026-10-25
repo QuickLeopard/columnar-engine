@@ -165,7 +165,12 @@ fn column_bytes(chunk: &columnar_core::ColumnChunk, rows: usize) -> usize {
 /// the pushed-down predicates, because the peak is during the read: every row
 /// of the file is still in flight then. The estimate is an upper bound.
 #[must_use]
-pub fn estimate_lazy_read(source: &ParquetSource, read: &[usize], threads: usize) -> usize {
+pub fn estimate_lazy_read(
+    source: &ParquetSource,
+    read: &[usize],
+    threads: usize,
+    grouped: bool,
+) -> usize {
     let rows = source.rows();
     if rows == 0 {
         return 0;
@@ -183,8 +188,12 @@ pub fn estimate_lazy_read(source: &ParquetSource, read: &[usize], threads: usize
     // The filter's match mask and the selection vector it becomes.
     bytes = bytes.saturating_add(rows.div_ceil(8).saturating_mul(2));
 
-    // The aggregate hash table: one entry per group, bounded by the rows.
-    bytes = bytes.saturating_add(rows.saturating_mul(GROUP_ENTRY_BYTES));
+    // The aggregate hash table: one entry per group. A **grouped** aggregate
+    // can have as many groups as it has rows, so the rows bound it; a
+    // **global** aggregate has exactly one, and counting one entry per row
+    // would overstate the working set by six million times.
+    let groups = if grouped { rows } else { 1 };
+    bytes = bytes.saturating_add(groups.saturating_mul(GROUP_ENTRY_BYTES));
 
     bytes
 }

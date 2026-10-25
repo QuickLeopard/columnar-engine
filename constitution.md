@@ -127,7 +127,12 @@ Anything not implemented MUST be written down as out of scope, with the reason.
 
 - **MUST**: every spec carry a Scope section listing what is explicitly excluded.
 - **MUST**: known simplifications (no SQL parser, single-threaded *operators*, `Utf8` dates, no
-  decimal type) be stated on the README, not buried in a design document.
+  decimal type, no vectorised arithmetic) be stated on the README, not buried in a design
+  document.
+- **MUST**: a simplification that a measurement says does not matter yet be **measured and
+  published as such**, rather than assumed. The arithmetic aggregate is scalar, and the
+  measurement says the arithmetic is 0.2 ms of the real Q6's 142 ms — so the scalar path is the
+  right amount of work for now, and the number is published rather than the omission.
 - **MUST**: a limit that is not the implementation's own be named as such. The parallel read is
   capped by the **file's row groups**, not by the machine's cores, and a published curve that
   flattens must say which of the two it is.
@@ -215,9 +220,28 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.3.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
+**Version**: 1.4.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
 
 ### Amendment history
+
+**1.4.0 — 2026-10-25 — a simplification a measurement says does not matter yet is published as
+such.** The engine now evaluates arithmetic expressions over columns and runs TPC-H's Q6 as Q6
+rather than as Q6's predicate with a `count(*)`. The expression evaluator is a scalar loop, which
+is a simplification — and the measurement says the arithmetic is **0.2 ms of the real Q6's 142
+ms**, because the expression is evaluated over the rows that survived the filter and not over
+the file.
+
+*Rationale*: the constitution asks for known simplifications to be stated rather than hidden, and
+it has not said anything about what a simplification is *worth*. A simplification that a reader
+cannot size is indistinguishable from a gap, and a gap that has never been measured is
+indistinguishable from a decision. The new requirement is that such a simplification carries its
+own measurement: the vectorised arithmetic kernel is not implemented, and the published number
+says how much it would have been worth.
+*Principles touched*: VII is extended, not changed; the Performance Standards are untouched.
+*Not a MAJOR bump*: Principle I, III and IV are untouched.
+*Migration plan*: the real Q6 is published as `q6-revenue` beside the `count(*)` query that was
+measured before it, so the arithmetic's cost is a **difference between two published numbers**
+rather than an assertion. `PERF.md` §3b and §5 carry the measurement and the statement.
 
 **1.3.0 — 2026-10-25 — symmetry extends to every thread count, and the parallel read has an
 order.** The engine's read is now parallel over the file's row groups (spec 005), so the rule that

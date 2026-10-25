@@ -78,7 +78,7 @@ pub use explain::{PlanOutput, StageStats};
 pub use memory::{MemoryBudget, MemoryError};
 pub use operators::aggregate::{AggregateResult, AggregateValue, Group};
 pub use operators::filter::FilterStats;
-pub use plan::{Aggregate, AggregateSpec, QueryPlan};
+pub use plan::{Aggregate, AggregateSpec, QueryPlan, ResolvedAggregateFn};
 pub use pushdown::{PushdownMetrics, PushdownPlan};
 pub use source::{ParquetSource, SourceColumn};
 
@@ -225,7 +225,9 @@ pub fn execute_on(
     // the file's schema and its row count, so a plan that does not fit is
     // refused having read nothing at all -- and it accounts for the parallel
     // read's peak, which holds two copies of the read set rather than one.
-    let estimate = memory::estimate_lazy_read(source, &decision.read, workers);
+    let grouped =
+        resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
+    let estimate = memory::estimate_lazy_read(source, &decision.read, workers, grouped);
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
     }
@@ -442,6 +444,28 @@ fn run_pipeline(
         elapsed: start.elapsed(),
     });
 
+    // --- evaluate ---------------------------------------------------------
+    // An aggregate over an expression needs the expression's value, and the
+    // expression's value is a column. So the expression is evaluated over the
+    // rows that survived the filter -- SQL applies WHERE before the
+    // aggregate, and so does this -- and the aggregate sums the result.
+    //
+    // The aggregate operator does not know that the column it is summing was
+    // computed rather than read. That is the point: a computed column is a
+    // column, so the aggregate's NULL rules, its type rules and its
+    // saturation all keep working, and the differential tests that cover them
+    // cover this path too.
+    let evaluate_started = std::time::Instant::now();
+    let (computed, evaluated) = evaluate_aggregates(resolved, &materialised, selected_rows)?;
+    if evaluated {
+        stages.push(StageStats {
+            stage: "evaluate".to_owned(),
+            rows_in: rows(selected_rows),
+            rows_out: rows(selected_rows),
+            elapsed: evaluate_started.elapsed(),
+        });
+    }
+
     // --- aggregate --------------------------------------------------------
     let mut groups: Vec<Group> = Vec::new();
     if let Some(aggregate) = &resolved.aggregate {
@@ -451,7 +475,16 @@ fn run_pipeline(
         let values: Vec<Option<&columnar_core::BatchColumn>> = aggregate
             .aggregates
             .iter()
-            .map(|function| function.column().map(|index| materialised.gathered_ref(index)))
+            .zip(computed.iter())
+            .map(|(function, computed)| {
+                if let plan::ResolvedAggregateFn::Sum { expr } = function {
+                    if let plan::ResolvedExpr::Column { index, .. } = expr {
+                        return Some(materialised.gathered_ref(*index));
+                    }
+                    return computed.as_ref();
+                }
+                function.columns().first().map(|&index| materialised.gathered_ref(index))
+            })
             .collect();
         groups =
             operators::aggregate::aggregate(&aggregate.spec, &group_by, &values, selected_rows);
@@ -477,6 +510,46 @@ fn run_pipeline(
     };
 
     Ok(AggregateResult { groups, stages, plan_output })
+}
+
+/// Evaluates the aggregates' expressions over the rows that survived the
+/// filter.
+///
+/// Returns one computed column per aggregate -- `None` for the aggregates
+/// that did not need one -- and whether anything was computed at all.
+///
+/// A sum over a **plain column** needs no evaluation: the column is already
+/// materialised, and the aggregate reads it directly. Only a computed
+/// expression needs the stage, and only then does the stage appear in the
+/// plan output.
+fn evaluate_aggregates(
+    resolved: &plan::ResolvedPlan,
+    materialised: &operators::project::Materialised<'_>,
+    rows: usize,
+) -> Result<(Vec<Option<columnar_core::BatchColumn>>, bool), EngineError> {
+    let mut computed: Vec<Option<columnar_core::BatchColumn>> = Vec::new();
+    let mut evaluated = false;
+    let Some(aggregate) = &resolved.aggregate else {
+        return Ok((computed, evaluated));
+    };
+    for function in &aggregate.aggregates {
+        let value = if let plan::ResolvedAggregateFn::Sum { expr } = function {
+            if let plan::ResolvedExpr::Column { .. } = expr {
+                None
+            } else {
+                evaluated = true;
+                Some(operators::expr::evaluate(
+                    expr,
+                    &|index| materialised.gathered_ref(index),
+                    rows,
+                )?)
+            }
+        } else {
+            None
+        };
+        computed.push(value);
+    }
+    Ok((computed, evaluated))
 }
 
 /// Converts a row count into the `u64` the statistics use.

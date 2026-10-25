@@ -459,7 +459,7 @@ fn the_parallel_path_agrees_with_the_single_threaded_one() {
         projection: Vec::new(),
         aggregate: Some(AggregateSpec {
             group_by: Vec::new(),
-            aggregates: vec![Aggregate::Sum { column: "l_quantity".to_owned() }],
+            aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("l_quantity") }],
         }),
     };
 
@@ -548,7 +548,7 @@ fn the_parallel_path_reads_the_rows_in_the_files_order() {
         projection: Vec::new(),
         aggregate: Some(AggregateSpec {
             group_by: vec!["l_shipdate".to_owned()],
-            aggregates: vec![Aggregate::Sum { column: "l_quantity".to_owned() }],
+            aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("l_quantity") }],
         }),
     };
 
@@ -663,7 +663,7 @@ fn an_aggregate_column_is_read_and_the_predicate_is_pushed_down() {
         projection: Vec::new(),
         aggregate: Some(AggregateSpec {
             group_by: Vec::new(),
-            aggregates: vec![Aggregate::Sum { column: "l_quantity".to_owned() }],
+            aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("l_quantity") }],
         }),
     };
 
@@ -696,7 +696,7 @@ fn a_predicate_on_an_aggregated_column_is_not_pushed_down() {
         projection: Vec::new(),
         aggregate: Some(AggregateSpec {
             group_by: Vec::new(),
-            aggregates: vec![Aggregate::Sum { column: "l_quantity".to_owned() }],
+            aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("l_quantity") }],
         }),
     };
 

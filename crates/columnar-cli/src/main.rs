@@ -206,6 +206,8 @@ enum BuiltinQueryArg {
     FilterRange,
     /// The TPC-H Q6 predicate set, with COUNT(*) in place of the computed sum.
     Q6,
+    /// TPC-H Q6 itself: the revenue query, with an arithmetic aggregate.
+    Q6Revenue,
 }
 
 impl From<BuiltinQueryArg> for BuiltinQuery {
@@ -216,6 +218,7 @@ impl From<BuiltinQueryArg> for BuiltinQuery {
             BuiltinQueryArg::FilterString => BuiltinQuery::FilterString,
             BuiltinQueryArg::FilterRange => BuiltinQuery::FilterRange,
             BuiltinQueryArg::Q6 => BuiltinQuery::Q6,
+            BuiltinQueryArg::Q6Revenue => BuiltinQuery::Q6Revenue,
         }
     }
 }

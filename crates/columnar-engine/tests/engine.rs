@@ -189,7 +189,7 @@ fn the_aggregate_computes_sum_count_count_star_min_and_max() {
         aggregate: Some(AggregateSpec {
             group_by: vec!["g".to_owned()],
             aggregates: vec![
-                Aggregate::Sum { column: "v".to_owned() },
+                Aggregate::Sum { expr: columnar_core::Expr::column("v") },
                 Aggregate::Count { column: "v".to_owned() },
                 Aggregate::CountStar,
                 Aggregate::Min { column: "v".to_owned() },
@@ -252,7 +252,7 @@ fn a_sum_over_an_all_null_group_is_null() {
         aggregate: Some(AggregateSpec {
             group_by: vec!["g".to_owned()],
             aggregates: vec![
-                Aggregate::Sum { column: "v".to_owned() },
+                Aggregate::Sum { expr: columnar_core::Expr::column("v") },
                 Aggregate::Count { column: "v".to_owned() },
             ],
         }),
@@ -341,7 +341,9 @@ fn a_plan_filters_and_aggregates_without_decoding_the_other_columns() {
         projection: vec![],
         aggregate: Some(AggregateSpec {
             group_by: vec!["l_returnflag".to_owned()],
-            aggregates: vec![Aggregate::Sum { column: "l_extendedprice".to_owned() }],
+            aggregates: vec![Aggregate::Sum {
+                expr: columnar_core::Expr::column("l_extendedprice"),
+            }],
         }),
     };
 
@@ -444,7 +446,9 @@ fn the_plan_output_reports_the_stages_and_the_late_materialisation() {
         projection: vec![],
         aggregate: Some(AggregateSpec {
             group_by: vec![],
-            aggregates: vec![Aggregate::Sum { column: "l_extendedprice".to_owned() }],
+            aggregates: vec![Aggregate::Sum {
+                expr: columnar_core::Expr::column("l_extendedprice"),
+            }],
         }),
     };
 
@@ -657,7 +661,7 @@ fn a_sum_over_no_rows_is_null() {
         projection: vec![],
         aggregate: Some(AggregateSpec {
             group_by: vec![],
-            aggregates: vec![Aggregate::Sum { column: "x".to_owned() }],
+            aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("x") }],
         }),
     };
 
@@ -688,7 +692,7 @@ fn a_global_aggregate_agrees_with_the_single_group_aggregate() {
                 aggregates: vec![
                     Aggregate::CountStar,
                     Aggregate::Count { column: "x".to_owned() },
-                    Aggregate::Sum { column: "x".to_owned() },
+                    Aggregate::Sum { expr: columnar_core::Expr::column("x") },
                     Aggregate::Min { column: "x".to_owned() },
                     Aggregate::Max { column: "x".to_owned() },
                 ],
@@ -709,7 +713,7 @@ fn a_global_aggregate_agrees_with_the_single_group_aggregate() {
                 aggregates: vec![
                     Aggregate::CountStar,
                     Aggregate::Count { column: "x".to_owned() },
-                    Aggregate::Sum { column: "x".to_owned() },
+                    Aggregate::Sum { expr: columnar_core::Expr::column("x") },
                     Aggregate::Min { column: "x".to_owned() },
                     Aggregate::Max { column: "x".to_owned() },
                 ],

@@ -90,6 +90,32 @@ impl NullBitmap {
         Self { words: vec![0; Self::words_for(len)], len, null_count: len }
     }
 
+    /// The conjunction of two masks.
+    ///
+    /// A row is valid in the result when it is valid in **both** masks. This is
+    /// what an expression's operands combine to: a row whose expression reads
+    /// a NULL is a NULL row, so the validity of the result is the validity of
+    /// the left operand `AND`ed with the validity of the right one.
+    ///
+    /// The masks must describe the same number of rows. Two masks of different
+    /// lengths would have to be combined over some third length, and there is
+    /// no third length that is obviously right — so this panics rather than
+    /// guessing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the two masks have different lengths.
+    #[must_use]
+    pub fn and(&self, other: &Self) -> Self {
+        assert_eq!(
+            self.len, other.len,
+            "two validity masks of different lengths cannot be conjoined"
+        );
+        let words: Vec<u64> =
+            self.words.iter().zip(other.words.iter()).map(|(left, right)| left & right).collect();
+        Self::from_words(&words, self.len)
+    }
+
     /// Concatenates two masks.
     ///
     /// The second mask's rows continue the first's, so a first mask that does
@@ -271,6 +297,40 @@ mod tests {
         let bitmap = NullBitmap::with_nulls(8, &[2, 5]);
         let rows: Vec<usize> = bitmap.valid_rows().collect();
         assert_eq!(rows, vec![0, 1, 3, 4, 6, 7]);
+    }
+
+    #[test]
+    fn and_keeps_only_the_rows_both_masks_hold() {
+        let left = NullBitmap::with_nulls(8, &[1, 2]);
+        let right = NullBitmap::with_nulls(8, &[2, 3]);
+        let joined = left.and(&right);
+        assert_eq!(joined.null_count(), 3);
+        assert!(joined.is_valid(0));
+        assert!(!joined.is_valid(1));
+        assert!(!joined.is_valid(2));
+        assert!(!joined.is_valid(3));
+        assert!(joined.is_valid(4));
+    }
+
+    #[test]
+    fn and_of_a_mask_with_itself_is_itself() {
+        let mask = NullBitmap::with_nulls(70, &[0, 69]);
+        assert_eq!(mask.and(&mask), mask);
+    }
+
+    #[test]
+    fn and_of_two_all_valid_masks_is_all_valid() {
+        let left = NullBitmap::all_valid(65);
+        let right = NullBitmap::all_valid(65);
+        assert_eq!(left.and(&right), left);
+    }
+
+    #[test]
+    #[should_panic(expected = "different lengths")]
+    fn and_of_two_masks_of_different_lengths_is_refused() {
+        let left = NullBitmap::all_valid(4);
+        let right = NullBitmap::all_valid(5);
+        let _ = left.and(&right);
     }
 
     #[test]

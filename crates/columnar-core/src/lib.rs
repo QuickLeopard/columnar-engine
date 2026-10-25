@@ -29,6 +29,7 @@
 
 pub mod batch;
 pub mod chunk;
+pub mod expr;
 pub mod null;
 pub mod predicate;
 pub mod selection;
@@ -36,6 +37,7 @@ pub mod types;
 
 pub use batch::{Batch, BatchColumn, BatchData, BATCH_SIZE};
 pub use chunk::{ColumnChunk, Encoding};
+pub use expr::{ArithOp, Expr};
 pub use null::NullBitmap;
 pub use predicate::{ComparisonOp, Predicate};
 pub use selection::{SelectionKind, SelectionVector, BITMAP_DISPATCH_DENSITY};

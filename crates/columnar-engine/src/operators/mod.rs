@@ -4,6 +4,7 @@
 //! also where late materialisation lives) and a hash aggregate.
 
 pub mod aggregate;
+pub mod expr;
 pub mod filter;
 pub mod project;
 

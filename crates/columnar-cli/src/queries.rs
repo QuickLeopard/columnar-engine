@@ -4,21 +4,28 @@
 //! one exists to exercise a specific mechanism, and each one is written so
 //! that the *same* SQL can be handed to `DuckDB` and to `Polars`.
 //!
-//! ## Why the last query counts rows instead of summing
+//! ## The two Q6 queries
 //!
-//! The TPC-H Q6 query computes `sum(l_extendedprice * (1 - l_discount))` --
-//! a sum over a *computed* expression. This milestone's aggregate operator
-//! sums a column; it does not evaluate arithmetic over columns. So the Q6
-//! comparison here uses **Q6's predicate** with `count(*)` in place of the
-//! computed sum.
+//! There are two, and they are different queries.
 //!
-//! That is a deliberate, stated limitation rather than a quiet one: the
-//! filter half of Q6 -- a range predicate on a numeric column `AND`ed with a
-//! range predicate on a dictionary-encoded string column -- is exactly what
-//! this engine claims to do well, and it is measured honestly. The aggregate
-//! half is a separate increment.
+//! - **`q6`** is Q6's *predicate* with `count(*)` in place of the computed
+//!   sum. It is the filter half of Q6 -- a range predicate on a numeric column
+//!   `AND`ed with a range predicate on a dictionary-encoded string column --
+//!   and it is what the repository measured for three increments.
+//! - **`q6-revenue`** is Q6 itself: the same shape of predicate, over a
+//!   tighter range, and `sum(l_extendedprice * (1 - l_discount))` as the
+//!   aggregate -- a sum over an *arithmetic expression*.
+//!
+//! `q6` stays because it is the query the published tables are the median of,
+//! and changing a published query's meaning would make every published figure
+//! mean something else. `q6-revenue` is added because the aggregate half of
+//! Q6 is now implemented, and a repository that measures "Q6's predicate with
+//! `count(*)`" and calls it Q6 is measuring something else.
+//!
+//! The two are measured side by side, so the cost of the arithmetic is a
+//! difference between two published numbers rather than an assertion.
 
-use columnar_core::{ComparisonOp, Predicate, ScalarValue};
+use columnar_core::{ArithOp, ComparisonOp, Expr, Predicate, ScalarValue};
 use columnar_engine::{Aggregate, AggregateSpec, QueryPlan};
 
 /// The table name the `Polars` driver registers the Parquet file under.
@@ -42,6 +49,8 @@ pub enum BuiltinQuery {
     FilterRange,
     /// The TPC-H Q6 predicate set, with COUNT(*) in place of the computed sum.
     Q6,
+    /// TPC-H Q6 itself: the revenue query, with an arithmetic aggregate.
+    Q6Revenue,
 }
 
 impl BuiltinQuery {
@@ -54,6 +63,7 @@ impl BuiltinQuery {
             Self::FilterString => "filter-string",
             Self::FilterRange => "filter-range",
             Self::Q6 => "q6",
+            Self::Q6Revenue => "q6-revenue",
         }
     }
 }
@@ -139,6 +149,13 @@ pub const QUERIES: &[QueryDefinition] = &[
                AND l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01'",
         plan: q6_plan,
     },
+    QueryDefinition {
+        query: BuiltinQuery::Q6Revenue,
+        sql: "SELECT sum(l_extendedprice * (1 - l_discount)) FROM {table} \
+               WHERE l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01' \
+               AND l_discount >= 0.05 AND l_discount <= 0.07 AND l_quantity < 24",
+        plan: q6_revenue_plan,
+    },
 ];
 
 /// `SELECT count(*)` over every row.
@@ -191,7 +208,7 @@ fn filter_range_plan() -> QueryPlan {
         projection: Vec::new(),
         aggregate: Some(AggregateSpec {
             group_by: Vec::new(),
-            aggregates: vec![Aggregate::Sum { column: "l_quantity".to_owned() }],
+            aggregates: vec![Aggregate::Sum { expr: Expr::column("l_quantity") }],
         }),
     }
 }
@@ -217,6 +234,46 @@ fn q6_plan() -> QueryPlan {
         aggregate: Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::CountStar],
+        }),
+    }
+}
+
+/// TPC-H Q6 itself: the revenue query.
+///
+/// `sum(l_extendedprice * (1 - l_discount))` over the rows whose discount is
+/// in `[0.05, 0.07]`, whose ship date is in 1994 and whose quantity is under
+/// 24.
+///
+/// The aggregate is an **expression**, not a column: the plan carries
+/// `l_extendedprice * (1 - l_discount)`, the engine evaluates it over the
+/// rows that survived the filter, and the sum is over the result.
+fn q6_revenue_plan() -> QueryPlan {
+    QueryPlan {
+        filter: vec![
+            Predicate::new(
+                "l_shipdate",
+                ComparisonOp::GtEq,
+                ScalarValue::Utf8("1994-01-01".to_owned()),
+            ),
+            Predicate::new(
+                "l_shipdate",
+                ComparisonOp::Lt,
+                ScalarValue::Utf8("1995-01-01".to_owned()),
+            ),
+            Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.05)),
+            Predicate::new("l_discount", ComparisonOp::LtEq, ScalarValue::Float64(0.07)),
+            Predicate::new("l_quantity", ComparisonOp::Lt, ScalarValue::Float64(24.0)),
+        ],
+        projection: Vec::new(),
+        aggregate: Some(AggregateSpec {
+            group_by: Vec::new(),
+            aggregates: vec![Aggregate::Sum {
+                expr: Expr::binary(
+                    ArithOp::Mul,
+                    Expr::column("l_extendedprice"),
+                    Expr::binary(ArithOp::Sub, Expr::constant(1.0), Expr::column("l_discount")),
+                ),
+            }],
         }),
     }
 }

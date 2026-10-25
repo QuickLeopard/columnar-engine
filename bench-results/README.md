@@ -16,11 +16,15 @@ python3 scripts/medians.py
 | `compare-run1.json` | the first of the three runs the published table is the median of |
 | `compare-run2.json` | the second |
 | `compare-run3.json` | the third |
-| `scaling-run1.json` | the first of the three **thread-count sweeps** the §2e table is the median of |
+| `scaling-run1.json` | the first of the three **thread-count sweeps** of `q6` the §2e table is the median of |
 | `scaling-run2.json` | the second, and the one `scaling.json` is a copy of |
 | `scaling-run3.json` | the third |
-| `compare.json` | a copy of `compare-run1.json`, the run whose figures sit nearest the medians |
+| `scaling-revenue-run1.json` | the first of the three **thread-count sweeps of the real Q6** the §2e table is the median of |
+| `scaling-revenue-run2.json` | the second, and the one `scaling-revenue.json` is a copy of |
+| `scaling-revenue-run3.json` | the third |
+| `compare.json` | a copy of `compare-run2.json`, the run whose figures sit nearest the medians |
 | `scaling.json` | a copy of `scaling-run2.json`, the sweep run nearest the medians |
+| `scaling-revenue.json` | a copy of `scaling-revenue-run2.json`, the sweep run nearest the medians |
 | `experiment-dictionary-copy.json` | **not a normal run.** A measurement taken with a deliberate perturbation of the decode path — see below |
 
 ## The experiment file
@@ -45,7 +49,8 @@ There are **two** published comparison tables, and they answer different questio
 | table | question | reports |
 |---|---|---|
 | §2a, §2b | *which is faster when every system is given one thread* | `compare-run*.json` |
-| §2e | *how does each system's number move with the thread count* | `scaling-run*.json` |
+| §2e, `q6` | *how does each system's number move with the thread count* | `scaling-run*.json` |
+| §2e, `q6-revenue` | the same, on the real Q6 | `scaling-revenue-run*.json` |
 
 The first is the like-for-like **single-threaded** comparison, and it has been the headline since
 the first set of numbers in this repository. The second exists because a one-thread table on its
