@@ -88,3 +88,19 @@ impl From<&str> for ScalarValue {
         Self::Utf8(v.to_owned())
     }
 }
+
+impl std::fmt::Display for ScalarValue {
+    /// Writes the value the way a plan output reads it.
+    ///
+    /// A string is quoted, so that a threshold of `'1994-01-01'` is not
+    /// mistaken for a number, and a float is written with Rust's shortest
+    /// round-tripping form, so the output says the number that was actually
+    /// compared against.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int64(v) => write!(f, "{v}"),
+            Self::Float64(v) => write!(f, "{v}"),
+            Self::Utf8(v) => write!(f, "'{v}'"),
+        }
+    }
+}

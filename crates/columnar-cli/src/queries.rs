@@ -30,7 +30,7 @@ const POLARS_TABLE: &str = "lineitem";
 
 /// The queries the engine knows how to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BuiltinQuery {
+pub enum BuiltinQuery {
     /// `SELECT count(*) FROM lineitem` -- the COUNT(*) fast path, with no
     /// column materialised at all.
     Scan,
@@ -47,7 +47,7 @@ pub(crate) enum BuiltinQuery {
 impl BuiltinQuery {
     /// The query's short name.
     #[must_use]
-    pub(crate) const fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Scan => "scan",
             Self::FilterNumeric => "filter-numeric",
@@ -61,20 +61,20 @@ impl BuiltinQuery {
 /// A query the engine can run, with the SQL that means the same thing to an
 /// incumbent.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct QueryDefinition {
+pub struct QueryDefinition {
     /// Which query this is.
-    pub(crate) query: BuiltinQuery,
+    pub query: BuiltinQuery,
     /// The SQL, with `{table}` standing in for the table or file.
-    pub(crate) sql: &'static str,
+    pub sql: &'static str,
     /// Builds the engine's plan.
-    pub(crate) plan: fn() -> QueryPlan,
+    pub plan: fn() -> QueryPlan,
 }
 
 impl QueryDefinition {
     /// The SQL as the engine runs it, with the table named rather than the
     /// file.
     #[must_use]
-    pub(crate) fn sql_for_display(&self) -> String {
+    pub fn sql_for_display(&self) -> String {
         self.sql.replace("{table}", "lineitem")
     }
 
@@ -95,7 +95,7 @@ impl QueryDefinition {
     /// -- as this function used to do -- makes it fail with *"relation not
     /// found"*, which is a different question from the one being measured.
     #[must_use]
-    pub(crate) fn sql_for(
+    pub fn sql_for(
         &self,
         comparator: columnar_bench::Comparator,
         mode: columnar_bench::Mode,
@@ -112,7 +112,7 @@ impl QueryDefinition {
 }
 
 /// Every builtin query.
-pub(crate) const QUERIES: &[QueryDefinition] = &[
+pub const QUERIES: &[QueryDefinition] = &[
     QueryDefinition {
         query: BuiltinQuery::Scan,
         sql: "SELECT count(*) FROM {table}",

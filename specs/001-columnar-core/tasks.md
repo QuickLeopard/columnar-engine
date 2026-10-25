@@ -111,3 +111,16 @@ ADR-0007.
 - [x] T8.12 Correct the published claim about *why* the engine is slow cold: it is the eager
       decode of all sixteen columns (39.3× of the 62× gap), not a slow reader (1.58×). Recorded
       in ADR-0008.
+
+## T9. Superseded by spec 002
+
+- [x] T9.1 The eager decode this increment recorded as a deliberate trade is now **one of two**
+      ways to read a file. The lazy path — a plan resolved against the file's schema, a reader
+      given only the columns the plan needs, and the predicates pushed into the reader — is
+      [spec 002](../002-lazy-columnar-scan/spec.md).
+- [x] T9.2 The cold `q6` query went from **1181 ms to 121 ms**, and the gap against DuckDB's
+      cold 32 ms from **36.9× to 3.8×**. Both paths are measured, side by side, in `PERF.md`.
+- [x] T9.3 The pushdown reproduces the engine's NULL and NaN rules rather than Arrow's, because
+      Arrow's float kernels use IEEE *totalOrder*. Recorded in
+      [ADR-0010](../../docs/adr/0010-pushdown-equivalence.md), and pinned by a differential test
+      that holds the two paths to the same answer on every operator.

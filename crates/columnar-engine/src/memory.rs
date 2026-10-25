@@ -79,7 +79,19 @@ pub fn estimate_bytes(plan: &QueryPlan, dataset: &Dataset) -> usize {
 /// Estimates the working set of an already-resolved plan, in bytes.
 #[must_use]
 pub fn estimate_resolved(resolved: &ResolvedPlan, dataset: &Dataset) -> usize {
-    let rows = dataset.len();
+    estimate_resolved_at(resolved, dataset, dataset.len())
+}
+
+/// Estimates the working set of an already-resolved plan over `rows` rows.
+///
+/// The row count is a parameter because the two paths have different peaks.
+/// The eager path's peak is the decoded dataset, which holds `dataset.len()`
+/// rows. The lazy path's peak is *during* the read, when every row of the
+/// file is still in flight even though only some of them survive the
+/// pushed-down predicates -- so the lazy path estimates against the file's
+/// row count, which is the conservative one.
+#[must_use]
+pub fn estimate_resolved_at(resolved: &ResolvedPlan, dataset: &Dataset, rows: usize) -> usize {
     if rows == 0 {
         return 0;
     }

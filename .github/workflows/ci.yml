@@ -1,11 +1,15 @@
 # Continuous integration for the columnar engine.
 #
-# Three things are checked on every push, and they are all non-negotiable:
+# Everything checked on every push is non-negotiable:
 #
 #   1. the workspace is formatted,
 #   2. the workspace is lint-clean under clippy `all` + `pedantic`,
 #   3. every test passes -- including the differential suite, which is the
-#      mechanism that keeps the five kernel implementations honest.
+#      mechanism that keeps the five kernel implementations honest,
+#   4. the x86-64 half of the kernel still compiles,
+#   5. the dependency policy holds,
+#   6. no dataset is committed, and
+#   7. the published figures still agree with the committed reports.
 #
 # The benchmark is NOT run here. A shared runner is a noisy machine, and a
 # performance number measured on one is not a number this repository is
@@ -144,3 +148,17 @@ jobs:
             exit 1
           fi
           echo "no committed datasets"
+
+  published-figures:
+    name: published figures match the evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # `PERF.md` and `README.md` quote the medians of the committed
+      # comparison reports. This job derives those medians and asserts that
+      # the headline figures appear in the prose, so a hand-edited number
+      # cannot drift away from the evidence without the gate noticing.
+      - name: Derive the medians
+        run: python3 scripts/medians.py
+      - name: Check the published figures against the reports
+        run: python3 scripts/check-published-figures.py

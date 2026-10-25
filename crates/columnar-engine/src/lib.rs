@@ -61,9 +61,14 @@ pub mod explain;
 pub mod memory;
 pub mod operators;
 pub mod plan;
+pub mod pushdown;
+pub mod source;
 
 use columnar_core::SelectionVector;
 use columnar_kernels::Flavor;
+
+use crate::plan::ColumnSchema;
+use crate::pushdown::Pushdown;
 
 pub use dataset::{Dataset, DatasetError};
 pub use explain::{PlanOutput, StageStats};
@@ -71,6 +76,8 @@ pub use memory::{MemoryBudget, MemoryError};
 pub use operators::aggregate::{AggregateResult, AggregateValue, Group};
 pub use operators::filter::FilterStats;
 pub use plan::{Aggregate, AggregateSpec, QueryPlan};
+pub use pushdown::PushdownPlan;
+pub use source::{ParquetSource, SourceColumn};
 
 /// Everything that can go wrong while executing a plan.
 #[derive(Debug, thiserror::Error)]
@@ -126,6 +133,10 @@ pub struct ExecOptions {
 ///
 /// Returns [`MemoryError::BudgetExceeded`] if the plan's estimated working
 /// set exceeds `options.memory_budget`.
+///
+/// This is the **eager** path: the dataset already holds every column of the
+/// file. The lazy path is [`execute_on`], which reads only what the plan
+/// needs.
 pub fn execute(
     plan: &QueryPlan,
     dataset: &Dataset,
@@ -138,24 +149,229 @@ pub fn execute(
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
     }
 
+    let scan = StageStats {
+        stage: "scan".to_owned(),
+        rows_in: rows(dataset.len()),
+        rows_out: rows(dataset.len()),
+        elapsed: std::time::Duration::ZERO,
+    };
+
+    let report = ScanReport { pushed_down: Vec::new(), columns_read: dataset.column_names() };
+
+    run_pipeline(&resolved, dataset, options, scan, report, estimate)
+}
+
+/// Executes `plan` over a Parquet file, reading only what the plan needs.
+///
+/// This is the **lazy** path. It differs from [`execute`] in three ways, and
+/// each of them is the point:
+///
+/// - **The plan resolves against the file's schema**, so an unknown column
+///   or a type mismatch is reported before a single row is read.
+/// - **Only the columns the plan needs are read.** The bytes of the others
+///   are never fetched from the file.
+/// - **The plan's predicates are pushed into the reader**, so the rows that
+///   fail them are dropped during the scan rather than after it.
+///
+/// The pushdown reproduces the engine's filter semantics exactly -- a NULL
+/// never matches, a NaN never matches, for every operator including `!=` --
+/// which is stricter than both SQL and Arrow's own comparisons. See
+/// [`pushdown`] and [ADR-0010](../../../docs/adr/0010-pushdown-equivalence.md).
+///
+/// # Errors
+///
+/// Returns [`EngineError::Memory`] when the plan's estimated working set
+/// exceeds `options.memory_budget`, and the usual resolution errors when
+/// the plan does not fit the file's schema.
+pub fn execute_on(
+    plan: &QueryPlan,
+    source: &ParquetSource,
+    options: &ExecOptions,
+) -> Result<AggregateResult, EngineError> {
+    let resolved = plan.resolve_against(source)?;
+    let decision = decide_scan(&resolved, source);
+
+    let scan_started = std::time::Instant::now();
+    let dataset = source.read(&decision.read, &decision.pushdown)?;
+    let scan_elapsed = scan_started.elapsed();
+
+    // Every index the plan holds is a column of the *file*; the dataset holds
+    // only the read set, so the indices have to move.
+    let mapping = build_mapping(&decision.read, source.column_count());
+    let effective = resolved.remap(&mapping);
+
+    // The estimate is checked against the file's row count rather than the
+    // surviving rows: the peak of the working set is during the read, when
+    // every row of the file is still in flight.
+    let estimate = memory::estimate_resolved_at(&effective, &dataset, source.rows());
+    if estimate > options.memory_budget.bytes {
+        return Err(EngineError::Memory(MemoryError::BudgetExceeded));
+    }
+
+    let scan = StageStats {
+        stage: "scan".to_owned(),
+        rows_in: rows(source.rows()),
+        rows_out: rows(dataset.len()),
+        elapsed: scan_elapsed,
+    };
+
+    let report = ScanReport {
+        pushed_down: decision.pushdown_descriptions(),
+        columns_read: source.column_names(&fetched_columns(&decision)),
+    };
+
+    run_pipeline(&effective, &dataset, options, scan, report, estimate)
+}
+
+/// The columns whose bytes were fetched from the file.
+///
+/// That is the read set -- the columns the plan materialises -- plus the
+/// columns the pushed-down predicates read to evaluate themselves. The
+/// reader fetches both, and a column outside this list was never touched.
+fn fetched_columns(decision: &ScanDecision) -> Vec<usize> {
+    let mut fetched = decision.read.clone();
+    for predicate in decision.pushdown.predicates() {
+        if !fetched.contains(&predicate.column) {
+            fetched.push(predicate.column);
+        }
+    }
+    fetched.sort_unstable();
+    fetched
+}
+
+/// What a scan reads, and what it pushes into the reader.
+#[derive(Debug)]
+struct ScanDecision {
+    /// The file's root indices to read, ascending.
+    read: Vec<usize>,
+    /// The predicates to push into the reader.
+    pushdown: PushdownPlan,
+}
+
+impl ScanDecision {
+    /// A human-readable description of each pushed predicate.
+    fn pushdown_descriptions(&self) -> Vec<String> {
+        self.pushdown.predicates().iter().map(Pushdown::describe).collect()
+    }
+}
+
+/// Decides what a scan reads and what it pushes down.
+///
+/// The rules, in order:
+///
+/// 1. The plan's materialised columns are read. That is the late
+///    materialisation set: the group-by, the aggregate and the projection.
+/// 2. A predicate whose column is **already being read** is declined. The
+///    reader would decode that column twice -- once to evaluate the
+///    predicate and once to produce the output -- which is slower than not
+///    pushing it.
+/// 3. A predicate the pushdown cannot evaluate **exactly** is declined. It
+///    is never approximated.
+/// 4. A declined predicate's column is read, because the engine's filter
+///    stage will need it.
+fn decide_scan(resolved: &plan::ResolvedPlan, source: &ParquetSource) -> ScanDecision {
+    let mut read = resolved.materialised.clone();
+    let mut pushdown = PushdownPlan::new();
+    let mut pushed_columns: Vec<usize> = Vec::new();
+
+    for filter in &resolved.filter {
+        let Some(column) = source.columns().get(filter.column) else {
+            continue;
+        };
+        if read.contains(&filter.column) {
+            continue;
+        }
+        if !pushdown_supports(&column.arrow_type) {
+            continue;
+        }
+        // Two predicates on the same column are one conjunction over that
+        // column, and the reader would decode the column once per predicate.
+        // They are pushed together.
+        match pushdown.for_column_mut(filter.column) {
+            Some(existing) => {
+                existing.and(filter.predicate.op, filter.predicate.value.clone());
+            }
+            None => {
+                pushdown.push(Pushdown::new(
+                    filter.column,
+                    &column.name,
+                    filter.predicate.op,
+                    filter.predicate.value.clone(),
+                ));
+            }
+        }
+        pushed_columns.push(filter.column);
+    }
+
+    for filter in &resolved.filter {
+        if pushed_columns.contains(&filter.column) {
+            continue;
+        }
+        if !read.contains(&filter.column) {
+            read.push(filter.column);
+        }
+    }
+
+    read.sort_unstable();
+    read.dedup();
+
+    ScanDecision { read, pushdown }
+}
+
+/// Whether the pushdown evaluates this Arrow type exactly.
+///
+/// The pushdown implements the engine's three physical types. A dictionary
+/// column is included because the pushdown compares it once per distinct
+/// value and then maps through the indices, exactly as the engine's own
+/// dictionary path does.
+fn pushdown_supports(arrow_type: &arrow::datatypes::DataType) -> bool {
+    use arrow::datatypes::DataType as ArrowType;
+    match arrow_type {
+        ArrowType::Int64 | ArrowType::Float64 | ArrowType::Utf8 | ArrowType::LargeUtf8 => true,
+        ArrowType::Dictionary(key, value) => {
+            matches!(key.as_ref(), ArrowType::Int32)
+                && matches!(value.as_ref(), ArrowType::Utf8 | ArrowType::LargeUtf8)
+        }
+        _ => false,
+    }
+}
+
+/// Maps the file's column indices onto the read set.
+///
+/// The entry for a column that is not read is `None`.
+fn build_mapping(read: &[usize], columns: usize) -> Vec<Option<usize>> {
+    (0..columns).map(|index| read.binary_search(&index).ok()).collect()
+}
+
+/// What the scan did, for the plan output.
+#[derive(Debug, Default)]
+struct ScanReport {
+    /// The predicates that were pushed into the reader.
+    pushed_down: Vec<String>,
+    /// The columns that were read from the file.
+    columns_read: Vec<String>,
+}
+
+/// Runs the pipeline over an already-resolved plan.
+fn run_pipeline(
+    resolved: &plan::ResolvedPlan,
+    dataset: &Dataset,
+    options: &ExecOptions,
+    scan: StageStats,
+    report: ScanReport,
+    estimate: usize,
+) -> Result<AggregateResult, EngineError> {
     let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
     let total_rows = dataset.len();
-    let mut stages: Vec<StageStats> = Vec::new();
+    let mut stages: Vec<StageStats> = vec![scan];
     let mut materialised =
         operators::project::Materialised::new(dataset, SelectionVector::empty(total_rows));
 
-    // --- scan -------------------------------------------------------------
-    // The scan stage decodes the column the filter reads. It is the only
-    // column decoded densely: the comparison kernel reads a dense array.
-    let scan_start = std::time::Instant::now();
-    stages.push(StageStats {
-        stage: "scan".to_owned(),
-        rows_in: rows(total_rows),
-        rows_out: rows(total_rows),
-        elapsed: scan_start.elapsed(),
-    });
-
     // --- filter -----------------------------------------------------------
+    // A predicate that was pushed into the reader has already been applied,
+    // and its column is not in the dataset. The filters left here are the
+    // ones the reader did not take, and the conjunction is separable, so
+    // applying them now gives the same answer.
     let selection = if resolved.filter.is_empty() {
         operators::all_rows(total_rows)
     } else {
@@ -218,6 +434,8 @@ pub fn execute(
         estimated_bytes: estimate,
         budget_bytes: options.memory_budget.bytes,
         kernel_flavor: operators::flavor_name(flavor).to_owned(),
+        pushed_down: report.pushed_down,
+        columns_read: report.columns_read,
     };
 
     Ok(AggregateResult { groups, stages, plan_output })

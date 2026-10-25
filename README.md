@@ -36,9 +36,45 @@ registers every two rows. Rewriting the mask accumulation to stay in a vector re
 
 **What this is not:** this is a claim about a kernel on a query. It is not a claim that the engine
 beats DuckDB or Polars, and where it does not, [`PERF.md`](PERF.md) says so with the same
-precision — including the 1.92-second Parquet decode that makes the engine 63× slower than
-DuckDB on a one-shot query against the file. (97.6% of that gap is the engine decoding all
-sixteen columns when the query wants two, not the reader being slow; `PERF.md` breaks it down.)
+precision.
+
+**And the engine itself has two ways to read a file.** The eager one decodes every column before
+the query starts. The lazy one resolves the plan against the file's *schema*, reads only the
+columns the plan needs, and pushes the plan's predicates into the Parquet reader so the rows that
+fail them are dropped during the scan. For TPC-H Q6 that is **two columns of sixteen** and
+**12.1 MiB of the file's 231.6 MiB**:
+
+```
+$ just compare
+cold · read the Parquet file and answer in one go
+query          engine   engine-lazy   duckdb   polars
+--------------------------------------------------------
+scan        1205.8           0.1      2.0      1.1
+filter-numeric     1212.8          40.4     22.0     43.8
+filter-string      1202.2          42.4     21.0    161.1
+filter-range       1220.7         129.5     31.0     15.8
+q6          1181.1         121.5     32.0    190.8
+```
+
+**The lazy path is 9.7× faster than the eager one on `q6`**, and it beats Polars on every cold
+query except `filter-range`. It does not beat DuckDB: the gap falls from 36.9× to 3.8×, and the
+remaining 3.8× is the Parquet reader, because DuckDB prunes pages with the column index and the
+engine does not. That is measured and attributed in [`PERF.md`](PERF.md), not glossed.
+
+**The eager path got faster too** — 1921 ms to 1181 ms — because the two paths now share one
+decode function, and that function stopped copying a dictionary column's distinct values out of
+every batch. The lazy path never paid that cost; the eager path paid it 5,860 times over.
+Putting the copy back and re-measuring gives 1890 ms, so the 1.60× is a measurement rather than
+a story. See [`PERF.md` §2b-bis](PERF.md#2b-bis-the-eager-path-got-faster-too-and-it-is-measured).
+
+(The table is the median of three full runs; `python3 scripts/medians.py` re-derives it from the
+committed raw reports.)
+
+**The pushdown reproduces the engine's filter semantics exactly** — a NULL never matches, a NaN
+never matches, for every operator including `!=` — which is stricter than both SQL and Arrow's
+own comparisons, whose float kernels use IEEE *totalOrder* and would answer `NaN != 5.0` with
+*true*. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md). The equivalence is not asserted;
+it is checked, row for row, by a differential test over every operator and every edge.
 
 ---
 
@@ -55,6 +91,7 @@ crates/
   columnar-cli       dataset / query / bench / compare
 docs/adr/            the decision record
 specs/001-columnar-core/  the spec, the plan, the tasks
+specs/002-lazy-columnar-scan/  the lazy scan: the plan, the pushdown, the equivalence test
 ```
 
 **One predicate, five implementations, one answer.** The comparison kernel is the project. There
@@ -83,6 +120,7 @@ just dataset                      # 6,000,000 rows, 231.6 MiB, about 2.8 seconds
 
 # 3. Run a query and read the plan output.
 just query                        # the TPC-H Q6 predicate set
+just query-lazy                   # the same, reading only what the plan needs
 
 # 4. Measure the kernel, four ways.
 just bench
@@ -110,7 +148,7 @@ computed different values is not a benchmark.
 | The comparison kernel, on AArch64 / NEON | **measured**, 5 runs, spread published |
 | The comparison kernel, on x86-64 / AVX2 | **performance not yet measured** — no x86-64 machine exists. Its **correctness is verified**, on this ARM64 Mac, under Rosetta 2 |
 | The engine's filter, project and aggregate | **measured**, against DuckDB 2.0.0 and Polars 1.36.1 |
-| The engine's Parquet reader | **measured**, and it is the engine's weakest part |
+| The engine's Parquet reader | **measured**, in two modes: eager (all sixteen columns) and lazy (two of sixteen, with the predicates pushed in) |
 | Multithreading | **not implemented** — the engine is single-threaded in this increment, and so are the incumbents in the comparison |
 
 The x86-64 row is the important one, and it has two halves.
@@ -155,6 +193,9 @@ This repository has a constitution, and it is not decoration.
   published number.
 - [`specs/001-columnar-core/`](specs/001-columnar-core/) — the spec, the plan and the tasks, each
   requirement traced to a principle or to a review finding, with an explicit out-of-scope table.
+- [`specs/002-lazy-columnar-scan/`](specs/002-lazy-columnar-scan/) — the lazy scan: a plan that
+  resolves against a schema, a reader that is given only the columns the plan needs, and a
+  predicate pushdown that reproduces the engine's filter semantics exactly.
 
 The principles that shaped the code most:
 
@@ -180,9 +221,9 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Spec | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table |
-| Increment | storage → filter → project → aggregate (the TPC-H Q6 path) |
-| Tests | 90, all green, including the differential kernel suite and the x86-64 cross-check |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown |
+| Increment | storage → filter → project → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
+| Tests | 109, all green, including the differential kernel suite, the lazy-scan differential suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, and the two benchmark runners |
-| Next | the Parquet reader (the 39.3× cold gap), the projection/aggregate fusion, the x86-64 measurement |
+| Next | page-level pruning, the projection/aggregate fusion, the x86-64 measurement |

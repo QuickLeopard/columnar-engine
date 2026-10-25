@@ -108,3 +108,31 @@ query, and that is a real limitation rather than a rounding error.
   item, and it is worth about 38× on a one-shot query. It does not change ADR-0005 -- the engine
   still owns its own column chunks -- it changes *when* they are built.
 - A faster decode path. That is the 1.58× item, and it is worth much less than the 39.3× one.
+
+## Superseded
+
+**Spec 002 did exactly this**, and this ADR's revisit clause has been taken up. The engine now
+has two ways to read a file:
+
+- the **eager** path this ADR describes, which is unchanged and still the default for a caller
+  that wants every column; and
+- the **lazy** path, which resolves the plan against the file's schema, reads only the columns
+  the plan needs, and pushes the plan's predicates into the Parquet reader.
+
+The measurement this ADR recorded is the measurement the lazy path was built to remove. On the
+TPC-H `lineitem` file, Q6's cold query went from **1181 ms to 121 ms**, and the gap against
+DuckDB's cold 32 ms from **36.9× to 3.8×**. (Medians of three full runs; the derivation is in
+`PERF.md` and the raw reports are in `bench-results/`.)
+
+The eager path got faster too, as a side effect: the two paths now share one decode function, and
+that function stopped copying a dictionary column's distinct values out of every batch. The eager
+path was paying for it 5,860 times — about 14.6 million string allocations — and putting the copy
+back and re-measuring puts it at **1890 ms against 1181 ms**, a 1.60× difference, measured rather
+than argued. The lazy path does not move, because it never materialised the column.
+
+The eager path is kept because the trade this ADR recorded is real: the eager decode is the
+right one for many queries over one file, where the decode is paid once and amortised. The lazy
+path is the right one for a one-shot query. Both are measured, side by side, in `PERF.md`.
+
+See [spec 002](../../specs/002-lazy-columnar-scan/spec.md) and
+[ADR-0010](0010-pushdown-equivalence.md).

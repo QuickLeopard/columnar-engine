@@ -31,9 +31,7 @@ use columnar_bench::{
 use columnar_core::ComparisonOp;
 use columnar_engine::{Dataset, ExecOptions};
 
-mod queries;
-
-use queries::{BuiltinQuery, QueryDefinition, QUERIES};
+use columnar_cli::queries::{BuiltinQuery, QueryDefinition, QUERIES};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -77,6 +75,13 @@ enum Command {
         /// How many times to run it. The median is reported.
         #[arg(long, default_value_t = 5)]
         iterations: usize,
+        /// Read only the columns the query needs, with the query's predicates
+        /// pushed into the Parquet reader.
+        ///
+        /// The lazy path reads the file *during* the query, so its timing is
+        /// a cold number: there is no resident form.
+        #[arg(long)]
+        lazy: bool,
     },
 
     /// The kernel A/B: every flavor, on the real data.
@@ -173,7 +178,9 @@ fn run(cli: Cli) -> Result<()> {
         Command::Dataset { scale_factor, seed, null_rate, output } => {
             run_dataset(scale_factor, seed, null_rate, &output)
         }
-        Command::Query { data, query, iterations } => run_query(&data, query, iterations),
+        Command::Query { data, query, iterations, lazy } => {
+            run_query(&data, query, iterations, lazy)
+        }
         Command::Bench { data, rows, iterations, column, threshold, out } => {
             run_bench(&data, rows, iterations, &column, threshold, &out)
         }
@@ -205,42 +212,82 @@ fn run_dataset(scale_factor: u32, seed: u64, null_rate: f64, output: &Path) -> R
 }
 
 /// Runs one query and prints its plan output.
-fn run_query(data: &Path, query: BuiltinQueryArg, iterations: usize) -> Result<()> {
+fn run_query(data: &Path, query: BuiltinQueryArg, iterations: usize, lazy: bool) -> Result<()> {
     {
         {
-            let dataset = Dataset::read_parquet(data)
-                .with_context(|| format!("could not read {}", data.display()))?;
             let builtin = BuiltinQuery::from(query);
             let definition =
                 QUERIES.iter().find(|q| q.query == builtin).context("unknown query")?;
 
             let mut timings = Vec::with_capacity(iterations);
             let mut last = None;
-            for _ in 0..iterations.max(1) {
-                let started = std::time::Instant::now();
-                let result = columnar_engine::execute(
-                    &(definition.plan)(),
-                    &dataset,
-                    &ExecOptions::default(),
-                )
-                .context("the query failed")?;
-                timings.push(started.elapsed().as_secs_f64() * 1000.0);
-                last = Some(result);
-            }
-            timings.sort_by(f64::total_cmp);
 
-            let result = last.context("no result")?;
-            println!("{}", definition.sql_for_display());
-            println!();
-            println!("{}", result.plan_output);
-            println!();
-            println!(
-                "median wall clock: {:.1} ms over {} runs",
-                timings.get(timings.len() / 2).copied().unwrap_or(0.0),
-                timings.len()
-            );
-            for group in &result.groups {
-                println!("  group {:?} -> {:?}", group.key, group.values);
+            if lazy {
+                // The lazy path opens the file and reads it during the query.
+                // The open is timed separately, because it is the only part
+                // that happens before the query starts.
+                let mut opens = Vec::with_capacity(iterations.max(1));
+                for _ in 0..iterations.max(1) {
+                    let open_started = std::time::Instant::now();
+                    let source = columnar_engine::ParquetSource::open(data)
+                        .with_context(|| format!("could not open {}", data.display()))?;
+                    opens.push(open_started.elapsed().as_secs_f64() * 1000.0);
+
+                    let started = std::time::Instant::now();
+                    let result = columnar_engine::execute_on(
+                        &(definition.plan)(),
+                        &source,
+                        &ExecOptions::default(),
+                    )
+                    .context("the query failed")?;
+                    timings.push(started.elapsed().as_secs_f64() * 1000.0);
+                    last = Some(result);
+                }
+                opens.sort_by(f64::total_cmp);
+                timings.sort_by(f64::total_cmp);
+                let result = last.context("no result")?;
+                println!("{}", definition.sql_for_display());
+                println!();
+                println!("{}", result.plan_output);
+                println!();
+                println!(
+                    "median wall clock: {:.1} ms over {} runs (open: {:.1} ms)",
+                    timings.get(timings.len() / 2).copied().unwrap_or(0.0),
+                    timings.len(),
+                    opens.get(opens.len() / 2).copied().unwrap_or(0.0)
+                );
+                for group in &result.groups {
+                    println!("  group {:?} -> {:?}", group.key, group.values);
+                }
+            } else {
+                let dataset = Dataset::read_parquet(data)
+                    .with_context(|| format!("could not read {}", data.display()))?;
+                for _ in 0..iterations.max(1) {
+                    let started = std::time::Instant::now();
+                    let result = columnar_engine::execute(
+                        &(definition.plan)(),
+                        &dataset,
+                        &ExecOptions::default(),
+                    )
+                    .context("the query failed")?;
+                    timings.push(started.elapsed().as_secs_f64() * 1000.0);
+                    last = Some(result);
+                }
+                timings.sort_by(f64::total_cmp);
+
+                let result = last.context("no result")?;
+                println!("{}", definition.sql_for_display());
+                println!();
+                println!("{}", result.plan_output);
+                println!();
+                println!(
+                    "median wall clock: {:.1} ms over {} runs",
+                    timings.get(timings.len() / 2).copied().unwrap_or(0.0),
+                    timings.len()
+                );
+                for group in &result.groups {
+                    println!("  group {:?} -> {:?}", group.key, group.values);
+                }
             }
         }
     }
@@ -313,33 +360,15 @@ fn run_compare(data: &Path, iterations: usize, threads: usize, out: &Path) -> Re
             let mut external_results = Vec::new();
 
             for definition in QUERIES {
-                // The engine is measured twice, the same way the incumbents
-                // are: once with the data already resident, and once cold,
-                // reading the file and answering the query in one go.
-                let (load_ms, resident_ms, cold_ms, result) =
-                    measure_engine(definition, data, iterations)?;
-
-                // The numeric answer, so it can be cross-checked against each
-                // incumbent's answer.
-                let result_value =
-                    result.groups.first().and_then(|group| group.values.first()).and_then(
-                        |value| match value {
-                            columnar_engine::AggregateValue::Int(v) => Some(*v as f64),
-                            columnar_engine::AggregateValue::Float(v) => Some(*v),
-                            columnar_engine::AggregateValue::Null => None,
-                        },
-                    );
-
-                engine_queries.push(EngineQueryResult {
-                    query: definition.query.name().to_owned(),
-                    sql: definition.sql_for_display(),
-                    elapsed_ms: resident_ms,
-                    load_ms,
-                    cold_ms,
-                    result: format!("{:?}", result.groups),
-                    result_value,
-                    plan_output: result.plan_output.to_string(),
-                });
+                let measured = measure_both_paths(definition, data, iterations)?;
+                // The engine's own answer is the reference for the cross-check
+                // against the incumbents below. Both paths computed it, and
+                // they agreed -- `measure_both_paths` refuses otherwise.
+                let result_value = measured
+                    .iter()
+                    .find(|entry| entry.mode == "eager")
+                    .and_then(|entry| entry.result_value);
+                engine_queries.extend(measured);
 
                 for mode in [external::Mode::Resident, external::Mode::Cold] {
                     for comparator in [Comparator::DuckDb, Comparator::Polars] {
@@ -423,6 +452,69 @@ fn run_compare(data: &Path, iterations: usize, threads: usize, out: &Path) -> Re
     Ok(())
 }
 
+/// Measures the engine on one query, both ways.
+///
+/// The eager path is measured the way the incumbents are: once with the data
+/// already resident, and once cold, reading the file and answering the query
+/// in one go. The lazy path is measured once, because it has no resident
+/// form: it reads the file during the query, so its number is a cold number
+/// by construction.
+///
+/// The two paths must agree, or one of them is wrong. The engine's own
+/// answer is also the reference for the cross-check against the incumbents.
+fn measure_both_paths(
+    definition: &QueryDefinition,
+    data: &Path,
+    iterations: usize,
+) -> Result<Vec<EngineQueryResult>> {
+    let (load_ms, resident_ms, cold_ms, result) = measure_engine(definition, data, iterations)?;
+    let (lazy_open_ms, lazy_ms, lazy_result) = measure_engine_lazy(definition, data, iterations)?;
+
+    if lazy_result.groups != result.groups {
+        anyhow::bail!(
+            "the lazy and the eager path disagree on `{}`: {:?} against {:?}",
+            definition.query.name(),
+            lazy_result.groups,
+            result.groups
+        );
+    }
+
+    // The numeric answer, so it can be cross-checked against each incumbent's
+    // answer.
+    let result_value = result.groups.first().and_then(|group| group.values.first()).and_then(
+        |value| match value {
+            columnar_engine::AggregateValue::Int(v) => Some(*v as f64),
+            columnar_engine::AggregateValue::Float(v) => Some(*v),
+            columnar_engine::AggregateValue::Null => None,
+        },
+    );
+
+    Ok(vec![
+        EngineQueryResult {
+            query: definition.query.name().to_owned(),
+            mode: "eager".to_owned(),
+            sql: definition.sql_for_display(),
+            elapsed_ms: resident_ms,
+            load_ms,
+            cold_ms,
+            result: format!("{:?}", result.groups),
+            result_value,
+            plan_output: result.plan_output.to_string(),
+        },
+        EngineQueryResult {
+            query: definition.query.name().to_owned(),
+            mode: "lazy".to_owned(),
+            sql: definition.sql_for_display(),
+            elapsed_ms: lazy_ms,
+            load_ms: lazy_open_ms,
+            cold_ms: lazy_ms,
+            result: format!("{:?}", lazy_result.groups),
+            result_value,
+            plan_output: lazy_result.plan_output.to_string(),
+        },
+    ])
+}
+
 /// Measures the engine on one query, the way the incumbents are measured.
 ///
 /// Returns `(load ms, resident query ms, cold ms, the result)`.
@@ -477,6 +569,57 @@ fn measure_engine(
     }
 
     Ok((median(&loads), median(&resident), median(&colds), result.context("no result")?))
+}
+
+/// Measures the engine on one query, the lazy way.
+///
+/// Returns `(open ms, the whole query ms, the result)`.
+///
+/// The lazy path reads the file *during* the query, so it has no separate
+/// "resident" form: the number it produces is a cold number by
+/// construction, and it is the number to compare with the incumbents' cold
+/// measurements.
+///
+/// The **open** is the part the lazy path does before the query starts:
+/// reading the file's footer, and nothing else. It is reported separately
+/// because it is the honest answer to "how long does the file take to
+/// become queryable" for a path that never holds the whole file.
+fn measure_engine_lazy(
+    definition: &QueryDefinition,
+    data: &Path,
+    iterations: usize,
+) -> Result<(f64, f64, columnar_engine::AggregateResult)> {
+    let iterations = iterations.max(1);
+
+    // Warm-up: the first open pays for the page cache.
+    {
+        let source = columnar_engine::ParquetSource::open(data)
+            .with_context(|| format!("could not open {}", data.display()))?;
+        let _ = columnar_engine::execute_on(&(definition.plan)(), &source, &ExecOptions::default());
+    }
+
+    let mut opens = Vec::with_capacity(iterations);
+    let mut totals = Vec::with_capacity(iterations);
+    let mut result = None;
+
+    for _ in 0..iterations {
+        let open_started = std::time::Instant::now();
+        let source = columnar_engine::ParquetSource::open(data)
+            .with_context(|| format!("could not open {}", data.display()))?;
+        let open_ms = open_started.elapsed().as_secs_f64() * 1000.0;
+
+        let query_started = std::time::Instant::now();
+        let value =
+            columnar_engine::execute_on(&(definition.plan)(), &source, &ExecOptions::default())
+                .context("the query failed")?;
+        let query_ms = query_started.elapsed().as_secs_f64() * 1000.0;
+
+        opens.push(open_ms);
+        totals.push(query_ms);
+        result = Some(value);
+    }
+
+    Ok((median(&opens), median(&totals), result.context("no result")?))
 }
 
 /// The median of a set of samples.

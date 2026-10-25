@@ -63,10 +63,17 @@ not deleted after the SIMD path works.
 - **MUST**: a comparison involving a NaN value or a NaN threshold **never match**, for every
   operator, **including `!=`**. This is "unknown propagates", and it is stricter than SQL's
   treatment of NaN.
+- **MUST**: a predicate pushed into the Parquet reader compute **the engine's** answer, not the
+  reader's. Arrow's own float comparison kernels use IEEE *totalOrder*, under which `NaN != 5.0`
+  is true and `-0.0 != 0.0`; a pushdown that used them would answer a different question from
+  the filter, on the same query, on the same data. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md).
 
 **Rationale**: these two rules are the easiest thing in a vectorized engine to get wrong, and the
 failure is silent — the engine returns rows instead of an error. They are pinned by explicit tests
-rather than left to the random cases.
+rather than left to the random cases. The pushdown is a **second** place where they can be got
+wrong, because the reader's comparison kernels disagree with them; so the pushdown implements the
+engine's rules itself, and a differential test holds the two paths to the same answer, row for
+row, on every operator and every edge the rules mention.
 
 ### IV. Evidence Over Claims
 
@@ -135,6 +142,11 @@ These are the standards any change must hold or improve. They are the floor.
   query that exceeds it rather than exhausting the machine.
 - **Benchmark hygiene**: a fixed dataset generated from a pinned seed, a fixed warm-up, a fixed
   sample count, and the warm/cold distinction stated explicitly.
+- **Repeated runs, published medians**: a published timing MUST be the **median of at least three
+  full runs**, and the raw reports MUST be committed. The **spread** MUST be published wherever it
+  is wide enough to change a reader's conclusion, and a run that disagrees with the median MUST be
+  published rather than dropped. The published table MUST be derivable from the committed reports
+  by a checked-in script, so the prose and the evidence cannot drift apart.
 
 ---
 
@@ -181,4 +193,21 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-23
+**Version**: 1.1.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
+
+### Amendment history
+
+**1.1.0 — 2026-10-25 — repeated runs, published medians.** Added a performance standard
+requiring that a published timing be the median of at least three full runs, that the raw reports
+be committed, that the spread be published where it changes a conclusion, and that the published
+table be derivable from those reports by a checked-in script.
+
+*Rationale*: the machine this project is built on is shared, and a single run of the comparison
+was found to vary by up to 43% on one figure. A single run is an estimate of a number that moves
+when the machine is busy, and publishing one is publishing a sample as if it were a population.
+*Principles touched*: none of I–VIII; this extends the Performance Standards only, so it is a
+MINOR bump.
+*Migration plan*: the comparison table in `PERF.md` was re-measured under the new rule; three
+full runs were committed as `bench-results/compare-run{1,2,3}.json`, and
+`scripts/medians.py` was added as the derivation. The kernel A/B table already published its
+median over eight runs and its spread, and is unchanged.

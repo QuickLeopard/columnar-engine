@@ -78,8 +78,13 @@ clean-data:
 # ---------------------------------------------------------------------------
 
 # Run the TPC-H Q6 query over the dataset and print the plan output.
-query data="data/lineitem.parquet":
-    cargo run --release -p columnar-cli -- query --data {{data}} --query q6
+query data="data/lineitem.parquet" lazy="":
+    cargo run --release -p columnar-cli -- query --data {{data}} --query q6 {{lazy}}
+
+# Run the query the lazy way: read only the columns the plan needs, with
+# the plan's predicates pushed into the Parquet reader.
+query-lazy data="data/lineitem.parquet":
+    cargo run --release -p columnar-cli -- query --data {{data}} --query q6 --lazy
 
 # Run the kernel A/B. Override the row count with `just bench rows=20000000`.
 bench data="data/lineitem.parquet" rows="20000000" iterations="5" out="bench-results/kernel.json":
@@ -89,8 +94,25 @@ bench data="data/lineitem.parquet" rows="20000000" iterations="5" out="bench-res
 #
 # Both incumbents are pinned to one thread, because the engine is
 # single-threaded in this increment. See ADR-0007.
+#
+# Publish a table from this: run it at least three times, keep the reports,
+# and derive the medians with `just medians`.
 compare data="data/lineitem.parquet" iterations="3" threads="1" out="bench-results/compare.json":
     cargo run --release -p columnar-cli -- compare --data {{data}} --iterations {{iterations}} --threads {{threads}} --out {{out}}
+
+# Derive the published comparison table from the committed raw reports.
+#
+# The table in PERF.md is the median of three full `just compare` runs. This
+# is the derivation, and it prints each figure as `median (min-max)`.
+medians:
+    python3 scripts/medians.py
+
+# Check that the published figures still agree with the committed reports.
+#
+# A hand-edited number in PERF.md or README.md that drifts away from the
+# evidence fails here.
+check-published:
+    python3 scripts/check-published-figures.py
 
 # Run everything that produces a published number.
 perf: bench compare

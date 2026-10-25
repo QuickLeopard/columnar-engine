@@ -64,15 +64,29 @@ pub struct DatasetReport {
 pub struct EngineQueryResult {
     /// The query's name.
     pub query: String,
+    /// Which way the engine read the file: `eager` or `lazy`.
+    ///
+    /// The eager path decodes every column of the file before the query
+    /// runs. The lazy path reads only the columns the plan needs, with the
+    /// plan's predicates pushed into the reader.
+    pub mode: String,
     /// The SQL the query corresponds to, for reference.
     pub sql: String,
-    /// How long the query took with the data already resident, in
-    /// milliseconds.
+    /// How long the query took, in milliseconds.
     ///
-    /// This is the like-for-like number against the incumbents' resident
-    /// measurements.
+    /// For the **eager** path this is the query against data that is already
+    /// in memory, which is the like-for-like number against the incumbents'
+    /// resident measurements.
+    ///
+    /// For the **lazy** path there is no resident form -- the file is read
+    /// during the query -- so this is the whole lazy query: open the file,
+    /// read the columns the plan needs, and answer.
     pub elapsed_ms: f64,
     /// How long the Parquet file took to become queryable, in milliseconds.
+    ///
+    /// For the eager path this is the full decode. For the lazy path it is
+    /// the open: reading the footer, which is all the lazy path does before
+    /// the query starts.
     pub load_ms: f64,
     /// How long a cold run took end to end: read the file, then answer.
     ///
@@ -180,7 +194,8 @@ impl BenchReport {
 /// every system.
 ///
 /// This is the like-for-like table -- it asks the same question of all
-/// three systems.
+/// three systems. The lazy path has no resident form and is not in this
+/// table; it is in the cold one, where the file is read.
 fn render_resident(
     out: &mut String,
     engine: &[EngineQueryResult],
@@ -190,7 +205,7 @@ fn render_resident(
     writeln!(out, "resident \u{b7} the data is already in memory").ok();
     writeln!(out, "query          engine   duckdb   polars   note").ok();
     writeln!(out, "--------------------------------------------------------").ok();
-    for query in engine {
+    for query in engine.iter().filter(|query| query.mode == "eager") {
         let duckdb = lookup(external, &query.query, "duckdb", "resident");
         let polars = lookup(external, &query.query, "polars", "resident");
         let candidates = [("engine", query.elapsed_ms), ("duckdb", duckdb), ("polars", polars)];
@@ -215,17 +230,25 @@ fn render_resident(
 
 /// Renders the cold comparison: from the file on disk to the answer, in
 /// one go. Every system pays for reading the Parquet file.
+///
+/// The lazy path belongs here and not in the resident table: it reads the
+/// file *during* the query, so its number is a cold number by
+/// construction.
 fn render_cold(out: &mut String, engine: &[EngineQueryResult], external: &[ExternalComparison]) {
     writeln!(out, "\ncold \u{b7} read the Parquet file and answer in one go").ok();
-    writeln!(out, "query          engine   duckdb   polars").ok();
+    writeln!(out, "query          engine   engine-lazy   duckdb   polars").ok();
     writeln!(out, "--------------------------------------------------------").ok();
-    for query in engine {
+    for query in engine.iter().filter(|query| query.mode == "eager") {
+        let lazy = engine
+            .iter()
+            .find(|other| other.mode == "lazy" && other.query == query.query)
+            .map_or(f64::NAN, |other| other.elapsed_ms);
         let duckdb = lookup(external, &query.query, "duckdb", "cold");
         let polars = lookup(external, &query.query, "polars", "cold");
         writeln!(
             out,
-            "{:<7}  {:>9.1}   {:>6.1}   {:>6.1}",
-            query.query, query.cold_ms, duckdb, polars
+            "{:<7}  {:>9.1}   {:>11.1}   {:>6.1}   {:>6.1}",
+            query.query, query.cold_ms, lazy, duckdb, polars
         )
         .ok();
     }
@@ -233,13 +256,17 @@ fn render_cold(out: &mut String, engine: &[EngineQueryResult], external: &[Exter
 
 /// Renders the load, on its own: how long does the file take to become
 /// queryable? For the incumbents this is a separate statement; for the
-/// engine it is the Parquet decode.
+/// eager engine it is the Parquet decode, and for the lazy engine it is the
+/// open -- reading the footer, and nothing else.
 fn render_load(out: &mut String, engine: &[EngineQueryResult], external: &[ExternalComparison]) {
     writeln!(out, "\nfile load \u{b7} the Parquet file becoming queryable \u{b7} ms").ok();
     writeln!(out, "system        load ms   subprocess wall ms").ok();
     writeln!(out, "--------------------------------------------------------").ok();
-    if let Some(query) = engine.first() {
+    if let Some(query) = engine.iter().find(|query| query.mode == "eager") {
         writeln!(out, "{:<7}  {:>9.1}   {:>18}", "engine", query.load_ms, "-").ok();
+    }
+    if let Some(query) = engine.iter().find(|query| query.mode == "lazy") {
+        writeln!(out, "{:<12}  {:>9.1}   {:>18}", "engine lazy", query.load_ms, "-").ok();
     }
     for comparator in ["duckdb", "polars"] {
         let load = worst(

@@ -29,6 +29,27 @@ use crate::{Dataset, EngineError};
 pub const OPTIMIZATION_ORDER: &str =
     "predicate pushdown -> projection pushdown -> late materialization -> aggregate";
 
+/// What a plan needs to know about the columns it may touch.
+///
+/// The plan resolves against this rather than against a decoded dataset, so
+/// that a query over a Parquet file can be checked -- an unknown column, a
+/// type mismatch -- before a single row is read. The eager path resolves
+/// against a [`Dataset`], which implements this trait over its chunks; the
+/// lazy path resolves against the file's schema.
+pub trait ColumnSchema {
+    /// How many columns the schema has.
+    fn column_count(&self) -> usize;
+
+    /// The name of the column at `index`.
+    ///
+    /// An index outside the schema yields an empty name, which no plan can
+    /// name, so a plan that reaches it fails rather than matching something.
+    fn column_name(&self, index: usize) -> &str;
+
+    /// The type of the column at `index`.
+    fn column_type(&self, index: usize) -> DataType;
+}
+
 /// The aggregate functions the engine supports.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Aggregate {
@@ -100,28 +121,41 @@ impl QueryPlan {
     /// `int64` column compared against a `float64` threshold is a plan error
     /// rather than an implicit cast.
     pub fn resolve(&self, dataset: &Dataset) -> Result<ResolvedPlan, EngineError> {
+        self.resolve_against(dataset)
+    }
+
+    /// Resolves the plan against a schema.
+    ///
+    /// This is [`QueryPlan::resolve`] against something that is not a decoded
+    /// dataset -- a Parquet file's schema, say -- so that a query can be
+    /// checked before any data is read. The lazy path uses it, and it is the
+    /// reason the lazy path can report an unknown column without having
+    /// touched the file's data.
+    pub fn resolve_against(&self, schema: &dyn ColumnSchema) -> Result<ResolvedPlan, EngineError> {
         let filter = self
             .filter
             .iter()
-            .map(|predicate| resolve_filter(predicate, dataset))
+            .map(|predicate| resolve_filter(predicate, schema))
             .collect::<Result<Vec<ResolvedFilter>, EngineError>>()?;
         let aggregate = match &self.aggregate {
-            Some(spec) => Some(resolve_aggregate(spec, dataset)?),
+            Some(spec) => Some(resolve_aggregate(spec, schema)?),
             None => None,
         };
-        let projection = resolve_projection(&self.projection, dataset)?;
+        let projection = resolve_projection(&self.projection, schema)?;
 
-        let materialised = materialised_columns(dataset, aggregate.as_ref(), &projection);
+        let materialised = materialised_columns(schema, aggregate.as_ref(), &projection);
 
         Ok(ResolvedPlan { filter, projection, aggregate, materialised })
     }
 }
 
 /// Resolves the filter's column and type-checks its threshold.
-fn resolve_filter(predicate: &Predicate, dataset: &Dataset) -> Result<ResolvedFilter, EngineError> {
-    let column = column_index(dataset, &predicate.column)?;
-    let chunk = chunk(dataset, column);
-    let column_type = chunk.data_type();
+fn resolve_filter(
+    predicate: &Predicate,
+    schema: &dyn ColumnSchema,
+) -> Result<ResolvedFilter, EngineError> {
+    let column = column_index(schema, &predicate.column)?;
+    let column_type = schema.column_type(column);
     let value_type = predicate.value.data_type();
     if column_type != value_type {
         return Err(EngineError::TypeMismatch(format!(
@@ -137,35 +171,35 @@ fn resolve_filter(predicate: &Predicate, dataset: &Dataset) -> Result<ResolvedFi
 /// Resolves the aggregate's columns and type-checks every aggregate.
 fn resolve_aggregate(
     spec: &AggregateSpec,
-    dataset: &Dataset,
+    schema: &dyn ColumnSchema,
 ) -> Result<ResolvedAggregate, EngineError> {
     let group_by = spec
         .group_by
         .iter()
-        .map(|name| column_index(dataset, name))
+        .map(|name| column_index(schema, name))
         .collect::<Result<Vec<usize>, EngineError>>()?;
 
     let mut aggregates = Vec::with_capacity(spec.aggregates.len());
     for aggregate in &spec.aggregates {
         let function = match aggregate {
             Aggregate::Sum { column } => {
-                let index = column_index(dataset, column)?;
-                require_numeric(dataset, index, column, "SUM")?;
+                let index = column_index(schema, column)?;
+                require_numeric(schema, index, column, "SUM")?;
                 ResolvedAggregateFn::Sum { column: index }
             }
             Aggregate::Count { column } => {
-                let index = column_index(dataset, column)?;
+                let index = column_index(schema, column)?;
                 ResolvedAggregateFn::Count { column: index }
             }
             Aggregate::CountStar => ResolvedAggregateFn::CountStar,
             Aggregate::Min { column } => {
-                let index = column_index(dataset, column)?;
-                require_numeric(dataset, index, column, "MIN")?;
+                let index = column_index(schema, column)?;
+                require_numeric(schema, index, column, "MIN")?;
                 ResolvedAggregateFn::Min { column: index }
             }
             Aggregate::Max { column } => {
-                let index = column_index(dataset, column)?;
-                require_numeric(dataset, index, column, "MAX")?;
+                let index = column_index(schema, column)?;
+                require_numeric(schema, index, column, "MAX")?;
                 ResolvedAggregateFn::Max { column: index }
             }
         };
@@ -177,8 +211,11 @@ fn resolve_aggregate(
 
 /// Resolves the projection's columns. An empty projection stays empty; it
 /// means "all columns".
-fn resolve_projection(projection: &[String], dataset: &Dataset) -> Result<Vec<usize>, EngineError> {
-    projection.iter().map(|name| column_index(dataset, name)).collect()
+fn resolve_projection(
+    projection: &[String],
+    schema: &dyn ColumnSchema,
+) -> Result<Vec<usize>, EngineError> {
+    projection.iter().map(|name| column_index(schema, name)).collect()
 }
 
 /// The columns the plan will actually decode, in schema order.
@@ -187,7 +224,7 @@ fn resolve_projection(projection: &[String], dataset: &Dataset) -> Result<Vec<us
 /// the aggregation reads, and -- for a plan without an aggregation -- the
 /// projection (or every column, when the projection is empty).
 fn materialised_columns(
-    dataset: &Dataset,
+    schema: &dyn ColumnSchema,
     aggregate: Option<&ResolvedAggregate>,
     projection: &[usize],
 ) -> Vec<usize> {
@@ -213,7 +250,7 @@ fn materialised_columns(
             }
         }
     } else if projection.is_empty() {
-        for column in 0..dataset.chunks.len() {
+        for column in 0..schema.column_count() {
             push(column);
         }
     } else {
@@ -239,6 +276,51 @@ pub struct ResolvedPlan {
     pub materialised: Vec<usize>,
 }
 
+impl ResolvedPlan {
+    /// Maps this plan's column indices onto a subset of the columns.
+    ///
+    /// `mapping` has one entry per column of the schema the plan was
+    /// resolved against: the entry is the column's index in the subset, or
+    /// `None` when the column is not in it.
+    ///
+    /// The lazy path needs this. The plan is resolved against the *file's*
+    /// schema, and the dataset it ends up running over holds only the
+    /// columns the read set asked for, so every index has to move.
+    ///
+    /// **The filters whose column is not in the subset are dropped.** That is
+    /// not a silent omission: a filter is only left out of the subset when
+    /// it was pushed into the Parquet reader, which already applied it. The
+    /// conjunction is separable, so `(A ∧ B)` applied by the reader and then
+    /// `B` applied by the engine is `A ∧ B`.
+    #[must_use]
+    pub fn remap(&self, mapping: &[Option<usize>]) -> ResolvedPlan {
+        let filter = self
+            .filter
+            .iter()
+            .filter_map(|filter| {
+                let column = mapping.get(filter.column).copied().flatten()?;
+                Some(ResolvedFilter { column, predicate: filter.predicate.clone() })
+            })
+            .collect();
+
+        let projection = self
+            .projection
+            .iter()
+            .filter_map(|&index| mapping.get(index).copied().flatten())
+            .collect();
+
+        let aggregate = self.aggregate.as_ref().map(|aggregate| aggregate.remap(mapping));
+
+        let materialised = self
+            .materialised
+            .iter()
+            .filter_map(|&index| mapping.get(index).copied().flatten())
+            .collect();
+
+        ResolvedPlan { filter, projection, aggregate, materialised }
+    }
+}
+
 /// A filter whose column has been resolved.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedFilter {
@@ -257,6 +339,24 @@ pub struct ResolvedAggregate {
     pub group_by: Vec<usize>,
     /// The aggregates, with their columns resolved.
     pub aggregates: Vec<ResolvedAggregateFn>,
+}
+
+impl ResolvedAggregate {
+    /// Maps this aggregation's column indices onto a subset of the columns.
+    ///
+    /// Every column an aggregation reads is materialised, so every one of
+    /// them is in the subset; a column that is not would mean the aggregate
+    /// was reading something nobody read.
+    fn remap(&self, mapping: &[Option<usize>]) -> ResolvedAggregate {
+        let group_by = self.group_by.iter().map(|&index| remap_index(mapping, index)).collect();
+        let aggregates = self.aggregates.iter().map(|function| function.remap(mapping)).collect();
+        ResolvedAggregate { spec: self.spec.clone(), group_by, aggregates }
+    }
+}
+
+/// Maps one column index onto a subset.
+fn remap_index(mapping: &[Option<usize>], index: usize) -> usize {
+    mapping.get(index).copied().flatten().expect("a materialised column is in the read set")
 }
 
 /// One resolved aggregate function.
@@ -298,20 +398,24 @@ impl ResolvedAggregateFn {
             Self::CountStar => None,
         }
     }
+
+    /// Maps this function's column index onto a subset of the columns.
+    fn remap(&self, mapping: &[Option<usize>]) -> ResolvedAggregateFn {
+        match self {
+            Self::Sum { column } => Self::Sum { column: remap_index(mapping, *column) },
+            Self::Count { column } => Self::Count { column: remap_index(mapping, *column) },
+            Self::Min { column } => Self::Min { column: remap_index(mapping, *column) },
+            Self::Max { column } => Self::Max { column: remap_index(mapping, *column) },
+            Self::CountStar => Self::CountStar,
+        }
+    }
 }
 
 /// The index of the column called `name`.
-fn column_index(dataset: &Dataset, name: &str) -> Result<usize, EngineError> {
-    dataset
-        .chunks
-        .iter()
-        .position(|chunk| chunk.name == name)
+fn column_index(schema: &dyn ColumnSchema, name: &str) -> Result<usize, EngineError> {
+    (0..schema.column_count())
+        .find(|&index| schema.column_name(index) == name)
         .ok_or_else(|| EngineError::UnknownColumn(name.to_owned()))
-}
-
-/// The chunk at `index`.
-fn chunk(dataset: &Dataset, index: usize) -> &columnar_core::ColumnChunk {
-    dataset.chunks.get(index).expect("a resolved column index is in range")
 }
 
 /// Rejects a column whose type the aggregate cannot represent.
@@ -320,13 +424,12 @@ fn chunk(dataset: &Dataset, index: usize) -> &columnar_core::ColumnChunk {
 /// value type has no string variant: returning one would mean inventing a
 /// representation the output type cannot express.
 fn require_numeric(
-    dataset: &Dataset,
+    schema: &dyn ColumnSchema,
     index: usize,
     name: &str,
     function: &str,
 ) -> Result<(), EngineError> {
-    let data_type: DataType = chunk(dataset, index).data_type();
-    match data_type {
+    match schema.column_type(index) {
         DataType::Int64 | DataType::Float64 => Ok(()),
         DataType::Utf8 => Err(EngineError::TypeMismatch(format!(
             "{function} over the utf8 column `{name}` is not representable in the aggregate value type"

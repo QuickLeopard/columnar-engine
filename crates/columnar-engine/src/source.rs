@@ -1,0 +1,245 @@
+//! A Parquet file the engine reads lazily.
+//!
+//! # Why this exists
+//!
+//! [`Dataset::read_parquet`](crate::Dataset::read_parquet) decodes **every**
+//! column of the file before any query runs. On the TPC-H `lineitem` file
+//! that is 231.6 MiB of compressed bytes and 404.5 MiB of raw bytes, of
+//! which the Q6 predicate set needs 11.5 MiB and 11.7 MiB: **2.9%**.
+//! `l_comment` alone is half of everything the eager reader decodes, and Q6
+//! never reads it.
+//!
+//! ADR-0008 recorded that cost as a deliberate choice for the first
+//! increment, with a clause to revisit it. This module is the revisit.
+//!
+//! # What a source is
+//!
+//! A [`ParquetSource`] holds a path and the file's *metadata*. Opening one
+//! reads the footer and nothing else: no row is decoded, and no column's
+//! data is fetched. The query then decides what it needs, and the source
+//! reads exactly that.
+//!
+//! ```text
+//! open   ->  schema, row count, row-group count        (the footer)
+//! read   ->  the columns the plan names, with the plan's
+//!            predicates pushed into the reader            (the data)
+//! ```
+//!
+//! # What is read
+//!
+//! Two things decide the read:
+//!
+//! - **Projection.** The reader is handed a [`ProjectionMask`] over the
+//!   file's root columns, so the bytes of the columns outside it are never
+//!   fetched from the file -- not read, not decompressed, not decoded.
+//! - **Pushdown.** The plan's predicates are handed to the reader as a
+//!   [`RowFilter`], so the rows that fail them are dropped during the scan
+//!   rather than after it.
+//!
+//! The pushdown's semantics are the engine's, not Arrow's, and that is the
+//! whole of [`crate::pushdown`].
+
+use std::fs::File;
+use std::path::{Path, PathBuf};
+
+use arrow::datatypes::{DataType as ArrowType, SchemaRef};
+use columnar_core::DataType;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::ProjectionMask;
+
+use crate::dataset::{decode_batches, Dataset, DatasetError};
+use crate::plan::ColumnSchema;
+use crate::pushdown::PushdownPlan;
+
+/// A column of a [`ParquetSource`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceColumn {
+    /// The column's name.
+    pub name: String,
+    /// The engine's type for the column.
+    ///
+    /// A dictionary-encoded UTF-8 column is a `utf8` column to the engine:
+    /// the encoding is the chunk's business, not the plan's.
+    pub data_type: DataType,
+    /// The file's Arrow type for the column.
+    ///
+    /// The pushdown needs this, because it is the pushdown that has to
+    /// evaluate an Arrow array.
+    pub arrow_type: ArrowType,
+}
+
+/// The number of rows the Parquet reader hands over at a time.
+///
+/// The reader's own default is 1024 rows, which for a six-million-row file
+/// means 5,860 batches. Every batch costs a little: the readers are set up,
+/// the arrays are allocated, and the engine's builders are extended. At
+/// 8,192 rows the file arrives in 733 batches and the read of Q6's two
+/// columns drops from 52.6 ms to 43.4 ms.
+///
+/// Larger is not better: at 262,144 rows the batches get big enough that
+/// the allocation and the copy cost more than the per-batch overhead they
+/// save. The engine's own operator batch size is a separate thing, and
+/// unrelated.
+pub const READER_BATCH_ROWS: usize = 8_192;
+
+/// A Parquet file the engine can read without decoding it.
+#[derive(Debug, Clone)]
+pub struct ParquetSource {
+    /// Where the file is.
+    path: PathBuf,
+    /// The file's Arrow schema.
+    schema: SchemaRef,
+    /// The file's columns, in schema order.
+    columns: Vec<SourceColumn>,
+    /// How many rows the file holds.
+    rows: usize,
+    /// How many row groups the file has.
+    row_groups: usize,
+}
+
+impl ParquetSource {
+    /// Opens a Parquet file, reading its metadata and nothing else.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatasetError::Io`] if the file cannot be opened, and
+    /// [`DatasetError::Parquet`] if it is not a Parquet file the reader
+    /// understands, or holds a column type the engine does not support.
+    pub fn open(path: &Path) -> Result<Self, DatasetError> {
+        let file = File::open(path)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+            .map_err(|error| DatasetError::Parquet(error.to_string()))?;
+
+        let schema = builder.schema().clone();
+        let metadata = builder.metadata();
+        let rows = usize::try_from(metadata.file_metadata().num_rows()).unwrap_or(0);
+        let row_groups = metadata.num_row_groups();
+
+        let columns = schema
+            .fields()
+            .iter()
+            .map(|field| {
+                Ok(SourceColumn {
+                    name: field.name().clone(),
+                    data_type: engine_type(field.data_type())?,
+                    arrow_type: field.data_type().clone(),
+                })
+            })
+            .collect::<Result<Vec<SourceColumn>, DatasetError>>()?;
+
+        Ok(Self { path: path.to_path_buf(), schema, columns, rows, row_groups })
+    }
+
+    /// Where the file is.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// How many rows the file holds.
+    #[must_use]
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// How many row groups the file has.
+    #[must_use]
+    pub fn row_groups(&self) -> usize {
+        self.row_groups
+    }
+
+    /// The file's columns, in schema order.
+    #[must_use]
+    pub fn columns(&self) -> &[SourceColumn] {
+        &self.columns
+    }
+
+    /// The index of the column called `name`.
+    #[must_use]
+    pub fn column_index(&self, name: &str) -> Option<usize> {
+        self.columns.iter().position(|column| column.name == name)
+    }
+
+    /// The names of the columns at `indices`, in the order given.
+    #[must_use]
+    pub fn column_names(&self, indices: &[usize]) -> Vec<String> {
+        indices
+            .iter()
+            .filter_map(|&index| self.columns.get(index).map(|column| column.name.clone()))
+            .collect()
+    }
+
+    /// Reads the given columns, with the given predicates pushed into the
+    /// reader.
+    ///
+    /// `columns` names the file's root columns to read, in ascending order.
+    /// The columns outside it are never fetched from the file.
+    ///
+    /// The dataset that comes back holds the columns in the order given, and
+    /// only the rows that survived the pushed-down predicates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatasetError::Io`] if the file cannot be read, and
+    /// [`DatasetError::Parquet`] if the file is not one the reader
+    /// understands.
+    pub fn read(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+    ) -> Result<Dataset, DatasetError> {
+        let file = File::open(&self.path)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+            .map_err(|error| DatasetError::Parquet(error.to_string()))?;
+
+        // The schema descriptor is needed to build the projection mask and
+        // the predicates' own masks, and it is borrowed from the builder --
+        // which `with_projection` consumes. The borrow therefore ends before
+        // the builder is consumed.
+        let (mask, filter) = {
+            let descriptor = builder.parquet_schema();
+            let mask = ProjectionMask::roots(descriptor, columns.iter().copied());
+            let filter =
+                if pushdown.is_empty() { None } else { Some(pushdown.to_row_filter(descriptor)) };
+            (mask, filter)
+        };
+
+        let mut builder = builder.with_projection(mask).with_batch_size(READER_BATCH_ROWS);
+        if let Some(filter) = filter {
+            builder = builder.with_row_filter(filter);
+        }
+
+        let reader = builder.build().map_err(|error| DatasetError::Parquet(error.to_string()))?;
+        decode_batches(reader, &self.schema, columns)
+    }
+}
+
+impl ColumnSchema for ParquetSource {
+    fn column_count(&self) -> usize {
+        self.columns.len()
+    }
+
+    fn column_name(&self, index: usize) -> &str {
+        self.columns.get(index).map_or("", |column| column.name.as_str())
+    }
+
+    fn column_type(&self, index: usize) -> DataType {
+        self.columns.get(index).map_or(DataType::Int64, |column| column.data_type)
+    }
+}
+
+/// The engine's type for an Arrow type.
+fn engine_type(arrow_type: &ArrowType) -> Result<DataType, DatasetError> {
+    match arrow_type {
+        ArrowType::Int64 => Ok(DataType::Int64),
+        ArrowType::Float64 => Ok(DataType::Float64),
+        ArrowType::Utf8 | ArrowType::LargeUtf8 => Ok(DataType::Utf8),
+        ArrowType::Dictionary(_, value) => match value.as_ref() {
+            ArrowType::Utf8 | ArrowType::LargeUtf8 => Ok(DataType::Utf8),
+            other => Err(DatasetError::UnsupportedType(format!(
+                "a dictionary column over {other} is not supported"
+            ))),
+        },
+        other => Err(DatasetError::UnsupportedType(format!("{other}"))),
+    }
+}

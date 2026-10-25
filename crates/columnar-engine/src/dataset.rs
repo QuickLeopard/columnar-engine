@@ -35,10 +35,9 @@ use std::path::Path;
 use arrow::array::{
     Array, DictionaryArray, Float64Array, Int64Array, LargeStringArray, StringArray,
 };
-use arrow::datatypes::{DataType, Int32Type, SchemaRef};
-use columnar_core::{ColumnChunk, Encoding, NullBitmap};
+use arrow::datatypes::{DataType as ArrowType, Int32Type, SchemaRef};
+use columnar_core::{ColumnChunk, DataType, Encoding, NullBitmap};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-
 /// Everything that can go wrong while reading a dataset.
 #[derive(Debug, thiserror::Error)]
 pub enum DatasetError {
@@ -54,17 +53,50 @@ pub enum DatasetError {
 }
 
 /// A set of columns, in schema order.
+///
+/// The row count is stored rather than derived, because a scan whose
+/// predicates were all pushed into the Parquet reader can produce **rows and
+/// no columns**: a `count(*)` over a fully pushed-down filter needs no
+/// column at all, and the reader returns zero-column batches that still
+/// carry the surviving row count. A dataset that holds a column always has
+/// that column's length as its row count.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dataset {
     /// The columns, in schema order.
     pub chunks: Vec<ColumnChunk>,
+    /// The number of rows in the dataset.
+    pub rows: usize,
 }
 
 impl Dataset {
+    /// A dataset over the given columns.
+    ///
+    /// The row count is the first column's length, or zero when there are no
+    /// columns.
+    #[must_use]
+    pub fn from_chunks(chunks: Vec<ColumnChunk>) -> Self {
+        let rows = chunks.first().map_or(0, |chunk| chunk.len);
+        Self { chunks, rows }
+    }
+
+    /// A dataset over the given columns and row count.
+    ///
+    /// The row count is only meaningful when there are no columns: with a
+    /// column present, the column's length is the row count, and a
+    /// disagreement would mean the data and the count contradict each other.
+    #[must_use]
+    pub fn with_rows(chunks: Vec<ColumnChunk>, rows: usize) -> Self {
+        Self { chunks, rows }
+    }
+
     /// Reads a Parquet file into column chunks.
     ///
     /// The file may hold several row groups and several record batches; the
     /// chunks that come back cover every row of the file, in schema order.
+    ///
+    /// This is the **eager** read: every column of the file is decoded,
+    /// whether the query needs it or not. The lazy read, which decodes only
+    /// what a plan needs, is [`crate::source::ParquetSource`].
     ///
     /// # Errors
     ///
@@ -76,34 +108,16 @@ impl Dataset {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .map_err(|error| DatasetError::Parquet(error.to_string()))?;
         let schema = builder.schema().clone();
-        let mut builders = builders_for(&schema)?;
+        let indices: Vec<usize> = (0..schema.fields().len()).collect();
 
         let reader = builder.build().map_err(|error| DatasetError::Parquet(error.to_string()))?;
-        let mut rows = 0usize;
-        for batch in reader {
-            let batch = batch.map_err(|error| DatasetError::Parquet(error.to_string()))?;
-            for (index, column) in batch.columns().iter().enumerate() {
-                let Some(builder) = builders.get_mut(index) else {
-                    return Err(DatasetError::Parquet(
-                        "the record batch holds more columns than the schema".to_owned(),
-                    ));
-                };
-                builder.push(column.as_ref(), rows)?;
-            }
-            rows += batch.num_rows();
-        }
-
-        let mut chunks = Vec::with_capacity(builders.len());
-        for builder in builders {
-            chunks.push(builder.finish(rows)?);
-        }
-        Ok(Self { chunks })
+        decode_batches(reader, &schema, &indices)
     }
 
     /// Number of rows in the dataset.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.chunks.first().map_or(0, |chunk| chunk.len)
+        self.rows
     }
 
     /// True when the dataset has no rows.
@@ -123,6 +137,56 @@ impl Dataset {
     pub fn column_names(&self) -> Vec<String> {
         self.chunks.iter().map(|chunk| chunk.name.clone()).collect()
     }
+}
+
+impl crate::plan::ColumnSchema for Dataset {
+    fn column_count(&self) -> usize {
+        self.chunks.len()
+    }
+
+    fn column_name(&self, index: usize) -> &str {
+        self.chunks.get(index).map_or("", |chunk| chunk.name.as_str())
+    }
+
+    fn column_type(&self, index: usize) -> DataType {
+        self.chunks.get(index).map_or(DataType::Int64, columnar_core::ColumnChunk::data_type)
+    }
+}
+
+/// Decodes record batches into column chunks.
+///
+/// `indices` names the file's root columns the batches hold, in ascending
+/// order. The batches' columns are in that same order, because the reader
+/// hands them over in schema order.
+///
+/// The row count is taken from the batches rather than from the file's
+/// metadata: a scan with pushed-down predicates returns fewer rows than the
+/// file holds, and it is the surviving rows that were decoded.
+pub(crate) fn decode_batches(
+    reader: impl Iterator<Item = Result<arrow::record_batch::RecordBatch, arrow::error::ArrowError>>,
+    schema: &SchemaRef,
+    indices: &[usize],
+) -> Result<Dataset, DatasetError> {
+    let mut builders = builders_for(schema, indices)?;
+    let mut rows = 0usize;
+    for batch in reader {
+        let batch = batch.map_err(|error| DatasetError::Parquet(error.to_string()))?;
+        for (position, column) in batch.columns().iter().enumerate() {
+            let Some(builder) = builders.get_mut(position) else {
+                return Err(DatasetError::Parquet(
+                    "the record batch holds more columns than were projected".to_owned(),
+                ));
+            };
+            builder.push(column.as_ref(), rows)?;
+        }
+        rows += batch.num_rows();
+    }
+
+    let mut chunks = Vec::with_capacity(builders.len());
+    for builder in builders {
+        chunks.push(builder.finish(rows)?);
+    }
+    Ok(Dataset::with_rows(chunks, rows))
 }
 
 /// Accumulates one column across the record batches of a file.
@@ -171,19 +235,19 @@ enum ColumnBuilder {
 
 impl ColumnBuilder {
     /// The builder for a column of the given name and Arrow type.
-    fn new(name: &str, data_type: &DataType) -> Result<Self, DatasetError> {
+    fn new(name: &str, data_type: &ArrowType) -> Result<Self, DatasetError> {
         match data_type {
-            DataType::Int64 => {
+            ArrowType::Int64 => {
                 Ok(Self::Int64 { name: name.to_owned(), values: Vec::new(), nulls: Vec::new() })
             }
-            DataType::Float64 => {
+            ArrowType::Float64 => {
                 Ok(Self::Float64 { name: name.to_owned(), values: Vec::new(), nulls: Vec::new() })
             }
-            DataType::Utf8 | DataType::LargeUtf8 => {
+            ArrowType::Utf8 | ArrowType::LargeUtf8 => {
                 Ok(Self::Utf8 { name: name.to_owned(), values: Vec::new(), nulls: Vec::new() })
             }
-            DataType::Dictionary(_, value) => match value.as_ref() {
-                DataType::Utf8 | DataType::LargeUtf8 => Ok(Self::Utf8Dict {
+            ArrowType::Dictionary(_, value) => match value.as_ref() {
+                ArrowType::Utf8 | ArrowType::LargeUtf8 => Ok(Self::Utf8Dict {
                     name: name.to_owned(),
                     dict: Vec::new(),
                     lookup: HashMap::new(),
@@ -203,13 +267,26 @@ impl ColumnBuilder {
         match self {
             Self::Int64 { name, values, nulls } => {
                 let array = downcast::<Int64Array>(array, &format!("int64 column `{name}`"))?;
-                values.extend(array.iter().map(Option::unwrap_or_default));
-                nulls.extend(null_rows(array, row_offset));
+                let batch_nulls = null_rows(array, row_offset);
+                let offset = values.len();
+                values.extend_from_slice(array.values());
+                for &row in &batch_nulls {
+                    // A null row's value is undefined. The engine's
+                    // convention is zero, and the validity bitmap is what
+                    // says the row is NULL.
+                    values[offset + (row - row_offset)] = 0;
+                }
+                nulls.extend(batch_nulls);
             }
             Self::Float64 { name, values, nulls } => {
                 let array = downcast::<Float64Array>(array, &format!("float64 column `{name}`"))?;
-                values.extend(array.iter().map(Option::unwrap_or_default));
-                nulls.extend(null_rows(array, row_offset));
+                let batch_nulls = null_rows(array, row_offset);
+                let offset = values.len();
+                values.extend_from_slice(array.values());
+                for &row in &batch_nulls {
+                    values[offset + (row - row_offset)] = 0.0;
+                }
+                nulls.extend(batch_nulls);
             }
             Self::Utf8 { name, values, nulls } => {
                 values.extend(string_values(array, name)?);
@@ -220,26 +297,30 @@ impl ColumnBuilder {
                     array,
                     &format!("dictionary column `{name}`"),
                 )?;
-                let strings = string_values(array.values().as_ref(), name)?;
+                let strings = dictionary_values(array.values().as_ref(), name)?;
 
                 // Merge the batch's dictionary into the column's dictionary,
-                // so one dictionary covers the whole file.
+                // so one dictionary covers the whole file. The values are
+                // borrowed: a value the column already holds is not copied,
+                // so this allocates once per *distinct* value over the whole
+                // file rather than once per batch.
                 let mut remap = Vec::with_capacity(strings.len());
                 for value in &strings {
-                    let slot = if let Some(&slot) = lookup.get(value) {
+                    let slot = if let Some(&slot) = lookup.get(*value) {
                         slot
                     } else {
                         let slot = dict.len();
-                        dict.push(value.clone());
-                        lookup.insert(value.clone(), slot);
+                        dict.push((*value).to_owned());
+                        lookup.insert((*value).to_owned(), slot);
                         slot
                     };
                     remap.push(slot);
                 }
 
                 let keys = array.keys();
+                let has_nulls = keys.null_count() > 0;
                 for row in 0..keys.len() {
-                    if keys.is_null(row) {
+                    if has_nulls && keys.is_null(row) {
                         // A null key is a NULL value.
                         indices.push(0);
                         nulls.push(row_offset + row);
@@ -311,6 +392,28 @@ fn string_values(array: &dyn Array, name: &str) -> Result<Vec<String>, DatasetEr
     Err(DatasetError::UnsupportedType(format!("column `{name}` is not a utf8 column")))
 }
 
+/// The distinct values of a dictionary, **borrowed**.
+///
+/// The dictionary path needs the distinct values only to merge one batch's
+/// dictionary into the column's, and the merge is a lookup: the column's
+/// dictionary already holds the string, so nothing needs to be copied. This
+/// function therefore borrows.
+///
+/// The difference is not academic. A `lineitem` file has 2,500 distinct
+/// ship dates and the reader hands the file over in batches, so an owning
+/// version of this would allocate and copy 2,500 strings *per batch* --
+/// 1.8 million string allocations for the 733 batches of a six-million-row
+/// file -- to throw all but the first batch's worth away.
+fn dictionary_values<'a>(array: &'a dyn Array, name: &str) -> Result<Vec<&'a str>, DatasetError> {
+    if let Some(array) = array.as_any().downcast_ref::<StringArray>() {
+        return Ok(array.iter().map(Option::unwrap_or_default).collect());
+    }
+    if let Some(array) = array.as_any().downcast_ref::<LargeStringArray>() {
+        return Ok(array.iter().map(Option::unwrap_or_default).collect());
+    }
+    Err(DatasetError::UnsupportedType(format!("column `{name}` is not a utf8 dictionary column")))
+}
+
 /// Downcasts an Arrow array, or reports that the file holds another type.
 fn downcast<'a, T: 'static>(array: &'a dyn Array, what: &str) -> Result<&'a T, DatasetError> {
     array
@@ -327,12 +430,16 @@ fn null_rows(array: &dyn Array, row_offset: usize) -> Vec<usize> {
     (0..array.len()).filter(|&row| array.is_null(row)).map(|row| row_offset + row).collect()
 }
 
-/// One builder per column of the schema.
-fn builders_for(schema: &SchemaRef) -> Result<Vec<ColumnBuilder>, DatasetError> {
-    schema
-        .fields()
+/// One builder per projected column of the schema.
+fn builders_for(schema: &SchemaRef, indices: &[usize]) -> Result<Vec<ColumnBuilder>, DatasetError> {
+    indices
         .iter()
-        .map(|field| ColumnBuilder::new(field.name(), field.data_type()))
+        .map(|&index| {
+            let field = schema.fields().get(index).ok_or_else(|| {
+                DatasetError::Parquet(format!("the schema has no column at index {index}"))
+            })?;
+            ColumnBuilder::new(field.name(), field.data_type())
+        })
         .collect()
 }
 

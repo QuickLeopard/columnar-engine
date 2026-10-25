@@ -47,6 +47,18 @@ pub struct PlanOutput {
     pub budget_bytes: usize,
     /// The kernel flavor that ran the filter.
     pub kernel_flavor: String,
+    /// The predicates that were pushed into the scan.
+    ///
+    /// A predicate that was pushed was applied by the reader, during the
+    /// scan, so the rows that failed it never reached the operators behind
+    /// it. The list is empty for the eager path, which pushes nothing.
+    pub pushed_down: Vec<String>,
+    /// The columns that were read from the file.
+    ///
+    /// This is the projection report: a column that is neither filtered nor
+    /// aggregated is absent from this list, because its bytes were never
+    /// fetched.
+    pub columns_read: Vec<String>,
 }
 
 impl fmt::Display for PlanOutput {
@@ -98,6 +110,24 @@ impl fmt::Display for PlanOutput {
                 "(none)".to_owned()
             } else {
                 self.materialised_columns.join(", ")
+            }
+        )?;
+        writeln!(
+            f,
+            "columns read: {}",
+            if self.columns_read.is_empty() {
+                "(none)".to_owned()
+            } else {
+                self.columns_read.join(", ")
+            }
+        )?;
+        writeln!(
+            f,
+            "pushed down: {}",
+            if self.pushed_down.is_empty() {
+                "(none)".to_owned()
+            } else {
+                self.pushed_down.join(", ")
             }
         )?;
         writeln!(

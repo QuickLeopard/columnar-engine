@@ -38,7 +38,7 @@ fn int_dataset(columns: &[(&str, Vec<i64>)]) -> Dataset {
         .iter()
         .map(|(name, values)| chunk(name, Encoding::Int64 { values: values.clone() }, &[]))
         .collect();
-    Dataset { chunks }
+    Dataset::from_chunks(chunks)
 }
 
 /// The scalar options, so a test never depends on what the machine can run.
@@ -170,16 +170,14 @@ fn a_dense_filter_selects_the_bitmap_representation() {
 #[test]
 fn the_aggregate_computes_sum_count_count_star_min_and_max() {
     // g: the group key. v: the aggregated value, with two NULLs.
-    let dataset = Dataset {
-        chunks: vec![
-            chunk("g", Encoding::Int64 { values: vec![1, 1, 1, 2, 2, 2, 3] }, &[]),
-            chunk(
-                "v",
-                Encoding::Float64 { values: vec![10.0, 20.0, 0.0, 5.0, 0.0, 0.0, 7.0] },
-                &[2, 4, 5],
-            ),
-        ],
-    };
+    let dataset = Dataset::from_chunks(vec![
+        chunk("g", Encoding::Int64 { values: vec![1, 1, 1, 2, 2, 2, 3] }, &[]),
+        chunk(
+            "v",
+            Encoding::Float64 { values: vec![10.0, 20.0, 0.0, 5.0, 0.0, 0.0, 7.0] },
+            &[2, 4, 5],
+        ),
+    ]);
 
     let plan = QueryPlan {
         filter: Vec::new(),
@@ -239,12 +237,10 @@ fn the_aggregate_computes_sum_count_count_star_min_and_max() {
 
 #[test]
 fn a_sum_over_an_all_null_group_is_null() {
-    let dataset = Dataset {
-        chunks: vec![
-            chunk("g", Encoding::Int64 { values: vec![1, 1, 2] }, &[]),
-            chunk("v", Encoding::Float64 { values: vec![0.0, 0.0, 3.0] }, &[0, 1]),
-        ],
-    };
+    let dataset = Dataset::from_chunks(vec![
+        chunk("g", Encoding::Int64 { values: vec![1, 1, 2] }, &[]),
+        chunk("v", Encoding::Float64 { values: vec![0.0, 0.0, 3.0] }, &[0, 1]),
+    ]);
 
     let plan = QueryPlan {
         filter: Vec::new(),
@@ -308,35 +304,33 @@ fn the_group_order_is_the_same_across_runs() {
 #[test]
 fn a_plan_filters_and_aggregates_without_decoding_the_other_columns() {
     // The TPC-H `lineitem` shape, trimmed to four columns.
-    let dataset = Dataset {
-        chunks: vec![
-            chunk("l_discount", Encoding::Float64 { values: vec![0.02, 0.06, 0.01, 0.09] }, &[]),
-            chunk(
-                "l_extendedprice",
-                Encoding::Float64 { values: vec![100.0, 200.0, 300.0, 400.0] },
-                &[],
-            ),
-            chunk(
-                "l_returnflag",
-                Encoding::Utf8 {
-                    values: vec!["N".to_owned(), "A".to_owned(), "N".to_owned(), "R".to_owned()],
-                },
-                &[],
-            ),
-            chunk(
-                "l_comment",
-                Encoding::Utf8 {
-                    values: vec![
-                        "a long comment".to_owned(),
-                        "another long comment".to_owned(),
-                        "yet another long comment".to_owned(),
-                        "the last long comment".to_owned(),
-                    ],
-                },
-                &[],
-            ),
-        ],
-    };
+    let dataset = Dataset::from_chunks(vec![
+        chunk("l_discount", Encoding::Float64 { values: vec![0.02, 0.06, 0.01, 0.09] }, &[]),
+        chunk(
+            "l_extendedprice",
+            Encoding::Float64 { values: vec![100.0, 200.0, 300.0, 400.0] },
+            &[],
+        ),
+        chunk(
+            "l_returnflag",
+            Encoding::Utf8 {
+                values: vec!["N".to_owned(), "A".to_owned(), "N".to_owned(), "R".to_owned()],
+            },
+            &[],
+        ),
+        chunk(
+            "l_comment",
+            Encoding::Utf8 {
+                values: vec![
+                    "a long comment".to_owned(),
+                    "another long comment".to_owned(),
+                    "yet another long comment".to_owned(),
+                    "the last long comment".to_owned(),
+                ],
+            },
+            &[],
+        ),
+    ]);
 
     let plan = QueryPlan {
         filter: vec![Predicate::new("l_discount", ComparisonOp::Lt, 0.05f64)],
@@ -429,16 +423,14 @@ fn a_filter_over_the_wrong_type_is_a_plan_error() {
 
 #[test]
 fn the_plan_output_reports_the_stages_and_the_late_materialisation() {
-    let dataset = Dataset {
-        chunks: vec![
-            chunk("l_discount", Encoding::Float64 { values: vec![0.02, 0.06, 0.01, 0.09] }, &[]),
-            chunk(
-                "l_extendedprice",
-                Encoding::Float64 { values: vec![100.0, 200.0, 300.0, 400.0] },
-                &[],
-            ),
-        ],
-    };
+    let dataset = Dataset::from_chunks(vec![
+        chunk("l_discount", Encoding::Float64 { values: vec![0.02, 0.06, 0.01, 0.09] }, &[]),
+        chunk(
+            "l_extendedprice",
+            Encoding::Float64 { values: vec![100.0, 200.0, 300.0, 400.0] },
+            &[],
+        ),
+    ]);
 
     let plan = QueryPlan {
         filter: vec![Predicate::new("l_discount", ComparisonOp::Lt, 0.05f64)],
@@ -509,7 +501,7 @@ fn dictionary_dataset() -> Dataset {
             &[],
         ),
     ];
-    Dataset { chunks }
+    Dataset::from_chunks(chunks)
 }
 
 #[test]
@@ -582,13 +574,11 @@ fn the_dictionary_fast_path_agrees_with_a_row_by_row_comparison() {
 
     for threshold in thresholds {
         for op in ComparisonOp::all() {
-            let dataset = Dataset {
-                chunks: vec![chunk(
-                    "l_shipdate",
-                    Encoding::Utf8Dict { dict: dictionary.clone(), indices: indices.clone() },
-                    &[],
-                )],
-            };
+            let dataset = Dataset::from_chunks(vec![chunk(
+                "l_shipdate",
+                Encoding::Utf8Dict { dict: dictionary.clone(), indices: indices.clone() },
+                &[],
+            )]);
             let plan = QueryPlan {
                 filter: vec![Predicate::new(
                     "l_shipdate",
