@@ -237,3 +237,10 @@ Two things the spec did not anticipate, and both are findings rather than surpri
   limited by the Parquet reader fetching pages DuckDB would have skipped, not by the engine's
   operators. That gap is measured and attributed in `PERF.md`, and it is the next increment's work.
 
+  > **Correction, published after measurement.** The last sentence above is wrong, and it is
+  > corrected rather than quietly dropped. DuckDB prunes *nothing* on this file: its own plan
+  > says `Row Groups Scanned: 6 / 6` and `Data Read: 12.3 MB`, because the file has no page
+  > index for either system to select against. The reader-speed term is closed — the engine's
+  > full-file decode is at parity with DuckDB's — and the remaining 3.8× is almost entirely
+  > **parallel decode**: DuckDB gets 3.3× from fourteen cores on the identical work.
+

@@ -57,9 +57,12 @@ q6          1181.1         121.5     32.0    190.8
 ```
 
 **The lazy path is 9.7× faster than the eager one on `q6`**, and it beats Polars on every cold
-query except `filter-range`. It does not beat DuckDB: the gap falls from 36.9× to 3.8×, and the
-remaining 3.8× is the Parquet reader, because DuckDB prunes pages with the column index and the
-engine does not. That is measured and attributed in [`PERF.md`](PERF.md), not glossed.
+query except `filter-range`. It does not beat DuckDB: the gap falls from 36.9× to 3.8×. That
+3.8× is not pruning — DuckDB prunes nothing on this file either (its own plan says `Row Groups
+Scanned: 6 / 6`, and the file has no page index). It is **threads**: DuckDB gets 3.3× from
+fourteen cores on the identical query, 32.0 ms to 10.0 ms, and this engine has one. The
+reader-speed term is closed — the engine's full-file decode is now at parity with DuckDB's.
+Measured and attributed in [`PERF.md`](PERF.md), not glossed.
 
 **The eager path got faster too** — 1921 ms to 1181 ms — because the two paths now share one
 decode function, and that function stopped copying a dictionary column's distinct values out of

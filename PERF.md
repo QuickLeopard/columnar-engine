@@ -274,13 +274,51 @@ Per the Parquet footer's own metadata, those two columns are 3.0 MiB and 9.1 MiB
 across the file's six row groups — **12.1 MiB of the file's 231.6 MiB**, and 2.9% of its raw
 bytes. `l_comment` alone, which the eager path decodes and throws away, is 50% of the raw bytes.
 
-**The remaining 3.8× against DuckDB is the reader, and it is attributed.** The `ArrowPredicate`
-path evaluates the predicate over the *decoded* batch, so the reader fetches every page of the
-predicate's column. DuckDB prunes pages using the column index. The engine does not, and cannot
-without computing a `RowSelection` from the page index by hand — and the file does not have one:
-the generator writes `EnabledStatistics::Chunk`, so there are no per-page statistics to prune
-with. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md) for why the row-format predicate,
-which *would* prune, is not an option.
+**The remaining 3.8× against DuckDB is not pruning. It is threads.** This was published as a
+pruning gap once, and that was wrong; here is DuckDB's own plan for the same query on the same
+file:
+
+```
+╭─ Table Scan ───────────────────────────────╮
+│ Function: READ_PARQUET                      │
+│ Filters: (l_discount >= 0.04) AND ...      │
+│ Row Groups Scanned: 6 / 6                   │
+│ 315,203 rows                               │
+╰─────────────────────────────────────────────╯
+Data Read: 12.3 MB
+```
+
+**6 / 6 row groups scanned, 12.3 MB read** — the same two columns, the same bytes the engine
+reads. DuckDB prunes *nothing* here, because there is nothing to prune with: the file has no page
+index. The generator writes `EnabledStatistics::Chunk`, so there are no per-page statistics, and
+neither system can skip a page it has never been told about. The engine fetches every page of the
+predicate's column because the `ArrowPredicate` path evaluates over the decoded batch — but so
+does DuckDB, because there is no page index to select against.
+
+What is left is throughput, and it decomposes cleanly:
+
+| | engine | duckdb | ratio |
+|---|---|---|---|
+| **Reader speed**, same job: decode all 16 columns into memory | **1205.8 ms** | 1227.0 ms | **0.98×** — parity |
+| **Architecture**: read 2 columns and push the predicate down | 121.5 ms | 32.0 ms | 3.8× |
+
+The reader-speed term that ADR-0008 recorded as **1.58×** is **gone** — the shared decode path and
+the dictionary fix closed it, and the engine's full-file decode is now indistinguishable from
+DuckDB's. The whole of the remaining 3.8× is the architecture term, and the architecture term is
+mostly this:
+
+| | duckdb, one thread | duckdb, fourteen threads |
+|---|---|---|
+| `q6` cold | **32.0 ms** | **10.0 ms** |
+
+**DuckDB gets 3.3× from fourteen cores on exactly this work**, and the engine is single-threaded
+by design, in this increment, because the comparison pins both incumbents to one thread to make
+the comparison like-for-like. That pinning is the reason for the gap, and it is a decision this
+repository made on purpose.
+
+So the remaining 3.8× is approximately **3.3× parallel decode the engine has not implemented**,
+plus the residue — which the engine's own plan output names: the lazy path materialises the
+*pushed predicate columns* into engine chunks that a `count(*)` never reads.
 
 ### 2d. Where the cold time goes
 
@@ -396,7 +434,8 @@ materialises all sixteen columns across 5,860 batches. See [§2b-bis](#2b-bis-th
 |---|---|---|
 | **x86-64 / AVX2 kernel numbers** | There is no x86-64 machine. The machine this was built on is an Apple Silicon Mac. | The AVX2 path's **correctness** is verified — on this machine, under Rosetta 2, with the row counter proving the instructions ran. See [AVX2 correctness](#avx2-correctness-verified-on-an-arm64-mac) and [ADR-0009](docs/adr/0009-avx2-without-x86-hardware.md). Its **performance** numbers do not exist and are not estimated here. |
 | **The blueprint's "AVX2 6.7× scalar"** | It was measured on an EPYC / DDR5 / NVMe machine that is not this one. | Not reproduced, not quoted as this project's own. |
-| **Page-level pruning** | The `ArrowPredicate` path evaluates over the decoded batch, so the reader fetches every page of the predicate's column. `DuckDB` prunes pages using the column index. | The engine does not prune, and does not pretend to. The file has no page index to prune with — the generator writes `EnabledStatistics::Chunk` — and the row-format predicate that *would* prune computes a different function. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md). |
+| **Page-level pruning** | The `ArrowPredicate` path evaluates over the decoded batch, so the reader fetches every page of the predicate's column — but so does DuckDB, because **this file has no page index**: the generator writes `EnabledStatistics::Chunk`. DuckDB's own plan says `Row Groups Scanned: 6 / 6`. | **Not the gap.** It was published as the gap once and was wrong. Page pruning would be a *further* win on top, and it needs a `RowSelection` computed from a page index that does not exist in this file, or the row-format predicate — which computes a different function. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md) and [§2c](#2c-the-lazy-scan-and-what-it-reads). |
+| **Parallel decode** | The engine is single-threaded. `DuckDB` gets **3.3×** from fourteen cores on the identical query and file — 32.0 ms to 10.0 ms — and the comparison pins both incumbents to one thread so the comparison is like-for-like. | **This is the remaining 3.8×.** The reader-speed term is closed (parity with DuckDB at the same job); the architecture term is almost entirely the parallelism the engine has not implemented. The next increment's work. |
 | **Multithreading** | The engine is single-threaded in this increment. | Out of scope for spec 001 and spec 002. |
 | **The official TPC-H SF-1 file** | The generator produces a TPC-H-*shaped* file with approximated distributions, UTF-8 dates and a seeded PRNG. | Said in as many words in the manifest and in [constitution principle VI](constitution.md). |
 | **`SUM` over a computed expression** | This increment's aggregate sums a column; it does not evaluate arithmetic over columns. | The Q6 comparison uses Q6's *predicate* with `count(*)`. The limitation is stated, not hidden. |
@@ -444,5 +483,5 @@ with NEON, single-threaded, over 20 million rows. The engine's filter on the Q6 
 takes 6.7 ms. The engine's lazy scan of the same file, reading the two columns Q6 needs and
 pushing the predicates into the reader, takes 121.5 ms — against 32.0 ms for DuckDB and 190.8 ms
 for Polars, and against 1181.1 ms for the engine's own eager read. The lazy path is 1.6× faster
-than Polars and 3.8× slower than DuckDB, and the reason it is slower is measured and named:
-the reader fetches the pages DuckDB prunes.
+than Polars and 3.8× slower than DuckDB, and the reason it is slower is measured and named: DuckDB
+gets 3.3× from fourteen cores on the identical work, and this engine has one thread.

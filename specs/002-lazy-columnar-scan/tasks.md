@@ -108,11 +108,20 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done, and the gap is written
 
 ## T9 — Follow-ons, not done
 
-- [ ] **Page-level pruning.** DuckDB skips the pages its predicates exclude, using the column
-      index. The engine does not, because the `ArrowPredicate` path evaluates over the decoded
-      batch. Doing it needs either the row-format predicate -- which computes a different
-      function, see [ADR-0010](../../docs/adr/0010-pushdown-equivalence.md) -- or an explicit
-      `RowSelection` computed from the page index with the engine's own rules.
+- [ ] **Parallel decode. This is the gap.** `DuckDB` gets **3.3×** from fourteen cores on the
+      identical query and file — 32.0 ms to 10.0 ms — and the engine has one thread, because the
+      comparison pins both incumbents to one thread to keep it like-for-like. The reader-speed
+      term is closed (the engine's full-file decode is at parity with DuckDB's), so this is
+      almost exactly what stands between the engine and DuckDB on the cold path.
+- [ ] **The lazy path materialises columns nobody reads.** The pushed predicate columns are
+      built into engine chunks even when the query is `count(*)`, which needs no column at all.
+      The plan output says `materialised columns: (none)` — and the reader still built two.
+- [ ] **Page-level pruning.** *Not the gap, and not to be published as one.* DuckDB prunes
+      nothing on this file either: its plan says `Row Groups Scanned: 6 / 6`, and the file has no
+      page index for either system to select against. It would still be a further win on a file
+      that *has* one, and it needs either a `RowSelection` computed from a page index with the
+      engine's own rules, or the row-format predicate -- which computes a different function, see
+      [ADR-0010](../../docs/adr/0010-pushdown-equivalence.md).
 - [ ] **The file has no page index.** The generator writes `EnabledStatistics::Chunk`, so there
       are no per-page statistics to prune with. Writing `EnabledStatistics::Page` would change
       the dataset, and the dataset is meant to model a real TPC-H file.
@@ -120,5 +129,5 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done, and the gap is written
       chunk format. Using it here would mean converting the column first, which costs more than
       the scalar comparison saves. A pushdown that reads the Arrow array's raw slice directly
       would be worth having.
-- [ ] **Parallel decode.** Sixteen columns, no scheduler needed, and the reader is
-      single-threaded like the rest of the engine in this increment.
+- [ ] **Parallel decode, again, for the eager path.** Sixteen columns, no scheduler needed, and
+      the reader is single-threaded like the rest of the engine in this increment.

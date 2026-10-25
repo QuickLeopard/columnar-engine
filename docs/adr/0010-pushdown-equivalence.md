@@ -65,7 +65,25 @@ The pushdown:
 - compares a dictionary-encoded column **once per distinct value** and then maps the answer back through the indices, which is what the engine's own dictionary path does;
 - compares strings byte-wise, which is what Rust's `str` ordering is and what DuckDB's binary collation is.
 
-**Accept the cost: no page-level pruning.** The `ArrowPredicate` path evaluates the predicate over the decoded batch, so the reader fetches the pages of the predicate's column. DuckDB prunes pages using the column index, and the engine does not. That is a real gap and it is measured, in `PERF.md`.
+**Accept the cost: no page-level pruning.** The `ArrowPredicate` path evaluates the predicate over the decoded batch, so the reader fetches the pages of the predicate's column. The engine does not prune, and does not pretend to.
+
+**What this cost turned out to be: nothing, on this file.** The cost was initially published as
+the cause of the remaining cold gap against DuckDB. That was wrong, and DuckDB's own plan says
+so: `Row Groups Scanned: 6 / 6`, `Data Read: 12.3 MB`. DuckDB prunes nothing here either,
+because the file has no page index — the generator writes `EnabledStatistics::Chunk` — so there
+is no page for either system to skip. Both systems read the same 12.3 MB and both decode every
+page of the two columns.
+
+The decision still stands on its own terms: the row-format predicate computes a different
+function, and that is a correctness problem, not a performance one. But the *performance* reason
+for preferring it turns out not to exist on this dataset, and the ADR should say so rather than
+borrow credit for a gap that has another cause. The real cause is measured in `PERF.md` §2c: the
+engine has one thread where DuckDB uses fourteen, and DuckDB gets 3.3× from that on this exact
+query.
+
+The row-format predicate remains available for a future increment — but if it is used, it will be
+for the reason that it prunes *where a page index exists*, not because this file would have
+benefited.
 
 **Then check the equivalence, rather than assert it.** The differential test in `crates/columnar-engine/tests/lazy_scan.rs` answers every operator, against NULLs, NaNs, a NaN threshold, a dictionary column and a plain UTF-8 column, over row counts of 0, 1, 2, 63, 64, 65, 127, 128, 129, 191, 192 and 193 — the boundaries of the 64-row block the kernel works in — and requires the lazy path and the eager path to agree, row for row, every time. `crates/columnar-cli/tests/lazy_scan.rs` does the same over the real generated file with the real Q6 plan.
 
