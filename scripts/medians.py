@@ -114,13 +114,14 @@ def collect_scaling(runs: list[dict]) -> dict[int, dict[str, list[float]]]:
             push(threads, "workers", point.get("workers"))
             push(threads, "engine", point.get("engine_ms"))
             push(threads, "engine_scan", point.get("engine_scan_ms"))
+            push(threads, "engine_operators", point.get("engine_operators_ms"))
             push(threads, "duckdb", point.get("duckdb_ms"))
             push(threads, "polars", point.get("polars_ms"))
 
     return out
 
 
-def print_scaling(runs: list[dict], label: str = "q6") -> None:
+def print_scaling(runs: list[dict], label: str = "q6", mode: str = "cold") -> None:
     """Print the thread-count sweep's medians."""
     if not runs:
         return
@@ -128,9 +129,9 @@ def print_scaling(runs: list[dict], label: str = "q6") -> None:
     if not sweep:
         return
 
-    print(f"\n=== THREAD-COUNT SWEEP, {label} ({len(runs)} runs) ===")
+    print(f"\n=== THREAD-COUNT SWEEP, {label} ({mode}, {len(runs)} runs) ===")
     print(
-        f"{'threads':>8}{'workers':>9}{'engine':>26}{'engine scan':>26}"
+        f"{'threads':>8}{'workers':>9}{'engine':>26}{'engine scan':>26}{'engine ops':>26}"
         f"{'duckdb':>26}{'polars':>26}"
     )
     for threads in sorted(sweep):
@@ -141,6 +142,7 @@ def print_scaling(runs: list[dict], label: str = "q6") -> None:
             f"{median(workers):>9.0f}"
             f"{cell(figures.get('engine'))}"
             f"{cell(figures.get('engine_scan'))}"
+            f"{cell(figures.get('engine_operators'))}"
             f"{cell(figures.get('duckdb'))}"
             f"{cell(figures.get('polars'))}"
         )
@@ -236,14 +238,16 @@ def main() -> int:
         detail = "  ".join(f"{name} {value:8.1f}" for name, value in figures.items())
         print(f"{query:<16} {detail}   best: {best}")
 
-    for pattern, label in (
-        ("scaling-run*.json", "q6"),
-        ("scaling-revenue-run*.json", "q6-revenue"),
+    for pattern, label, mode in (
+        ("scaling-run*.json", "q6", "cold"),
+        ("scaling-revenue-run*.json", "q6-revenue", "cold"),
+        ("scaling-resident-run*.json", "q6", "resident"),
+        ("scaling-resident-revenue-run*.json", "q6-revenue", "resident"),
     ):
         scaling_paths = sorted(Path("bench-results").glob(pattern))
         if scaling_paths:
             scaling_runs = [load(p) for p in scaling_paths]
-            print_scaling(scaling_runs, label)
+            print_scaling(scaling_runs, label, mode)
 
     return 0
 

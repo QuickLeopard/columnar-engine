@@ -61,6 +61,12 @@ pub struct FilterStats {
     /// The engine picks between an index list and a bitmap by density; see
     /// [`columnar_core::BITMAP_DISPATCH_DENSITY`].
     pub kind: SelectionKind,
+    /// How many workers the filter ran.
+    ///
+    /// One for the serial filter. For the parallel one it is the number of
+    /// row blocks that were computed, which is the number of workers that
+    /// actually did something -- not the number of threads that were offered.
+    pub workers: usize,
 }
 
 /// Filters `dataset` by a conjunction of predicates.
@@ -78,7 +84,77 @@ pub fn filter_all(
     filters: &[ResolvedFilter],
     flavor: Flavor,
 ) -> Result<(SelectionVector, FilterStats), EngineError> {
+    filter_all_with_workers(dataset, filters, flavor, 1)
+}
+
+/// Filters `dataset` by a conjunction of predicates, over `workers` threads.
+///
+/// The rows are split into **contiguous, word-aligned blocks**, one per
+/// worker, and each worker computes the conjunction's match mask for its own
+/// block. The masks are then concatenated **in block order**.
+///
+/// Both halves of that sentence matter. Contiguous blocks mean the workers
+/// write to disjoint parts of the output, and word-aligned blocks mean each
+/// block's mask is a whole number of words, so the concatenation is a
+/// concatenation and not a shift. Merging the blocks in *completion* order
+/// would make the selection depend on the scheduler -- and the selection is
+/// the set of rows the rest of the query sees.
+///
+/// The result is **bit-identical** to the serial filter's: the same mask, the
+/// same rows, in the same order.
+///
+/// # Errors
+///
+/// Returns [`EngineError::TypeMismatch`] when a predicate's threshold does not
+/// have the column's type.
+pub fn filter_all_with_workers(
+    dataset: &Dataset,
+    filters: &[ResolvedFilter],
+    flavor: Flavor,
+    workers: usize,
+) -> Result<(SelectionVector, FilterStats), EngineError> {
     let rows = dataset.len();
+    let workers = workers.max(1);
+
+    if workers > 1 && rows > BLOCK_ROWS {
+        let blocks = block_ranges(rows, workers);
+        let block_count = blocks.len();
+        let masks = std::thread::scope(|scope| {
+            let handles: Vec<_> = blocks
+                .iter()
+                .map(|&(start, end)| {
+                    scope.spawn(move || filter_block(dataset, filters, flavor, start, end))
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle.join().map_err(|_| {
+                        EngineError::UnknownColumn("a filter worker panicked".to_owned())
+                    })?
+                })
+                .collect::<Result<Vec<Vec<u64>>, EngineError>>()
+        })?;
+
+        let mut combined: Vec<u64> = Vec::with_capacity(rows.div_ceil(64));
+        for mask in masks {
+            combined.extend_from_slice(&mask);
+        }
+        let combined = trim_to_rows(combined, rows);
+        let matched = combined.iter().map(|word| word.count_ones() as usize).sum::<usize>();
+        let selection = SelectionVector::from_filter(&combined, matched, rows);
+        let kind = selection.kind();
+        return Ok((
+            selection,
+            FilterStats {
+                rows_in: u64::try_from(rows).unwrap_or(u64::MAX),
+                rows_out: u64::try_from(matched).unwrap_or(u64::MAX),
+                kind,
+                workers: block_count,
+            },
+        ));
+    }
+
     let mut combined: Option<Vec<u64>> = None;
 
     for filter in filters {
@@ -108,6 +184,7 @@ pub fn filter_all(
                 rows_in: u64::try_from(rows).unwrap_or(u64::MAX),
                 rows_out: u64::try_from(rows).unwrap_or(u64::MAX),
                 kind: SelectionKind::Bitmap,
+                workers: 1,
             },
         ));
     };
@@ -118,8 +195,89 @@ pub fn filter_all(
         rows_in: u64::try_from(rows).unwrap_or(u64::MAX),
         rows_out: u64::try_from(matched).unwrap_or(u64::MAX),
         kind: selection.kind(),
+        workers: 1,
     };
     Ok((selection, stats))
+}
+
+/// The rows one filter worker is given.
+///
+/// The blocks are **contiguous** and their starts are multiples of
+/// [`BLOCK_ROWS`], so every block's mask is a whole number of words and the
+/// masks concatenate without a shift.
+fn block_ranges(rows: usize, workers: usize) -> Vec<(usize, usize)> {
+    let per_block = rows.div_ceil(workers).div_ceil(BLOCK_ROWS) * BLOCK_ROWS;
+    let mut blocks = Vec::with_capacity(workers);
+    let mut start = 0;
+    while start < rows {
+        let end = (start + per_block).min(rows);
+        blocks.push((start, end));
+        start = end;
+    }
+    blocks
+}
+
+/// The granularity of a filter block, in rows.
+///
+/// Sixty-four, because a match mask is a bit per row and a mask that is a
+/// whole number of words is a mask that can be concatenated with another one
+/// without shifting its bits.
+const BLOCK_ROWS: usize = 64;
+
+/// Computes the conjunction's match mask over one block of rows.
+fn filter_block(
+    dataset: &Dataset,
+    filters: &[ResolvedFilter],
+    flavor: Flavor,
+    start: usize,
+    end: usize,
+) -> Result<Vec<u64>, EngineError> {
+    let mut combined: Option<Vec<u64>> = None;
+
+    for filter in filters {
+        let chunk = dataset
+            .chunks
+            .get(filter.column)
+            .ok_or_else(|| EngineError::UnknownColumn(format!("column index {}", filter.column)))?;
+        // The block's validity mask, copied: a validity mask is packed with no
+        // offset, so the bits of a range have to be moved into a new mask.
+        // The copy is a word at a time, so it is a memory copy rather than a
+        // per-row loop.
+        let validity = if chunk.validity.null_count() == 0 {
+            None
+        } else {
+            Some(chunk.validity.slice(start, end))
+        };
+        let mask =
+            mask_for_chunk_range(chunk, &filter.predicate, flavor, start, end, validity.as_ref())?;
+
+        combined = Some(match combined {
+            None => mask,
+            Some(mut accumulated) => {
+                for (slot, &bits) in accumulated.iter_mut().zip(mask.iter()) {
+                    *slot &= bits;
+                }
+                accumulated
+            }
+        });
+    }
+
+    Ok(combined.unwrap_or_default())
+}
+
+/// Trims a mask to the rows it describes.
+///
+/// The last word of the last block may carry padding bits, because the last
+/// block is not a whole number of rows.
+fn trim_to_rows(mut mask: Vec<u64>, rows: usize) -> Vec<u64> {
+    let remainder = rows % 64;
+    if remainder != 0 {
+        if let Some(last) = mask.last_mut() {
+            *last &= (1u64 << remainder) - 1;
+        }
+    }
+    mask.truncate(rows.div_ceil(64));
+    mask
 }
 
 /// Produces the match mask of one predicate over one chunk.
@@ -129,36 +287,73 @@ fn mask_for_chunk(
     flavor: Flavor,
     rows: usize,
 ) -> Result<Vec<u64>, EngineError> {
+    // The whole chunk's validity, borrowed. The serial path never copies a
+    // mask it does not have to.
     let validity = if chunk.validity.null_count() == 0 { None } else { Some(&chunk.validity) };
+    mask_for_chunk_range(chunk, predicate, flavor, 0, rows, validity)
+}
+
+/// Produces the match mask of one predicate over the rows `start..end` of one
+/// chunk.
+///
+/// The chunk's rows are **sliced**, not copied: the values, the dictionary
+/// indices and the validity mask are all addressed from `start`. The validity
+/// mask is the one thing the caller has to copy, because a validity mask is a
+/// packed bitmap with no offset — and that copy is a word at a time.
+///
+/// The caller owns the copy, because it is the only thing here that needs
+/// one, and the serial path -- which addresses the whole chunk -- borrows
+/// instead.
+fn mask_for_chunk_range(
+    chunk: &columnar_core::ColumnChunk,
+    predicate: &Predicate,
+    flavor: Flavor,
+    start: usize,
+    end: usize,
+    validity: Option<&NullBitmap>,
+) -> Result<Vec<u64>, EngineError> {
+    let rows = end - start;
 
     match (&chunk.encoding, &predicate.value) {
-        (Encoding::Int64 { values }, ScalarValue::Int64(threshold)) => {
-            Ok(numeric_mask_i64(values, predicate.op, *threshold, validity, rows, flavor))
-        }
-        (Encoding::Float64 { values }, ScalarValue::Float64(threshold)) => {
-            Ok(numeric_mask_f64(values, predicate.op, *threshold, validity, rows, flavor))
-        }
+        (Encoding::Int64 { values }, ScalarValue::Int64(threshold)) => Ok(numeric_mask_i64(
+            slice_of(values, start, end),
+            predicate.op,
+            *threshold,
+            validity,
+            rows,
+            flavor,
+        )),
+        (Encoding::Float64 { values }, ScalarValue::Float64(threshold)) => Ok(numeric_mask_f64(
+            slice_of(values, start, end),
+            predicate.op,
+            *threshold,
+            validity,
+            rows,
+            flavor,
+        )),
         (Encoding::Int64Dict { dict, indices }, ScalarValue::Int64(threshold)) => {
             // The kernel runs over the dictionary, not over the rows.
             let dict_mask =
                 numeric_mask_i64(dict, predicate.op, *threshold, None, dict.len(), flavor);
-            Ok(map_dictionary(&dict_mask, indices, rows, validity))
+            Ok(map_dictionary(&dict_mask, slice_of(indices, start, end), rows, validity))
         }
         (Encoding::Float64Dict { dict, indices }, ScalarValue::Float64(threshold)) => {
             let dict_mask =
                 numeric_mask_f64(dict, predicate.op, *threshold, None, dict.len(), flavor);
-            Ok(map_dictionary(&dict_mask, indices, rows, validity))
+            Ok(map_dictionary(&dict_mask, slice_of(indices, start, end), rows, validity))
         }
         (Encoding::Utf8Dict { dict, indices }, ScalarValue::Utf8(threshold)) => {
             // One comparison per distinct value, then a map.
             let matches: Vec<bool> =
                 dict.iter().map(|v| compare_str(v, predicate.op, threshold)).collect();
             let dict_mask = mask_from_bools(&matches);
-            Ok(map_dictionary(&dict_mask, indices, rows, validity))
+            Ok(map_dictionary(&dict_mask, slice_of(indices, start, end), rows, validity))
         }
         (Encoding::Utf8 { values }, ScalarValue::Utf8(threshold)) => {
-            let matches: Vec<bool> =
-                values.iter().map(|v| compare_str(v, predicate.op, threshold)).collect();
+            let matches: Vec<bool> = slice_of(values, start, end)
+                .iter()
+                .map(|v| compare_str(v, predicate.op, threshold))
+                .collect();
             let mask = mask_from_bools(&matches);
             Ok(apply_validity(mask, validity, rows))
         }
@@ -172,6 +367,14 @@ fn mask_for_chunk(
             predicate.value.data_type().name()
         ))),
     }
+}
+
+/// The rows `start..end` of a slice.
+///
+/// The slice is borrowed, not copied: the values are addressed from `start`,
+/// so a block's mask is computed over the block's own values.
+fn slice_of<T>(values: &[T], start: usize, end: usize) -> &[T] {
+    values.get(start..end).unwrap_or(&[])
 }
 
 /// The match mask of an `int64` comparison.
@@ -344,6 +547,7 @@ pub fn filter(
         rows_in: u64::try_from(rows).unwrap_or(u64::MAX),
         rows_out: u64::try_from(matched).unwrap_or(u64::MAX),
         kind: selection.kind(),
+        workers: 1,
     };
     Ok((selection, stats))
 }

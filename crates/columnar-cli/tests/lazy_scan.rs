@@ -299,3 +299,75 @@ fn the_sum_is_bit_for_bit_the_same_at_every_thread_count() {
         assert_eq!(parallel.groups, single.groups, "the sum differs at {threads} threads");
     }
 }
+
+/// The **eager** path's operators must give the same answer at every thread
+/// count.
+///
+/// The test above covers the lazy path, whose operators run in parallel too.
+/// But the eager path is where the operators *are* the work -- the filter is
+/// 7 ms of a 15 ms query -- so the eager path is the one where a parallel
+/// operator that dropped or duplicated a row would actually show up.
+///
+/// Over every built-in query, on the real file.
+#[test]
+fn the_eager_path_operators_agree_at_every_thread_count() {
+    let path = dataset();
+    let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
+
+    for definition in QUERIES {
+        let single = execute(&(definition.plan)(), &dataset, &ExecOptions::default())
+            .expect("the eager path answers the query");
+
+        for threads in [2, 4, 6, 8, 14] {
+            let options = ExecOptions { threads: Some(threads), ..ExecOptions::default() };
+            let parallel =
+                execute(&(definition.plan)(), &dataset, &options).expect("the parallel query runs");
+            assert_eq!(
+                parallel.groups,
+                single.groups,
+                "`{}`: the eager path's answer differs at {threads} threads",
+                definition.query.name()
+            );
+        }
+    }
+}
+
+/// The plan output reports the operator workers that ran, not the threads
+/// that were asked for.
+///
+/// The read's workers are capped by the file's row groups; the operators' are
+/// capped by the row count. The two therefore differ at fourteen threads, and
+/// the plan says so rather than reporting the requested count for both.
+#[test]
+fn the_plan_output_reports_the_operator_workers_that_ran() {
+    let path = dataset();
+    let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
+    let definition = definition(BuiltinQuery::Q6Revenue);
+
+    let single =
+        execute(&(definition.plan)(), &dataset, &ExecOptions::default()).expect("the query runs");
+    assert_eq!(single.plan_output.filter_workers, 1, "one thread is one worker");
+    assert_eq!(single.plan_output.projection_workers, 1, "one thread is one worker");
+
+    let options = ExecOptions { threads: Some(14), ..ExecOptions::default() };
+    let parallel = execute(&(definition.plan)(), &dataset, &options).expect("the query runs");
+    assert!(
+        parallel.plan_output.filter_workers > 1,
+        "the filter ran on {} worker(s) at fourteen threads",
+        parallel.plan_output.filter_workers
+    );
+    assert!(
+        parallel.plan_output.projection_workers > 1,
+        "the projection ran on {} worker(s) at fourteen threads",
+        parallel.plan_output.projection_workers
+    );
+    // And the filter ran more workers than the file has row groups: the
+    // operators split by rows, the read splits by row groups.
+    let source = ParquetSource::open(path).expect("the source can be opened");
+    assert!(
+        parallel.plan_output.filter_workers > source.row_groups(),
+        "the filter's worker count ({}) did not pass the file's row-group count ({})",
+        parallel.plan_output.filter_workers,
+        source.row_groups()
+    );
+}

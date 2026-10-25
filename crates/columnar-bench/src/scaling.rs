@@ -50,7 +50,7 @@ use crate::result::DatasetReport;
 pub struct ScalingPoint {
     /// The thread count every system ran at.
     pub threads: usize,
-    /// How many threads the engine's read **actually** used.
+    /// How many threads the engine **actually** used.
     ///
     /// Not the count that was asked for: the read splits the file's row
     /// groups across the threads, so a file with six row groups has six
@@ -58,11 +58,21 @@ pub struct ScalingPoint {
     /// capped this way -- `DuckDB` will happily use fourteen threads on a
     /// six-row-group file -- so this column is the one that explains the
     /// shape of the engine's curve.
+    ///
+    /// In the **cold** mode this is the read's worker count; in the
+    /// **resident** mode there is no read in the measurement, so it is the
+    /// operator worker count instead.
     pub workers: usize,
     /// The engine's cold number: the whole query, the file included.
     pub engine_ms: f64,
     /// The engine's scan stage: the read, the pushdown and the merge.
     pub engine_scan_ms: f64,
+    /// The engine's **operator** stages: the filter, the projection, the
+    /// expression evaluation and the aggregate.
+    ///
+    /// This is the number the operators' parallelism moves. In the cold mode
+    /// the scan dominates it; in the resident mode it *is* the measurement.
+    pub engine_operators_ms: f64,
     /// `DuckDB`'s cold number, at the same thread count.
     pub duckdb_ms: f64,
     /// `Polars`' cold number, at the same thread count.
@@ -80,7 +90,12 @@ pub struct ScalingReport {
     pub query: String,
     /// The SQL the query corresponds to.
     pub sql: String,
-    /// How the number was measured: `cold`, always.
+    /// How the number was measured: `cold` or `resident`.
+    ///
+    /// **Cold** is the file read and the query answered in one go, which is
+    /// what a user waiting on a command line pays. **Resident** is the query
+    /// against data that is already in memory, which is the pure query-engine
+    /// measurement and the one the operators dominate.
     pub mode: String,
     /// How many row groups the file has.
     ///
@@ -141,12 +156,23 @@ impl ScalingReport {
         )
         .ok();
         writeln!(out, "query     {} \u{b7} {}", self.query, self.sql).ok();
-        writeln!(
-            out,
-            "mode      {} \u{b7} the file is read and the query answered in one go",
-            self.mode
-        )
-        .ok();
+        match self.mode.as_str() {
+            "resident" => {
+                writeln!(
+                    out,
+                    "mode      resident \u{b7} the data is already in memory, so this is the query alone"
+                )
+                .ok();
+            }
+            _ => {
+                writeln!(
+                    out,
+                    "mode      {} \u{b7} the file is read and the query answered in one go",
+                    self.mode
+                )
+                .ok();
+            }
+        }
         writeln!(
             out,
             "row groups {} \u{b7} the read splits the row groups across the threads, so this caps the engine's parallelism",
@@ -157,7 +183,7 @@ impl ScalingReport {
 
         writeln!(
             out,
-            "threads   workers     engine   engine-scan     duckdb     polars   engine x    duckdb x"
+            "threads   workers     engine   engine-scan  engine-ops     duckdb     polars   engine x    duckdb x"
         )
         .ok();
         writeln!(out, "---------------------------------------------------------------").ok();
@@ -168,11 +194,12 @@ impl ScalingReport {
             let duckdb_speedup = ratio(base.map(|base| base.duckdb_ms), point.duckdb_ms);
             writeln!(
                 out,
-                "{:>7}  {:>7}  {:>8.1}   {:>11.1}   {:>8.1}   {:>8.1}   {:>8.2}x   {:>7.2}x",
+                "{:>7}  {:>7}  {:>8.1}   {:>11.1}   {:>10.1}   {:>8.1}   {:>8.1}   {:>8.2}x   {:>7.2}x",
                 point.threads,
                 point.workers,
                 point.engine_ms,
                 point.engine_scan_ms,
+                point.engine_operators_ms,
                 point.duckdb_ms,
                 point.polars_ms,
                 engine_speedup,

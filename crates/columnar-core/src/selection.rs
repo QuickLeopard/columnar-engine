@@ -218,6 +218,61 @@ impl SelectionVector {
         out
     }
 
+    /// Visits each surviving row whose number is in `start..end`.
+    ///
+    /// This is what lets a gather be split across threads: each worker takes
+    /// a contiguous range of the **source** rows and gathers the survivors in
+    /// it. The ranges are disjoint and cover the source, so every survivor is
+    /// visited exactly once and the workers' outputs concatenate into the
+    /// same rows the serial gather would have produced.
+    ///
+    /// The rows are visited in ascending order, as everywhere else.
+    pub fn for_each_in_range(&self, start: usize, end: usize, mut f: impl FnMut(u32)) {
+        if start >= end {
+            return;
+        }
+        match &self.repr {
+            Repr::Index(rows) => {
+                // The rows are sorted, so the first one in range is found by a
+                // binary search rather than by a scan.
+                let first = rows.partition_point(|&row| (row as usize) < start);
+                for &row in rows.get(first..).unwrap_or(&[]) {
+                    if (row as usize) >= end {
+                        break;
+                    }
+                    f(row);
+                }
+            }
+            Repr::Bitmap(words) => {
+                let first_word = start / 64;
+                let last_word = end.div_ceil(64);
+                for word_index in first_word..last_word {
+                    let Some(&word) = words.get(word_index) else { break };
+                    let mut bits = word;
+                    while bits != 0 {
+                        let bit = bits.trailing_zeros();
+                        let row = word_index * 64 + bit as usize;
+                        if row >= end {
+                            break;
+                        }
+                        if row >= start {
+                            f(row as u32);
+                        }
+                        bits &= bits - 1;
+                    }
+                }
+            }
+        }
+    }
+
+    /// How many surviving rows are in the source-row range `start..end`.
+    #[must_use]
+    pub fn count_in_range(&self, start: usize, end: usize) -> usize {
+        let mut count = 0usize;
+        self.for_each_in_range(start, end, |_| count += 1);
+        count
+    }
+
     /// Extracts the set bits of a filter bitmap into a row list.
     fn rows_from_words(words: &[u64], total: usize) -> Vec<u32> {
         let mut rows = Vec::new();
@@ -272,6 +327,48 @@ mod tests {
         let selection = SelectionVector::from_filter(&words, 60, 100);
         assert_eq!(selection.kind(), SelectionKind::Bitmap);
         assert_eq!(selection.len(), 60);
+    }
+
+    #[test]
+    fn a_range_visits_exactly_the_rows_in_it() {
+        let mask: Vec<u64> = vec![0b1010_1010, 0b1111_0000, 0b0000_0011];
+        let selection = SelectionVector::from_filter(&mask, 10, 192);
+
+        let mut all = Vec::new();
+        selection.for_each_in_range(0, 192, |row| all.push(row));
+        assert_eq!(all, selection.collect_rows());
+
+        for (start, end) in [(0usize, 192usize), (0, 1), (1, 2), (63, 65), (64, 128), (100, 150)] {
+            let mut rows = Vec::new();
+            selection.for_each_in_range(start, end, |row| rows.push(row));
+            let expected: Vec<u32> = selection
+                .collect_rows()
+                .into_iter()
+                .filter(|&row| (row as usize) >= start && (row as usize) < end)
+                .collect();
+            assert_eq!(rows, expected, "the range {start}..{end} is wrong");
+            assert_eq!(selection.count_in_range(start, end), rows.len());
+        }
+    }
+
+    #[test]
+    fn the_ranges_cover_every_row_exactly_once() {
+        let mask: Vec<u64> = vec![0xFFFF_FFFF_FFFF_FFFF, 0x0000_0000_FFFF_0000];
+        let selection = SelectionVector::from_filter(&mask, 80, 128);
+        let mut seen = Vec::new();
+        for (start, end) in [(0usize, 32usize), (32, 64), (64, 96), (96, 128)] {
+            selection.for_each_in_range(start, end, |row| seen.push(row));
+        }
+        assert_eq!(seen, selection.collect_rows());
+    }
+
+    #[test]
+    fn an_empty_range_visits_nothing() {
+        let selection = SelectionVector::from_filter(&[0b1010], 2, 8);
+        let mut rows = Vec::new();
+        selection.for_each_in_range(3, 3, |row| rows.push(row));
+        assert!(rows.is_empty());
+        assert_eq!(selection.count_in_range(3, 3), 0);
     }
 
     #[test]

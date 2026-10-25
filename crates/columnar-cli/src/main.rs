@@ -187,10 +187,29 @@ enum Command {
         /// How many timed runs to make per system, per thread count.
         #[arg(long, default_value_t = 5)]
         iterations: usize,
+        /// How to measure: `cold` reads the file inside the measurement, and
+        /// `resident` measures the query against data that is already in
+        /// memory.
+        ///
+        /// The two answer different questions, and the operators' share is
+        /// different in each: in the cold mode the scan dominates and the
+        /// operators are a few percent, and in the resident mode the operators
+        /// are the measurement.
+        #[arg(long, value_enum, default_value_t = SweepModeArg::Cold)]
+        mode: SweepModeArg,
         /// Where to write the JSON report.
         #[arg(long, default_value = "bench-results/scaling.json")]
         out: PathBuf,
     },
+}
+
+/// How the thread-count sweep measures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum SweepModeArg {
+    /// The file is read and the query answered in one go.
+    Cold,
+    /// The query is answered against data that is already in memory.
+    Resident,
 }
 
 /// The builtin queries, as command line values.
@@ -286,8 +305,8 @@ fn run(cli: Cli) -> Result<()> {
         Command::Compare { data, iterations, threads, out } => {
             run_compare(&data, iterations, threads, &out)
         }
-        Command::Sweep { data, query, threads, iterations, out } => {
-            run_sweep(&data, query, &threads, iterations, &out)
+        Command::Sweep { data, query, threads, iterations, mode, out } => {
+            run_sweep(&data, query, &threads, iterations, mode, &out)
         }
     }
 }
@@ -369,14 +388,17 @@ fn run_query(
             } else {
                 let dataset = Dataset::read_parquet(data)
                     .with_context(|| format!("could not read {}", data.display()))?;
+                // The thread count reaches the operators here too, not only
+                // the reader. The eager path's *decode* is still serial --
+                // that is the next increment -- but the filter and the
+                // projection behind it are not, and a thread count that only
+                // reached half the engine would measure half an engine.
+                let options =
+                    ExecOptions { threads: Some(threads.max(1)), ..ExecOptions::default() };
                 for _ in 0..iterations.max(1) {
                     let started = std::time::Instant::now();
-                    let result = columnar_engine::execute(
-                        &(definition.plan)(),
-                        &dataset,
-                        &ExecOptions::default(),
-                    )
-                    .context("the query failed")?;
+                    let result = columnar_engine::execute(&(definition.plan)(), &dataset, &options)
+                        .context("the query failed")?;
                     timings.push(started.elapsed().as_secs_f64() * 1000.0);
                     last = Some(result);
                 }
@@ -467,7 +489,7 @@ fn run_compare(data: &Path, iterations: usize, threads: usize, out: &Path) -> Re
             let mut external_results = Vec::new();
 
             for definition in QUERIES {
-                let measured = measure_both_paths(definition, data, iterations)?;
+                let measured = measure_both_paths(definition, data, iterations, threads)?;
                 // The engine's own answer is the reference for the cross-check
                 // against the incumbents below. Both paths computed it, and
                 // they agreed -- `measure_both_paths` refuses otherwise.
@@ -586,6 +608,7 @@ fn run_sweep(
     query: BuiltinQueryArg,
     threads: &str,
     iterations: usize,
+    mode: SweepModeArg,
     out: &Path,
 ) -> Result<()> {
     let counts = parse_thread_counts(threads)?;
@@ -598,13 +621,31 @@ fn run_sweep(
         .with_context(|| format!("could not open {}", data.display()))?;
     let row_groups = source.row_groups();
 
+    // The two modes measure different things, and the incumbents are measured
+    // the same way the engine is: the resident mode loads the file first and
+    // times the query, and the cold mode times the two together.
+    let resident = mode == SweepModeArg::Resident;
+    let external_mode = if resident { external::Mode::Resident } else { external::Mode::Cold };
+
     let mut points = Vec::with_capacity(counts.len());
     let mut reference: Option<String> = None;
 
     for count in &counts {
         // The engine.
-        let (_open_ms, engine_ms, engine_scan_ms, engine_result) =
-            measure_engine_lazy_at(definition, data, iterations, *count)?;
+        let (engine_ms, engine_scan_ms, engine_operators_ms, engine_workers, engine_result) =
+            if resident {
+                measure_engine_resident_at(definition, &dataset, iterations, *count)?
+            } else {
+                let (_open_ms, engine_ms, engine_scan_ms, result) =
+                    measure_engine_lazy_at(definition, data, iterations, *count)?;
+                (
+                    engine_ms,
+                    engine_scan_ms,
+                    operator_stage_ms(&result),
+                    source.worker_count(*count),
+                    result,
+                )
+            };
 
         // The engine's answer at this thread count has to be the same as at
         // every other one. The rows come back in the file's order whatever
@@ -622,66 +663,27 @@ fn run_sweep(
         }
 
         // The incumbents, at the same thread count.
-        let mut incumbents = Vec::new();
-        for comparator in [Comparator::DuckDb, Comparator::Polars] {
-            let query_sql = ExternalQuery::new(
-                definition.query.name(),
-                definition.sql_for(comparator, external::Mode::Cold, data),
-            );
-            match external::run(
-                comparator,
-                external::Mode::Cold,
-                &query_sql,
-                data,
-                *count,
-                iterations,
-            ) {
-                Ok(outcome) => {
-                    if let (Some(ours), Some(theirs)) = (
-                        engine_result
-                            .groups
-                            .first()
-                            .and_then(|group| group.values.first())
-                            .and_then(|value| match value {
-                                columnar_engine::AggregateValue::Int(v) => Some(*v as f64),
-                                columnar_engine::AggregateValue::Float(v) => Some(*v),
-                                columnar_engine::AggregateValue::Null => None,
-                            }),
-                        outcome.result_value,
-                    ) {
-                        let tolerance = 1e-9 * ours.abs().max(1.0);
-                        if (ours - theirs).abs() > tolerance {
-                            anyhow::bail!(
-                                "{} computed {theirs} at {count} threads, the engine computed {ours}",
-                                comparator.name()
-                            );
-                        }
-                    }
-                    incumbents.push((comparator.name(), outcome.query_ms));
-                }
-                Err(error) => {
-                    eprintln!("skipping {} at {count} threads: {error}", comparator.name());
-                }
-            }
-        }
-
-        let duckdb_ms =
-            incumbents.iter().find(|(name, _)| *name == "duckdb").map_or(f64::NAN, |(_, ms)| *ms);
-        let polars_ms =
-            incumbents.iter().find(|(name, _)| *name == "polars").map_or(f64::NAN, |(_, ms)| *ms);
+        let (duckdb_ms, polars_ms) = measure_incumbents(
+            definition,
+            data,
+            external_mode,
+            *count,
+            iterations,
+            &engine_result,
+        )?;
 
         points.push(ScalingPoint {
             threads: *count,
-            workers: source.worker_count(*count),
+            workers: engine_workers,
             engine_ms,
             engine_scan_ms,
+            engine_operators_ms,
             duckdb_ms,
             polars_ms,
         });
 
         println!(
-            "{count:>3} threads ({:>2} workers) \u{b7} engine {engine_ms:.1} ms \u{b7} scan {engine_scan_ms:.1} ms \u{b7} duckdb {duckdb_ms:.1} ms \u{b7} polars {polars_ms:.1} ms",
-            source.worker_count(*count)
+            "{count:>3} threads ({engine_workers:>2} workers) \u{b7} engine {engine_ms:.1} ms \u{b7} scan {engine_scan_ms:.1} ms \u{b7} operators {engine_operators_ms:.1} ms \u{b7} duckdb {duckdb_ms:.1} ms \u{b7} polars {polars_ms:.1} ms"
         );
     }
 
@@ -690,7 +692,7 @@ fn run_sweep(
         dataset: dataset_report(data, &dataset),
         query: definition.query.name().to_owned(),
         sql: definition.sql_for_display(),
-        mode: "cold".to_owned(),
+        mode: if resident { "resident".to_owned() } else { "cold".to_owned() },
         row_groups,
         points,
     };
@@ -701,6 +703,123 @@ fn run_sweep(
     println!("{}", report.render());
     println!("report written to {}", out.display());
     Ok(())
+}
+
+/// Measures both incumbents at one thread count.
+///
+/// Returns `(DuckDB's ms, Polars' ms)`. A system that could not be measured
+/// is reported as a NaN rather than as a zero, so a missing figure cannot be
+/// read as a fast one.
+///
+/// Each incumbent's answer is cross-checked against the engine's. A sweep that
+/// published timings for systems computing different answers would be a sweep
+/// of nothing.
+fn measure_incumbents(
+    definition: &QueryDefinition,
+    data: &Path,
+    mode: external::Mode,
+    threads: usize,
+    iterations: usize,
+    engine_result: &columnar_engine::AggregateResult,
+) -> Result<(f64, f64)> {
+    let ours =
+        engine_result.groups.first().and_then(|group| group.values.first()).and_then(|value| {
+            match value {
+                columnar_engine::AggregateValue::Int(v) => Some(*v as f64),
+                columnar_engine::AggregateValue::Float(v) => Some(*v),
+                columnar_engine::AggregateValue::Null => None,
+            }
+        });
+
+    let mut incumbents = Vec::new();
+    for comparator in [Comparator::DuckDb, Comparator::Polars] {
+        let query_sql =
+            ExternalQuery::new(definition.query.name(), definition.sql_for(comparator, mode, data));
+        match external::run(comparator, mode, &query_sql, data, threads, iterations) {
+            Ok(outcome) => {
+                if let (Some(ours), Some(theirs)) = (ours, outcome.result_value) {
+                    // A SUM over hundreds of thousands of values is not
+                    // associative in floating point, so two engines that sum
+                    // in a different order can differ in the last bits. The
+                    // tolerance is relative, and loose enough for that and
+                    // tight enough to catch a real disagreement.
+                    let tolerance = 1e-9 * ours.abs().max(1.0);
+                    if (ours - theirs).abs() > tolerance {
+                        anyhow::bail!(
+                            "{} computed {theirs} at {threads} threads, the engine computed {ours}",
+                            comparator.name()
+                        );
+                    }
+                }
+                incumbents.push((comparator.name(), outcome.query_ms));
+            }
+            Err(error) => {
+                eprintln!("skipping {} at {threads} threads: {error}", comparator.name());
+            }
+        }
+    }
+
+    let duckdb_ms =
+        incumbents.iter().find(|(name, _)| *name == "duckdb").map_or(f64::NAN, |(_, ms)| *ms);
+    let polars_ms =
+        incumbents.iter().find(|(name, _)| *name == "polars").map_or(f64::NAN, |(_, ms)| *ms);
+    Ok((duckdb_ms, polars_ms))
+}
+
+/// Measures the engine on one query, against data that is already in memory.
+///
+/// Returns `(the query ms, the scan stage ms, the operator stages ms, the
+/// filter's worker count, the result)`.
+///
+/// This is the **resident** measurement, and it is the one the incumbents'
+/// resident numbers are compared against: the data is loaded once, outside the
+/// timed region, and the query is timed on its own.
+fn measure_engine_resident_at(
+    definition: &QueryDefinition,
+    dataset: &Dataset,
+    iterations: usize,
+    threads: usize,
+) -> Result<(f64, f64, f64, usize, columnar_engine::AggregateResult)> {
+    let iterations = iterations.max(1);
+    let options = ExecOptions { threads: Some(threads.max(1)), ..ExecOptions::default() };
+
+    // Warm-up: the first run pays for the allocator.
+    {
+        let _ = columnar_engine::execute(&(definition.plan)(), dataset, &options);
+    }
+
+    let mut times = Vec::with_capacity(iterations);
+    let mut scans = Vec::with_capacity(iterations);
+    let mut operators = Vec::with_capacity(iterations);
+    let mut workers = 1;
+    let mut result = None;
+
+    for _ in 0..iterations {
+        let started = std::time::Instant::now();
+        let value = columnar_engine::execute(&(definition.plan)(), dataset, &options)
+            .context("the query failed")?;
+        times.push(started.elapsed().as_secs_f64() * 1000.0);
+        scans.push(scan_stage_ms(&value));
+        operators.push(operator_stage_ms(&value));
+        workers = value.plan_output.filter_workers;
+        result = Some(value);
+    }
+
+    Ok((median(&times), median(&scans), median(&operators), workers, result.context("no result")?))
+}
+
+/// The engine's operator stages, in milliseconds.
+///
+/// The filter, the projection, the expression evaluation and the aggregate --
+/// everything except the scan. It is the number the operators' parallelism
+/// moves, and in the resident mode it *is* the measurement.
+fn operator_stage_ms(result: &columnar_engine::AggregateResult) -> f64 {
+    result
+        .stages
+        .iter()
+        .filter(|stage| stage.stage != "scan")
+        .map(|stage| stage.elapsed.as_secs_f64() * 1000.0)
+        .sum()
 }
 
 /// Parses a comma-separated list of thread counts.
@@ -743,9 +862,12 @@ fn measure_both_paths(
     definition: &QueryDefinition,
     data: &Path,
     iterations: usize,
+    threads: usize,
 ) -> Result<Vec<EngineQueryResult>> {
-    let (load_ms, resident_ms, cold_ms, result) = measure_engine(definition, data, iterations)?;
-    let (lazy_open_ms, lazy_ms, lazy_result) = measure_engine_lazy(definition, data, iterations)?;
+    let (load_ms, resident_ms, cold_ms, result) =
+        measure_engine(definition, data, iterations, threads)?;
+    let (lazy_open_ms, lazy_ms, lazy_result) =
+        measure_engine_lazy(definition, data, iterations, threads)?;
 
     if lazy_result.groups != result.groups {
         anyhow::bail!(
@@ -812,14 +934,16 @@ fn measure_engine(
     definition: &QueryDefinition,
     data: &Path,
     iterations: usize,
+    threads: usize,
 ) -> Result<(f64, f64, f64, columnar_engine::AggregateResult)> {
     let iterations = iterations.max(1);
+    let options = ExecOptions { threads: Some(threads.max(1)), ..ExecOptions::default() };
 
     // Warm-up: the first read pays for the page cache and the allocator.
     {
         let dataset = Dataset::read_parquet(data)
             .with_context(|| format!("could not read {}", data.display()))?;
-        let _ = columnar_engine::execute(&(definition.plan)(), &dataset, &ExecOptions::default());
+        let _ = columnar_engine::execute(&(definition.plan)(), &dataset, &options);
     }
 
     let mut loads = Vec::with_capacity(iterations);
@@ -834,9 +958,8 @@ fn measure_engine(
         let load_ms = read_started.elapsed().as_secs_f64() * 1000.0;
 
         let query_started = std::time::Instant::now();
-        let value =
-            columnar_engine::execute(&(definition.plan)(), &dataset, &ExecOptions::default())
-                .context("the query failed")?;
+        let value = columnar_engine::execute(&(definition.plan)(), &dataset, &options)
+            .context("the query failed")?;
         let query_ms = query_started.elapsed().as_secs_f64() * 1000.0;
 
         loads.push(load_ms);
@@ -865,9 +988,10 @@ fn measure_engine_lazy(
     definition: &QueryDefinition,
     data: &Path,
     iterations: usize,
+    threads: usize,
 ) -> Result<(f64, f64, columnar_engine::AggregateResult)> {
     let (open_ms, total_ms, _scan_ms, result) =
-        measure_engine_lazy_at(definition, data, iterations, 1)?;
+        measure_engine_lazy_at(definition, data, iterations, threads)?;
     Ok((open_ms, total_ms, result))
 }
 

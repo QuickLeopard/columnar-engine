@@ -118,10 +118,15 @@ compare data="data/lineitem.parquet" iterations="3" threads="1" out="bench-resul
 # The engine's parallelism is capped by the file's row groups, so the report
 # records both the thread count asked for and the workers that ran.
 #
+# Two modes, because they answer different questions: `cold` reads the file
+# inside the measurement, which is what a user waiting on a command line
+# pays, and `resident` measures the query against data that is already in
+# memory, which is the pure query-engine measurement.
+#
 # Publish a table from this too: run it at least three times, keep the
 # reports, and derive the medians with `just medians`.
-sweep data="data/lineitem.parquet" query="q6" threads="1,2,4,6,8,14" iterations="3" out="bench-results/scaling.json":
-    cargo run --release -p columnar-cli -- sweep --data {{data}} --query {{query}} --threads {{threads}} --iterations {{iterations}} --out {{out}}
+sweep data="data/lineitem.parquet" query="q6" threads="1,2,4,6,8,14" iterations="3" mode="cold" out="bench-results/scaling.json":
+    cargo run --release -p columnar-cli -- sweep --data {{data}} --query {{query}} --threads {{threads}} --iterations {{iterations}} --mode {{mode}} --out {{out}}
 
 # The performance gate: measure the kernel and compare it against the stored
 # baseline.

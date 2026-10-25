@@ -66,6 +66,20 @@ pub struct PlanOutput {
     /// are not comparable, and a reader should not have to guess which one
     /// they are looking at.
     pub threads: usize,
+    /// How many workers the filter used.
+    ///
+    /// The filter splits the rows into contiguous blocks, one per worker, so
+    /// the number of workers that ran is the number of blocks. It is **not**
+    /// the thread count that was asked for: a file with a hundred rows has one
+    /// block, however many threads were offered.
+    pub filter_workers: usize,
+    /// How many workers the projection used.
+    ///
+    /// The projection splits the *source rows* into blocks, one per worker,
+    /// and gathers the survivors in each. It has its own block size, so its
+    /// worker count can differ from the filter's, and the two are reported
+    /// separately rather than as one number that is true of neither.
+    pub projection_workers: usize,
     /// What the pushed-down predicates cost.
     ///
     /// The pushdown runs inside the reader, so its cost is otherwise folded
@@ -126,6 +140,11 @@ impl fmt::Display for PlanOutput {
             }
         )?;
         writeln!(f, "read threads: {}", self.threads)?;
+        writeln!(
+            f,
+            "operator workers: {} filter, {} projection",
+            self.filter_workers, self.projection_workers
+        )?;
         writeln!(
             f,
             "columns read: {}",

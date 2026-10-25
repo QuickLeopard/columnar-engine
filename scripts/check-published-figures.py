@@ -26,6 +26,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
+RESIDENT_SCALING_REPORTS = sorted(
+    (ROOT / "bench-results").glob("scaling-resident-run*.json")
+)
 DOCS = [ROOT / "PERF.md", ROOT / "README.md"]
 
 # (document, label, figure as it appears in the prose)
@@ -59,6 +62,17 @@ SCALING_CHECKS = [
     ("PERF.md", "sweep duckdb q6 at 6 threads", 6, "duckdb", 1),
     ("PERF.md", "sweep engine q6 at 1 thread", 1, "engine", 1),
     ("PERF.md", "sweep duckdb q6 at 1 thread", 1, "duckdb", 1),
+]
+
+# The **resident** sweep is the table the parallel operators show up in, and
+# it is the one this increment added. The same rule applies: the engine at its
+# best point against DuckDB at the same thread count, and the one-thread
+# figures at both ends.
+RESIDENT_SCALING_CHECKS = [
+    ("PERF.md", "resident sweep engine q6 at 6 threads", 6, "engine", 1),
+    ("PERF.md", "resident sweep duckdb q6 at 6 threads", 6, "duckdb", 1),
+    ("PERF.md", "resident sweep engine q6 at 1 thread", 1, "engine", 1),
+    ("PERF.md", "resident sweep duckdb q6 at 1 thread", 1, "duckdb", 1),
 ]
 
 
@@ -133,6 +147,28 @@ def main() -> int:
             values = sweep.get(threads, {}).get(system)
             if not values:
                 failures.append(f"{doc}: no figure for {label} in the sweep reports")
+                continue
+            figure = statistics.median(values)
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+    if RESIDENT_SCALING_REPORTS:
+        resident_runs = []
+        for path in RESIDENT_SCALING_REPORTS:
+            with path.open() as handle:
+                resident_runs.append(json.load(handle))
+        resident_sweep = collect_scaling(resident_runs)
+
+        for doc, label, threads, system, places in RESIDENT_SCALING_CHECKS:
+            values = resident_sweep.get(threads, {}).get(system)
+            if not values:
+                failures.append(f"{doc}: no figure for {label} in the resident sweep reports")
                 continue
             figure = statistics.median(values)
             rendered = f"{figure:.{places}f}"

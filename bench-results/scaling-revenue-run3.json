@@ -25,50 +25,56 @@
     {
       "threads": 1,
       "workers": 1,
-      "engine_ms": 143.086542,
-      "engine_scan_ms": 141.601625,
+      "engine_ms": 142.711792,
+      "engine_scan_ms": 141.2465,
+      "engine_operators_ms": 1.344877,
       "duckdb_ms": 69.0,
-      "polars_ms": 194.17
+      "polars_ms": 191.849
     },
     {
       "threads": 2,
       "workers": 2,
-      "engine_ms": 76.03275,
-      "engine_scan_ms": 74.476625,
+      "engine_ms": 74.573459,
+      "engine_scan_ms": 73.37575,
+      "engine_operators_ms": 1.229083,
       "duckdb_ms": 39.0,
-      "polars_ms": 106.429
+      "polars_ms": 106.826
     },
     {
       "threads": 4,
       "workers": 4,
-      "engine_ms": 54.003583,
-      "engine_scan_ms": 52.338125,
+      "engine_ms": 51.880750000000006,
+      "engine_scan_ms": 50.682625,
+      "engine_operators_ms": 1.175541,
       "duckdb_ms": 27.0,
-      "polars_ms": 68.443
+      "polars_ms": 69.619
     },
     {
       "threads": 6,
       "workers": 6,
-      "engine_ms": 32.137583,
-      "engine_scan_ms": 30.331500000000002,
-      "duckdb_ms": 18.0,
-      "polars_ms": 41.177
+      "engine_ms": 37.574333,
+      "engine_scan_ms": 35.856791,
+      "engine_operators_ms": 1.3045,
+      "duckdb_ms": 19.0,
+      "polars_ms": 44.276
     },
     {
       "threads": 8,
       "workers": 6,
-      "engine_ms": 31.609917000000003,
-      "engine_scan_ms": 30.135125,
+      "engine_ms": 32.201833,
+      "engine_scan_ms": 30.575084,
+      "engine_operators_ms": 1.347041,
       "duckdb_ms": 18.0,
-      "polars_ms": 40.883
+      "polars_ms": 40.295
     },
     {
       "threads": 14,
       "workers": 6,
-      "engine_ms": 32.576,
-      "engine_scan_ms": 30.926540999999997,
-      "duckdb_ms": 19.0,
-      "polars_ms": 40.207
+      "engine_ms": 31.1605,
+      "engine_scan_ms": 28.8855,
+      "engine_operators_ms": 1.7996670000000001,
+      "duckdb_ms": 18.0,
+      "polars_ms": 40.231
     }
   ]
 }

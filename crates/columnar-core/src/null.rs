@@ -90,6 +90,46 @@ impl NullBitmap {
         Self { words: vec![0; Self::words_for(len)], len, null_count: len }
     }
 
+    /// A slice of this mask, covering rows `start..end`.
+    ///
+    /// The slice is a **copy**: a validity mask is a packed bitmap with no
+    /// offset, so the bits of a range have to be moved into a new one. The
+    /// copy is a word at a time wherever the range allows it, so slicing a
+    /// whole mask is a memory copy rather than a per-row loop -- which
+    /// matters, because a filter over six million rows would otherwise spend
+    /// more time slicing its mask than filtering.
+    ///
+    /// The result is canonical: the padding bits of the last word are clear,
+    /// so a slice of a mask compares equal to any other mask describing the
+    /// same rows.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `end` is before `start`, or if `end` is past the mask's
+    /// length.
+    #[must_use]
+    pub fn slice(&self, start: usize, end: usize) -> Self {
+        assert!(start <= end, "a mask slice must not run backwards");
+        assert!(end <= self.len, "a mask slice must not run past the mask");
+        let len = end - start;
+        let mut words = vec![0u64; Self::words_for(len)];
+        for (index, word) in words.iter_mut().enumerate() {
+            let in_bit = start + index * 64;
+            let in_word = in_bit / 64;
+            let shift = in_bit % 64;
+            let base = self.words.get(in_word).copied().unwrap_or(0);
+            // `next << 64` is not a thing, so the high half is only taken
+            // when the shift is not zero.
+            let high = if shift == 0 {
+                0
+            } else {
+                self.words.get(in_word + 1).copied().unwrap_or(0) << (64 - shift)
+            };
+            *word = (base >> shift) | high;
+        }
+        Self::from_words(&words, len)
+    }
+
     /// The conjunction of two masks.
     ///
     /// A row is valid in the result when it is valid in **both** masks. This is
@@ -297,6 +337,50 @@ mod tests {
         let bitmap = NullBitmap::with_nulls(8, &[2, 5]);
         let rows: Vec<usize> = bitmap.valid_rows().collect();
         assert_eq!(rows, vec![0, 1, 3, 4, 6, 7]);
+    }
+
+    #[test]
+    fn a_slice_describes_the_rows_it_was_cut_from() {
+        let mask = NullBitmap::with_nulls(200, &[0, 63, 64, 65, 127, 199]);
+        for (start, end) in [(0, 200), (0, 64), (64, 128), (64, 65), (65, 130), (1, 199)] {
+            let slice = mask.slice(start, end);
+            assert_eq!(slice.len(), end - start);
+            for row in start..end {
+                assert_eq!(
+                    slice.is_valid(row - start),
+                    mask.is_valid(row),
+                    "row {row} differs in the slice {start}..{end}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_slice_of_a_whole_mask_is_the_mask() {
+        let mask = NullBitmap::with_nulls(130, &[3, 64, 129]);
+        assert_eq!(mask.slice(0, 130), mask);
+    }
+
+    #[test]
+    fn an_empty_slice_is_empty() {
+        let mask = NullBitmap::with_nulls(4, &[1]);
+        let slice = mask.slice(2, 2);
+        assert_eq!(slice.len(), 0);
+        assert_eq!(slice.null_count(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "backwards")]
+    fn a_backwards_slice_is_refused() {
+        let mask = NullBitmap::all_valid(4);
+        let _ = mask.slice(3, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "past the mask")]
+    fn a_slice_past_the_mask_is_refused() {
+        let mask = NullBitmap::all_valid(4);
+        let _ = mask.slice(0, 5);
     }
 
     #[test]

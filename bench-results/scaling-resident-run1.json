@@ -1,0 +1,80 @@
+{
+  "machine": {
+    "cpu": "Apple M4 Max",
+    "arch": "aarch64",
+    "cores": 14,
+    "os": "macOS 27.0.1",
+    "simd": "neon",
+    "forced_simd": "auto",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "threads": 1
+  },
+  "dataset": {
+    "path": "data/lineitem.parquet",
+    "rows": 6000000,
+    "bytes": 242857841,
+    "scale_factor": 1,
+    "seed": 24001,
+    "null_rate": 0.0
+  },
+  "query": "q6",
+  "sql": "SELECT count(*) FROM lineitem WHERE l_discount >= 0.04 AND l_discount <= 0.07 AND l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01'",
+  "mode": "resident",
+  "row_groups": 6,
+  "points": [
+    {
+      "threads": 1,
+      "workers": 1,
+      "engine_ms": 6.567875,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 6.499582000000001,
+      "duckdb_ms": 43.0,
+      "polars_ms": 67.718
+    },
+    {
+      "threads": 2,
+      "workers": 2,
+      "engine_ms": 3.877667,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 3.8011250000000003,
+      "duckdb_ms": 24.0,
+      "polars_ms": 35.214
+    },
+    {
+      "threads": 4,
+      "workers": 4,
+      "engine_ms": 2.473833,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 2.4522090000000003,
+      "duckdb_ms": 13.0,
+      "polars_ms": 17.944
+    },
+    {
+      "threads": 6,
+      "workers": 6,
+      "engine_ms": 2.195875,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 2.170208,
+      "duckdb_ms": 10.0,
+      "polars_ms": 12.448
+    },
+    {
+      "threads": 8,
+      "workers": 8,
+      "engine_ms": 1.8937920000000001,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 1.8701670000000001,
+      "duckdb_ms": 8.0,
+      "polars_ms": 10.016
+    },
+    {
+      "threads": 14,
+      "workers": 14,
+      "engine_ms": 1.811833,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 1.791708,
+      "duckdb_ms": 7.0,
+      "polars_ms": 8.94
+    }
+  ]
+}

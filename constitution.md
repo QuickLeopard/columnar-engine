@@ -174,6 +174,18 @@ These are the standards any change must hold or improve. They are the floor.
   order, and MUST be bit-identical to the single-threaded read. `SUM` is not associative, so a
   read that ordered its rows by *completion* rather than by *position* would make the answer
   depend on the scheduler — and an answer that depends on the scheduler is not an answer.
+- **Parallel operators, and the one that may never be parallel**: a parallel operator MUST be
+  bit-identical to its serial counterpart — the same rows, in the same order, with the same
+  values and the same validity bits — and the comparison MUST be made against the **rows**, not
+  against an aggregate, because an aggregate cannot see a mis-ordered merge. The **aggregate** is
+  exempt, and permanently: `SUM` is not associative, so a parallel aggregate's answer would depend
+  on the block boundaries, and the block boundaries depend on the thread count. The exemption is a
+  permanent property, not a deferral, and any proposal to parallelise it must be refused on those
+  grounds.
+- **A published worker count is the count that ran**: a plan that reports its parallelism MUST
+  report the workers that **ran**, not the threads that were **asked for**. The two differ — the
+  read's parallelism is capped by the file's row groups, and the operators' by the row count — and
+  a reader who is shown the requested count will read the curve wrong.
 
 ---
 
@@ -220,9 +232,39 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.4.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
+**Version**: 1.5.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
 
 ### Amendment history
+
+**1.5.0 — 2026-10-25 — the operators are parallel now, and the aggregate never will be.** The
+engine's filter and projection split their work across the workers (spec 007). The aggregate does
+not, and the reason is permanent rather than provisional.
+
+*Rationale*: the 1.3.0 standard made order-preserving parallelism a rule for the **read**, because
+`SUM` is not associative. The same rule extends to the **operators** — a parallel filter or gather
+must be bit-identical to its serial counterpart — and it extends with one **permanent exemption**:
+the aggregate. A parallel aggregate folds each block and combines the partials, and the combined
+answer would depend on the block boundaries, and the block boundaries depend on the thread count.
+The engine's answer being reproducible is not a performance feature that can be traded away for
+0.1 ms, so this is stated as a permanent property rather than as a deferral.
+
+Two requirements are added beyond the extension. First, the equivalence MUST be checked against the
+**rows** and not against an aggregate: a mis-ordered merge leaves a sum unchanged, so an
+aggregate-level check passes on the defect it is meant to catch. The tests are mutation-verified
+for exactly this reason. Second, a published worker count MUST be the count that **ran** — the
+read's parallelism is capped by the file's row groups and the operators' by the row count, so the
+requested count and the actual one differ, and a reader shown only the requested one will read the
+curve wrong.
+
+*Principles touched*: VII and IV are extended, not changed; the Performance Standards gain two
+requirements. Neither I, III nor II is touched, so it is a MINOR bump.
+*Migration plan*: the thread-count sweep is published in two modes — `PERF.md` §2e (cold) and
+`PERF.md` §2f (resident) — derived from the `bench-results/scaling-*-run{1,2,3}.json` reports by the
+same script that derives the headline table. The headline table was re-measured under the new code,
+because the plan output embedded in the committed reports changed. The operators' share of the
+resident query and of the cold one is published side by side, because the two answers differ by an
+order of magnitude and quoting only the flattering one would be the thing this constitution exists
+to prevent.
 
 **1.4.0 — 2026-10-25 — a simplification a measurement says does not matter yet is published as
 such.** The engine now evaluates arithmetic expressions over columns and runs TPC-H's Q6 as Q6

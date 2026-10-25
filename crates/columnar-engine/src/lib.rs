@@ -402,8 +402,17 @@ fn run_pipeline(
     let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
     let total_rows = dataset.len();
     let mut stages: Vec<StageStats> = vec![scan];
-    let mut materialised =
-        operators::project::Materialised::new(dataset, SelectionVector::empty(total_rows));
+    let mut materialised = operators::project::Materialised::with_workers(
+        dataset,
+        SelectionVector::empty(total_rows),
+        options.threads.unwrap_or(1),
+    );
+    // How many workers the operators may use. The filter's blocks are
+    // 64-row aligned and the projection's are larger, so the two can end up
+    // with different worker counts -- and the plan reports the count that
+    // actually ran for each of them, not the count that was asked for.
+    let operator_workers = options.threads.unwrap_or(1).max(1);
+    let mut filter_workers = 1;
 
     // --- filter -----------------------------------------------------------
     // A predicate that was pushed into the reader has already been applied,
@@ -417,7 +426,13 @@ fn run_pipeline(
         // Every predicate is evaluated against the chunk and their masks are
         // ANDed. For a dictionary-encoded column the predicate is evaluated
         // once per distinct value rather than once per row.
-        let (selection, stats) = operators::filter::filter_all(dataset, &resolved.filter, flavor)?;
+        let (selection, stats) = operators::filter::filter_all_with_workers(
+            dataset,
+            &resolved.filter,
+            flavor,
+            operator_workers,
+        )?;
+        filter_workers = stats.workers;
         stages.push(StageStats {
             stage: "filter".to_owned(),
             rows_in: stats.rows_in,
@@ -507,6 +522,8 @@ fn run_pipeline(
         columns_read: report.columns_read,
         pushdown_metrics: report.pushdown_metrics,
         threads: workers,
+        filter_workers,
+        projection_workers: materialised.projection_workers(),
     };
 
     Ok(AggregateResult { groups, stages, plan_output })
