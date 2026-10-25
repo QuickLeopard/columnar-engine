@@ -243,6 +243,7 @@ def main() -> int:
         ("scaling-revenue-run*.json", "q6-revenue", "cold"),
         ("scaling-resident-run*.json", "q6", "resident"),
         ("scaling-resident-revenue-run*.json", "q6-revenue", "resident"),
+        ("scaling-load-run*.json", "q6", "load"),
     ):
         scaling_paths = sorted(Path("bench-results").glob(pattern))
         if scaling_paths:

@@ -29,6 +29,7 @@ SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 RESIDENT_SCALING_REPORTS = sorted(
     (ROOT / "bench-results").glob("scaling-resident-run*.json")
 )
+LOAD_SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-load-run*.json"))
 DOCS = [ROOT / "PERF.md", ROOT / "README.md"]
 
 # (document, label, figure as it appears in the prose)
@@ -73,6 +74,14 @@ RESIDENT_SCALING_CHECKS = [
     ("PERF.md", "resident sweep duckdb q6 at 6 threads", 6, "duckdb", 1),
     ("PERF.md", "resident sweep engine q6 at 1 thread", 1, "engine", 1),
     ("PERF.md", "resident sweep duckdb q6 at 1 thread", 1, "duckdb", 1),
+]
+
+# The **load** sweep is the table the parallel eager decode shows up in.
+LOAD_SCALING_CHECKS = [
+    ("PERF.md", "load sweep engine q6 at 6 threads", 6, "engine", 1),
+    ("PERF.md", "load sweep duckdb q6 at 6 threads", 6, "duckdb", 1),
+    ("PERF.md", "load sweep engine q6 at 1 thread", 1, "engine", 1),
+    ("PERF.md", "load sweep duckdb q6 at 1 thread", 1, "duckdb", 1),
 ]
 
 
@@ -169,6 +178,28 @@ def main() -> int:
             values = resident_sweep.get(threads, {}).get(system)
             if not values:
                 failures.append(f"{doc}: no figure for {label} in the resident sweep reports")
+                continue
+            figure = statistics.median(values)
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+    if LOAD_SCALING_REPORTS:
+        load_runs = []
+        for path in LOAD_SCALING_REPORTS:
+            with path.open() as handle:
+                load_runs.append(json.load(handle))
+        load_sweep = collect_scaling(load_runs)
+
+        for doc, label, threads, system, places in LOAD_SCALING_CHECKS:
+            values = load_sweep.get(threads, {}).get(system)
+            if not values:
+                failures.append(f"{doc}: no figure for {label} in the load sweep reports")
                 continue
             figure = statistics.median(values)
             rendered = f"{figure:.{places}f}"

@@ -118,10 +118,12 @@ compare data="data/lineitem.parquet" iterations="3" threads="1" out="bench-resul
 # The engine's parallelism is capped by the file's row groups, so the report
 # records both the thread count asked for and the workers that ran.
 #
-# Two modes, because they answer different questions: `cold` reads the file
+# Three modes, because they answer different questions: `cold` reads the file
 # inside the measurement, which is what a user waiting on a command line
-# pays, and `resident` measures the query against data that is already in
-# memory, which is the pure query-engine measurement.
+# pays; `resident` measures the query against data that is already in memory,
+# which is the pure query-engine measurement; and `load` measures the load
+# itself -- the time to get the file into memory -- which is the one
+# measurement in this repository that is about the file rather than the query.
 #
 # Publish a table from this too: run it at least three times, keep the
 # reports, and derive the medians with `just medians`.

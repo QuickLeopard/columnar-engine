@@ -164,6 +164,13 @@ impl ScalingReport {
                 )
                 .ok();
             }
+            "load" => {
+                writeln!(
+                    out,
+                    "mode      load \u{b7} only the load is measured: the time to get the file into memory"
+                )
+                .ok();
+            }
             _ => {
                 writeln!(
                     out,
@@ -181,17 +188,35 @@ impl ScalingReport {
         .ok();
         writeln!(out).ok();
 
-        writeln!(
-            out,
-            "threads   workers     engine   engine-scan  engine-ops     duckdb     polars   engine x    duckdb x"
-        )
-        .ok();
+        if self.mode == "load" {
+            writeln!(out, "threads   workers        engine      duckdb     polars   engine x").ok();
+        } else {
+            writeln!(
+                out,
+                "threads   workers     engine   engine-scan  engine-ops     duckdb     polars   engine x    duckdb x"
+            )
+            .ok();
+        }
         writeln!(out, "---------------------------------------------------------------").ok();
 
         let base = self.base();
         for point in &self.points {
             let engine_speedup = ratio(base.map(|base| base.engine_ms), point.engine_ms);
             let duckdb_speedup = ratio(base.map(|base| base.duckdb_ms), point.duckdb_ms);
+            if self.mode == "load" {
+                writeln!(
+                    out,
+                    "{:>7}  {:>7}  {:>10.1}   {:>8.1}   {:>8.1}   {:>8.2}x",
+                    point.threads,
+                    point.workers,
+                    point.engine_ms,
+                    point.duckdb_ms,
+                    point.polars_ms,
+                    engine_speedup
+                )
+                .ok();
+                continue;
+            }
             writeln!(
                 out,
                 "{:>7}  {:>7}  {:>8.1}   {:>11.1}   {:>10.1}   {:>8.1}   {:>8.1}   {:>8.2}x   {:>7.2}x",

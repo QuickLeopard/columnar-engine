@@ -22,6 +22,15 @@ python3 scripts/medians.py
 | `scaling-revenue-run1.json` | the first of the three **thread-count sweeps of the real Q6** the §2e table is the median of |
 | `scaling-revenue-run2.json` | the second, and the one `scaling-revenue.json` is a copy of |
 | `scaling-revenue-run3.json` | the third |
+| `scaling-resident-run1.json` | the first of the three **resident sweeps of `q6`** the §2f table is the median of |
+| `scaling-resident-run2.json` | the second |
+| `scaling-resident-run3.json` | the third |
+| `scaling-resident-revenue-run1.json` | the first of the three **resident sweeps of the real Q6** the §2f table is the median of |
+| `scaling-resident-revenue-run2.json` | the second |
+| `scaling-resident-revenue-run3.json` | the third |
+| `scaling-load-run1.json` | the first of the three **load sweeps** the §2g table is the median of |
+| `scaling-load-run2.json` | the second |
+| `scaling-load-run3.json` | the third |
 | `compare.json` | a copy of `compare-run2.json`, the run whose figures sit nearest the medians |
 | `scaling.json` | a copy of `scaling-run2.json`, the sweep run nearest the medians |
 | `scaling-revenue.json` | a copy of `scaling-revenue-run2.json`, the sweep run nearest the medians |
@@ -42,23 +51,30 @@ accident.
 The working tree is the unperturbed code. The perturbation was applied, measured, and reverted;
 `git diff` after the revert was empty.
 
-## The two tables
+## The published tables
 
-There are **two** published comparison tables, and they answer different questions.
+There is **one headline table** and **three sweeps**, and they answer different questions.
 
 | table | question | reports |
 |---|---|---|
 | §2a, §2b | *which is faster when every system is given one thread* | `compare-run*.json` |
 | §2e, `q6` | *how does each system's number move with the thread count* | `scaling-run*.json` |
 | §2e, `q6-revenue` | the same, on the real Q6 | `scaling-revenue-run*.json` |
+| §2f, `q6` | the same, with the data already in memory | `scaling-resident-run*.json` |
+| §2f, `q6-revenue` | the same, on the real Q6 | `scaling-resident-revenue-run*.json` |
+| §2g | *how long does each system take to get the file into memory* | `scaling-load-run*.json` |
 
 The first is the like-for-like **single-threaded** comparison, and it has been the headline since
-the first set of numbers in this repository. The second exists because a one-thread table on its
-own is a misleading picture of what a user sees: `DuckDB` uses every core by default.
+the first set of numbers in this repository. The sweeps exist because a one-thread table on its
+own is a misleading picture of what a user sees: `DuckDB` uses every core by default. The **load**
+sweep is the odd one out: it is the only measurement here that is about the *file* rather than the
+*query*.
 
-**Both are comparisons, not measurements.** At every point of the sweep the engine and both
+**All of them are comparisons, not measurements.** At every point of a sweep the engine and both
 incumbents run at the *same* thread count, on the same file, in the same harness, and the answers
-are cross-checked at every point.
+are cross-checked at every point — except in the load sweep, which times the load and so has no
+answer to check. The load sweep's incumbents are still measured in the harness's resident mode,
+because that is the mode that times a load separately.
 
 The sweep's report records the thread count that was **asked for** and the workers that
 **actually ran**, side by side, because the engine's read splits the file's *row groups* across

@@ -50,24 +50,24 @@ $ just compare
 cold · read the Parquet file and answer in one go
 query          engine   engine-lazy   duckdb   polars
 --------------------------------------------------------
-scan        1277.8           0.1      2.0      1.1
-filter-numeric     1278.3          18.5     22.0     43.6
-filter-string      1281.6          30.1     21.0    160.1
-filter-range       1292.9          94.1     31.0     15.0
-q6          1289.7          83.2     31.0    187.8
-q6-revenue   1287.4         143.5     67.0    195.1
+scan         546.6           0.1      2.0      1.0
+filter-numeric     545.6          18.5     22.0     43.8
+filter-string      547.8          30.4     21.0    160.9
+filter-range       560.0          95.5     31.0     15.3
+q6          553.8          82.4     32.0    187.5
+q6-revenue   558.4         143.7     68.0    195.2
 ```
 
-**The lazy path is 15.5× faster than the eager one on `q6`**, and it beats Polars on every cold
+**The lazy path is 6.7× faster than the eager one on `q6`**, and it beats Polars on every cold
 query except `filter-range`. It beats DuckDB on `filter-numeric` — narrowly, 18.5 ms against
-22.0 ms, inside DuckDB's own spread — and on `scan`. On `q6` it is 2.7× behind, and that gap is
+22.0 ms, inside DuckDB's own spread — and on `scan`. On `q6` it is 2.6× behind, and that gap is
 not pruning: DuckDB prunes nothing on this file either (its own plan says `Row Groups Scanned:
 6 / 6`, and the file has no page index). It is **threads**. Measured and attributed in
 [`PERF.md`](PERF.md), not glossed.
 
 **`q6-revenue` is TPC-H Q6 itself** — `sum(l_extendedprice * (1 - l_discount))` — and the engine
-runs it: 143.5 ms cold against DuckDB's 67.0 ms, and 15.2 ms resident against DuckDB's 46.0 ms.
-The arithmetic is **0.2 ms of the 143 ms**, because it is evaluated over the 110,915 rows that
+runs it: 143.7 ms cold against DuckDB's 68.0 ms, and 14.9 ms resident against DuckDB's 47.0 ms.
+The arithmetic is **0.2 ms of the 144 ms**, because it is evaluated over the 110,915 rows that
 survived the filter and not over the 6,000,000 rows of the file. The query's cost is reading
 `l_extendedprice`, not computing with it. See
 [ADR-0012](docs/adr/0012-arithmetic-expression.md).
@@ -121,11 +121,39 @@ one implementation. That took the pushdown from 42.9 ms to 6.1 ms on `q6`, and i
 equivalence is now structural rather than merely tested. See
 [ADR-0010](docs/adr/0010-pushdown-equivalence.md).
 
-**The eager path got faster too** — 1921 ms to 1265 ms — because the two paths now share one
-decode function, and that function stopped copying a dictionary column's distinct values out of
-every batch. The lazy path never paid that cost; the eager path paid it 5,860 times over.
-Putting the copy back and re-measuring gives 1890 ms, so the 1.60× is a measurement rather than
-a story. See [`PERF.md` §2b-bis](PERF.md#2b-bis-the-eager-path-got-faster-too-and-it-is-measured).
+**The eager path got faster twice.** The first time was not a change to the eager path at all:
+the two paths now share one decode function, and that function stopped copying a dictionary
+column's distinct values out of every batch. The lazy path never paid that cost; the eager path
+paid it 5,860 times over. Putting the copy back and re-measuring gives 1890 ms, so the 1.60× is
+a measurement rather than a story. See
+[`PERF.md` §2b-bis](PERF.md#2b-bis-the-eager-path-got-faster-too-and-it-is-measured).
+
+**The second time was the eager decode, and it is now parallel.** The *load* — the time to get
+the file into memory — was **1277.8 ms**, the largest number in the repository and the one place
+the engine was behind both incumbents. It is now **550.2 ms**, and at one thread the engine is
+**2.2× ahead** of DuckDB on the same file:
+
+```
+$ just sweep mode=load
+threads   workers     engine    duckdb    polars
+---------------------------------------------------------------
+      1        1      550.2    1207.0     995.5
+      2        2      378.6     607.0     513.4
+      4        4      304.6     412.0     349.5
+      6        6      226.2     221.0     189.3
+      8        6      223.7     227.0     186.6
+     14        6      223.0     224.0     187.9
+```
+
+**Most of that was not the parallelism — it was a constant the eager path had inherited rather
+than measured.** The Parquet reader's default batch size is 1,024 rows, and the per-batch cost
+scales with the number of columns it reads; the eager path reads all sixteen, so it rebuilt
+sixteen dictionary tables 5,860 times instead of 733. Fixing that one constant took the
+one-thread load from 1145.6 ms to 587.0 ms, and the parallel decode took it the rest of the way.
+The merge is **one pass, and it moves** the parts' values instead of copying them, so the peak
+memory stays at about one copy of the data. The merged dataset is **bit-identical** to the serial
+one — checked row by row, including the dictionary's order and the indices of the rows that are
+NULL. See [ADR-0014](docs/adr/0014-parallel-eager-decode.md).
 
 (The table is the median of three full runs; `python3 scripts/medians.py` re-derives it from the
 committed raw reports.)
@@ -158,6 +186,7 @@ specs/004-performance-gates/  the regression gate and the budget gate
 specs/005-parallel-decode/  the parallel read, and the order it preserves
 specs/006-arithmetic-aggregate/  the arithmetic aggregate, and the real Q6
 specs/007-parallel-operators/  the parallel filter and projection, and the aggregate that is not
+specs/008-parallel-eager-decode/  the parallel eager decode, and the batch size it inherited
 ```
 
 **One predicate, five implementations, one answer.** The comparison kernel is the project. There
@@ -223,7 +252,7 @@ computed different values is not a benchmark.
 | The **read** under several thread counts | **measured** — the engine and both incumbents, at the same thread counts, on the same file: [`PERF.md` §2e](PERF.md#2e-the-thread-count-sweep) |
 | The **query** under several thread counts | **measured** — the same sweep with the data already in memory, which is where the operators are the measurement: [`PERF.md` §2f](PERF.md#2f-the-resident-sweep-where-the-operators-are-the-measurement) |
 | Multithreading of the **operators** | **measured** — the filter and the projection are parallel, and the answer does not depend on the thread count. The **aggregate** is not parallelised and never will be: `SUM` is not associative |
-| The **eager** path's decode | **not parallel** — the lazy path's read is; the eager path is the one the resident comparison uses |
+| The **eager** path's decode | **measured** — the eager path splits the file's row groups across the workers, and the merged dataset is bit-identical to the serial one's: [`PERF.md` §2g](PERF.md#2g-the-load-sweep--where-the-engines-biggest-number-was) |
 
 The x86-64 row is the important one, and it has two halves.
 
@@ -298,10 +327,10 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited |
 | Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 184, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the performance-gate suite and the x86-64 cross-check |
+| Tests | 196, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the performance-gate suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |
-| Next | the eager path's parallel decode — 1,278 ms, the largest number in the repository — and the x86-64 measurement |
+| Next | **Decompose the lazy scan.** The engine's lazy scan of the two columns Q6 needs takes **82.4 ms** against DuckDB's **32.0 ms** on the same file at the same thread count, and that 2.6× has never been split — the plan output says the scan stage is 84.3 ms and the pushdown 6.0 ms of it, but not how much of the rest is Arrow's decode and how much is the engine's own work. Splitting it the way the eager decode was split is what found that one. After that: the x86-64 measurement, which stays blocked until there is an x86-64 machine |

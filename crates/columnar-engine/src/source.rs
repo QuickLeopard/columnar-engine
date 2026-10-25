@@ -266,7 +266,7 @@ impl ParquetSource {
             }
             Ok(parts)
         })?;
-        crate::dataset::merge(&parts)
+        crate::dataset::merge(parts)
     }
 
     /// Reads the given row groups -- or all of them, when `row_groups` is

@@ -186,6 +186,14 @@ These are the standards any change must hold or improve. They are the floor.
   report the workers that **ran**, not the threads that were **asked for**. The two differ — the
   read's parallelism is capped by the file's row groups, and the operators' by the row count — and
   a reader who is shown the requested count will read the curve wrong.
+- **A tuning constant that depends on the shape of the work MUST be measured for that shape**: a
+  constant measured for one workload and reused for another is not a measured constant. The
+  per-batch cost of a Parquet read scales with the number of columns it reads, so the batch size
+  that is right for a two-column lazy read is not the one that is right for a sixteen-column eager
+  read — and inheriting the reader's default is not a measurement either.
+- **A parallel path's peak memory MUST be measured, not assumed**: a merge that copies its inputs
+  holds two copies of the data at its peak, and one that moves them holds one. The difference is
+  the difference between a budget that fits and one that does not.
 
 ---
 
@@ -232,9 +240,43 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.5.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
+**Version**: 1.6.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
 
 ### Amendment history
+
+**1.6.0 — 2026-10-25 — the eager decode is parallel, and the last big number is gone.** The
+engine's eager load was 1277.8 ms — the largest number in the repository, 144× the cost of
+everything spec 007 parallelised — and the engine was *behind* both incumbents at it. It is now
+**550.2 ms**, and the engine is ahead.
+
+*Rationale*: the constitution asks for evidence over claims, and this increment is what that
+requirement is for. The measurement that motivated it — that Arrow's own decode was 31% of the cost
+and the engine's own conversion was 69% — was not a measurement anybody would have guessed at, and
+it is what made the difference between a parallel decode and a parallel *conversion*. Three
+defects came out of it, and each is a different kind of mistake: a constant that was inherited
+rather than measured, a merge that grew with the square of the number of parts, and a merge that
+repointed the indices of NULL rows.
+
+The requirement added is that a **tuning constant that depends on the shape of the work MUST be
+measured for the shape it is used on**. The lazy path measured its batch size for two columns and
+the eager path inherited the reader's default for sixteen — and the per-batch cost scales with the
+column count, so the eager path was rebuilding sixteen dictionary tables 5,860 times instead of
+733. A constant measured for one shape and reused for another is not a measured constant.
+
+Two things are stated rather than assumed. The parallel eager decode's **peak memory is about one
+copy** of the data rather than two, because the merge moves the parts' values into the result
+instead of copying them — and a claim about memory that is not measured is a claim about nothing.
+And the merge's **serial share** is published: it has to be serial, because the merged
+dictionary's order depends on the parts being merged in order, and at six parts it is about a
+tenth of the decode.
+
+*Principles touched*: IV is extended, not changed; the Performance Standards gain two requirements.
+Neither I, III nor II is touched, so it is a MINOR bump.
+*Migration plan*: the load sweep is published as `PERF.md` §2g, derived from
+`bench-results/scaling-load-run{1,2,3}.json` by the same script that derives the other tables. The
+headline table was re-measured, because the committed reports carry the load figure: the engine's
+eager load went from 1277.8 ms to 550.2 ms while the incumbents' figures did not move by more
+than the machine's noise, so the difference was the engine's.
 
 **1.5.0 — 2026-10-25 — the operators are parallel now, and the aggregate never will be.** The
 engine's filter and projection split their work across the workers (spec 007). The aggregate does

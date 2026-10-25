@@ -104,14 +104,84 @@ impl Dataset {
     /// [`DatasetError::Parquet`] if it is not a Parquet file the reader
     /// understands.
     pub fn read_parquet(path: &Path) -> Result<Self, DatasetError> {
+        Self::read_parquet_with_threads(path, 1)
+    }
+
+    /// Reads a Parquet file into column chunks, with `threads` threads.
+    ///
+    /// The file's **row groups** are split into contiguous blocks, one per
+    /// worker -- a row group is decoded independently of every other one --
+    /// and the parts are merged afterwards **in block order**.
+    ///
+    /// The merged dataset holds the file's rows in the file's order, whatever
+    /// order the workers finish in. That is a correctness requirement and not
+    /// a preference: `SUM` is not associative, so a dataset ordered by
+    /// completion would make the engine's answer depend on the scheduler.
+    ///
+    /// One thread is the serial path, and it is the same path this always
+    /// took.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatasetError::Io`] if the file cannot be opened, and
+    /// [`DatasetError::Parquet`] if it is not a Parquet file the reader
+    /// understands.
+    pub fn read_parquet_with_threads(path: &Path, threads: usize) -> Result<Self, DatasetError> {
         let file = File::open(path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .map_err(|error| DatasetError::Parquet(error.to_string()))?;
         let schema = builder.schema().clone();
         let indices: Vec<usize> = (0..schema.fields().len()).collect();
+        let row_groups = builder.metadata().num_row_groups();
 
-        let reader = builder.build().map_err(|error| DatasetError::Parquet(error.to_string()))?;
-        decode_batches(reader, &schema, &indices)
+        // The file's row groups are the cap on the read's parallelism: a file
+        // with six row groups cannot be read by more than six threads at a
+        // time, however many cores the machine has.
+        let workers = threads.min(row_groups).max(1);
+        if workers == 1 {
+            let reader = builder
+                .with_batch_size(EAGER_BATCH_ROWS)
+                .build()
+                .map_err(|error| DatasetError::Parquet(error.to_string()))?;
+            return decode_batches(reader, &schema, &indices);
+        }
+
+        let per_worker = row_groups.div_ceil(workers);
+        let blocks: Vec<Vec<usize>> = (0..workers)
+            .map(|worker| {
+                let start = worker * per_worker;
+                let end = (start + per_worker).min(row_groups);
+                (start..end).collect()
+            })
+            .filter(|block: &Vec<usize>| !block.is_empty())
+            .collect();
+
+        // Each thread writes its own part, and the parts are joined **in
+        // block order**. Joining in order is what makes the merged dataset
+        // hold the file's rows in the file's order, without any sorting and
+        // without any shared mutable state.
+        let parts = std::thread::scope(|scope| -> Result<Vec<Dataset>, DatasetError> {
+            let handles: Vec<_> = blocks
+                .iter()
+                .map(|block| {
+                    let path = path.to_path_buf();
+                    let schema = schema.clone();
+                    let indices = indices.clone();
+                    let block = block.clone();
+                    scope.spawn(move || read_row_groups(&path, &schema, &indices, &block))
+                })
+                .collect();
+
+            let mut parts = Vec::with_capacity(handles.len());
+            for handle in handles {
+                let part = handle
+                    .join()
+                    .map_err(|_| DatasetError::Parquet("a read thread panicked".to_owned()))?;
+                parts.push(part?);
+            }
+            Ok(parts)
+        })?;
+        merge(parts)
     }
 
     /// Number of rows in the dataset.
@@ -151,6 +221,57 @@ impl crate::plan::ColumnSchema for Dataset {
     fn column_type(&self, index: usize) -> DataType {
         self.chunks.get(index).map_or(DataType::Int64, columnar_core::ColumnChunk::data_type)
     }
+}
+
+/// The number of rows per record batch on the **eager** path.
+///
+/// The eager path reads **every** column, and the per-batch cost scales with
+/// the number of columns: each batch sets up its readers, allocates its
+/// arrays, and -- for each dictionary column -- rebuilds the batch's table of
+/// merged dictionary slots. A file with sixteen columns pays that sixteen
+/// times per batch, so it wants a bigger batch than the lazy path's, which
+/// reads two columns.
+///
+/// The measurement, on the real six-million-row file, reading all sixteen
+/// columns:
+///
+/// | rows per batch | one thread | six threads |
+/// |---|---|---|
+/// | 1,024 | 1292.4 ms | 393.5 ms |
+/// | 4,096 | 704.2 ms | 295.8 ms |
+/// | 8,192 | 623.5 ms | 286.8 ms |
+/// | **32,768** | **564.5 ms** | **274.6 ms** |
+/// | 131,072 | 577.0 ms | 271.9 ms |
+/// | 262,144 | 636.2 ms | 273.3 ms |
+///
+/// The optimum is broad, and this is its middle. The default the Parquet
+/// reader uses -- 1,024 rows -- is the worst of the lot by a factor of two,
+/// and the eager path used it.
+///
+/// The lazy path's own batch size is [`crate::source::READER_BATCH_ROWS`],
+/// which is smaller because it reads fewer columns.
+pub const EAGER_BATCH_ROWS: usize = 32_768;
+
+/// Reads the given row groups of a Parquet file into column chunks.
+///
+/// Every column of the file is decoded, whatever the query needs: this is the
+/// **eager** read. `row_groups` names the row groups to read, in ascending
+/// order; the reader hands the file over in that order.
+fn read_row_groups(
+    path: &Path,
+    schema: &SchemaRef,
+    indices: &[usize],
+    row_groups: &[usize],
+) -> Result<Dataset, DatasetError> {
+    let file = File::open(path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        .map_err(|error| DatasetError::Parquet(error.to_string()))?;
+    let reader = builder
+        .with_row_groups(row_groups.to_vec())
+        .with_batch_size(EAGER_BATCH_ROWS)
+        .build()
+        .map_err(|error| DatasetError::Parquet(error.to_string()))?;
+    decode_batches(reader, schema, indices)
 }
 
 /// Decodes record batches into column chunks.
@@ -510,129 +631,214 @@ pub fn decode_counts() -> HashMap<String, usize> {
 /// holds the rows in the order the parts were given, and a parallel read
 /// gives its parts in row-group order.
 ///
+/// **The parts are consumed, not copied.** The merge *moves* the parts' values
+/// into the result rather than cloning them, so the peak memory of a parallel
+/// read stays at about one copy of the data rather than two: the merged
+/// result grows out of the parts instead of alongside them.
+///
+/// The merge is also **one pass**, not a fold. A fold would re-merge the
+/// accumulated result with every part, so the work would grow with the
+/// *square* of the number of parts -- and the dictionary remapping it does
+/// would be repeated over the accumulated rows each time.
+///
 /// # Errors
 ///
 /// Returns [`DatasetError::Parquet`] if two parts disagree about a column's
 /// encoding, or if a part holds an encoding this merge does not know how to
 /// combine.
-pub fn merge(parts: &[Dataset]) -> Result<Dataset, DatasetError> {
-    let Some(first) = parts.first() else {
+pub fn merge(parts: Vec<Dataset>) -> Result<Dataset, DatasetError> {
+    let mut parts = parts;
+    if parts.is_empty() {
         return Ok(Dataset::with_rows(Vec::new(), 0));
-    };
+    }
     if parts.len() == 1 {
-        return Ok(first.clone());
+        return Ok(parts.remove(0));
     }
 
-    let column_count = first.chunks.len();
-    let mut chunks = Vec::with_capacity(column_count);
-    for column in 0..column_count {
-        let mut merged: Option<ColumnChunk> = None;
-        for part in parts {
-            let chunk = part.chunks.get(column).ok_or_else(|| {
-                DatasetError::Parquet(format!(
-                    "a part of the merge has {} columns where the first has {column_count}",
-                    part.chunks.len()
-                ))
-            })?;
-            merged = Some(match merged {
-                None => chunk.clone(),
-                Some(previous) => merge_chunk(&previous, chunk)?,
-            });
+    let column_count = parts[0].chunks.len();
+
+    // Every part must hold the same columns. This is checked **before** the
+    // parts are taken apart, because taking a part apart is what empties it.
+    for part in &parts {
+        if part.chunks.len() != column_count {
+            return Err(DatasetError::Parquet(format!(
+                "a part of the merge has {} columns where the first has {column_count}",
+                part.chunks.len()
+            )));
         }
-        chunks.push(merged.unwrap_or_else(|| first.chunks[column].clone()));
+    }
+
+    // Take each part's columns out, so the merge can move them rather than
+    // copy them. The parts are taken apart **once**, and their chunks are
+    // distributed into the per-column lists in order.
+    let mut columns: Vec<Vec<ColumnChunk>> =
+        (0..column_count).map(|_| Vec::with_capacity(parts.len())).collect();
+    for part in &mut parts {
+        let chunks = std::mem::take(&mut part.chunks);
+        for (column, chunk) in chunks.into_iter().enumerate() {
+            columns[column].push(chunk);
+        }
+    }
+
+    let mut chunks = Vec::with_capacity(column_count);
+    for column_parts in columns {
+        chunks.push(merge_column(column_parts)?);
     }
 
     let rows = parts.iter().map(Dataset::len).sum();
     Ok(Dataset::with_rows(chunks, rows))
 }
 
-/// Merges two chunks of the same column.
-fn merge_chunk(left: &ColumnChunk, right: &ColumnChunk) -> Result<ColumnChunk, DatasetError> {
-    let name = left.name.clone();
-    let validity = left.validity.concat(&right.validity);
-    let encoding = match (&left.encoding, &right.encoding) {
-        (Encoding::Int64 { values: left_values }, Encoding::Int64 { values: right_values }) => {
-            let mut values = left_values.clone();
-            values.extend_from_slice(right_values);
+/// Merges the parts of one column, in order.
+fn merge_column(mut parts: Vec<ColumnChunk>) -> Result<ColumnChunk, DatasetError> {
+    let first = parts.remove(0);
+    let name = first.name.clone();
+
+    // The validity masks are concatenated in **one pass**: concatenating them
+    // two at a time would copy the accumulated mask once per part, and an
+    // allocation of megabytes is a page-fault storm rather than a memcpy.
+    let mut masks: Vec<&NullBitmap> = Vec::with_capacity(parts.len() + 1);
+    masks.push(&first.validity);
+    for part in &parts {
+        masks.push(&part.validity);
+    }
+    let validity = NullBitmap::concat_all(&masks);
+
+    let encoding = match first.encoding {
+        Encoding::Int64 { mut values } => {
+            for part in &mut parts {
+                match &mut part.encoding {
+                    Encoding::Int64 { values: other } => values.append(other),
+                    other => return Err(mismatch(&name, other)),
+                }
+            }
             Encoding::Int64 { values }
         }
-        (Encoding::Float64 { values: left_values }, Encoding::Float64 { values: right_values }) => {
-            let mut values = left_values.clone();
-            values.extend_from_slice(right_values);
+        Encoding::Float64 { mut values } => {
+            for part in &mut parts {
+                match &mut part.encoding {
+                    Encoding::Float64 { values: other } => values.append(other),
+                    other => return Err(mismatch(&name, other)),
+                }
+            }
             Encoding::Float64 { values }
         }
-        (Encoding::Utf8 { values: left_values }, Encoding::Utf8 { values: right_values }) => {
-            let mut values = left_values.clone();
-            values.extend(right_values.iter().cloned());
+        Encoding::Utf8 { mut values } => {
+            for part in &mut parts {
+                match &mut part.encoding {
+                    Encoding::Utf8 { values: other } => values.append(other),
+                    other => return Err(mismatch(&name, other)),
+                }
+            }
             Encoding::Utf8 { values }
         }
-        (
-            Encoding::Utf8Dict { dict: left_dict, indices: left_indices },
-            Encoding::Utf8Dict { dict: right_dict, indices: right_indices },
-        ) => {
-            let (dict, indices) =
-                merge_dictionary(left_dict, left_indices, right_dict, right_indices);
+        Encoding::Utf8Dict { dict, indices } => {
+            let (dict, indices) = merge_dictionary(dict, indices, parts);
             Encoding::Utf8Dict { dict, indices }
         }
-        (left, right) => {
-            return Err(DatasetError::Parquet(format!(
-                "cannot merge a `{}` column with a `{}` one",
-                left.name(),
-                right.name()
-            )))
-        }
+        ref other => return Err(mismatch(&name, other)),
     };
+
     Ok(ColumnChunk::new(name, encoding, validity))
 }
 
-/// Merges two dictionary-encoded string columns.
+/// The error two parts of a merge disagree.
+fn mismatch(name: &str, other: &Encoding) -> DatasetError {
+    DatasetError::Parquet(format!(
+        "cannot merge the `{name}` column with a `{}` one",
+        encoding_kind(other)
+    ))
+}
+
+/// What an encoding is called, for an error message.
+fn encoding_kind(encoding: &Encoding) -> &'static str {
+    match encoding {
+        Encoding::Int64 { .. } => "int64",
+        Encoding::Float64 { .. } => "float64",
+        Encoding::Utf8 { .. } => "utf8",
+        Encoding::Int64Dict { .. } => "int64 dictionary",
+        Encoding::Float64Dict { .. } => "float64 dictionary",
+        Encoding::Utf8Dict { .. } => "utf8 dictionary",
+        Encoding::BoolRle { .. } => "boolean",
+    }
+}
+
+/// Merges the parts of a dictionary-encoded string column.
 ///
-/// The two dictionaries may hold different distinct values, so the second
-/// one's entries are looked up in the first one's and remapped. A value the
-/// first dictionary does not hold is added to it, once, and every row that
-/// used it is repointed.
+/// The parts' dictionaries may hold different distinct values, so a part's
+/// values are looked up in the merged dictionary and remapped. **The lookup is
+/// per *distinct value*, not per row**: a part's dictionary is turned into a
+/// table of merged slots once, and every row is then an array index into it.
 ///
-/// This is the same operation the engine performs per batch when it merges a
-/// file's row groups into one dictionary. Doing it once, at the end, is the
-/// same work with the same answer.
+/// That distinction is the whole cost of this function. A file of six million
+/// rows with seven dictionary columns needs forty-two million remaps, and a
+/// string hash lookup per remap is roughly fifty times the cost of an array
+/// index -- the difference between a merge that costs a tenth of a second and
+/// one that costs five.
+///
+/// The merged dictionary holds the values in **first-appearance order across
+/// the parts**, which is the same order the serial read produces: the parts
+/// are in row-group order, and each part's own dictionary was built in row-
+/// group order too.
 fn merge_dictionary(
-    left_dict: &[String],
-    left_indices: &[i32],
-    right_dict: &[String],
-    right_indices: &[i32],
+    left_dict: Vec<String>,
+    left_indices: Vec<i32>,
+    mut parts: Vec<ColumnChunk>,
 ) -> (Vec<String>, Vec<i32>) {
-    let mut dict = left_dict.to_vec();
-    // The lookup owns its keys, because the dictionary it points into grows
-    // as values are added.
-    let mut lookup: HashMap<String, usize> = HashMap::with_capacity(dict.len());
+    let mut dict = left_dict;
+
+    // The merged dictionary's own lookup. It owns its keys, because the
+    // dictionary it points into grows as values are added.
+    let mut lookup: HashMap<String, usize> = HashMap::with_capacity(dict.len() * 2);
     for (index, value) in dict.iter().enumerate() {
         lookup.insert(value.clone(), index);
     }
 
-    let mut indices = left_indices.to_vec();
-    indices.reserve(right_indices.len());
-    for &key in right_indices {
-        // A negative or out-of-range index is a corrupt chunk. It cannot
-        // happen from this engine's own reader, and silently mapping it to
-        // some other value would turn a corrupt file into a wrong answer.
-        let Ok(position) = usize::try_from(key) else {
-            panic!("dictionary index {key} is negative");
+    let mut indices = left_indices;
+    for part in &mut parts {
+        let ColumnChunk { validity, encoding, .. } = part;
+        let Encoding::Utf8Dict { dict: part_dict, indices: part_indices } = encoding else {
+            continue;
         };
-        let Some(value) = right_dict.get(position) else {
-            panic!(
-                "dictionary index {key} is out of range for a {} entry dictionary",
-                right_dict.len()
-            );
-        };
-        let slot = if let Some(&slot) = lookup.get(value.as_str()) {
-            slot
-        } else {
-            let slot = dict.len();
-            lookup.insert(value.clone(), slot);
-            dict.push(value.clone());
-            slot
-        };
-        indices.push(i32::try_from(slot).expect("a dictionary slot fits in 32 bits"));
+
+        // The part's dictionary, turned into a table of merged slots. One
+        // lookup per *distinct value*.
+        let mut remap = Vec::with_capacity(part_dict.len());
+        for value in part_dict.iter() {
+            let slot = if let Some(&slot) = lookup.get(value.as_str()) {
+                slot
+            } else {
+                let slot = dict.len();
+                dict.push(value.clone());
+                lookup.insert(value.clone(), slot);
+                slot
+            };
+            remap.push(slot);
+        }
+
+        // Every row is now an array index into the table, not a hash lookup.
+        for (row, key) in part_indices.iter_mut().enumerate() {
+            if !validity.is_valid(row) {
+                // A NULL row's index is **undefined**: the engine's convention
+                // is slot zero, and the validity mask is what says the row is
+                // NULL. It is not a reference to the dictionary, and
+                // repointing it would give a NULL row a value -- a value the
+                // mask says is not there.
+                *key = 0;
+                continue;
+            }
+            let Ok(position) = usize::try_from(*key) else {
+                panic!("dictionary index {key} is negative");
+            };
+            let Some(&slot) = remap.get(position) else {
+                panic!(
+                    "dictionary index {key} is out of range for a {} entry dictionary",
+                    part_dict.len()
+                );
+            };
+            *key = i32::try_from(slot).expect("a dictionary slot fits in 32 bits");
+        }
+        indices.append(part_indices);
     }
     (dict, indices)
 }

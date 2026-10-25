@@ -277,6 +277,79 @@ fn every_builtin_query_agrees_at_every_thread_count() {
     }
 }
 
+/// The **eager** path's decode must give the same dataset at every thread
+/// count, over the real file.
+///
+/// The engine's own `parallel_eager.rs` holds the parallel eager read to the
+/// serial one over hand-built files whose row groups hold **different**
+/// dictionary values. This is the same property over the **real** file, where
+/// the row groups are the ones the generator wrote.
+///
+/// The comparison is on the **resolved** rows -- a dictionary column's values
+/// rather than its indices -- because a NULL row's dictionary index is
+/// undefined, and the validity mask is what says the row is NULL.
+#[test]
+fn the_parallel_eager_read_holds_the_same_rows_as_the_serial_one() {
+    let path = dataset();
+    let serial = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
+
+    for threads in [2, 4, 6, 8, 14] {
+        let parallel = Dataset::read_parquet_with_threads(path, threads)
+            .expect("the parallel eager read runs");
+        assert_eq!(parallel.rows, serial.rows, "the row counts differ at {threads} threads");
+        for (index, (left, right)) in serial.chunks.iter().zip(parallel.chunks.iter()).enumerate() {
+            assert_eq!(
+                resolved_rows(right),
+                resolved_rows(left),
+                "the parallel eager read holds different rows in column {index} at {threads} threads"
+            );
+            assert_eq!(
+                right.validity, left.validity,
+                "the parallel eager read holds a different validity mask in column {index} at {threads} threads"
+            );
+        }
+    }
+}
+
+/// The rows of a column, resolved.
+///
+/// A dictionary-encoded column is resolved to its strings, so the comparison
+/// is about the **values** and not about which dictionary happened to hold
+/// them. A float is rendered with `to_string`, so a `NaN` compares equal to a
+/// `NaN` -- which raw equality would not, because `NaN != NaN`.
+///
+/// A NULL row is `None`.
+fn resolved_rows(chunk: &columnar_core::ColumnChunk) -> Vec<Option<String>> {
+    use columnar_core::Encoding;
+
+    let values: Vec<String> = match &chunk.encoding {
+        Encoding::Int64 { values } => values.iter().map(ToString::to_string).collect(),
+        Encoding::Float64 { values } => values.iter().map(ToString::to_string).collect(),
+        Encoding::Utf8 { values } => values.clone(),
+        Encoding::Int64Dict { dict, indices } => indices
+            .iter()
+            .map(|index| {
+                let position = usize::try_from(*index).expect("the index is not negative");
+                dict.get(position).expect("the index is in range").to_string()
+            })
+            .collect(),
+        Encoding::Utf8Dict { dict, indices } => indices
+            .iter()
+            .map(|index| {
+                let position = usize::try_from(*index).expect("the index is not negative");
+                dict.get(position).expect("the index is in range").clone()
+            })
+            .collect(),
+        other => panic!("the comparison does not know the `{other:?}` encoding"),
+    };
+
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| if chunk.validity.is_valid(row) { Some(value) } else { None })
+        .collect()
+}
+
 /// The sum is the same integer, bit for bit, at every thread count.
 ///
 /// The sum is an integer sum, so "the same" is not a matter of tolerance: it

@@ -210,6 +210,8 @@ enum SweepModeArg {
     Cold,
     /// The query is answered against data that is already in memory.
     Resident,
+    /// Only the load is measured: the time to get the file into memory.
+    Load,
 }
 
 /// The builtin queries, as command line values.
@@ -386,13 +388,14 @@ fn run_query(
                     println!("  group {:?} -> {:?}", group.key, group.values);
                 }
             } else {
-                let dataset = Dataset::read_parquet(data)
+                let dataset = Dataset::read_parquet_with_threads(data, threads)
                     .with_context(|| format!("could not read {}", data.display()))?;
                 // The thread count reaches the operators here too, not only
-                // the reader. The eager path's *decode* is still serial --
-                // that is the next increment -- but the filter and the
-                // projection behind it are not, and a thread count that only
-                // reached half the engine would measure half an engine.
+                // the reader. The eager path's *decode* is parallel as well --
+                // it splits the file's row groups across the workers -- and
+                // the filter and the projection behind it are parallel too.
+                // A thread count that only reached half the engine would
+                // measure half an engine.
                 let options =
                     ExecOptions { threads: Some(threads.max(1)), ..ExecOptions::default() };
                 for _ in 0..iterations.max(1) {
@@ -621,20 +624,32 @@ fn run_sweep(
         .with_context(|| format!("could not open {}", data.display()))?;
     let row_groups = source.row_groups();
 
-    // The two modes measure different things, and the incumbents are measured
-    // the same way the engine is: the resident mode loads the file first and
-    // times the query, and the cold mode times the two together.
+    // The three modes measure different things, and the incumbents are
+    // measured the same way the engine is: the resident mode loads the file
+    // first and times the query, the cold mode times the two together, and
+    // the load mode times **only** the load.
     let resident = mode == SweepModeArg::Resident;
-    let external_mode = if resident { external::Mode::Resident } else { external::Mode::Cold };
+    let load_only = mode == SweepModeArg::Load;
+    // The incumbents time their load only in the **resident** mode, where the
+    // load is a statement of its own. The cold mode runs one statement, and
+    // there is no separate load to time.
+    let external_mode =
+        if resident || load_only { external::Mode::Resident } else { external::Mode::Cold };
 
     let mut points = Vec::with_capacity(counts.len());
     let mut reference: Option<String> = None;
 
     for count in &counts {
-        // The engine.
+        // The engine. The load mode measures the load and nothing else, so
+        // it has no answer to cross-check.
         let (engine_ms, engine_scan_ms, engine_operators_ms, engine_workers, engine_result) =
-            if resident {
-                measure_engine_resident_at(definition, &dataset, iterations, *count)?
+            if load_only {
+                let load_ms = measure_engine_load(data, iterations, *count)?;
+                (load_ms, 0.0, 0.0, source.worker_count(*count), None)
+            } else if resident {
+                let (ms, scan, operators, workers, result) =
+                    measure_engine_resident_at(definition, &dataset, iterations, *count)?;
+                (ms, scan, operators, workers, Some(result))
             } else {
                 let (_open_ms, engine_ms, engine_scan_ms, result) =
                     measure_engine_lazy_at(definition, data, iterations, *count)?;
@@ -643,7 +658,7 @@ fn run_sweep(
                     engine_scan_ms,
                     operator_stage_ms(&result),
                     source.worker_count(*count),
-                    result,
+                    Some(result),
                 )
             };
 
@@ -651,15 +666,17 @@ fn run_sweep(
         // every other one. The rows come back in the file's order whatever
         // the thread count is, so any difference is a defect and not a
         // rounding error.
-        let rendered = format!("{:?}", engine_result.groups);
-        match &reference {
-            None => reference = Some(rendered.clone()),
-            Some(expected) if *expected != rendered => {
-                anyhow::bail!(
-                    "the engine computed different answers at {count} threads: {rendered} against {expected}"
-                );
+        if let Some(engine_result) = &engine_result {
+            let rendered = format!("{:?}", engine_result.groups);
+            match &reference {
+                None => reference = Some(rendered.clone()),
+                Some(expected) if *expected != rendered => {
+                    anyhow::bail!(
+                        "the engine computed different answers at {count} threads: {rendered} against {expected}"
+                    );
+                }
+                Some(_) => {}
             }
-            Some(_) => {}
         }
 
         // The incumbents, at the same thread count.
@@ -669,7 +686,8 @@ fn run_sweep(
             external_mode,
             *count,
             iterations,
-            &engine_result,
+            engine_result.as_ref(),
+            load_only,
         )?;
 
         points.push(ScalingPoint {
@@ -692,7 +710,13 @@ fn run_sweep(
         dataset: dataset_report(data, &dataset),
         query: definition.query.name().to_owned(),
         sql: definition.sql_for_display(),
-        mode: if resident { "resident".to_owned() } else { "cold".to_owned() },
+        mode: if load_only {
+            "load".to_owned()
+        } else if resident {
+            "resident".to_owned()
+        } else {
+            "cold".to_owned()
+        },
         row_groups,
         points,
     };
@@ -705,6 +729,35 @@ fn run_sweep(
     Ok(())
 }
 
+/// Measures the engine's **eager load**: the time to get the file into the
+/// engine's own column format.
+///
+/// This is the number the comparison harness calls the *load*, and it is the
+/// one this increment moved: the eager path used the Parquet reader's default
+/// batch size, which made it rebuild every column's dictionary table once per
+/// thousand rows, and its decode was single-threaded.
+///
+/// Returns the median of `iterations` loads, in milliseconds.
+fn measure_engine_load(data: &Path, iterations: usize, threads: usize) -> Result<f64> {
+    let iterations = iterations.max(1);
+
+    // Warm-up: the first load pays for the page cache and the allocator.
+    {
+        let _ = Dataset::read_parquet_with_threads(data, threads)
+            .with_context(|| format!("could not read {}", data.display()))?;
+    }
+
+    let mut loads = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let started = std::time::Instant::now();
+        let dataset = Dataset::read_parquet_with_threads(data, threads)
+            .with_context(|| format!("could not read {}", data.display()))?;
+        loads.push(started.elapsed().as_secs_f64() * 1000.0);
+        std::hint::black_box(&dataset);
+    }
+    Ok(median(&loads))
+}
+
 /// Measures both incumbents at one thread count.
 ///
 /// Returns `(DuckDB's ms, Polars' ms)`. A system that could not be measured
@@ -714,22 +767,26 @@ fn run_sweep(
 /// Each incumbent's answer is cross-checked against the engine's. A sweep that
 /// published timings for systems computing different answers would be a sweep
 /// of nothing.
+///
+/// In the **load** mode the figure is the incumbent's *load* -- how long it
+/// took to get the file into memory -- rather than its query, because the
+/// engine's figure is its load too.
 fn measure_incumbents(
     definition: &QueryDefinition,
     data: &Path,
     mode: external::Mode,
     threads: usize,
     iterations: usize,
-    engine_result: &columnar_engine::AggregateResult,
+    engine_result: Option<&columnar_engine::AggregateResult>,
+    load_only: bool,
 ) -> Result<(f64, f64)> {
-    let ours =
-        engine_result.groups.first().and_then(|group| group.values.first()).and_then(|value| {
-            match value {
-                columnar_engine::AggregateValue::Int(v) => Some(*v as f64),
-                columnar_engine::AggregateValue::Float(v) => Some(*v),
-                columnar_engine::AggregateValue::Null => None,
-            }
-        });
+    let ours = engine_result.and_then(|result| {
+        result.groups.first().and_then(|group| group.values.first()).and_then(|value| match value {
+            columnar_engine::AggregateValue::Int(v) => Some(*v as f64),
+            columnar_engine::AggregateValue::Float(v) => Some(*v),
+            columnar_engine::AggregateValue::Null => None,
+        })
+    });
 
     let mut incumbents = Vec::new();
     for comparator in [Comparator::DuckDb, Comparator::Polars] {
@@ -751,7 +808,8 @@ fn measure_incumbents(
                         );
                     }
                 }
-                incumbents.push((comparator.name(), outcome.query_ms));
+                let figure = if load_only { outcome.load_ms } else { outcome.query_ms };
+                incumbents.push((comparator.name(), figure));
             }
             Err(error) => {
                 eprintln!("skipping {} at {threads} threads: {error}", comparator.name());
@@ -941,7 +999,7 @@ fn measure_engine(
 
     // Warm-up: the first read pays for the page cache and the allocator.
     {
-        let dataset = Dataset::read_parquet(data)
+        let dataset = Dataset::read_parquet_with_threads(data, threads)
             .with_context(|| format!("could not read {}", data.display()))?;
         let _ = columnar_engine::execute(&(definition.plan)(), &dataset, &options);
     }
@@ -953,7 +1011,7 @@ fn measure_engine(
 
     for _ in 0..iterations {
         let read_started = std::time::Instant::now();
-        let dataset = Dataset::read_parquet(data)
+        let dataset = Dataset::read_parquet_with_threads(data, threads)
             .with_context(|| format!("could not read {}", data.display()))?;
         let load_ms = read_started.elapsed().as_secs_f64() * 1000.0;
 

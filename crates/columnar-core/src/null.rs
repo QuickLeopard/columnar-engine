@@ -199,6 +199,53 @@ impl NullBitmap {
         Self::from_words(&words, total)
     }
 
+    /// Concatenates several masks, in order.
+    ///
+    /// This is [`concat`](Self::concat) applied to a whole list, and it is
+    /// not the same work: concatenating two masks at a time copies the
+    /// accumulated mask once per part, so *n* masks cost *n* copies of the
+    /// accumulated one, and the whole thing grows with the **square** of the
+    /// number of parts. Every one of those copies is also a fresh allocation,
+    /// and an allocation of megabytes is a page-fault storm rather than a
+    /// memcpy.
+    ///
+    /// This does it in **one pass**: one allocation, one copy of each mask,
+    /// and the same mid-word shift that [`concat`](Self::concat) does.
+    ///
+    /// The result is canonical, exactly as [`concat`](Self::concat)'s is: the
+    /// padding bits of the last word are clear.
+    #[must_use]
+    pub fn concat_all(parts: &[&Self]) -> Self {
+        let total: usize = parts.iter().map(|part| part.len).sum();
+        let mut words = vec![0u64; Self::words_for(total)];
+
+        // The bit offset the next part starts at.
+        let mut base = 0usize;
+        for part in parts {
+            let word_base = base / 64;
+            let shift = base % 64;
+            if shift == 0 {
+                for (index, &word) in part.words.iter().enumerate() {
+                    words[word_base + index] |= word;
+                }
+            } else {
+                // The part starts mid-word: each of its words splits across
+                // two of the result's.
+                for (index, &word) in part.words.iter().enumerate() {
+                    let low = word & ((1u64 << (64 - shift)) - 1);
+                    let high = word >> (64 - shift);
+                    words[word_base + index] |= low << shift;
+                    if let Some(slot) = words.get_mut(word_base + index + 1) {
+                        *slot |= high;
+                    }
+                }
+            }
+            base += part.len;
+        }
+
+        Self::from_words(&words, total)
+    }
+
     /// Number of rows this mask describes.
     #[must_use]
     pub const fn len(&self) -> usize {
@@ -489,6 +536,81 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn concat_all_of_one_mask_is_the_mask() {
+        let mask = NullBitmap::with_nulls(37, &[0, 36]);
+        let joined = NullBitmap::concat_all(&[&mask]);
+        assert_eq!(joined, mask);
+    }
+
+    #[test]
+    fn concat_all_of_no_masks_is_empty() {
+        let joined = NullBitmap::concat_all(&[]);
+        assert_eq!(joined.len(), 0);
+        assert_eq!(joined, NullBitmap::all_valid(0));
+    }
+
+    #[test]
+    fn concat_all_is_the_same_as_one_mask_over_the_same_rows() {
+        // The property the parallel merge relies on: concatenating the parts
+        // must describe exactly the rows the single mask describes. Every
+        // part's length is walked, because a part that ends mid-word is the
+        // one whose bits have to be shifted into place.
+        for lengths in [[1usize, 1, 1], [63, 1, 64], [64, 64, 64], [65, 63, 1], [7, 129, 5]] {
+            let mut expected: Vec<usize> = Vec::new();
+            let mut offset = 0usize;
+            let mut masks = Vec::new();
+            for (index, &length) in lengths.iter().enumerate() {
+                let nulls: Vec<usize> = (0..length).filter(|row| (row + index) % 3 == 0).collect();
+                expected.extend(nulls.iter().map(|row| row + offset));
+                offset += length;
+                masks.push(NullBitmap::with_nulls(length, &nulls));
+            }
+
+            let refs: Vec<&NullBitmap> = masks.iter().collect();
+            let joined = NullBitmap::concat_all(&refs);
+            assert_eq!(joined.len(), offset);
+            assert_eq!(joined.null_count(), expected.len());
+            for row in 0..offset {
+                assert_eq!(
+                    joined.is_valid(row),
+                    !expected.contains(&row),
+                    "row {row} differs for {lengths:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn concat_all_agrees_with_concatenating_two_at_a_time() {
+        // The two methods have to agree, because the merge uses one and the
+        // existing tests pin the other.
+        let masks: Vec<NullBitmap> = (0..5)
+            .map(|index| {
+                let length = 1 + index * 17;
+                let nulls: Vec<usize> = (0..length).filter(|row| row % 4 == index).collect();
+                NullBitmap::with_nulls(length, &nulls)
+            })
+            .collect();
+
+        let mut folded = masks[0].clone();
+        for mask in &masks[1..] {
+            folded = folded.concat(mask);
+        }
+
+        let refs: Vec<&NullBitmap> = masks.iter().collect();
+        assert_eq!(NullBitmap::concat_all(&refs), folded);
+    }
+
+    #[test]
+    fn concat_all_produces_a_canonical_mask() {
+        // The padding bits of the last word must be clear, so two masks
+        // describing the same rows compare equal.
+        let mask = NullBitmap::with_nulls(3, &[1]);
+        let joined = NullBitmap::concat_all(&[&mask]);
+        assert_eq!(joined, NullBitmap::with_nulls(3, &[1]));
     }
 
     #[test]
