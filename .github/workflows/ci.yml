@@ -15,6 +15,16 @@
 # performance number measured on one is not a number this repository is
 # willing to publish. The benchmark lives in `bench.yml` (macOS / NEON) and
 # `bench-avx2.yml` (self-hosted x86-64 / AVX2), both `workflow_dispatch`.
+#
+# One caveat, recorded here because it has bitten this repository: this
+# repository is **private**, so these jobs consume the account's Actions
+# minutes, and the macOS jobs cost 10x a Linux job. If the account's billing
+# is blocked or the minutes are gone, every job here fails at once with
+# "the job was not started because recent account payments have failed or
+# your spending limit needs to be increased" -- which looks like a broken
+# workflow and is not one. The local gate (`just check`) covers every job
+# here, including the published-figures check, and does not depend on
+# Actions at all.
 
 name: CI
 

@@ -105,6 +105,10 @@ empty input, the bits past the end.
 
 ## Running it
 
+**Prerequisites**: a Rust toolchain (`rustup`), `just` (`cargo install just`), and Python 3 for the
+two scripts under `scripts/`. `just` is the single entry point — every recipe in the `justfile` is
+the documented way to do a thing.
+
 ```bash
 # 1. Build and check. This is the whole gate.
 just check
@@ -225,5 +229,5 @@ The principles that shaped the code most:
 | Increment | storage → filter → project → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
 | Tests | 109, all green, including the differential kernel suite, the lazy-scan differential suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
-| CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, and the two benchmark runners |
+| CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Next | page-level pruning, the projection/aggregate fusion, the x86-64 measurement |

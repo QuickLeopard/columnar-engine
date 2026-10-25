@@ -15,8 +15,13 @@ default:
 build:
     cargo build --workspace --release
 
-# Build and run everything: format check, lint, tests.
-check: fmt lint test
+# Build and run everything: format check, lint, tests, and the check that
+# the published figures still agree with the committed reports.
+#
+# The last one is also a CI job, but the local gate must not be weaker than
+# CI -- a private repository's Actions minutes are billed, and this account's
+# billing is currently blocked, so the local gate is the one that runs.
+check: fmt lint test check-published
 
 # Compile the x86-64 half of the kernel from this ARM64 machine.
 #
