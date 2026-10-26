@@ -184,17 +184,30 @@ identical query, with the incumbents at the identical thread count:
 $ just sweep
 threads   workers     engine   engine-scan     duckdb     polars
 ---------------------------------------------------------------
-      1        1      20.5          20.4       33.0      196.9
-      2        2      10.3          10.3       22.0      103.7
-      4        4       7.2           7.2       15.0       69.9
-      6        6       4.0           3.9       10.0       39.6
+      1        1      19.7          19.7       32.0      189.4
+      2        2       9.9           9.9       21.0      101.9
+      4        4       7.1           7.1       14.0       67.7
+      6        6       4.0           4.0       10.0       39.0
 ```
 
-**The engine gets 5.2× from six workers, against DuckDB's 3.3× from six, and it is ahead at every
+**The engine gets 4.95× from six workers, against DuckDB's 3.20× from six, and it is ahead at every
 thread count.** The engine's curve is steeper because its query is almost entirely scan, and the
 scan is the part that parallelises. The parallelism is capped by the file's **six row groups**, so
 the curve is flat past six — the ceiling is the file's, not the machine's. See
 [ADR-0011](docs/adr/0011-parallel-decode.md).
+
+**And that ceiling is now a knob, and it has been measured.** The row-group size is a generator
+flag, and files with **twelve** and **twenty-four** row groups were swept beside the six-row-group
+one, in one session, with every incumbent at every thread count. The worker count is
+`min(threads, row_groups)` at every point — **6**, **12** and **14** workers at fourteen threads —
+and the engine's speedup rises with it: **4.95×**, **5.76×**, **6.44×**.
+
+**But the more parallel file is the slower one.** The engine's one-thread figure rises from 19.7 ms
+to 34.6 ms across the three files, and DuckDB's, Polars' and DataFusion's **do not move at all** —
+they read the same bytes. So the engine pays about **0.8 ms a row group** that the other readers do
+not pay, and on this machine that costs more than the parallelism is worth. The mechanism is not
+measured yet, and it is written down as the next spec's question rather than guessed at. See
+[ADR-0022](docs/adr/0022-the-parallelism-above-the-row-group-count.md).
 
 **The operators are parallel too now, and that is where the engine is furthest ahead.** The filter
 and the projection split their work across the workers; the answer does not depend on the thread
@@ -389,6 +402,7 @@ a benchmark.
 | The engine against a **Rust peer** | **measured** — `DataFusion` 49.0.2 reading the same Parquet through the same Arrow stack, in the same harness, at the same thread count. It is a **separate cargo project** under `tools/`, so the engine's dependency graph does not move: [`PERF.md` §2](PERF.md#2-the-engine-against-duckdb-polars-and-datafusion) |
 | The **materialised column**, taken apart | **measured** — the column the query materialises is 58% of the real Q6, and its cost is **bytes**: Arrow decodes it in 36.01 ms and the engine materialises it in 37.65 ms. The counterfactual — the same column written *with* a dictionary — is 30% bigger and 10% slower: [`PERF.md` §3h](PERF.md#3h-the-materialised-column-and-what-it-is-made-of) |
 | The query, under several **dataset sizes** | **measured** — the real Q6 at 6, 12 and 24 million rows, with every incumbent at every size. The cost per million rows is **flat**: 11.1, 11.6, 11.7: [`PERF.md` §3i](PERF.md#3i-the-curve-over-the-size-of-the-data) |
+| The **row-group count**, as a knob | **measured** — the row-group size is a generator flag now, and the engine's parallelism cap was measured on files with six, twelve and twenty-four row groups. The cap is `min(threads, row_groups)`, exactly. And it is **not free**: the engine pays about **0.8 ms a row group** that DuckDB, Polars and DataFusion do not pay, so the file with the most parallelism is the slowest in absolute terms: [`PERF.md` §3j](PERF.md#3j-the-row-group-count-and-what-it-costs) |
 
 The x86-64 row is the important one, and it has two halves.
 
@@ -463,9 +477,9 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited · `specs/012-the-scan-does-not-expand-the-predicates-column/` — the scan's own decode and the expansion of its RLE indices, both measured and refused · `specs/013-the-kernel-in-a-browser/` — R1..R6, the third SIMD path, the page that checks it, and the number it reproduces · `specs/014-the-materialised-column-and-a-rust-peer/` — R1..R4, the materialised column taken apart, the curve over the size of the data, and a Rust peer beside the incumbents |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited · `specs/012-the-scan-does-not-expand-the-predicates-column/` — the scan's own decode and the expansion of its RLE indices, both measured and refused · `specs/013-the-kernel-in-a-browser/` — R1..R6, the third SIMD path, the page that checks it, and the number it reproduces · `specs/014-the-materialised-column-and-a-rust-peer/` — R1..R4, the materialised column taken apart, the curve over the size of the data, and a Rust peer beside the incumbents · `specs/015-the-row-group-count-is-a-knob/` — R1..R4, the row-group count as a knob, the parallelism cap measured on three files, and the per-row-group cost the incumbents do not pay |
 | Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 260, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite, the browser's column suite, the RLE decoder's suite and the x86-64 cross-check |
+| Tests | 263, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite, the browser's column suite, the RLE decoder's suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |

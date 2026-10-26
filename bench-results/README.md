@@ -47,6 +47,26 @@ python3 scripts/medians.py
 | `curve-run1.json` | the first of the three **size-curve campaigns** the §3i table is the median of |
 | `curve-run2.json` | the second |
 | `curve-run3.json` | the third |
+| `scaling-rg12-run1.json` | the first of the three **thread-count sweeps on the twelve-row-group file** the §3j table is the median of |
+| `scaling-rg12-run2.json` | the second |
+| `scaling-rg12-run3.json` | the third |
+| `scaling-rg24-run1.json` | the first of the three **thread-count sweeps on the twenty-four-row-group file** the §3j table is the median of |
+| `scaling-rg24-run2.json` | the second |
+| `scaling-rg24-run3.json` | the third |
+| `row-groups-6-run1.json` | the first of the three **probe campaigns on the six-row-group file** the §3j shape table is the median of |
+| `row-groups-6-run2.json` | the second |
+| `row-groups-6-run3.json` | the third |
+| `row-groups-12-run1.json` | the first of the three **probe campaigns on the twelve-row-group file** |
+| `row-groups-12-run2.json` | the second |
+| `row-groups-12-run3.json` | the third |
+| `row-groups-24-run1.json` | the first of the three **probe campaigns on the twenty-four-row-group file** |
+| `row-groups-24-run2.json` | the second |
+| `row-groups-24-run3.json` | the third |
+| `scaling-rg12.json` | a copy of `scaling-rg12-run1.json`, the run nearest the medians |
+| `scaling-rg24.json` | a copy of `scaling-rg24-run2.json`, the run nearest the medians |
+| `row-groups-6.json` | a copy of `row-groups-6-run2.json`, the campaign nearest the medians |
+| `row-groups-12.json` | a copy of `row-groups-12-run2.json`, the campaign nearest the medians |
+| `row-groups-24.json` | a copy of `row-groups-24-run2.json`, the campaign nearest the medians |
 | `experiment-dictionary-copy.json` | **not a normal run.** A measurement taken with a deliberate perturbation of the decode path — see below |
 
 ## The experiment file
@@ -78,6 +98,9 @@ There is **one headline table** and **three sweeps**, and they answer different 
 | §2g | *how long does each system take to get the file into memory* | `scaling-load-run*.json` |
 | §1a | *what does the kernel do in a browser* | `browser-run*.json` |
 | §3g | *what does the expansion of the RLE indices cost* | `rle-expansion-run*.json` |
+| §3h | *what is the materialised column made of* | `materialised-run*.json` |
+| §3i | *what does the query cost per million rows* | `curve-run*.json` |
+| §3j | *what does the row-group count cap, and what does it cost* | `scaling-rg12-run*.json`, `scaling-rg24-run*.json`, `row-groups-*-run*.json` |
 
 The first is the like-for-like **single-threaded** comparison, and it has been the headline since
 the first set of numbers in this repository. The sweeps exist because a one-thread table on its
@@ -85,15 +108,17 @@ own is a misleading picture of what a user sees: `DuckDB` uses every core by def
 sweep is the odd one out: it is the only measurement here that is about the *file* rather than the
 *query*.
 
-**All of them are comparisons, not measurements.** At every point of a sweep the engine and both
-incumbents run at the *same* thread count, on the same file, in the same harness, and the answers
+**All of them are comparisons, not measurements.** At every point of a sweep the engine and every
+incumbent run at the *same* thread count, on the same file, in the same harness, and the answers
 are cross-checked at every point — except in the load sweep, which times the load and so has no
 answer to check. The load sweep's incumbents are still measured in the harness's resident mode,
 because that is the mode that times a load separately.
 
 The sweep's report records the thread count that was **asked for** and the workers that
 **actually ran**, side by side, because the engine's read splits the file's *row groups* across
-the workers: this file has six, so six is the ceiling however many threads are requested.
+the workers: this file has six, so six is the ceiling however many threads are requested. The
+**§3j** sweeps are the same measurement on files with twelve and twenty-four row groups, and their
+worker counts are 12 and 14 at fourteen threads.
 
 ## Why three runs and a median
 
@@ -138,6 +163,23 @@ The RLE expansion's reports are written by the probe itself:
 cargo run --release -p columnar-engine --example rle_expansion_probe -- \
     data/lineitem.parquet --out bench-results/rle-expansion-run1.json
 ```
+
+The row-group campaigns are written the same way, on the three files:
+
+```bash
+just dataset-row-groups 500000   # data/lineitem-rg12.parquet
+just dataset-row-groups 250000   # data/lineitem-rg24.parquet
+
+cargo run --release -p columnar-cli -- sweep \
+    --data data/lineitem-rg24.parquet --query q6 \
+    --threads 1,2,4,6,8,14 --iterations 3 --mode cold \
+    --out bench-results/scaling-rg24-run1.json
+cargo run --release -p columnar-engine --example materialised_column_probe -- \
+    data/lineitem-rg24.parquet --out bench-results/row-groups-24-run1.json
+```
+
+The three files are swept and probed **interleaved**, because this machine is shared and a
+comparison between two campaigns taken far apart measures the machine as much as the engines.
 
 `just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, and the `polars`
 Python package installed. Both versions are recorded in the report, in
