@@ -872,6 +872,55 @@ The interleaved A/B, three runs: 8,192 → 16.1, 16.4 and 16.1 ms; 65,536 → 14
 65,536, and the sweep is in the tree as
 `crates/columnar-engine/examples/lazy_batch_size.rs`.
 
+### 3f. The scan's read is the Parquet decode, and owning it is not worth it
+
+The cold path's one remaining loss is `filter-range`, by 1.1 ms, and the scan that holds it is 15.7 ms of the 17.5 ms
+query. The obvious next move is the one every columnar engine makes eventually: **stop going through Arrow and read
+the Parquet file into the engine's own column format.** Arrow's reader is a thin wrapper over the parquet crate's own
+reader — it decodes a column chunk into a buffer and *moves* that buffer into an Arrow array — so the engine could use
+the parquet crate directly, apply its own mask to the decoded values, and write the survivors straight into its own
+column.
+
+It was prototyped as a full read path and measured, and the measurement says **no**. The probe is in the tree, as
+`crates/columnar-engine/examples/own_decode_probe.rs`, and it measures four things on the same file, in the same
+process, warm, each the median of five runs:
+
+| | |
+|---|---|
+| **A** | the parquet crate's own decode of the two columns, into plain Rust buffers | **10.30 ms** |
+| **B** | Arrow's decode of the same two columns | **9.86 ms** |
+| **C** | A, plus the engine's predicate over the decoded buffer, plus the compaction of the survivors into the engine's own column | **15.73 ms** |
+| **D** | the engine's own scan, as it is today | **15.74 ms** |
+
+**C is D.** The shape without Arrow is equal to the engine's scan, to a tenth of a millisecond. And **A is B**:
+Arrow's reader is not slower than the parquet crate's raw reader, because it *is* the parquet crate's reader with an
+array wrapper on top — and the wrapper is worth **0.3 ms** on a 15.7 ms scan.
+
+**So Arrow is not the cost, and the engine keeps Arrow.** The rewrite is refused, and the receipt is published, because
+a measurement that says "no" is worth more than the increment it refuses: a future contributor does not have to spend
+a week discovering that the Arrow layer is worth 0.3 ms. See
+[ADR-0018](docs/adr/0018-the-scan-reads-the-parquet-decode.md).
+
+**The same measurement pointed at where the decode's time is.** The file's columns are **dictionary-encoded** — per
+the Parquet footer's own metadata, one row group of 1,000,000 rows:
+
+| column | encodings | uncompressed |
+|---|---|---|
+| `l_quantity` | PLAIN, RLE, **RLE_DICTIONARY** | 1,667,405 bytes — **1.67 bytes a row** |
+| `l_discount` | PLAIN, RLE, **RLE_DICTIONARY** | 503,674 bytes — **0.50 bytes a row** |
+
+A `float64` column at 1.67 bytes a row is not storing floats: it is storing a **dictionary of a few dozen values** and
+a million **RLE indices** into it, and the decode is the work of **expanding** those indices back into a million
+values.
+
+**And the engine throws most of that expansion away.** The predicate column is expanded into six million floats,
+compared row by row, and then dropped — because the query does not materialise it. The engine already knows how to
+compare a column without expanding it: the dictionary path compares **one distinct value at a time**, which is why
+the predicates cost 1.4 ms rather than 14.
+
+That is the next increment — [spec 012](specs/012-the-scan-does-not-expand-the-predicates-column/spec.md) — and it is
+a **hypothesis**, measured before anything is built, the way this one was.
+
 ---
 
 ## 4. The defects the increments found

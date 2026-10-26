@@ -178,8 +178,8 @@ And the answer is **bit for bit the same**: `55559443.879999444`.
 
 **The gap to Polars is now 1.1 ms, and it was 4.2 ms.** The scan's floor — Arrow's own decode of the two columns —
 is 10.7 ms, and Polars does not pay it: it reads the file with its own reader, in its own format, and answers a
-`SUM` over a filtered column in 16.4 ms in total. The engine's remaining overhead on this query is the conversion
-from Arrow's arrays into the engine's own column format, and it is 4.4 ms of it.
+`SUM` over a filtered column in 16.4 ms in total. The engine's own work on top of that decode is **5.4 ms**, and
+it is not one thing: the compaction is 2.5 ms of it, the predicates 1.4 ms, and the scan's own overhead the rest.
 
 That is the honest state of this query, and it is published as what it is: **the engine is 1.1 ms behind Polars on
 the cold `filter-range`, and the scan's own decode is 10.7 ms of the 16.1.**
