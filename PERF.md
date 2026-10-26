@@ -158,6 +158,54 @@ explanation rather than producing a number that means something other than what 
 AVX2 timings require an x86-64 machine with AVX2, and are published only from one. See
 [Not measured](#not-measured).
 
+### 1a. The kernel in a browser
+
+**This is a browser's number, and it is not a native number.** It is published here with everything
+it depends on, and it is never compared with the native table in §1: a different runtime, a different
+clock and a different compiler make the ratio between them a claim about two engines rather than
+about one kernel. What the browser measures is the comparison it *can* make — the `simd128` path
+against the oracle, over the same data, in the same process.
+
+**What is measured**: one pass over a column of `f64` values, comparing every row against `0.04`
+and writing a bit mask. 20,000,000 rows, five iterations per round, five rounds per campaign,
+three campaigns.
+
+| flavor | ns/row (median) | spread | rows/sec | matches |
+|---|---|---|---|---|
+| `oracle` | **3.429** | 3.409–3.445 | 0.292 G | 12,726,115 |
+| `simd128` | **0.273** | 0.271–0.277 | 3.663 G | 12,726,115 |
+
+**`simd128` is 12.51× the oracle**, over the three campaigns (12.51×–12.56×).
+
+| | |
+|---|---|
+| browser | Chromium 148.0.7778.280, Electron 42.8.0, on macOS 27.0.1 |
+| engine | `wasm32-unknown-unknown`, `simd128`, release build, fat LTO, one codegen unit |
+| machine | Apple M4 Max, 14 cores — **the host's load average was 6.2–10.9 throughout** |
+| warm-up | one untimed pass per implementation before each timed run |
+| rounds | 5 per campaign, 3 campaigns, median published with the spread |
+| commit | `e23289b` |
+
+**The spread is published.** The host's load average was between 6.2 and 10.9 while these were
+taken — the machine is shared and it was busy — and the oracle's range across the campaigns is
+3.409–3.445 ns/row, a 1.1% range. The `simd128` path's is 0.271–0.277, a 2.2% range, and the
+**ratio**'s is 12.51×–12.56×. A browser's numbers are the least portable thing this repository
+publishes, and they are published with their spread for that reason.
+
+**The masks are identical, bit for bit, in every campaign**, and so is the **edge check**: every
+operator, a NaN value, a NaN threshold, the two zeros, the two infinities and a NULL row, against
+the oracle. The page makes both checks itself, before it prints anything, so a reader who opens it
+runs them too.
+
+The match count is **12,726,115**, which is the native benchmark's number: the browser rebuilds
+the benchmark's column from a histogram of the file's eleven distinct discount values, in an
+interleaved order that is not the file's. The browser has no Parquet reader and does not pretend to
+one.
+
+The raw reports are committed — `browser-run1.json`, `browser-run2.json`, `browser-run3.json` — and
+`python3 scripts/medians.py` derives the table above from them. See
+[ADR-0019](docs/adr/0019-the-kernel-in-a-browser.md).
+
 ---
 
 ## 2. The engine, against DuckDB and Polars

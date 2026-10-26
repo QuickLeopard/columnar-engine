@@ -36,13 +36,34 @@ the oracle. That is the exact failure mode the project exists to avoid.
 
 ## The measurement
 
-It is taken in a real browser, on a named browser and a named machine, and it is committed with
-its raw reports. The table, the conditions and the spread are in the commit that follows this
-one — the measurement was taken on **this commit's tree**, and the reports are committed beside
-it.
+**What is measured**: one pass over a column of `f64` values, comparing every row against
+`0.04` and writing a bit mask. 20,000,000 rows, five iterations per round, five rounds per
+campaign, three campaigns.
 
-The conditions are not optional, and they are these: the browser, the engine, the machine, the
-host's load average, the warm-up, the rounds, and the commit.
+| flavor | ns/row (median) | spread | rows/sec | matches |
+|---|---|---|---|---|
+| `oracle` | **3.429** | 3.409–3.445 | 0.292 G | 12,726,115 |
+| `simd128` | **0.273** | 0.271–0.277 | 3.663 G | 12,726,115 |
+
+**`simd128` is 12.51× the oracle**, over the three campaigns (12.51×–12.56×).
+
+**The conditions**, which are not optional:
+
+| | |
+|---|---|
+| browser | Chromium 148.0.7778.280, Electron 42.8.0, on macOS 27.0.1 |
+| engine | `wasm32-unknown-unknown`, `simd128`, release build, LTO, one codegen unit |
+| machine | Apple M4 Max, 14 cores — **the host's load average was 6.2–10.9 throughout** |
+| warm-up | one untimed pass per implementation before each timed run |
+| rounds | 5 per campaign, 3 campaigns, median published with the spread |
+| commit | `e23289b` |
+
+The raw reports are committed: `bench-results/browser-run1.json`, `browser-run2.json`,
+`browser-run3.json`. `python3 scripts/medians.py` derives the table above from them.
+
+**The masks are identical, bit for bit, in every campaign** — and so is the edge check, which
+runs every operator over a NaN, a NaN threshold, the two zeros, the two infinities and a NULL row
+and compares the result with the oracle's.
 
 ## What this is not
 
@@ -55,9 +76,9 @@ What the browser *can* compare is the two implementations **in the same process,
 data, with the same clock** — and that is the comparison it makes: the `simd128` path against the
 oracle.
 
-The browser's absolute numbers are also the noisiest thing this repository publishes, because
-the browser is the one runtime the repository has no control over. The measurement section gives
-the spread, and the spread is wide.
+The browser's absolute numbers are also the least portable thing this repository publishes,
+because the browser is the one runtime the repository has no control over. The spread is in the
+measurement table, and the host's load average is recorded beside it.
 
 ## The check that matters
 
@@ -89,10 +110,9 @@ The browser's build needs **no toolchain beyond Rust**: no `wasm-bindgen`, no `n
 emscripten, no second compiler. `rust-lld` ships with the Rust toolchain, and the module is a
 plain `cdylib` with an explicit ABI of eight exported functions.
 
-The commit the module was built from comes from the **server**, not from the
-module: cargo caches a build script, so a commit baked into the module can be
-a commit the module was not built from. The server reads git when the page
-asks, and stamps the same commit into the report it writes.
+The commit the module was built from comes from the **server**, not from the module: cargo caches
+a build script, so a commit baked into the module can be a commit the module was not built from.
+The server reads git when the page asks, and stamps the same commit into the report it writes.
 
 What that costs is the C++ path, which does not go to the browser. There is no wasm C++ toolchain
 in this repository's dependencies, and adding one would cost every reader a second toolchain to

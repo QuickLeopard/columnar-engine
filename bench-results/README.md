@@ -34,6 +34,10 @@ python3 scripts/medians.py
 | `compare.json` | a copy of `compare-run3.json`, the run whose figures sit nearest the medians |
 | `scaling.json` | a copy of `scaling-run3.json`, the sweep run nearest the medians |
 | `scaling-revenue.json` | a copy of `scaling-revenue-run2.json`, the sweep run nearest the medians |
+| `browser-run1.json` | the first of the three **browser campaigns** the §1a table is the median of |
+| `browser-run2.json` | the second |
+| `browser-run3.json` | the third |
+| `browser.json` | a copy of `browser-run3.json`, the campaign whose figures sit nearest the medians |
 | `experiment-dictionary-copy.json` | **not a normal run.** A measurement taken with a deliberate perturbation of the decode path — see below |
 
 ## The experiment file
@@ -63,6 +67,7 @@ There is **one headline table** and **three sweeps**, and they answer different 
 | §2f, `q6` | the same, with the data already in memory | `scaling-resident-run*.json` |
 | §2f, `q6-revenue` | the same, on the real Q6 | `scaling-resident-revenue-run*.json` |
 | §2g | *how long does each system take to get the file into memory* | `scaling-load-run*.json` |
+| §1a | *what does the kernel do in a browser* | `browser-run*.json` |
 
 The first is the like-for-like **single-threaded** comparison, and it has been the headline since
 the first set of numbers in this repository. The sweeps exist because a one-thread table on its
@@ -113,11 +118,20 @@ published table. The three `compare-run*.json` files are.
 just dataset     # 6,000,000 rows, deterministic, about 2.8 seconds
 just compare     # writes bench-results/compare.json
 just sweep       # writes bench-results/scaling.json
+just web         # serves the page; the page posts its measurement back
+just web-report  # copies that measurement into bench-results/browser.json
 ```
 
 `just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, and the `polars`
 Python package installed. Both versions are recorded in the report, in
 `machine` and in each comparator's `version` field.
+
+The browser's reports are written by the **page**, not by hand: the page posts
+its result back to `scripts/web-server.py`, which adds the host's load average
+— a condition of a measurement taken on it, and one the page cannot see — and
+writes the file. Publishing it into `bench-results/` is a separate, deliberate
+step (`just web-report`), because running the page to see it work should not
+silently overwrite a committed number.
 
 Every report also records the machine it was taken on: the CPU, the
 architecture, the core count, the OS, the SIMD path in use, whether the SIMD
