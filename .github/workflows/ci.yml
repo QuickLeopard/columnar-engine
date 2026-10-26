@@ -5,11 +5,12 @@
 #   1. the workspace is formatted,
 #   2. the workspace is lint-clean under clippy `all` + `pedantic`,
 #   3. every test passes -- including the differential suite, which is the
-#      mechanism that keeps the five kernel implementations honest,
+#      mechanism that keeps the six kernel implementations honest,
 #   4. the x86-64 half of the kernel still compiles,
-#   5. the dependency policy holds,
-#   6. no dataset is committed, and
-#   7. the published figures still agree with the committed reports.
+#   5. the browser's half of the kernel still compiles,
+#   6. the dependency policy holds,
+#   7. no dataset is committed, and
+#   8. the published figures still agree with the committed reports.
 #
 # The benchmark is NOT run here. A shared runner is a noisy machine, and a
 # performance number measured on one is not a number this repository is
@@ -127,6 +128,31 @@ jobs:
       # thing on the author's machine.
       - name: cargo check for x86_64
         run: cargo check --workspace --all-targets --target x86_64-apple-darwin
+
+  wasm-check:
+    name: cross-compile check (wasm32, the browser's SIMD path)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+      # The browser's kernel is a third SIMD path -- WebAssembly's `simd128`
+      # -- and it exists only in a `wasm32` build. The same rot that the
+      # x86-64 cross-check above was written for applies to it: a path that
+      # no job compiles is a path nobody has checked.
+      #
+      # Only the two crates that reach the browser are compiled: the engine's
+      # Parquet reader has no reason to exist in a browser. The `simd128`
+      # feature is enabled, because that is the feature the page's module
+      # declares -- a build without it would not exercise the path.
+      - name: cargo check for wasm32
+        run: >
+          RUSTFLAGS="-C target-feature=+simd128"
+          cargo check --lib --target wasm32-unknown-unknown
+          -p columnar-kernels -p columnar-web
 
   dependency-policy:
     name: dependency policy

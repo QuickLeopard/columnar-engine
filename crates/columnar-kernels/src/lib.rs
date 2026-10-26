@@ -63,10 +63,12 @@
 // checked by the differential tests.
 #![allow(clippy::indexing_slicing)]
 
-pub mod ffi;
 pub mod force;
 pub mod oracle;
 pub mod rust_simd;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ffi;
 
 use columnar_core::{ComparisonOp, NullBitmap};
 
@@ -127,6 +129,12 @@ pub enum SimdKind {
     Neon,
     /// x86 AVX2.
     Avx2,
+    /// WebAssembly's `simd128`, the browser's path.
+    ///
+    /// This one is not probed at run time. A WebAssembly module declares the
+    /// features it needs when it is instantiated, so the path is either in
+    /// the module or it is not -- there is nothing to probe.
+    WasmSimd128,
 }
 
 impl SimdKind {
@@ -137,6 +145,7 @@ impl SimdKind {
             Self::None => "none",
             Self::Neon => "neon",
             Self::Avx2 => "avx2",
+            Self::WasmSimd128 => "wasm-simd128",
         }
     }
 }
@@ -149,12 +158,26 @@ impl SimdKind {
 /// machine that cannot run AVX2 rather than faulting.
 #[must_use]
 pub fn simd_kind() -> SimdKind {
-    // SAFETY: `col_simd_kind` takes no arguments, reads no pointers and
-    // touches no global state.
-    match unsafe { ffi::col_simd_kind() } {
-        ffi::abi::COL_SIMD_NEON => SimdKind::Neon,
-        ffi::abi::COL_SIMD_AVX2 => SimdKind::Avx2,
-        _ => SimdKind::None,
+    #[cfg(target_arch = "wasm32")]
+    {
+        // The browser has no C++ side to probe. What it has is WebAssembly's
+        // `simd128`, and whether the module carries it is decided when the
+        // module is instantiated rather than while it runs.
+        if rust_simd::available() {
+            SimdKind::WasmSimd128
+        } else {
+            SimdKind::None
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // SAFETY: `col_simd_kind` takes no arguments, reads no pointers and
+        // touches no global state.
+        match unsafe { ffi::col_simd_kind() } {
+            ffi::abi::COL_SIMD_NEON => SimdKind::Neon,
+            ffi::abi::COL_SIMD_AVX2 => SimdKind::Avx2,
+            _ => SimdKind::None,
+        }
     }
 }
 
@@ -167,9 +190,17 @@ pub fn simd_kind() -> SimdKind {
 /// whose CPU has no AVX2 when the override is off.
 #[must_use]
 pub fn avx2_rows_processed() -> u64 {
-    // SAFETY: `col_avx2_rows` takes no arguments, reads no pointers and
-    // touches no global state beyond an atomic counter.
-    unsafe { ffi::col_avx2_rows() }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // There is no C++ side, so there is no AVX2 counter to read.
+        0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // SAFETY: `col_avx2_rows` takes no arguments, reads no pointers and
+        // touches no global state beyond an atomic counter.
+        unsafe { ffi::col_avx2_rows() }
+    }
 }
 
 /// The flavors that can actually run on this machine, most-preferred first.
@@ -180,20 +211,30 @@ pub fn avx2_rows_processed() -> u64 {
 /// path. [`Flavor::RustSimd`] is present when this machine can run the Rust
 /// intrinsics path.
 ///
+/// On the browser target there is no C++ at all -- see the crate's build
+/// script -- so the C++ flavors are absent from this list and the Rust path
+/// is the only SIMD path there is.
+///
 /// The `COLUMNAR_FORCE_SIMD` override can make a path available that the CPU
 /// probe would hide -- see [`force`]. It is for correctness testing, not for
 /// measurement.
 #[must_use]
 pub fn available() -> Vec<Flavor> {
     let mut flavors = Vec::with_capacity(4);
-    if simd_kind() != SimdKind::None {
-        flavors.push(Flavor::CppSimd);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if simd_kind() != SimdKind::None {
+            flavors.push(Flavor::CppSimd);
+        }
     }
     if rust_simd::available() {
         flavors.push(Flavor::RustSimd);
     }
-    flavors.push(Flavor::CppAuto);
-    flavors.push(Flavor::Scalar);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        flavors.push(Flavor::CppAuto);
+        flavors.push(Flavor::Scalar);
+    }
     flavors
 }
 
@@ -206,11 +247,13 @@ pub fn best() -> Flavor {
 }
 
 /// The validity mask's words as a raw pointer, or null when there is no mask.
+#[cfg(not(target_arch = "wasm32"))]
 fn validity_ptr(validity: Option<&NullBitmap>) -> *const u64 {
     validity.map_or(std::ptr::null(), |v| v.words().as_ptr())
 }
 
 /// The C entry point for a 64-bit integer comparison.
+#[cfg(not(target_arch = "wasm32"))]
 type CompareI64Fn = unsafe extern "C" fn(
     *const i64,
     u64,
@@ -221,6 +264,7 @@ type CompareI64Fn = unsafe extern "C" fn(
 ) -> core::ffi::c_longlong;
 
 /// The C entry point for a 64-bit float comparison.
+#[cfg(not(target_arch = "wasm32"))]
 type CompareF64Fn = unsafe extern "C" fn(
     *const f64,
     u64,
@@ -237,6 +281,7 @@ type CompareF64Fn = unsafe extern "C" fn(
 /// live slices and `op` is one of the six defined operators. A negative
 /// result is therefore treated as "no rows matched" rather than propagated,
 /// because the public API has no error channel.
+#[cfg(not(target_arch = "wasm32"))]
 fn run_cpp(
     entry: CompareI64Fn,
     values: &[i64],
@@ -265,6 +310,7 @@ fn run_cpp(
 /// Runs one of the C++ entry points and converts its return value.
 ///
 /// See [`run_cpp`].
+#[cfg(not(target_arch = "wasm32"))]
 fn run_cpp_f64(
     entry: CompareF64Fn,
     values: &[f64],
@@ -317,11 +363,21 @@ pub fn compare_i64_into(
     );
 
     match flavor {
+        #[cfg(not(target_arch = "wasm32"))]
         Flavor::Scalar => {
             run_cpp(ffi::col_compare_i64_scalar, values, op, threshold, validity, out)
         }
+        #[cfg(not(target_arch = "wasm32"))]
         Flavor::CppAuto => run_cpp(ffi::col_compare_i64_auto, values, op, threshold, validity, out),
+        #[cfg(not(target_arch = "wasm32"))]
         Flavor::CppSimd => run_cpp(ffi::col_compare_i64, values, op, threshold, validity, out),
+        // On the browser target there is no C++, so the three C++ flavors
+        // fall back to the oracle. The oracle is the browser's reference, so
+        // the fallback is correct -- it is just the slow one.
+        #[cfg(target_arch = "wasm32")]
+        Flavor::Scalar | Flavor::CppAuto | Flavor::CppSimd => {
+            crate::oracle::compare_i64(values, op, threshold, validity, out)
+        }
         Flavor::RustSimd => rust_simd::compare_i64(values, op, threshold, validity, out),
     }
 }
@@ -351,13 +407,23 @@ pub fn compare_f64_into(
     );
 
     match flavor {
+        #[cfg(not(target_arch = "wasm32"))]
         Flavor::Scalar => {
             run_cpp_f64(ffi::col_compare_f64_scalar, values, op, threshold, validity, out)
         }
+        #[cfg(not(target_arch = "wasm32"))]
         Flavor::CppAuto => {
             run_cpp_f64(ffi::col_compare_f64_auto, values, op, threshold, validity, out)
         }
+        #[cfg(not(target_arch = "wasm32"))]
         Flavor::CppSimd => run_cpp_f64(ffi::col_compare_f64, values, op, threshold, validity, out),
+        // On the browser target there is no C++, so the three C++ flavors
+        // fall back to the oracle. The oracle is the browser's reference, so
+        // the fallback is correct -- it is just the slow one.
+        #[cfg(target_arch = "wasm32")]
+        Flavor::Scalar | Flavor::CppAuto | Flavor::CppSimd => {
+            crate::oracle::compare_f64(values, op, threshold, validity, out)
+        }
         Flavor::RustSimd => rust_simd::compare_f64(values, op, threshold, validity, out),
     }
 }
@@ -402,6 +468,7 @@ mod tests {
     use columnar_core::{ComparisonOp, NullBitmap};
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn the_abi_operator_codes_match_the_header() {
         // The C++ header defines COL_CMP_LT..COL_CMP_NE as 0..5. If either
         // side changes, the filter silently computes the wrong predicate --

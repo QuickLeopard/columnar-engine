@@ -166,6 +166,62 @@ def print_scaling(runs: list[dict], label: str = "q6", mode: str = "cold") -> No
             )
 
 
+def print_browser(runs: list[dict]) -> None:
+    """Print the browser's medians.
+
+    The browser's report has a different shape from the engine's: it is one
+    **campaign** of several rounds, each round a median over the same
+    column. Every round of every campaign is a sample, so the published
+    figure is the median over all of them, with the spread.
+
+    The browser's number is not comparable with the native one, and this
+    section never prints it next to the native table. What it does print is
+    the one comparison the browser can make: the `simd128` path against the
+    oracle, over the same data, in the same process.
+    """
+    if not runs:
+        return
+
+    oracle: list[float] = []
+    simd: list[float] = []
+    ratios: list[float] = []
+    matches: set[int] = set()
+    agree: set[bool] = set()
+    browsers: set[str] = set()
+
+    for run in runs:
+        oracle.extend(run.get("oracle_ns_per_row", []))
+        simd.extend(run.get("simd_ns_per_row", []))
+        if run.get("ratio_median") is not None:
+            ratios.append(run["ratio_median"])
+        if run.get("matches") is not None:
+            matches.add(run["matches"])
+        if run.get("masks_agree") is not None:
+            agree.add(run["masks_agree"])
+        if run.get("browser"):
+            browsers.add(run["browser"])
+
+    print(f"\n=== BROWSER, {len(runs)} campaigns ===")
+    print(f"{'flavor':<12}{'ns/row (median)':>28}{'rows/sec':>12}{'matches':>14}")
+    for name, values in (("oracle", oracle), ("simd128", simd)):
+        if not values:
+            continue
+        rate = 1e9 / median(values) / 1e9
+        print(
+            f"{name:<12}{f'{median(values):.3f} ({min(values):.3f}-{max(values):.3f})':>28}"
+            f"{rate:>11.3f}G{str(sorted(matches)[0] if matches else '-'):>14}"
+        )
+    if ratios:
+        print(
+            f"\nsimd128 / oracle: {median(ratios):.2f}x "
+            f"({min(ratios):.2f}-{max(ratios):.2f}) over {len(ratios)} campaigns"
+        )
+    print(f"masks identical in every campaign: {agree == {True}}")
+    print(f"match count in every campaign:     {sorted(matches)}")
+    for browser in sorted(browsers):
+        print(f"browser: {browser}")
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -249,6 +305,10 @@ def main() -> int:
         if scaling_paths:
             scaling_runs = [load(p) for p in scaling_paths]
             print_scaling(scaling_runs, label, mode)
+
+    browser_paths = sorted(Path("bench-results").glob("browser-run*.json"))
+    if browser_paths:
+        print_browser([load(p) for p in browser_paths])
 
     return 0
 

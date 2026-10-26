@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
+BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
 RESIDENT_SCALING_REPORTS = sorted(
     (ROOT / "bench-results").glob("scaling-resident-run*.json")
 )
@@ -218,6 +219,35 @@ def main() -> int:
                 )
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+    if BROWSER_REPORTS:
+        # The browser's measurement is a **browser's** number and is never
+        # compared with the native one. What it can be checked against is the
+        # one thing the two runs share: the number of rows that match. The
+        # browser rebuilds the benchmark's column from a histogram, so its
+        # match count must be the native's -- and the documents quote it.
+        browser_runs = [json.loads(path.read_text()) for path in BROWSER_REPORTS]
+        counts = {run.get("matches") for run in browser_runs}
+        if len(counts) != 1:
+            failures.append(
+                f"the browser campaigns disagree on the match count: {sorted(counts)}"
+            )
+        else:
+            count = counts.pop()
+            for doc in DOCS:
+                rendered = f"{count:,}"
+                if rendered not in texts[doc.name]:
+                    failures.append(
+                        f"{doc.name}: the browser's match count is {rendered} in the "
+                        f"reports but that figure does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {doc.name:<10} {'browser match count':<28} {rendered}")
+        for run in browser_runs:
+            if not run.get("masks_agree"):
+                failures.append(
+                    "a browser campaign reports that the two masks did not agree"
+                )
 
     if failures:
         print()

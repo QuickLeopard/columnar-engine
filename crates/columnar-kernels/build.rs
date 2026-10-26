@@ -31,7 +31,31 @@
 //! not be portable at all -- it would be an x86-64-with-AVX2-only kernel
 //! wearing a runtime-dispatch hat.
 
+//! ## The browser target has no C++
+//!
+//! For `wasm32` targets the C++ translation units are **not** built, and the
+//! crate's FFI module is compiled out. The browser's SIMD path is the Rust
+//! one, on WebAssembly's `simd128`.
+//!
+//! That is a deliberate trade rather than an omission. The C++ kernels reach
+//! NEON and AVX2 through intrinsics and a runtime CPU probe; there is no
+//! equivalent probe for `simd128` in WebAssembly, because a WebAssembly
+//! module declares the features it needs at instantiation time. So the
+//! browser's path is the Rust intrinsics path, and the browser's *reference*
+//! is the same plain Rust oracle every other target is held to.
+//!
+//! Dragging a wasm C++ toolchain into the repository's dependencies to
+//! publish one more flavor of the same predicate would cost every reader a
+//! second toolchain and buy nothing that the Rust path does not already give
+//! up.
+
 fn main() {
+    // The browser target carries no C++. See the module comment.
+    if std::env::var("TARGET").is_ok_and(|target| target.starts_with("wasm32")) {
+        println!("cargo:rerun-if-changed=src/rust_simd.rs");
+        return;
+    }
+
     // Keep the C++ objects' deployment target in step with the Rust target's.
     //
     // Without this, `cc` builds the objects for the SDK's own version (27.0 on

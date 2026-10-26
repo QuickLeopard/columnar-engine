@@ -33,6 +33,22 @@ check-x86:
     @rustup target list --installed | grep -qx x86_64-apple-darwin || rustup target add x86_64-apple-darwin
     cargo check --workspace --all-targets --target x86_64-apple-darwin
 
+# Compile the browser's half of the kernel from this machine.
+#
+# The `simd128` path only exists in a `wasm32` build, so without this it rots
+# silently too -- and it is the path the browser runs, so a reader who opens
+# the page deserves a kernel that was compiled by somebody.
+#
+# Only the two crates that reach the browser are checked: the engine's Parquet
+# reader has no reason to exist in a browser and does not build for one.
+#
+# Only the **libraries** are checked, not the test harnesses: the differential
+# suite's dev-dependencies are Unix-only, and the browser's check is the page
+# itself -- it compares the two masks before it prints anything.
+check-wasm:
+    @rustup target list --installed | grep -qx wasm32-unknown-unknown || rustup target add wasm32-unknown-unknown
+    RUSTFLAGS="-C target-feature=+simd128" cargo check --lib --target wasm32-unknown-unknown -p columnar-kernels -p columnar-web
+
 # Check formatting.
 fmt:
     cargo fmt --all -- --check
@@ -81,6 +97,54 @@ clean-data:
 # ---------------------------------------------------------------------------
 # Running
 # ---------------------------------------------------------------------------
+
+# The browser build: the engine's kernel as a WebAssembly module, and the
+# page that runs it.
+#
+# The module is `columnar-kernels` compiled for `wasm32-unknown-unknown` with
+# the `simd128` feature -- the browser's third SIMD path, beside NEON and
+# AVX2. The page rebuilds the benchmark's column from a histogram, runs the
+# oracle and the `simd128` path over it, and compares their masks bit for
+# bit before it prints a number.
+#
+# The build needs no toolchain beyond Rust: no `wasm-bindgen`, no `npm`, no
+# emscripten. `rust-lld` ships with the toolchain.
+web port="8080":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just web-build
+    echo
+    echo "== serving target/web on http://localhost:{{port}} =="
+    echo "   open that URL; the page runs the kernel and posts its result back."
+    echo
+    python3 scripts/web-server.py "{{port}}"
+
+# Build the browser module and the page into target/web.
+web-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rustup target list --installed | grep -qx wasm32-unknown-unknown || rustup target add wasm32-unknown-unknown
+    echo "== building the wasm32 module (simd128) =="
+    RUSTFLAGS="-C target-feature=+simd128" \
+        cargo build --release -p columnar-web --target wasm32-unknown-unknown
+    mkdir -p target/web
+    cp target/wasm32-unknown-unknown/release/columnar_web.wasm target/web/columnar_web.wasm
+    cp crates/columnar-web/web/index.html crates/columnar-web/web/app.js target/web/
+    echo "== target/web =="
+    ls -l target/web
+
+# Publish the browser's measurement into bench-results/.
+#
+# The page writes its report to target/web/browser-report.json. Copying it
+# into bench-results/ is the deliberate act -- that is the difference between
+# running the page and publishing what it measured.
+web-report:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -f target/web/browser-report.json || { echo "no report: run the page first"; exit 1; }
+    cp target/web/browser-report.json bench-results/browser.json
+    echo "== bench-results/browser.json =="
+    cat bench-results/browser.json
 
 # The demo: the whole story, in one command, in about a minute.
 #

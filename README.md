@@ -68,6 +68,23 @@ the source in place.
 **The comparison** comes last: the engine, DuckDB and Polars on the same file, resident and cold.
 The table is below.
 
+**And there is a browser version**, for a reader who has a link rather than a terminal:
+
+```bash
+just web        # builds the wasm32 module and serves the page
+```
+
+The page runs the **engine's own kernel** — the same Rust crate, compiled to WebAssembly — over
+the same column, and it is a **third SIMD path**: WebAssembly's `simd128`, beside NEON and AVX2.
+It checks itself before it prints anything: the `simd128` mask is compared with the oracle's, bit
+for bit, and **no throughput is printed if they differ**. The match count is the native
+benchmark's — **12,726,115** — because the browser rebuilds the benchmark's column from a
+histogram of the file's eleven distinct discount values.
+
+The browser's number is a browser's number: a different runtime, a different clock, a different
+compiler. It is published in [`PERF.md`](PERF.md) §1a with the browser, the engine, the machine
+and the host's load, and it is never compared with the native one.
+
 ---
 
 ## The headline
@@ -268,6 +285,8 @@ crates/
   columnar-bench     the kernel A/B, the machine spec, the external comparison driver,
                      the performance gate, the thread-count sweep
   columnar-cli       dataset / query / bench / compare / gate / sweep
+  columnar-web       the browser build: the kernel as a wasm32 module, and the page
+                     that runs it and checks it against the oracle
 docs/adr/            the decision record
 specs/001-columnar-core/  the spec, the plan, the tasks
 specs/002-lazy-columnar-scan/  the lazy scan: the plan, the pushdown, the equivalence test
@@ -279,12 +298,13 @@ specs/007-parallel-operators/  the parallel filter and projection, and the aggre
 specs/008-parallel-eager-decode/  the parallel eager decode, and the batch size it inherited
 ```
 
-**One predicate, five implementations, one answer.** The comparison kernel is the project. There
-is a plain Rust oracle, a C++ scalar reference compiled two ways, a C++ NEON/AVX2 path and a Rust
-intrinsics path, and the differential test suite holds every one of them to the oracle's mask,
-bit for bit, on random inputs and on the cases that are easy to get wrong: a NULL row never
-matches (including under `!=`), a NaN never matches (including under `!=`), the tail block, the
-empty input, the bits past the end.
+**One predicate, six implementations, one answer.** The comparison kernel is the project. There
+is a plain Rust oracle, a C++ scalar reference compiled two ways, a C++ NEON/AVX2 path, a Rust
+intrinsics path on the same two ISAs, and a Rust `simd128` path for the browser — all agreeing bit
+for bit, and the differential test suite holds every one of them to the oracle's mask, bit for
+bit, on random inputs and on the cases that are easy to get wrong: a NULL row never matches
+(including under `!=`), a NaN never matches (including under `!=`), the tail block, the empty
+input, the bits past the end.
 
 ---
 
@@ -324,7 +344,14 @@ just compare
 #    Correctness only -- the benchmark refuses to measure with the
 #    override in force, because emulated timings mean nothing.
 just verify-avx2
+
+# 8. Build the browser module and serve the page.
+just web                     # then open the URL it prints
 ```
+
+`just check-wasm` is the build gate for the browser's half of the kernel: it compiles
+`columnar-kernels` for `wasm32-unknown-unknown` with the `simd128` feature, so the browser's
+path cannot rot silently — the way the AVX2 path rotted once already.
 
 `just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, and the `polars` Python package
 installed. It says so and skips the missing comparator rather than failing quietly — and it
@@ -347,6 +374,7 @@ computed different values is not a benchmark.
 | Multithreading of the **operators** | **measured** — the filter and the projection are parallel, and the answer does not depend on the thread count. The **aggregate** is not parallelised and never will be: `SUM` is not associative |
 | The **eager** path's decode | **measured** — the eager path splits the file's row groups across the workers, and the merged dataset is bit-identical to the serial one's: [`PERF.md` §2g](PERF.md#2g-the-load-sweep--where-the-engines-biggest-number-was) |
 | The **lazy** path's scan, decomposed | **measured** — Arrow's own decode, the engine's kernel, and the mask are separated, and the decomposition is in the tree as `crates/columnar-engine/examples/lazy_scan_decomposition.rs`: [ADR-0015](docs/adr/0015-the-engine-keeps-the-mask.md) |
+| The comparison kernel, **in a browser** | **measured**, on a named browser and a named machine, with the host's load — and never compared with the native number: [`PERF.md` §1a](PERF.md#1a-the-kernel-in-a-browser) |
 
 The x86-64 row is the important one, and it has two halves.
 
@@ -421,9 +449,9 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited · `specs/012-the-scan-does-not-expand-the-predicates-column/` — the scan's own decode, measured and refused · `specs/013-the-kernel-in-a-browser/` — R1..R6, the third SIMD path, the page that checks it, and the number it reproduces |
 | Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 224, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite and the x86-64 cross-check |
+| Tests | 237, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite, the browser's column suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |

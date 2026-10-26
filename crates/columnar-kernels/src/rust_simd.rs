@@ -96,7 +96,15 @@ fn native_available() -> bool {
     {
         std::is_x86_feature_detected!("avx2")
     }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(target_arch = "wasm32")]
+    {
+        // WebAssembly's `simd128` is declared by the module, not probed by
+        // it: a module either carries the feature or it does not, and the
+        // browser refuses to instantiate one that asks for a feature it does
+        // not have. So this is a compile-time question, not a run-time one.
+        cfg!(target_feature = "simd128")
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "wasm32")))]
     {
         false
     }
@@ -129,7 +137,11 @@ pub fn compare_i64(
     {
         avx2_i64(values, op, threshold, validity, out)
     }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(target_arch = "wasm32")]
+    {
+        wasm_i64(values, op, threshold, validity, out)
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "wasm32")))]
     {
         crate::oracle::compare_i64(values, op, threshold, validity, out)
     }
@@ -161,7 +173,11 @@ pub fn compare_f64(
     {
         avx2_f64(values, op, threshold, validity, out)
     }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    #[cfg(target_arch = "wasm32")]
+    {
+        wasm_f64(values, op, threshold, validity, out)
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "wasm32")))]
     {
         crate::oracle::compare_f64(values, op, threshold, validity, out)
     }
@@ -542,6 +558,193 @@ fn avx2_f64(
                 op::GE => avx2_impl::block_f64::<{ op::GE }>(ptr.add(block * 64), threshold),
                 op::EQ => avx2_impl::block_f64::<{ op::EQ }>(ptr.add(block * 64), threshold),
                 _ => avx2_impl::block_f64::<{ op::NE }>(ptr.add(block * 64), threshold),
+            }
+        };
+        count += finish_block(mask, validity, block, out);
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// WebAssembly / simd128
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_impl {
+    use super::op;
+    use core::arch::wasm32::{
+        f64x2_eq, f64x2_ge, f64x2_gt, f64x2_le, f64x2_lt, f64x2_splat, i64x2_bitmask, i64x2_eq,
+        i64x2_ge, i64x2_gt, i64x2_le, i64x2_lt, i64x2_ne, i64x2_splat, v128, v128_load, v128_or,
+    };
+
+    /// Computes the match mask for one 64-row block of int64 values.
+    ///
+    /// # Safety
+    ///
+    /// `values` must be readable for 64 elements, and the module must have
+    /// been compiled with the `simd128` feature.
+    //
+    // `cast_ptr_alignment` is wrong about this cast. Rust's `v128` is a
+    // 16-byte-aligned type, so the cast looks like it promises an alignment
+    // the `f64` slice does not have. But `v128_load` lowers to the
+    // `v128.load` instruction, and the standard library's own documentation
+    // for it says: *"there is no alignment requirement on this pointer
+    // since this intrinsic performs a 1-aligned load."* The bytes read are
+    // the bytes asked for; only the type's alignment is stricter than the
+    // instruction's.
+    #[allow(clippy::cast_ptr_alignment)]
+    #[target_feature(enable = "simd128")]
+    pub(super) unsafe fn block_i64<const OP: u8>(values: *const i64, threshold: i64) -> u64 {
+        let mut mask = 0u64;
+        let mut k = 0usize;
+        let b = i64x2_splat(threshold);
+        while k < 64 {
+            // SAFETY: the caller guarantees 64 readable elements from `values`;
+            // `k` stays below 64, so every load stays in bounds.
+            let a = unsafe { v128_load(values.add(k).cast::<v128>()) };
+            let cmp = if OP == op::LT {
+                i64x2_lt(a, b)
+            } else if OP == op::LE {
+                i64x2_le(a, b)
+            } else if OP == op::GT {
+                i64x2_gt(a, b)
+            } else if OP == op::GE {
+                i64x2_ge(a, b)
+            } else if OP == op::EQ {
+                i64x2_eq(a, b)
+            } else {
+                // Integers have no NaN, so the unordered `ne` is the ordered
+                // one here.
+                i64x2_ne(a, b)
+            };
+            // `i64x2.bitmask` takes the sign bit of each of the two lanes, so
+            // it yields one bit per row -- and the lane's row is the lane's
+            // own position, which is why the block is two rows per step.
+            let bits = u64::from(u32::from(i64x2_bitmask(cmp)));
+            mask |= bits << k;
+            k += 2;
+        }
+        mask
+    }
+
+    /// Computes the match mask for one 64-row block of float64 values.
+    ///
+    /// # Safety
+    ///
+    /// `values` must be readable for 64 elements, and the module must have
+    /// been compiled with the `simd128` feature.
+    //
+    // As in `block_i64`: the `v128.load` instruction is a 1-aligned load, so
+    // the cast does not need the `f64` slice to be 16-byte aligned.
+    #[allow(clippy::cast_ptr_alignment)]
+    #[target_feature(enable = "simd128")]
+    pub(super) unsafe fn block_f64<const OP: u8>(values: *const f64, threshold: f64) -> u64 {
+        let mut mask = 0u64;
+        let mut k = 0usize;
+        let b = f64x2_splat(threshold);
+        while k < 64 {
+            // SAFETY: the caller guarantees 64 readable elements from `values`.
+            let a = unsafe { v128_load(values.add(k).cast::<v128>()) };
+            let cmp = if OP == op::LT {
+                f64x2_lt(a, b)
+            } else if OP == op::LE {
+                f64x2_le(a, b)
+            } else if OP == op::GT {
+                f64x2_gt(a, b)
+            } else if OP == op::GE {
+                f64x2_ge(a, b)
+            } else if OP == op::EQ {
+                f64x2_eq(a, b)
+            } else {
+                // Ordered not-equal: false when either operand is a NaN.
+                //
+                // This is spelled out rather than taken from `f64x2.ne`,
+                // because the WebAssembly SIMD specification defines `ne` as
+                // the **unordered** not-equal: it answers `true` when either
+                // operand is a NaN. The engine's rule is that a NaN never
+                // matches, for every operator including `!=`, so the ordered
+                // form is the one that is correct here. `f64x2.lt` and
+                // `f64x2.gt` are both ordered, so this stays false for a NaN.
+                v128_or(f64x2_gt(a, b), f64x2_lt(a, b))
+            };
+            // One bit per lane, and the lane's row is the lane's own position.
+            let bits = u64::from(u32::from(i64x2_bitmask(cmp)));
+            mask |= bits << k;
+            k += 2;
+        }
+        mask
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_i64(
+    values: &[i64],
+    op: ComparisonOp,
+    threshold: i64,
+    validity: Option<&NullBitmap>,
+    out: &mut [u64],
+) -> usize {
+    let blocks = values.len().div_ceil(64);
+    let mut count = 0usize;
+    let ptr = values.as_ptr();
+    for block in 0..blocks {
+        let remaining = values.len() - block * 64;
+        if remaining < 64 {
+            // Tail block: fewer than 64 rows remain. The oracle handles it so
+            // the SIMD path never reads past the end of the slice.
+            let tail = &values[block * 64..];
+            let raw = tail_mask_i64(tail, op, threshold);
+            count += finish_block(raw, validity, block, out);
+            continue;
+        }
+        // SAFETY: 64 elements are readable from `ptr + block * 64`, and the
+        // module was compiled with the `simd128` feature.
+        let mask = unsafe {
+            match op.abi_code() as u8 {
+                op::LT => wasm_impl::block_i64::<{ op::LT }>(ptr.add(block * 64), threshold),
+                op::LE => wasm_impl::block_i64::<{ op::LE }>(ptr.add(block * 64), threshold),
+                op::GT => wasm_impl::block_i64::<{ op::GT }>(ptr.add(block * 64), threshold),
+                op::GE => wasm_impl::block_i64::<{ op::GE }>(ptr.add(block * 64), threshold),
+                op::EQ => wasm_impl::block_i64::<{ op::EQ }>(ptr.add(block * 64), threshold),
+                _ => wasm_impl::block_i64::<{ op::NE }>(ptr.add(block * 64), threshold),
+            }
+        };
+        count += finish_block(mask, validity, block, out);
+    }
+    count
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_f64(
+    values: &[f64],
+    op: ComparisonOp,
+    threshold: f64,
+    validity: Option<&NullBitmap>,
+    out: &mut [u64],
+) -> usize {
+    let blocks = values.len().div_ceil(64);
+    let mut count = 0usize;
+    let ptr = values.as_ptr();
+    for block in 0..blocks {
+        let remaining = values.len() - block * 64;
+        if remaining < 64 {
+            // Tail block: fewer than 64 rows remain. The oracle handles it so
+            // the SIMD path never reads past the end of the slice.
+            let tail = &values[block * 64..];
+            let raw = tail_mask_f64(tail, op, threshold);
+            count += finish_block(raw, validity, block, out);
+            continue;
+        }
+        // SAFETY: 64 elements are readable from `ptr + block * 64`, and the
+        // module was compiled with the `simd128` feature.
+        let mask = unsafe {
+            match op.abi_code() as u8 {
+                op::LT => wasm_impl::block_f64::<{ op::LT }>(ptr.add(block * 64), threshold),
+                op::LE => wasm_impl::block_f64::<{ op::LE }>(ptr.add(block * 64), threshold),
+                op::GT => wasm_impl::block_f64::<{ op::GT }>(ptr.add(block * 64), threshold),
+                op::GE => wasm_impl::block_f64::<{ op::GE }>(ptr.add(block * 64), threshold),
+                op::EQ => wasm_impl::block_f64::<{ op::EQ }>(ptr.add(block * 64), threshold),
+                _ => wasm_impl::block_f64::<{ op::NE }>(ptr.add(block * 64), threshold),
             }
         };
         count += finish_block(mask, validity, block, out);

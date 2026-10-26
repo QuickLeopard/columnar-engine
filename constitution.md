@@ -21,9 +21,9 @@ a reader who cannot trust the loss will not trust the win either.
 
 ## Core Principles
 
-### I. One Predicate, Five Implementations, One Answer
+### I. One Predicate, Six Implementations, One Answer
 
-The engine's hottest operation is a single comparison: `(column OP threshold) → mask`. Five
+The engine's hottest operation is a single comparison: `(column OP threshold) → mask`. Six
 implementations of it exist in this repository, and they MUST agree bit for bit, always.
 
 | Implementation | Where | Role |
@@ -31,10 +31,11 @@ implementations of it exist in this repository, and they MUST agree bit for bit,
 | Rust oracle | `columnar-kernels/src/oracle.rs` | the correctness reference |
 | C++ scalar | `columnar-kernels/src/comparison.cpp` | the A/B **baseline** |
 | C++ SIMD | `columnar-kernels/src/comparison.cpp` | the headline kernel (NEON / AVX2) |
-| Rust SIMD | `columnar-kernels/src/rust_simd.rs` | measures what the FFI seam costs |
+| Rust SIMD | `columnar-kernels/src/rust_simd.rs` | measures what the FFI seam costs (NEON / AVX2 / `simd128`) |
 | C++ SIMD fallback | inside the C++ dispatch | the no-SIMD-machine path |
+| Rust `simd128` | `columnar-kernels/src/rust_simd.rs` | the browser's path, over WebAssembly |
 
-The pushdown is **not** a sixth implementation. It runs the same kernel the filter runs, over the
+The pushdown is **not** a seventh implementation. It runs the same kernel the filter runs, over the
 reader's own value slice, so that the two paths cannot disagree by construction. See
 [ADR-0010](docs/adr/0010-pushdown-equivalence.md), [spec 003](specs/003-kernel-pushdown/spec.md)
 and [ADR-0015](docs/adr/0015-the-engine-keeps-the-mask.md).
@@ -44,6 +45,9 @@ and [ADR-0015](docs/adr/0015-the-engine-keeps-the-mask.md).
 - **MUST**: the C++ scalar reference be **branchless** and compute the same predicate as the SIMD
   paths, so the published ratio measures vectorisation and not branch prediction. A speedup
   measured against a naive branching baseline is not a claim about SIMD.
+- **MUST**: a SIMD path on a **new target** be held to the same oracle, and the check MUST run where
+  the path runs. A path that is only checked on the machine that built it is a path that has never
+  been checked. See [ADR-0019](docs/adr/0019-the-kernel-in-a-browser.md).
 
 **Rationale**: this project lives or dies on whether a reviewer believes the headline number. A
 kernel that is fast but disagrees on one row in a million is not a fast kernel; it is a bug with a
@@ -151,7 +155,7 @@ Anything not implemented MUST be written down as out of scope, with the reason.
 
 These are the standards any change must hold or improve. They are the floor.
 
-- **Kernel correctness**: bit-exact agreement across all five implementations. A mismatch is a
+- **Kernel correctness**: bit-exact agreement across all six implementations. A mismatch is a
   critical defect, not a flaky test.
 - **Comparison honesty**: the scalar baseline and the SIMD path run side by side, in the same
   process, on the same data, with the same warm-up.
@@ -195,6 +199,14 @@ These are the standards any change must hold or improve. They are the floor.
 - **A parallel path's peak memory MUST be measured, not assumed**: a merge that copies its inputs
   holds two copies of the data at its peak, and one that moves them holds one. The difference is
   the difference between a budget that fits and one that does not.
+- **A measurement's runtime is part of its conditions**: a number taken in a browser is published
+  with the browser, the engine, the machine and the host's load, and it is **never** compared with a
+  native number — a different runtime, a different clock and a different compiler make the ratio
+  between them a claim about two engines rather than about one kernel. What a browser *can* compare
+  is the two implementations **in the same process, over the same data**, and that is what it does.
+- **A published number MUST be checkable where it was taken**: a page that measures the kernel in a
+  browser MUST compare the two implementations' masks **before** it prints a throughput, and MUST
+  print no throughput at all when they differ.
 - **A row selection MUST have one representation, and it MUST be the cheap one**: a selection
   carried as a mask and then converted into a list of row ranges has **two** representations, and
   the conversion's cost is the list's length — a function of how *fragmented* the surviving rows
@@ -269,9 +281,27 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.9.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-26
+**Version**: 2.0.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-26
 
 ### Amendment history
+
+**2.0.0 — 2026-10-26 — the kernel is in a browser, and there are now six implementations.**
+A third SIMD target joined the project: WebAssembly's `simd128`, in the same module as NEON and
+AVX2, reached from a page a reader can open. That makes Principle I's count wrong — there are
+**six** implementations of the predicate now, not five — and the amendment rule says a change to
+Principle I is a MAJOR bump, so this is one. The rule exists so that the principles the project
+lives by cannot drift quietly, and this is exactly that case.
+
+Two Performance Standards were added with it, both about the same thing:
+
+- **a new target is a new implementation, and it is held to the same reference** — the `simd128`
+  path must agree with the oracle bit for bit, and the check must run **where the path runs**;
+- **a measurement's runtime is part of its conditions** — a browser's number is published with the
+  browser, the engine and the machine, and is never compared with a native number.
+
+The browser's own check is the page's: it compares the two masks before it prints a throughput,
+and prints nothing if they differ. See [ADR-0019](docs/adr/0019-the-kernel-in-a-browser.md) and
+[spec 013](specs/013-the-kernel-in-a-browser/spec.md).
 
 **1.9.0 — 2026-10-26 — the scan filters only what it keeps, and the cold path's last gap is 1.1 ms.**
 `filter-range` was the last query the engine lost on the cold path, and the plan output said it was

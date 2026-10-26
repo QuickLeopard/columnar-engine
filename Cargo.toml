@@ -35,6 +35,7 @@ members = [
     "crates/columnar-testdata",
     "crates/columnar-bench",
     "crates/columnar-cli",
+    "crates/columnar-web",
 ]
 
 # ---------------------------------------------------------------------------
@@ -107,6 +108,7 @@ columnar-kernels = { path = "crates/columnar-kernels", version = "0.1.0" }
 columnar-engine = { path = "crates/columnar-engine", version = "0.1.0" }
 columnar-testdata = { path = "crates/columnar-testdata", version = "0.1.0" }
 columnar-bench = { path = "crates/columnar-bench", version = "0.1.0" }
+columnar-web = { path = "crates/columnar-web", version = "0.1.0" }
 
 # --- correctness -----------------------------------------------------------
 # The correctness net for the comparison kernels: the scalar Rust oracle and

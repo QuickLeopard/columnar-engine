@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Columnar Engine · the kernel in your browser</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --ink: #16181d;
+        --paper: #fbfbfd;
+        --rule: #d7dae0;
+        --muted: #5d636e;
+        --good: #17683a;
+        --bad: #a3261f;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink: #e7e9ee;
+          --paper: #14161a;
+          --rule: #2c3138;
+          --muted: #9aa1ad;
+          --good: #58c98a;
+          --bad: #f08a80;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 2.5rem 1.25rem 4rem;
+        background: var(--paper);
+        color: var(--ink);
+        font: 16px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      main { max-width: 46rem; margin: 0 auto; }
+      h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 0.35rem; letter-spacing: -0.01em; }
+      h2 { font-size: 1rem; margin: 2.2rem 0 0.6rem; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+      p { margin: 0 0 0.9rem; }
+      .lede { color: var(--muted); margin-bottom: 1.6rem; }
+      a { color: inherit; }
+      code, pre { font-family: var(--mono); }
+      pre {
+        background: color-mix(in srgb, var(--ink) 5%, transparent);
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+        padding: 0.9rem 1rem;
+        overflow-x: auto;
+        font-size: 0.82rem;
+        line-height: 1.55;
+      }
+      table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 0.84rem; }
+      th, td { text-align: right; padding: 0.32rem 0.6rem; border-bottom: 1px solid var(--rule); }
+      th:first-child, td:first-child { text-align: left; }
+      th { color: var(--muted); font-weight: 600; }
+      .verdict { font-weight: 700; }
+      .ok { color: var(--good); }
+      .bad { color: var(--bad); }
+      .muted { color: var(--muted); }
+      button {
+        font: inherit;
+        font-weight: 600;
+        padding: 0.55rem 1.1rem;
+        border-radius: 8px;
+        border: 1px solid var(--rule);
+        background: var(--ink);
+        color: var(--paper);
+        cursor: pointer;
+      }
+      button[disabled] { opacity: 0.5; cursor: progress; }
+      .row { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
+      dl.conditions { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem; font-family: var(--mono); font-size: 0.82rem; margin: 0; }
+      dl.conditions dt { color: var(--muted); }
+      dl.conditions dd { margin: 0; }
+      footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.86rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>The comparison kernel, in your browser</h1>
+      <p class="lede">
+        This page runs the <strong>engine's own kernel</strong> — the same Rust crate the native
+        build uses — compiled to WebAssembly, over the same
+        <code>l_discount</code> column the native benchmark measures. The
+        <code>simd128</code> path is a third SIMD path, beside NEON and AVX2, and it is held to
+        the same plain Rust oracle.
+      </p>
+
+      <div class="row">
+        <button id="run" type="button">Run the kernel</button>
+        <span id="status" class="muted">not run yet</span>
+      </div>
+
+      <h2>The result</h2>
+      <pre id="out">Press the button. The page rebuilds the column, runs both implementations over
+it, compares their masks bit for bit, and only then prints a number.</pre>
+
+      <h2>What was measured</h2>
+      <dl class="conditions" id="conditions">
+        <dt>browser</dt><dd id="c-browser">—</dd>
+        <dt>engine</dt><dd id="c-engine">—</dd>
+        <dt>machine</dt><dd id="c-machine">—</dd>
+        <dt>rows</dt><dd id="c-rows">—</dd>
+        <dt>iterations</dt><dd id="c-iterations">—</dd>
+        <dt>SIMD path</dt><dd id="c-simd">—</dd>
+        <dt>edge check</dt><dd id="c-edges">—</dd>
+        <dt>mask check</dt><dd id="c-mask">—</dd>
+        <dt>match count</dt><dd id="c-matches">—</dd>
+      </dl>
+
+      <h2>What this is not</h2>
+      <p>
+        A browser's number is a browser's number. It is <em>not</em> comparable with the native
+        one: a different runtime, a different clock, a different compiler. What the two runs
+        <em>do</em> share is the <strong>match count</strong>, and that is the number this page
+        checks.
+      </p>
+      <p>
+        The column here is rebuilt from a <strong>histogram</strong> — the counts of the file's
+        eleven distinct discount values — not read from the Parquet file. It has the same
+        multiset as the native column, so the same number of rows match, but the row order is
+        not the file's: the browser has no Parquet reader, and it does not pretend to.
+      </p>
+
+      <footer>
+        <p>
+          The engine is <a href="https://github.com/QuickLeopard/columnar-engine">Columnar
+          Engine</a> — a vectorised columnar query engine in Rust with a measurement harness that
+          is willing to say the engine loses.
+        </p>
+      </footer>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

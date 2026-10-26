@@ -549,6 +549,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "columnar-web"
+version = "0.1.0"
+dependencies = [
+ "columnar-core",
+ "columnar-kernels",
+]
+
+[[package]]
 name = "const-random"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

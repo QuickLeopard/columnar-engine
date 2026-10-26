@@ -1,0 +1,25 @@
+[package]
+name = "columnar-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The browser build of the columnar engine's comparison kernel"
+readme.workspace = true
+keywords = ["wasm", "webassembly", "simd", "query-engine", "benchmark"]
+categories = ["wasm", "database-implementations", "algorithms"]
+
+[lints]
+workspace = true
+
+[lib]
+# `cdylib` is the WebAssembly module the browser loads; `rlib` is what the
+# tests link against, so the column builder and the ABI are tested natively.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+columnar-core = { workspace = true }
+columnar-kernels = { workspace = true }
