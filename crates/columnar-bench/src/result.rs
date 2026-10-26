@@ -150,35 +150,42 @@ impl BenchReport {
             self.dataset.seed.map_or_else(|| String::from("unknown"), |seed| seed.to_string())
         )
         .ok();
-        writeln!(
-            out,
-            "\nkernel A/B \u{b7} {} rows \u{b7} {} iterations \u{b7} column {} {} {}",
-            self.kernel_ab.rows,
-            self.kernel_ab.iterations,
-            self.kernel_ab.column,
-            self.kernel_ab.operator,
-            self.kernel_ab.threshold
-        )
-        .ok();
-        writeln!(
-            out,
-            "scalar = compiled with -fno-vectorize \u{b7} cpp-auto = the same source with the vectoriser on"
-        )
-        .ok();
-        writeln!(out, "flavor      rows/sec      ns/row   vs scalar  vs cpp-auto   matches").ok();
-        writeln!(out, "---------------------------------------------------------------").ok();
-        for flavor in &self.kernel_ab.flavors {
+        // The kernel A/B section is printed only when there **is** a kernel
+        // measurement. The comparison report has none -- it is the engine and
+        // the incumbents -- and an empty section with a header is a section
+        // that says nothing.
+        if !self.kernel_ab.flavors.is_empty() {
             writeln!(
                 out,
-                "{:<10}  {:>9.3} G  {:>10.3}   {:>6.2}x   {:>8.2}x   {:>9}",
-                flavor.flavor,
-                flavor.rows_per_sec / 1e9,
-                flavor.ns_per_row,
-                flavor.ratio_vs_scalar,
-                flavor.ratio_vs_auto,
-                flavor.matches
+                "\nkernel A/B \u{b7} {} rows \u{b7} {} iterations \u{b7} column {} {} {}",
+                self.kernel_ab.rows,
+                self.kernel_ab.iterations,
+                self.kernel_ab.column,
+                self.kernel_ab.operator,
+                self.kernel_ab.threshold
             )
             .ok();
+            writeln!(
+                out,
+                "scalar = compiled with -fno-vectorize \u{b7} cpp-auto = the same source with the vectoriser on"
+            )
+            .ok();
+            writeln!(out, "flavor      rows/sec      ns/row   vs scalar  vs cpp-auto   matches")
+                .ok();
+            writeln!(out, "---------------------------------------------------------------").ok();
+            for flavor in &self.kernel_ab.flavors {
+                writeln!(
+                    out,
+                    "{:<10}  {:>9.3} G  {:>10.3}   {:>6.2}x   {:>8.2}x   {:>9}",
+                    flavor.flavor,
+                    flavor.rows_per_sec / 1e9,
+                    flavor.ns_per_row,
+                    flavor.ratio_vs_scalar,
+                    flavor.ratio_vs_auto,
+                    flavor.matches
+                )
+                .ok();
+            }
         }
 
         if let Some(engine) = &self.engine_queries {
@@ -296,4 +303,106 @@ fn lookup(external: &[ExternalComparison], query: &str, comparator: &str, mode: 
         .iter()
         .find(|e| e.query == query && e.comparator == comparator && e.mode == mode)
         .map_or(f64::NAN, |e| e.query_ms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel_ab::KernelFlavorResult;
+
+    fn machine() -> MachineSpec {
+        MachineSpec {
+            cpu: "Apple M4 Max".to_owned(),
+            arch: "aarch64".to_owned(),
+            cores: 14,
+            os: "macOS 27.0.1".to_owned(),
+            simd: "neon".to_owned(),
+            forced_simd: "auto".to_owned(),
+            rustc: "rustc 1.97.1".to_owned(),
+            threads: 1,
+        }
+    }
+
+    fn dataset() -> DatasetReport {
+        DatasetReport {
+            path: "data/lineitem.parquet".to_owned(),
+            rows: 6_000_000,
+            bytes: 242_857_841,
+            scale_factor: Some(1),
+            seed: Some(24001),
+            null_rate: Some(0.0),
+        }
+    }
+
+    fn flavor(name: &str) -> KernelFlavorResult {
+        KernelFlavorResult {
+            flavor: name.to_owned(),
+            rows_per_sec: 8_726_034_709.0,
+            ns_per_row: 0.1146,
+            matches: 12_726_115,
+            ratio_vs_scalar: 2.45,
+            ratio_vs_auto: 1.53,
+        }
+    }
+
+    /// The comparison report has no kernel measurement, so it must not print
+    /// a kernel section -- not even an empty one with a header. A header over
+    /// no rows reads as a measurement that was taken and says nothing.
+    #[test]
+    fn a_report_without_a_kernel_measurement_prints_no_kernel_section() {
+        let report = BenchReport {
+            machine: machine(),
+            dataset: dataset(),
+            kernel_ab: KernelAb {
+                rows: 0,
+                iterations: 0,
+                column: String::new(),
+                operator: String::new(),
+                threshold: 0.0,
+                flavors: Vec::new(),
+            },
+            external: None,
+            engine_queries: None,
+        };
+
+        let rendered = report.render();
+        assert!(
+            !rendered.contains("kernel A/B"),
+            "the comparison report printed a kernel section:\n{rendered}"
+        );
+    }
+
+    /// The kernel report does have one, and it must print the header and every
+    /// flavor's match count -- the count is the claim that does not move with
+    /// the machine.
+    #[test]
+    fn a_report_with_a_kernel_measurement_prints_every_flavor_and_its_match_count() {
+        let report = BenchReport {
+            machine: machine(),
+            dataset: dataset(),
+            kernel_ab: KernelAb {
+                rows: 20_000_000,
+                iterations: 5,
+                column: "l_discount".to_owned(),
+                operator: ">=".to_owned(),
+                threshold: 0.04,
+                flavors: vec![flavor("cpp-simd"), flavor("rust-simd")],
+            },
+            external: None,
+            engine_queries: None,
+        };
+
+        let rendered = report.render();
+        assert!(rendered.contains("kernel A/B"), "{rendered}");
+        assert!(rendered.contains("l_discount >= 0.04"), "{rendered}");
+        for name in ["cpp-simd", "rust-simd"] {
+            assert!(rendered.contains(name), "{name} missing from:\n{rendered}");
+        }
+        // Both flavors matched the same number of rows: the invariant.
+        assert_eq!(
+            rendered.matches("12726115").count(),
+            2,
+            "each flavor must print its match count:\n{rendered}"
+        );
+    }
 }

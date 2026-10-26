@@ -11,6 +11,65 @@ The first increment is storage → filter → project → aggregate: the TPC-H Q
 
 ---
 
+## Try it
+
+```bash
+just demo
+```
+
+One command, about a minute, three things: the kernel measured four ways, the engine's own plan,
+and the engine against DuckDB and Polars. It generates the dataset if it is not there. The third
+part needs `DuckDB` on `PATH` and the `polars` Python package; if they are missing, the comparator
+is **skipped and named**, not faked — the engine's own numbers still print.
+
+**The kernel: four implementations, one answer.**
+
+```
+kernel A/B · 20000000 rows · 5 iterations · column l_discount >= 0.04
+scalar = compiled with -fno-vectorize · cpp-auto = the same source with the vectoriser on
+flavor      rows/sec      ns/row   vs scalar  vs cpp-auto   matches
+---------------------------------------------------------------
+scalar          3.350 G       0.299     1.00x       0.58x    12726115
+cpp-auto        5.746 G       0.174     1.72x       1.00x    12726115
+cpp-simd        7.528 G       0.133     2.25x       1.31x    12726115
+rust-simd       7.855 G       0.127     2.34x       1.37x    12726115
+```
+
+**The `matches` column is the point.** 12,726,115 in all four: a C++ reference clang was told not to
+vectorise, the same C++ with the vectoriser on, a hand-written NEON kernel over a C ABI, and a Rust
+`std::arch` intrinsics kernel with no FFI at all. A fifth implementation — the plain Rust oracle —
+is not timed here, because it is the reference the other four are held to: the differential suite
+compares the **masks bit for bit**, not the counts (`just differential`).
+
+**The ratios move; the matches do not.** That block is one run on a shared machine. The published
+figures are the medians of three campaigns, and they say `cpp-simd` is **2.50×** the scalar
+reference and **1.50×** what clang's auto-vectoriser produces from the same loop — this run said
+2.25× and 1.31×. Both are true; the ratio is a timing and the machine is not isolated, the count of
+matching rows is not a timing and does not move. The conditions, the medians and the spread are in
+[`PERF.md`](PERF.md) §1.
+
+**The engine's own plan.**
+
+```
+optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate
+stage      rows in  rows out  elapsed
+scan       6000000  315203    20.2 ms
+project    315203   315203    0.0 ms
+aggregate  315203   1         0.0 ms
+materialised columns: (none)
+columns read: l_discount, l_shipdate
+pushed down: l_discount >= 0.04 and l_discount <= 0.07, l_shipdate >= '1994-01-01' and l_shipdate < '1995-01-01'
+```
+
+Six million rows in, 315,203 out. Two columns of sixteen read, four predicates pushed into the
+reader, and **nothing materialised** — the projection stage costs 0.0 ms because the aggregate reads
+the source in place.
+
+**The comparison** comes last: the engine, DuckDB and Polars on the same file, resident and cold.
+The table is below.
+
+---
+
 ## The headline
 
 > **The comparison kernel on the Q6 predicate set: 8.7 G rows/s, 2.5× faster than a genuinely
@@ -236,29 +295,32 @@ two scripts under `scripts/`. `just` is the single entry point — every recipe 
 the documented way to do a thing.
 
 ```bash
-# 1. Build and check. This is the whole gate.
+# 1. The whole story, in one command, in about a minute.
+just demo
+
+# 2. Build and check. This is the whole gate.
 just check
 
-# 1a. Compile the x86-64 half of the kernel from this ARM64 machine.
+# 2a. Compile the x86-64 half of the kernel from this ARM64 machine.
 #     The AVX2 path only builds on x86-64, so without this it rots
 #     silently. It rotted silently once already.
 just check-x86
 
-# 2. Generate the dataset. Deterministic: the same (scale factor, seed) gives
+# 3. Generate the dataset. Deterministic: the same (scale factor, seed) gives
 #    byte-identical output, and the manifest records what it was.
 just dataset                      # 6,000,000 rows, 231.6 MiB, about 2.8 seconds
 
-# 3. Run a query and read the plan output.
+# 4. Run a query and read the plan output.
 just query                        # the TPC-H Q6 predicate set
 just query-lazy                   # the same, reading only what the plan needs
 
-# 4. Measure the kernel, four ways.
+# 5. Measure the kernel, four ways.
 just bench
 
-# 5. Measure the engine against DuckDB and Polars.
+# 6. Measure the engine against DuckDB and Polars.
 just compare
 
-# 6. Verify the AVX2 path's correctness, under Rosetta 2.
+# 7. Verify the AVX2 path's correctness, under Rosetta 2.
 #    Correctness only -- the benchmark refuses to measure with the
 #    override in force, because emulated timings mean nothing.
 just verify-avx2
@@ -361,7 +423,7 @@ The principles that shaped the code most:
 |---|---|
 | Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited |
 | Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 222, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite and the x86-64 cross-check |
+| Tests | 224, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |

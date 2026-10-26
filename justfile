@@ -72,7 +72,7 @@ deny:
 
 # Generate the benchmark dataset. Override with `just dataset scale=1 seed=42`.
 dataset scale="1" seed="24001" out="data/lineitem.parquet":
-    cargo run --release -p columnar-cli -- dataset --scale-factor {{scale}} --seed {{seed}} --output {{out}}
+    cargo run --release --quiet -p columnar-cli -- dataset --scale-factor {{scale}} --seed {{seed}} --output {{out}}
 
 # Remove the generated dataset.
 clean-data:
@@ -81,6 +81,43 @@ clean-data:
 # ---------------------------------------------------------------------------
 # Running
 # ---------------------------------------------------------------------------
+
+# The demo: the whole story, in one command, in about a minute.
+#
+# A stranger who clones this repository should be able to see what it is in
+# one step, without reading a table of numbers first:
+#
+#   1. **the kernel A/B** -- the project's headline claim, with the four
+#      implementations' match counts side by side, which is the bit-identical
+#      agreement made visible rather than asserted;
+#   2. **the engine's own plan output** -- two columns of sixteen, with the
+#      predicates pushed into the reader;
+#   3. **the comparison** against DuckDB and Polars.
+#
+# One iteration and one thread: this is a demonstration, not a published
+# number. The published numbers come from `just compare` run three times over,
+# and `just medians` derives the table from the committed reports. See
+# PERF.md.
+demo data="data/lineitem.parquet":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    data="{{data}}"
+    echo "== building =="
+    cargo build --release --workspace
+    if [ ! -f "$data" ]; then
+      echo
+      echo "== generating the dataset =="
+      cargo run --release --quiet -p columnar-cli -- dataset --scale-factor 1 --seed 24001 --output "$data"
+    fi
+    echo
+    echo "== the kernel: four implementations, one answer =="
+    cargo run --release --quiet -p columnar-cli -- bench --data "$data" --rows 20000000 --iterations 5 --out "$(mktemp)"
+    echo
+    echo "== the engine's own plan =="
+    cargo run --release --quiet -p columnar-cli -- query --data "$data" --query q6 --lazy
+    echo
+    echo "== against DuckDB and Polars, one thread =="
+    cargo run --release --quiet -p columnar-cli -- compare --data "$data" --iterations 1 --threads 1 --out "$(mktemp)"
 
 # Run the TPC-H Q6 query over the dataset and print the plan output.
 query data="data/lineitem.parquet" lazy="":
