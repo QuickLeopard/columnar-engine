@@ -39,6 +39,7 @@ pub mod kernel_ab;
 pub mod machine;
 pub mod result;
 pub mod scaling;
+pub mod size;
 
 pub use external::{Comparator, ExternalComparison, ExternalQuery, Mode};
 pub use kernel_ab::{KernelAb, KernelFlavorResult};

@@ -34,6 +34,8 @@ use columnar_engine::{Dataset, ExecOptions};
 
 use columnar_cli::queries::{self, BuiltinQuery, QueryDefinition, QUERIES};
 
+mod curve;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "columnar",
@@ -201,6 +203,41 @@ enum Command {
         #[arg(long, default_value = "bench-results/scaling.json")]
         out: PathBuf,
     },
+
+    /// Sweep the **size** of the data: this engine and every incumbent, at
+    /// every size, on the same file for each size.
+    ///
+    /// This is the third axis. The thread sweep and the load sweep hold the
+    /// data fixed; this one holds the query and the thread count fixed and
+    /// moves the size of the file, which is the axis a reader asks about
+    /// when they want to know what the query costs per row.
+    Curve {
+        /// The dataset files to measure, in order. Each is a Parquet file,
+        /// and each must have a manifest beside it.
+        #[arg(long, value_delimiter = ',', required = true)]
+        data: Vec<PathBuf>,
+        /// Which query to sweep.
+        #[arg(long, value_enum, default_value_t = BuiltinQueryArg::Q6Revenue)]
+        query: BuiltinQueryArg,
+        /// The thread count every system is pinned to.
+        #[arg(long, default_value_t = 1)]
+        threads: usize,
+        /// How many timed runs each system makes at each size.
+        #[arg(long, default_value_t = 5)]
+        iterations: usize,
+        /// The engine's memory budget, in mebibytes.
+        ///
+        /// The engine's default is 256 MiB, and the real Q6's estimated
+        /// working set is about 200 bytes a row, so the default refuses the
+        /// query at a few tens of millions of rows. The budget is a policy
+        /// knob and not a limit on the engine: below it, it changes nothing
+        /// at all.
+        #[arg(long, default_value_t = 256)]
+        memory_budget_mib: usize,
+        /// Where to write the JSON report.
+        #[arg(long, default_value = "bench-results/curve.json")]
+        out: PathBuf,
+    },
 }
 
 /// How the thread-count sweep measures.
@@ -268,6 +305,7 @@ fn run(cli: Cli) -> Result<()> {
             | Command::Compare { .. }
             | Command::Gate { .. }
             | Command::Sweep { .. }
+            | Command::Curve { .. }
     ) && columnar_bench::machine::simd_probe_is_overridden()
     {
         anyhow::bail!("{}", columnar_bench::machine::FORCED_SIMD_REFUSAL);
@@ -282,6 +320,17 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Bench { data, rows, iterations, column, threshold, out } => {
             run_bench(&data, rows, iterations, &column, threshold, &out)
+        }
+        Command::Curve { data, query, threads, iterations, memory_budget_mib, out } => {
+            let builtin = BuiltinQuery::from(query);
+            let definition = QUERIES
+                .iter()
+                .find(|definition| definition.query == builtin)
+                .context("unknown query")?;
+            let budget = columnar_engine::MemoryBudget {
+                bytes: memory_budget_mib.saturating_mul(1024 * 1024),
+            };
+            curve::run(&data, definition, threads, iterations, budget, &out)
         }
         Command::Gate {
             data,
@@ -653,8 +702,13 @@ fn run_sweep(
                     measure_engine_resident_at(definition, &dataset, iterations, *count)?;
                 (ms, scan, operators, workers, Some(result))
             } else {
-                let (_open_ms, engine_ms, engine_scan_ms, result) =
-                    measure_engine_lazy_at(definition, data, iterations, *count)?;
+                let (_open_ms, engine_ms, engine_scan_ms, result) = measure_engine_lazy_at(
+                    definition,
+                    data,
+                    iterations,
+                    *count,
+                    columnar_engine::MemoryBudget::default(),
+                )?;
                 (
                     engine_ms,
                     engine_scan_ms,
@@ -1052,8 +1106,13 @@ fn measure_engine_lazy(
     iterations: usize,
     threads: usize,
 ) -> Result<(f64, f64, columnar_engine::AggregateResult)> {
-    let (open_ms, total_ms, _scan_ms, result) =
-        measure_engine_lazy_at(definition, data, iterations, threads)?;
+    let (open_ms, total_ms, _scan_ms, result) = measure_engine_lazy_at(
+        definition,
+        data,
+        iterations,
+        threads,
+        columnar_engine::MemoryBudget::default(),
+    )?;
     Ok((open_ms, total_ms, result))
 }
 
@@ -1070,9 +1129,14 @@ pub(crate) fn measure_engine_lazy_at(
     data: &Path,
     iterations: usize,
     threads: usize,
+    budget: columnar_engine::MemoryBudget,
 ) -> Result<(f64, f64, f64, columnar_engine::AggregateResult)> {
     let iterations = iterations.max(1);
-    let options = ExecOptions { threads: Some(threads.max(1)), ..ExecOptions::default() };
+    let options = ExecOptions {
+        threads: Some(threads.max(1)),
+        memory_budget: budget,
+        ..ExecOptions::default()
+    };
 
     // Warm-up: the first open pays for the page cache.
     {

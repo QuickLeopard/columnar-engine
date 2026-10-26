@@ -197,6 +197,12 @@ impl BenchReport {
         out
     }
 }
+/// The incumbents, in the order the tables list them.
+const COMPARATORS: [&str; 3] = ["duckdb", "polars", "datafusion-peer"];
+
+/// The incumbents' names, as the tables print them.
+const COMPARATOR_LABELS: [&str; 3] = ["duckdb", "polars", "datafusion"];
+
 /// Renders the resident comparison: the data is already in memory for
 /// every system.
 ///
@@ -210,12 +216,16 @@ fn render_resident(
 ) {
     writeln!(out, "\nquery comparison \u{b7} wall clock ms \u{b7} lower is better").ok();
     writeln!(out, "resident \u{b7} the data is already in memory").ok();
-    writeln!(out, "query          engine   duckdb   polars   note").ok();
-    writeln!(out, "--------------------------------------------------------").ok();
+    writeln!(out, "query          engine   duckdb   polars   datafusion   note").ok();
+    writeln!(out, "------------------------------------------------------------").ok();
     for query in engine.iter().filter(|query| query.mode == "eager") {
-        let duckdb = lookup(external, &query.query, "duckdb", "resident");
-        let polars = lookup(external, &query.query, "polars", "resident");
-        let candidates = [("engine", query.elapsed_ms), ("duckdb", duckdb), ("polars", polars)];
+        let mut candidates = vec![("engine", query.elapsed_ms)];
+        let mut figures = Vec::new();
+        for (comparator, label) in COMPARATORS.iter().zip(COMPARATOR_LABELS) {
+            let ms = lookup(external, &query.query, comparator, "resident");
+            candidates.push((label, ms));
+            figures.push(ms);
+        }
         let best =
             candidates.iter().filter(|(_, ms)| ms.is_finite()).min_by(|a, b| a.1.total_cmp(&b.1));
         let note = match best {
@@ -226,12 +236,12 @@ fn render_resident(
             }
             None => String::from("no result"),
         };
-        writeln!(
-            out,
-            "{:<7}  {:>9.1}   {:>6.1}   {:>6.1}   {}",
-            query.query, query.elapsed_ms, duckdb, polars, note
-        )
-        .ok();
+        let mut line = format!("{:<7}  {:>9.1}", query.query, query.elapsed_ms);
+        for ms in figures {
+            write!(line, "   {ms:>6.1}").ok();
+        }
+        write!(line, "   {note}").ok();
+        writeln!(out, "{line}").ok();
     }
 }
 
@@ -243,21 +253,19 @@ fn render_resident(
 /// construction.
 fn render_cold(out: &mut String, engine: &[EngineQueryResult], external: &[ExternalComparison]) {
     writeln!(out, "\ncold \u{b7} read the Parquet file and answer in one go").ok();
-    writeln!(out, "query          engine   engine-lazy   duckdb   polars").ok();
-    writeln!(out, "--------------------------------------------------------").ok();
+    writeln!(out, "query          engine   engine-lazy   duckdb   polars   datafusion").ok();
+    writeln!(out, "------------------------------------------------------------").ok();
     for query in engine.iter().filter(|query| query.mode == "eager") {
         let lazy = engine
             .iter()
             .find(|other| other.mode == "lazy" && other.query == query.query)
             .map_or(f64::NAN, |other| other.elapsed_ms);
-        let duckdb = lookup(external, &query.query, "duckdb", "cold");
-        let polars = lookup(external, &query.query, "polars", "cold");
-        writeln!(
-            out,
-            "{:<7}  {:>9.1}   {:>11.1}   {:>6.1}   {:>6.1}",
-            query.query, query.cold_ms, lazy, duckdb, polars
-        )
-        .ok();
+        let mut line = format!("{:<7}  {:>9.1}   {:>11.1}", query.query, query.cold_ms, lazy);
+        for comparator in COMPARATORS {
+            let ms = lookup(external, &query.query, comparator, "cold");
+            write!(line, "   {ms:>6.1}").ok();
+        }
+        writeln!(out, "{line}").ok();
     }
 }
 
@@ -275,7 +283,7 @@ fn render_load(out: &mut String, engine: &[EngineQueryResult], external: &[Exter
     if let Some(query) = engine.iter().find(|query| query.mode == "lazy") {
         writeln!(out, "{:<12}  {:>9.1}   {:>18}", "engine lazy", query.load_ms, "-").ok();
     }
-    for comparator in ["duckdb", "polars"] {
+    for comparator in COMPARATORS {
         let load = worst(
             external
                 .iter()

@@ -41,6 +41,12 @@ python3 scripts/medians.py
 | `rle-expansion-run1.json` | the first of the three **RLE expansion campaigns** the §3g table is the median of |
 | `rle-expansion-run2.json` | the second |
 | `rle-expansion-run3.json` | the third |
+| `materialised-run1.json` | the first of the three **materialised column campaigns** the §3h table is the median of |
+| `materialised-run2.json` | the second |
+| `materialised-run3.json` | the third |
+| `curve-run1.json` | the first of the three **size-curve campaigns** the §3i table is the median of |
+| `curve-run2.json` | the second |
+| `curve-run3.json` | the third |
 | `experiment-dictionary-copy.json` | **not a normal run.** A measurement taken with a deliberate perturbation of the decode path — see below |
 
 ## The experiment file

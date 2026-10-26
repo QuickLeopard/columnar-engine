@@ -28,6 +28,8 @@ REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
 RLE_EXPANSION_REPORTS = sorted((ROOT / "bench-results").glob("rle-expansion-run*.json"))
+MATERIALISED_REPORTS = sorted((ROOT / "bench-results").glob("materialised-run*.json"))
+CURVE_REPORTS = sorted((ROOT / "bench-results").glob("curve-run*.json"))
 RESIDENT_SCALING_REPORTS = sorted(
     (ROOT / "bench-results").glob("scaling-resident-run*.json")
 )
@@ -109,6 +111,74 @@ RLE_EXPANSION_CHECKS = [
     ("PERF.md", "the engine's scan of the column", "engine_scan", 2),
     ("PERF.md", "the whole query", "engine_query", 2),
 ]
+
+
+# Spec 014's claim is that the **materialised** column's cost is bytes, and
+# these are the figures the claim rests on: what the column costs to decode,
+# what the counterfactual -- the same column, written the other way -- costs,
+# what the column's share of the query is, and what the query costs.
+#
+# The keys are paths into the report: `column.measurement` for a column's
+# figure, and `query.measurement` for the query's.
+MATERIALISED_CHECKS = [
+    ("PERF.md", "the materialised column's decode", "l_extendedprice.arrow_decode", 2),
+    ("PERF.md", "the counterfactual's decode", "l_extendedprice.counterfactual_arrow_decode", 2),
+    ("PERF.md", "the materialised column's share", "query.materialised_share", 2),
+    ("PERF.md", "the whole query", "query.q6_revenue", 2),
+]
+
+
+def materialised_figure(runs: list[dict], key: str) -> float | None:
+    """The median of one figure in the materialised reports."""
+    if key.startswith("query."):
+        name = key[len("query.") :]
+        if name == "materialised_share":
+            values = [
+                run["query"]["measurements_ms"]["predicates_and_price"]
+                - run["query"]["measurements_ms"]["predicates_only"]
+                for run in runs
+                if "query" in run
+            ]
+        else:
+            values = [
+                run["query"]["measurements_ms"][name]
+                for run in runs
+                if name in run.get("query", {}).get("measurements_ms", {})
+            ]
+        return statistics.median(values) if values else None
+
+    column, measurement = key.split(".", 1)
+    values = [
+        entry["measurements_ms"][measurement]
+        for run in runs
+        for entry in run.get("columns", [])
+        if entry["name"] == column and measurement in entry.get("measurements_ms", {})
+    ]
+    return statistics.median(values) if values else None
+
+
+# Spec 014's curve is a claim about the **size** of the data: this engine and
+# every incumbent, at every size. These are the figures the curve leads with:
+# the engine's number at each of the three sizes, and the point where the
+# curve stops being the engine's.
+CURVE_CHECKS = [
+    ("PERF.md", "the curve's engine at 6M rows", "engine", 6000000, 1),
+    ("PERF.md", "the curve's engine at 12M rows", "engine", 12000000, 1),
+    ("PERF.md", "the curve's engine at 24M rows", "engine", 24000000, 1),
+    ("PERF.md", "the curve's duckdb at 24M rows", "duckdb", 24000000, 1),
+]
+
+
+def curve_figure(runs: list[dict], system: str, rows: int) -> float | None:
+    """The median of one system's figure at one size."""
+    field = f"{system}_ms"
+    values = [
+        point[field]
+        for run in runs
+        for point in run.get("points", [])
+        if point.get("rows") == rows and point.get(field) is not None
+    ]
+    return statistics.median(values) if values else None
 
 
 def collect(runs: list[dict]) -> dict[tuple[str, str, str, str], list[float]]:
@@ -265,6 +335,61 @@ def main() -> int:
                 failures.append(
                     "a browser campaign reports that the two masks did not agree"
                 )
+
+    if CURVE_REPORTS:
+        curve_runs = [json.loads(path.read_text()) for path in CURVE_REPORTS]
+        for doc, label, system, rows, places in CURVE_CHECKS:
+            figure = curve_figure(curve_runs, system, rows)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the curve reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+    if MATERIALISED_REPORTS:
+        materialised_runs = [json.loads(path.read_text()) for path in MATERIALISED_REPORTS]
+        for doc, label, key, places in MATERIALISED_CHECKS:
+            figure = materialised_figure(materialised_runs, key)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the materialised reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+        # Every campaign must agree on the rows that survive, and on the
+        # answer: the claim is about one query, and the query must be the same
+        # query every time.
+        survivors = {run.get("query", {}).get("survivors") for run in materialised_runs}
+        if len(survivors) != 1:
+            failures.append(
+                "the materialised campaigns disagree on the surviving rows: "
+                f"{sorted(survivors)}"
+            )
+        else:
+            rows = survivors.pop()
+            if str(rows) not in texts["PERF.md"]:
+                failures.append(
+                    f"PERF.md: the surviving rows are {rows} in the reports but "
+                    f"that figure does not appear in the document"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {'the surviving rows':<28} {rows}")
+
+        answers = {run.get("query", {}).get("value") for run in materialised_runs}
+        if len(answers) != 1:
+            failures.append(f"the materialised campaigns disagree on the answer: {answers}")
 
     if RLE_EXPANSION_REPORTS:
         expansion_runs = [json.loads(path.read_text()) for path in RLE_EXPANSION_REPORTS]

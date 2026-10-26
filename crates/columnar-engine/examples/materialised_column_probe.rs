@@ -1266,8 +1266,6 @@ mod tests {
     /// the order they sit in the dictionary.
     #[test]
     fn the_gather_follows_the_indices() {
-        let phase =
-            Phase::Dictionary { dictionary: vec![10.0, 20.0, 30.0], indices: vec![2, 0, 1] };
         let mut out = vec![0.0f64; 3];
         super::fill(&mut out, Some(&[10.0, 20.0, 30.0]), Some(&[2, 0, 1]), None, 0);
         assert_eq!(out, vec![30.0, 10.0, 20.0]);

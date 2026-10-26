@@ -28,7 +28,8 @@ import sys
 from pathlib import Path
 
 QUERIES = ["scan", "filter-numeric", "filter-string", "filter-range", "q6", "q6-revenue"]
-COMPARATORS = ["duckdb", "polars"]
+COMPARATORS = ["duckdb", "polars", "datafusion-peer"]
+DISPLAY = {"duckdb": "duckdb", "polars": "polars", "datafusion-peer": "datafusion"}
 ENGINE_MODES = ["eager", "lazy"]
 
 
@@ -288,6 +289,181 @@ def print_rle_expansion(runs: list[dict]) -> None:
           f"{statistics.median([run.get('host_load_average', 0.0) for run in runs]):.1f}")
 
 
+def print_materialised(runs: list[dict]) -> None:
+    """Print the materialised column's medians.
+
+    This is spec 014: the decode of the column the query **materialises**,
+    against the decode of the column it only filters on, and against the
+    counterfactual -- the same column, written the other way.
+
+    Every figure is the median over the campaigns, with the spread. The
+    derived figures are **derived from the medians**, never typed.
+    """
+    if not runs:
+        return
+
+    columns: dict[str, dict[str, list[float]]] = {}
+    shapes: dict[str, dict] = {}
+    for run in runs:
+        for entry in run.get("columns", []):
+            name = entry["name"]
+            shapes.setdefault(name, entry)
+            bucket = columns.setdefault(name, {})
+            for key, value in entry.get("measurements_ms", {}).items():
+                bucket.setdefault(key, []).append(value)
+
+    def figure(name: str, key: str) -> tuple[float, float, float]:
+        values = columns.get(name, {}).get(key, [])
+        if not values:
+            return (0.0, 0.0, 0.0)
+        return (statistics.median(values), min(values), max(values))
+
+    rows = [
+        ("P", "the parquet crate's decode", "parquet_decode"),
+        ("A", "Arrow's decode", "arrow_decode"),
+        ("V", "the probe's decode", "probe_decode"),
+        ("I", "the probe's indices, no gather", "probe_indices"),
+        ("G", "the expansion", "expansion"),
+        ("G1", "  the reader's fresh buffers", "expansion_buffers"),
+        ("G2", "  the gather, or the copy", "expansion_gather"),
+        ("X", "the counterfactual, parquet crate", "counterfactual_parquet_decode"),
+        ("X", "the counterfactual, Arrow", "counterfactual_arrow_decode"),
+    ]
+
+    print(f"\n=== THE MATERIALISED COLUMN, {len(runs)} campaigns ===")
+    for name, shape in shapes.items():
+        print(f"\n-- {name} ({shape['role']}) --")
+        print(
+            f"   written {shape['encoding']}, "
+            f"{shape['dictionary_pages']} dictionary pages and "
+            f"{shape['plain_pages']} plain ones, "
+            f"{shape['dictionary_values']} dictionary values, "
+            f"{shape['bit_width']}-bit indices"
+        )
+        print(
+            f"   {shape['compressed_bytes']:,} bytes on disk "
+            f"(the counterfactual: {shape['counterfactual_style']}, "
+            f"{shape['counterfactual_bytes']:,} bytes)"
+        )
+        print(f"{'':4}{'figure':<36}{'median (min-max)':>26}")
+        for key, label, measurement in rows:
+            if measurement not in columns.get(name, {}):
+                continue
+            median, low, high = figure(name, measurement)
+            print(f"{key:<4}{label:<36}{f'{median:.2f} ({low:.2f}-{high:.2f})':>26}")
+
+    query: dict[str, list[float]] = {}
+    for run in runs:
+        for key, value in run.get("query", {}).get("measurements_ms", {}).items():
+            query.setdefault(key, []).append(value)
+
+    if not query:
+        return
+
+    def q(key: str) -> float:
+        return statistics.median(query.get(key, [0.0]))
+
+    print("\n-- the real Q6 --")
+    ladder = [
+        ("Q0", "the predicates alone", "predicates_only"),
+        ("Q1", "the predicates, and the price", "predicates_and_price"),
+        ("Q2", "the predicates, and the discount", "predicates_and_discount"),
+        ("Q3", "the predicates, and both", "predicates_and_both"),
+        ("Q4", "the whole query", "q6_revenue"),
+    ]
+    for key, label, measurement in ladder:
+        values = query.get(measurement, [])
+        if not values:
+            continue
+        print(
+            f"{key:<4}{label:<36}"
+            f"{f'{statistics.median(values):.2f} ({min(values):.2f}-{max(values):.2f})':>26}"
+        )
+    # The shares are derived from the **campaigns**, not from the medians of
+    # the medians: each campaign's share is measured, and the median of those
+    # is the figure. The guard in `check-published-figures.py` derives them
+    # the same way, and the two must agree.
+    shares = [
+        run["query"]["measurements_ms"]["predicates_and_price"]
+        - run["query"]["measurements_ms"]["predicates_only"]
+        for run in runs
+        if "query" in run
+    ]
+    aggregates = [
+        run["query"]["measurements_ms"]["q6_revenue"]
+        - run["query"]["measurements_ms"]["predicates_and_both"]
+        for run in runs
+        if "query" in run
+    ]
+    print()
+    print(f"{'the materialised column share of the query':<40}{statistics.median(shares):.2f} ms")
+    print(f"{'the aggregate own share of the query':<40}{statistics.median(aggregates):.2f} ms")
+    print(f"{'the scan stage':<40}{q('q6_revenue_scan'):.2f} ms")
+    print(f"{'the operator stages':<40}{q('q6_revenue_operators'):.2f} ms")
+    print(
+        f"{'the host load average':<40}"
+        f"{statistics.median([run.get('host_load_average', 0.0) for run in runs]):.1f}"
+    )
+
+
+def print_curve(runs: list[dict]) -> None:
+    """Print the size curve's medians.
+
+    This is spec 014's third axis: the query and the thread count are held
+    fixed and the **size of the data** moves. The figure it exists for is the
+    cost per million rows, because that is what a reader asking about the
+    size axis wants, and a table of whole-file times makes them divide it
+    out by hand.
+
+    Every system is measured at every size, in the same harness, on the same
+    file, with the thread count pinned -- a curve with only this engine's
+    line on it is a curve with nothing to be compared against.
+    """
+    if not runs:
+        return
+
+    def points(key: str) -> dict[int, list[float]]:
+        out: dict[int, list[float]] = {}
+        for run in runs:
+            for point in run.get("points", []):
+                value = point.get(key)
+                if value is not None:
+                    out.setdefault(point["rows"], []).append(value)
+        return out
+
+    engine = points("engine_ms")
+    duckdb = points("duckdb_ms")
+    polars = points("polars_ms")
+    datafusion = points("datafusion_ms")
+    scan = points("engine_scan_ms")
+    operators = points("engine_operators_ms")
+    rows_of: dict[int, int] = {}
+    for run in runs:
+        for point in run.get("points", []):
+            rows_of[point["rows"]] = point.get("scale_factor") or 0
+
+    budget = runs[0].get("memory_budget_bytes")
+    print(f"\n=== THE SIZE CURVE, {len(runs)} campaigns ===")
+    if budget:
+        print(f"the engine's memory budget: {budget // (1024 * 1024)} MiB")
+    header = f"{'rows':>10}{'sf':>4}{'engine':>12}{'scan':>10}{'ops':>8}"
+    for name in ("duckdb", "polars", "datafusion"):
+        header += f"{name:>12}"
+    header += f"{'ms/Mrow':>10}"
+    print(header)
+    print("-" * len(header))
+    for rows in sorted(engine):
+        line = f"{rows:>10}{rows_of.get(rows, 0):>4}"
+        line += f"{statistics.median(engine[rows]):>12.1f}"
+        line += f"{statistics.median(scan.get(rows, [0.0])):>10.1f}"
+        line += f"{statistics.median(operators.get(rows, [0.0])):>8.1f}"
+        for figures in (duckdb, polars, datafusion):
+            values = figures.get(rows)
+            line += f"{statistics.median(values):>12.1f}" if values else f"{'-':>12}"
+        line += f"{statistics.median(engine[rows]) / (rows / 1e6):>10.1f}"
+        print(line)
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -303,7 +479,10 @@ def main() -> int:
     print("every figure is the median across the reports, with the spread in brackets\n")
 
     print("=== COLD (ms) ===")
-    print(f"{'query':<16}{'engine eager':>26}{'engine lazy':>26}{'duckdb':>26}{'polars':>26}")
+    print(
+        f"{'query':<16}{'engine eager':>26}{'engine lazy':>26}"
+        + "".join(f"{DISPLAY[comparator]:>26}" for comparator in COMPARATORS)
+    )
     for query in QUERIES:
         cells = [
             cell(agg.get(("engine", mode, "cold", query)))
@@ -315,7 +494,10 @@ def main() -> int:
         print(f"{query:<16}" + "".join(cells))
 
     print("\n=== RESIDENT (ms) ===")
-    print(f"{'query':<16}{'engine eager':>26}{'duckdb':>26}{'polars':>26}")
+    print(
+        f"{'query':<16}{'engine eager':>26}"
+        + "".join(f"{DISPLAY[comparator]:>26}" for comparator in COMPARATORS)
+    )
     for query in QUERIES:
         cells = [cell(agg.get(("engine", "eager", "resident", query)))] + [
             cell(agg.get((comparator, "-", "resident", query)))
@@ -329,6 +511,7 @@ def main() -> int:
         ("engine", "lazy", "load", "scan"),
         ("duckdb", "-", "load", "worst"),
         ("polars", "-", "load", "worst"),
+        ("datafusion-peer", "-", "load", "worst"),
     ):
         values = agg.get(key)
         if values:
@@ -341,21 +524,22 @@ def main() -> int:
     q6 = "q6"
     eager_cold = median(agg[("engine", "eager", "cold", q6)])
     lazy_cold = median(agg[("engine", "lazy", "cold", q6)])
-    duckdb_cold = median(agg[("duckdb", "-", "cold", q6)])
-    polars_cold = median(agg[("polars", "-", "cold", q6)])
-    print(f"q6 cold  eager / lazy     = {eager_cold / lazy_cold:.2f}x")
-    print(f"q6 cold  eager / duckdb   = {eager_cold / duckdb_cold:.2f}x")
-    print(f"q6 cold  lazy  / duckdb   = {lazy_cold / duckdb_cold:.2f}x")
-    print(f"q6 cold  lazy  / polars   = {lazy_cold / polars_cold:.2f}x")
-    print(f"q6 cold  eager / polars   = {eager_cold / polars_cold:.2f}x")
+    for comparator in COMPARATORS:
+        values = agg.get((comparator, "-", "cold", q6))
+        if not values:
+            print(f"q6 cold  {DISPLAY[comparator]:<12} : not measured in these reports")
+            continue
+        theirs = median(values)
+        print(f"q6 cold  eager / {DISPLAY[comparator]:<12} = {eager_cold / theirs:.2f}x")
+        print(f"q6 cold  lazy  / {DISPLAY[comparator]:<12} = {lazy_cold / theirs:.2f}x")
 
     print("\n=== COLD WINNER, per query ===")
     for query in QUERIES:
-        figures = {
-            "lazy": median(agg[("engine", "lazy", "cold", query)]),
-            "duckdb": median(agg[("duckdb", "-", "cold", query)]),
-            "polars": median(agg[("polars", "-", "cold", query)]),
-        }
+        figures = {"lazy": median(agg[("engine", "lazy", "cold", query)])}
+        for comparator in COMPARATORS:
+            values = agg.get((comparator, "-", "cold", query))
+            if values:
+                figures[DISPLAY[comparator]] = median(values)
         best = min(figures, key=figures.get)
         detail = "  ".join(f"{name} {value:8.1f}" for name, value in figures.items())
         print(f"{query:<16} {detail}   best: {best}")
@@ -379,6 +563,14 @@ def main() -> int:
     expansion_paths = sorted(Path("bench-results").glob("rle-expansion-run*.json"))
     if expansion_paths:
         print_rle_expansion([load(p) for p in expansion_paths])
+
+    materialised_paths = sorted(Path("bench-results").glob("materialised-run*.json"))
+    if materialised_paths:
+        print_materialised([load(p) for p in materialised_paths])
+
+    curve_paths = sorted(Path("bench-results").glob("curve-run*.json"))
+    if curve_paths:
+        print_curve([load(p) for p in curve_paths])
 
     return 0
 
