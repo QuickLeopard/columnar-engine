@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
+RLE_EXPANSION_REPORTS = sorted((ROOT / "bench-results").glob("rle-expansion-run*.json"))
 RESIDENT_SCALING_REPORTS = sorted(
     (ROOT / "bench-results").glob("scaling-resident-run*.json")
 )
@@ -91,6 +92,22 @@ LOAD_SCALING_CHECKS = [
     ("PERF.md", "load sweep duckdb q6 at 6 threads", 6, "duckdb", 1),
     ("PERF.md", "load sweep engine q6 at 1 thread", 1, "engine", 1),
     ("PERF.md", "load sweep duckdb q6 at 1 thread", 1, "duckdb", 1),
+]
+
+
+# (document, label, measurement, decimal places)
+#
+# Spec 012's T3 is a **refusal**, and a refusal is only worth something if
+# the numbers that refused it are checkable. These are the five figures the
+# decision rests on: what the expansion costs, what the replacement costs,
+# what Arrow's decode costs, what the engine's scan costs, and what the
+# query costs.
+RLE_EXPANSION_CHECKS = [
+    ("PERF.md", "the expansion", "expansion", 2),
+    ("PERF.md", "the mask from the indices", "mask_from_indices", 2),
+    ("PERF.md", "Arrow's decode", "arrow_decode", 2),
+    ("PERF.md", "the engine's scan of the column", "engine_scan", 2),
+    ("PERF.md", "the whole query", "engine_query", 2),
 ]
 
 
@@ -248,6 +265,39 @@ def main() -> int:
                 failures.append(
                     "a browser campaign reports that the two masks did not agree"
                 )
+
+    if RLE_EXPANSION_REPORTS:
+        expansion_runs = [json.loads(path.read_text()) for path in RLE_EXPANSION_REPORTS]
+        for doc, label, key, places in RLE_EXPANSION_CHECKS:
+            values = [
+                run["measurements_ms"][key]
+                for run in expansion_runs
+                if key in run.get("measurements_ms", {})
+            ]
+            if not values:
+                failures.append(f"{doc}: no figure for {label} in the expansion reports")
+                continue
+            figure = statistics.median(values)
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+        # Every campaign must agree on the rows that survive: the expansion
+        # is a claim about a column, and the column's answer is the same
+        # answer the engine gives.
+        survivors = {run.get("survivors") for run in expansion_runs}
+        if len(survivors) != 1:
+            failures.append(
+                f"the expansion campaigns disagree on the surviving rows: {sorted(survivors)}"
+            )
+        else:
+            count = survivors.pop()
+            print(f"ok  {'PERF.md':<10} {'the surviving rows':<28} {count:,}")
 
     if failures:
         print()

@@ -38,6 +38,9 @@ python3 scripts/medians.py
 | `browser-run2.json` | the second |
 | `browser-run3.json` | the third |
 | `browser.json` | a copy of `browser-run3.json`, the campaign whose figures sit nearest the medians |
+| `rle-expansion-run1.json` | the first of the three **RLE expansion campaigns** the §3g table is the median of |
+| `rle-expansion-run2.json` | the second |
+| `rle-expansion-run3.json` | the third |
 | `experiment-dictionary-copy.json` | **not a normal run.** A measurement taken with a deliberate perturbation of the decode path — see below |
 
 ## The experiment file
@@ -68,6 +71,7 @@ There is **one headline table** and **three sweeps**, and they answer different 
 | §2f, `q6-revenue` | the same, on the real Q6 | `scaling-resident-revenue-run*.json` |
 | §2g | *how long does each system take to get the file into memory* | `scaling-load-run*.json` |
 | §1a | *what does the kernel do in a browser* | `browser-run*.json` |
+| §3g | *what does the expansion of the RLE indices cost* | `rle-expansion-run*.json` |
 
 The first is the like-for-like **single-threaded** comparison, and it has been the headline since
 the first set of numbers in this repository. The sweeps exist because a one-thread table on its
@@ -120,6 +124,13 @@ just compare     # writes bench-results/compare.json
 just sweep       # writes bench-results/scaling.json
 just web         # serves the page; the page posts its measurement back
 just web-report  # copies that measurement into bench-results/browser.json
+```
+
+The RLE expansion's reports are written by the probe itself:
+
+```bash
+cargo run --release -p columnar-engine --example rle_expansion_probe -- \
+    data/lineitem.parquet --out bench-results/rle-expansion-run1.json
 ```
 
 `just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, and the `polars`

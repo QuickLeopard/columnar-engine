@@ -222,6 +222,72 @@ def print_browser(runs: list[dict]) -> None:
         print(f"browser: {browser}")
 
 
+def print_rle_expansion(runs: list[dict]) -> None:
+    """Print the RLE expansion's medians.
+
+    This is spec 012's T3: what the expansion of six million RLE dictionary
+    indices costs, against what it would cost not to expand them.
+
+    Every figure is the median over the campaigns, with the spread. The
+    derived figures are **derived from the medians**, never typed: the share
+    of the decode that is the expansion, the share of the query it is, and
+    the net of the increment the hypothesis proposes.
+    """
+    if not runs:
+        return
+
+    def figure(key: str) -> tuple[float, float, float]:
+        values = [
+            run["measurements_ms"][key]
+            for run in runs
+            if key in run.get("measurements_ms", {})
+        ]
+        if not values:
+            return (0.0, 0.0, 0.0)
+        return (statistics.median(values), min(values), max(values))
+
+    rows = [
+        ("P", "the parquet crate's decode", "parquet_decode"),
+        ("A", "Arrow's decode", "arrow_decode"),
+        ("PLAIN", "the same column, no dictionary", "plain_arrow_decode"),
+        ("V", "the probe's decode", "probe_decode"),
+        ("I", "the probe's indices, no gather", "probe_indices"),
+        ("G", "the expansion", "expansion"),
+        ("G1", "  the reader's fresh buffers", "expansion_buffers"),
+        ("G2", "  the gather alone", "expansion_gather"),
+        ("M", "the mask from the indices", "mask_from_indices"),
+        ("C", "the hypothesis, end to end", "prototype"),
+        ("S1", "the engine's scan of the column", "engine_scan"),
+        ("S2", "the whole query", "engine_query"),
+    ]
+
+    print(f"\n=== THE RLE EXPANSION, {len(runs)} campaigns ===")
+    print(f"{'':6}{'figure':<34}{'median (min-max)':>26}")
+    for name, label, key in rows:
+        median, low, high = figure(key)
+        print(f"{name:<6}{label:<34}{f'{median:.2f} ({low:.2f}-{high:.2f})':>26}")
+
+    predicate, _, _ = figure("engine_predicate")
+    expansion, _, _ = figure("expansion")
+    mask, _, _ = figure("mask_from_indices")
+    scan, _, _ = figure("engine_scan")
+    query, _, _ = figure("engine_query")
+    parquet, _, _ = figure("parquet_decode")
+    probe, _, _ = figure("probe_decode")
+    decode = scan - predicate
+    net_crate = expansion - (mask - predicate)
+    net_probe = net_crate - (parquet - probe)
+
+    print()
+    print(f"{'the expansion share of that decode':<44}{expansion / decode * 100:.0f}%")
+    print(f"{'the expansion share of the query':<44}{expansion / query * 100:.1f}%")
+    print(f"{'the mask from the indices, less the predicate':<44}{mask - predicate:.2f} ms")
+    print(f"{'the net, with the crate own RLE decoder':<44}{net_crate:.2f} ms")
+    print(f"{'the net, with the probe RLE decoder':<44}{net_probe:.2f} ms")
+    print(f"{'the host load average':<44}"
+          f"{statistics.median([run.get('host_load_average', 0.0) for run in runs]):.1f}")
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -309,6 +375,10 @@ def main() -> int:
     browser_paths = sorted(Path("bench-results").glob("browser-run*.json"))
     if browser_paths:
         print_browser([load(p) for p in browser_paths])
+
+    expansion_paths = sorted(Path("bench-results").glob("rle-expansion-run*.json"))
+    if expansion_paths:
+        print_rle_expansion([load(p) for p in expansion_paths])
 
     return 0
 

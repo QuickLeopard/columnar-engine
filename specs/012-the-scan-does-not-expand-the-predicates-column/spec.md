@@ -1,8 +1,8 @@
 # Spec 012 — The scan does not expand the predicate's column
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-26
-**ADR**: [ADR-0018](../../docs/adr/0018-the-scan-reads-the-parquet-decode.md)
+**ADR**: [ADR-0018](../../docs/adr/0018-the-scan-reads-the-parquet-decode.md) · [ADR-0020](../../docs/adr/0020-the-expansion-is-not-the-decode-s-cost.md)
 **Predecessor**: [011-the-scan-filters-only-what-it-keeps](../011-the-scan-filters-only-what-it-keeps/spec.md)
 
 ## The problem
@@ -48,18 +48,28 @@ So the expansion is the candidate, and it is a specific one:
 
 ### R1 — The measurement comes first
 
-- [ ] The share of the decode that is the **expansion** is measured, not argued: the decode of a dictionary-encoded
-      column against the decode of the same column without one.
-- [ ] The measurement says what the expansion is worth **in the scan**, with the engine's own read path and the real
-      file, and not in a microbenchmark of the expansion alone.
-- [ ] If the measurement says the expansion is not the cost, **the increment is refused and the measurement is
-      published**.
+- [x] The share of the decode that is the **expansion** is measured, not argued: the decode of a dictionary-encoded
+      column against the decode of the same column without one. **The expansion is 1.83 ms of the engine's 4.06 ms
+      decode of the predicate's column — 45% of it — and 4.2% of the 43.95 ms query.** The same column written
+      **without** a dictionary decodes in 4.63 ms against the dictionary's 3.94 ms: the decode's cost is the bytes.
+- [x] The measurement says what the expansion is worth **in the scan**, with the engine's own read path and the real
+      file, and not in a microbenchmark of the expansion alone. The engine's own scan of the predicate's column is
+      **5.42 ms**, of which the predicate is 1.36 ms.
+- [x] If the measurement says the expansion is not the cost, **the increment is refused and the measurement is
+      published**. It is not the cost: the mask the hypothesis would build from the indices costs **1.80 ms** against
+      the **1.36 ms** the vectorised predicate costs today, and the parquet crate does not expose the indices at all,
+      so capturing the expansion means owning the Parquet reading. **ADR-0020**, `PERF.md` §3g.
 
 ### R2 — The predicate's column is not expanded
 
 - [ ] The scan reads the predicate column's **dictionary and indices**, and compares the dictionary.
 - [ ] The mask that comes out of the dictionary is applied to the **indices**, not to expanded values.
 - [ ] The expanded values of the predicate's column **do not exist** at any point.
+
+> **Not done, and not to be done.** The increment was refused on the measurement, and the requirement is the shape the
+> refused increment would have had. The shape was **prototyped and measured** anyway — the probe compares the
+> dictionary and maps the indices through the answer — because a refusal without a measured alternative is an
+> argument. See [ADR-0020](../../docs/adr/0020-the-expansion-is-not-the-decode-s-cost.md).
 
 ### R3 — The semantics do not change
 
@@ -69,6 +79,10 @@ So the expansion is the candidate, and it is a specific one:
       operator including `!=`. Arrow's `totalOrder` is not substituted for them.
 - [ ] A column the query **materialises** is still expanded, because the materialised column is the output.
 
+> **Not done, and not to be done**, for the same reason as R2: there is no change to the semantics, because there is
+> no change to the scan. The prototype's rows are the engine's rows — **2,178,861** in every campaign — and the probe
+> checks them against the engine's own answer.
+
 ### R4 — The tests
 
 - [ ] The scan's rows are compared against the scan's rows **before** this change, over the real predicates, over
@@ -77,10 +91,18 @@ So the expansion is the candidate, and it is a specific one:
       implementation that assumes the dictionary is sorted would pass on this file and fail on another.
 - [ ] **The mutations were run**, and each one was caught.
 
+> **The tests belong to the probe**, which is the instrument the measurement rests on, and they are in the tree: nine
+> tests over the probe's own RLE decoder, including **a dictionary whose values are not sorted and whose indices are
+> not monotonic**, and including the fact that **the answer is per row group** — two row groups hold the same eleven
+> values in a different order. Ten mutations were run against them and **each one was caught**.
+
 ### R5 — The publication
 
-- [ ] The headline table is **re-measured**: three full campaigns, medians and spreads, the raw reports committed.
-- [ ] ADR-0018 and this spec are updated with what was measured, whichever way it went.
+- [x] The headline table is **re-measured**: three full campaigns, medians and spreads, the raw reports committed.
+      The raw reports are in `bench-results/rle-expansion-run{1,2,3}.json`, the table is derived by
+      `python3 scripts/medians.py`, and `scripts/check-published-figures.py` guards the figures that are quoted.
+- [x] ADR-0018 and this spec are updated with what was measured, whichever way it went. **ADR-0020** records the
+      second refusal, and `PERF.md` §3g publishes the measurement.
 
 ## The non-goals
 

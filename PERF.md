@@ -969,6 +969,73 @@ the predicates cost 1.4 ms rather than 14.
 That is the next increment — [spec 012](specs/012-the-scan-does-not-expand-the-predicates-column/spec.md) — and it is
 a **hypothesis**, measured before anything is built, the way this one was.
 
+### 3g. The expansion of the RLE indices, and why it is not the decode's cost
+
+The hypothesis §3f ends on was specific: **the predicate's column is expanded into six million values, compared, and
+thrown away, and the engine could compare the dictionary instead and apply the mask to the indices.** Spec 012's T3
+is the test of it, and the test came out **no**.
+
+The probe is in the tree, as `crates/columnar-engine/examples/rle_expansion_probe.rs`. It measures eleven things on
+the same file, in the same process, warm, each the median of five runs, over **three campaigns**; the raw reports are
+in `bench-results/rle-expansion-run{1,2,3}.json` and the table below is derived from them by
+`python3 scripts/medians.py`.
+
+| | | median (min–max) |
+|---|---|---|
+| **P** | the parquet crate's own decode of the column | **7.19 ms** (7.17–7.39) |
+| **A** | Arrow's decode of the column — what the engine's reader does | **3.94 ms** (3.77–3.95) |
+| **PLAIN** | the decode of the **same column written without a dictionary**, through Arrow | **4.63 ms** (4.58–4.95) |
+| **V** | the probe's decode: the indices *and* the gather | **6.20 ms** (6.08–6.29) |
+| **I** | the probe's decode of the indices **only**: no gather, no values | **4.38 ms** (4.32–4.44) |
+| **G** | **the expansion**: the reader's fresh buffers, and the gather | **1.83 ms** (1.78–1.85) |
+| **G1** | the reader's fresh buffers, and their zeroing | **0.21 ms** (0.20–0.21) |
+| **G2** | the gather alone | **1.57 ms** (1.56–1.58) |
+| **M** | **the mask the hypothesis would have to build** from the indices | **1.80 ms** (1.73–1.83) |
+| **C** | the hypothesis's shape, end to end | **7.79 ms** (7.58–7.91) |
+| **S1** | the engine's scan of the predicate's column | **5.42 ms** (5.37–5.58) |
+| | of which the predicate itself | 1.36 ms |
+| **S2** | the whole query | **43.95 ms** (43.84–44.71) |
+
+**The expansion is real, and it is not the decode's cost.** `l_discount` is a `float64` column stored as **eleven
+distinct values** and a million RLE indices into them — four bits a row, 502,051 bytes of indices for a row group of
+1,000,000 rows. The expansion is **1.83 ms** of the engine's **4.06 ms** decode of that column, so **45% of it** — and
+that decode is **9.2% of the query**, which makes the expansion **4.2% of the 43.95 ms query**.
+
+**The decode's cost is the bytes.** The same column, written without a dictionary, holds 48,025,815 bytes against the
+dictionary's 3,012,834, and Arrow decodes it in **4.63 ms** against the dictionary's **3.94 ms**. The dictionary
+encoding wins by 0.69 ms *despite* paying the 1.83 ms expansion: the expansion costs less than the forty-five megabytes
+it saves, which is the whole reason the file is dictionary-encoded.
+
+**The replacement is not cheaper than what it replaces.** The mask is still one bit per row, and the row's bit is the
+predicate's answer for the row's index — so the engine has to build it per row, out of the indices. That is **M**:
+**1.80 ms**, against the **1.36 ms** the vectorised predicate costs today. There is no cheap "test a bit at a variable
+index" instruction, so the mask from the indices is a scalar loop, and it costs **0.44 ms more** than the comparison it
+would replace.
+
+**And the indices cannot be had for free.** The parquet crate does not expose them: the expansion is inside
+`DictDecoder::get`, its `RowFilter` and `ArrowPredicate` evaluate on the *decoded* batch, `DictIndexDecoder` is in a
+private module, and `RleDecoder` is `pub(crate)`. So the engine would have to **own the Parquet reading** — this
+spec's own non-goal, and ADR-0018's refusal. The price of owning it is measurable: the probe's own decoder of the
+format, checked bit-for-bit against the crate's, is **0.99 ms slower** than the crate's, and that cancels most of the
+increment.
+
+| | |
+|---|---|
+| the expansion, saved | 1.83 ms |
+| the mask from the indices, minus the predicate it replaces | −0.44 ms |
+| **the net, with the crate's own RLE decoder** | **1.39 ms** |
+| the probe's RLE decoder, against the crate's | −0.99 ms |
+| **the net, with the decoder the probe actually wrote** | **0.40 ms** |
+
+**So the increment is refused**, and the receipt is published, the way §3f's was: **0.40 ms on a 43.95 ms query** for
+a rewrite of the read path and a new implementation of the Parquet format's index encoding. The hypothesis was not
+wrong about the file — the column is dictionary-encoded, and the decode does expand six million indices. It was wrong
+about the size of the prize. See [ADR-0020](docs/adr/0020-the-expansion-is-not-the-decode-s-cost.md).
+
+One fact an implementation would have to respect, which the probe found the hard way: **every row group has its own
+dictionary**, built in the order the values were first seen in that chunk, so two row groups hold the same eleven
+values in a different order. The probe's first attempt at the mask was wrong by 3,671 rows because of it.
+
 ---
 
 ## 4. The defects the increments found
