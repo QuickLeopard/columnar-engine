@@ -36,11 +36,16 @@ pub struct PlanOutput {
     pub optimization_order: &'static str,
     /// The stages, in execution order.
     pub stages: Vec<StageStats>,
-    /// The columns that were decoded, in schema order.
+    /// The columns the query read, in schema order.
     ///
     /// This is the late-materialisation report: a column that is neither
     /// filtered nor aggregated is absent from this list, because it was
-    /// never decoded.
+    /// never read.
+    ///
+    /// A column the aggregate folded **in place**, over the filter's
+    /// selection, is in this list — it was read — even though it was never
+    /// copied into a column of the survivors. A column the query read is a
+    /// column the query read, whether or not the engine materialised it.
     pub materialised_columns: Vec<String>,
     /// The estimated working set, in bytes.
     pub estimated_bytes: usize,

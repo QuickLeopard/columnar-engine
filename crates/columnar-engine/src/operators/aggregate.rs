@@ -36,11 +36,33 @@
 //! `COUNT(*)` reads no column at all, so a plan that only counts rows
 //! materialises nothing: no column is decoded, and the engine touches no
 //! data beyond counting the rows that survived the filter.
+//!
+//! ## The global aggregate reads the source in place
+//!
+//! A **global** aggregate -- one with no GROUP BY -- has one group, and every
+//! surviving row belongs to it. Such an aggregate never needs the survivors'
+//! values *aligned* with the survivors: it folds them, one after another. So
+//! the engine does not build a column of the survivors at all. It hands the
+//! aggregate the **source** column and the **selection**, and the aggregate
+//! reads the survivors' values out of the source where they lie.
+//!
+//! That is the whole difference between a gather and a fold: the gather
+//! copies the survivors' values into a column of their own, and the fold
+//! reads them where they are. The values, the order and the NULL rules are
+//! the same -- a float sum is bit for bit the sum the gathered column
+//! produced, because the survivors are visited in the same ascending order --
+//! but the copy is not made, and a copy of a million doubles is not free.
+//!
+//! A **grouped** aggregate still gathers. Its group keys have to line up with
+//! its values, and the hash table wants both. There is no measurement behind
+//! fusing that, so it is not done.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use columnar_core::{BatchColumn, BatchData, ScalarValue};
+use columnar_core::{
+    BatchColumn, BatchData, ColumnChunk, Encoding, NullBitmap, ScalarValue, SelectionVector,
+};
 
 use crate::explain::{PlanOutput, StageStats};
 use crate::plan::{Aggregate, AggregateSpec};
@@ -76,12 +98,332 @@ pub enum AggregateValue {
     Null,
 }
 
+/// Where an aggregate's values come from.
+///
+/// The aggregate does not care which: it folds the values it is given, in the
+/// order it is given them, and skips the NULLs among them. What differs is
+/// where the values come from, and that is the difference between a column
+/// that was materialised and a column that was read where it lies.
+#[derive(Debug, Clone, Copy)]
+pub enum ValueSource<'a> {
+    /// The aggregate reads no column: it counts rows.
+    Rows,
+    /// A materialised column: the survivors, gathered into a column of their
+    /// own.
+    Gathered(&'a BatchColumn),
+    /// The source column, read in place over the rows that survived.
+    ///
+    /// The column is never copied. The aggregate reads the survivors' values
+    /// out of the source, one at a time, in the survivors' order.
+    Selected {
+        /// The column, read where it lies.
+        column: SelectedColumn<'a>,
+        /// The column's validity mask, over the source rows.
+        validity: &'a NullBitmap,
+        /// The rows that survived the filter.
+        selection: &'a SelectionVector,
+    },
+}
+
+/// A column read in place, over the rows that survived the filter.
+///
+/// The aggregate folds the column where it lies: it reads the survivors'
+/// values out of the source and adds them, and no copy of them is ever made.
+///
+/// The column's **encoding** is what is read, so a dictionary-encoded column
+/// is read through its dictionary -- the same values the gather would have
+/// copied out of it, reached the same way.
+#[derive(Debug, Clone, Copy)]
+pub enum SelectedColumn<'a> {
+    /// Plain doubles.
+    Float64(&'a [f64]),
+    /// Plain integers.
+    Int64(&'a [i64]),
+    /// Plain strings.
+    Utf8(&'a [String]),
+    /// Dictionary-encoded doubles.
+    Float64Dict {
+        /// The distinct values.
+        dict: &'a [f64],
+        /// One index into the dictionary per row.
+        indices: &'a [i32],
+    },
+    /// Dictionary-encoded integers.
+    Int64Dict {
+        /// The distinct values.
+        dict: &'a [i64],
+        /// One index into the dictionary per row.
+        indices: &'a [i32],
+    },
+    /// Dictionary-encoded strings.
+    Utf8Dict {
+        /// The distinct values.
+        dict: &'a [String],
+        /// One index into the dictionary per row.
+        indices: &'a [i32],
+    },
+}
+
+impl<'a> SelectedColumn<'a> {
+    /// The column in `chunk`, if its encoding can be read one row at a time.
+    ///
+    /// A run-length-encoded column cannot: its values are runs, and reading
+    /// one row means finding the run it falls in. Such a column is gathered,
+    /// as it always was.
+    #[must_use]
+    pub fn from_chunk(chunk: &'a ColumnChunk) -> Option<Self> {
+        match &chunk.encoding {
+            Encoding::Float64 { values } => Some(Self::Float64(values)),
+            Encoding::Int64 { values } => Some(Self::Int64(values)),
+            Encoding::Utf8 { values } => Some(Self::Utf8(values)),
+            Encoding::Float64Dict { dict, indices } => Some(Self::Float64Dict { dict, indices }),
+            Encoding::Int64Dict { dict, indices } => Some(Self::Int64Dict { dict, indices }),
+            Encoding::Utf8Dict { dict, indices } => Some(Self::Utf8Dict { dict, indices }),
+            Encoding::BoolRle { .. } => None,
+        }
+    }
+
+    /// Whether the column's values are doubles.
+    ///
+    /// This is the same question the accumulator asks of a gathered column,
+    /// and it is asked of the *encoding* rather than of a decoded column: a
+    /// dictionary-encoded double column is a float column, exactly as its
+    /// gathered copy is.
+    #[must_use]
+    pub const fn is_float(&self) -> bool {
+        matches!(self, Self::Float64(_) | Self::Float64Dict { .. })
+    }
+}
+
+impl ValueSource<'_> {
+    /// Whether the values are doubles.
+    ///
+    /// This is the question the accumulator asks, and it is asked of the
+    /// *source*: a dictionary-encoded double column is a float column, exactly
+    /// as its gathered copy is.
+    fn is_float(&self) -> bool {
+        match self {
+            Self::Rows => false,
+            Self::Gathered(column) => matches!(column.data, BatchData::Float64(_)),
+            Self::Selected { column, .. } => column.is_float(),
+        }
+    }
+}
+
+/// A column's values, read one row at a time.
+///
+/// The fold's inner loop asks for one row's value at a time, and this trait
+/// is what the loop is written against. Resolving the column's **kind** once
+/// -- here, in the type -- is what keeps the loop tight: the kind's test is
+/// not in the loop, and the accumulator's state stays in a register.
+///
+/// The difference between a tight loop and a dispatching one is worth a
+/// whole millisecond on the repository's own query, so the kind is resolved
+/// before the loop rather than inside it.
+trait RowValues {
+    /// The value one row holds.
+    type Value: Copy;
+    /// The value of `row`.
+    fn at(&self, row: usize) -> Self::Value;
+}
+
+/// A plain float column.
+impl RowValues for &[f64] {
+    type Value = f64;
+
+    fn at(&self, row: usize) -> f64 {
+        self[row]
+    }
+}
+
+/// A plain integer column.
+impl RowValues for &[i64] {
+    type Value = i64;
+
+    fn at(&self, row: usize) -> i64 {
+        self[row]
+    }
+}
+
+/// A dictionary-encoded float column.
+struct DictF64<'a> {
+    /// The distinct values.
+    dict: &'a [f64],
+    /// One index into the dictionary per row.
+    indices: &'a [i32],
+}
+
+impl RowValues for DictF64<'_> {
+    type Value = f64;
+
+    fn at(&self, row: usize) -> f64 {
+        let index = usize::try_from(self.indices[row]).expect("a dictionary index is not negative");
+        self.dict[index]
+    }
+}
+
+/// A dictionary-encoded integer column.
+struct DictI64<'a> {
+    /// The distinct values.
+    dict: &'a [i64],
+    /// One index into the dictionary per row.
+    indices: &'a [i32],
+}
+
+impl RowValues for DictI64<'_> {
+    type Value = i64;
+
+    fn at(&self, row: usize) -> i64 {
+        let index = usize::try_from(self.indices[row]).expect("a dictionary index is not negative");
+        self.dict[index]
+    }
+}
+
+/// A value the minimum and the maximum can be taken of.
+///
+/// Floats compare with `total_cmp`, so a NaN is **ordered** rather than
+/// refused: the same rule the gathered column's fold uses, and the same rule
+/// the aggregate's output order uses.
+trait Orderable: Copy {
+    /// Whether this value is smaller than `other`.
+    fn is_less(&self, other: &Self) -> bool;
+    /// Whether this value is larger than `other`.
+    fn is_greater(&self, other: &Self) -> bool;
+}
+
+impl Orderable for f64 {
+    fn is_less(&self, other: &Self) -> bool {
+        self.total_cmp(other).is_lt()
+    }
+
+    fn is_greater(&self, other: &Self) -> bool {
+        self.total_cmp(other).is_gt()
+    }
+}
+
+impl Orderable for i64 {
+    fn is_less(&self, other: &Self) -> bool {
+        self < other
+    }
+
+    fn is_greater(&self, other: &Self) -> bool {
+        self > other
+    }
+}
+
+/// Which way an extreme goes.
+#[derive(Debug, Clone, Copy)]
+enum Extreme {
+    /// The smallest value.
+    Min,
+    /// The largest value.
+    Max,
+}
+
+/// Folds the survivors' values into a running float sum.
+///
+/// The sum is taken in the survivors' **ascending order**, so it is bit for
+/// bit the sum the gathered column's fold took.
+fn fold_sum_f64<R: RowValues<Value = f64>>(
+    total: &mut f64,
+    seen: &mut bool,
+    rows: &R,
+    validity: &NullBitmap,
+    selection: &SelectionVector,
+) {
+    let mut sum = *total;
+    let mut any = *seen;
+    selection.for_each(|row| {
+        let row = usize::try_from(row).expect("a row fits in a usize");
+        if row < validity.len() && validity.is_valid(row) {
+            sum += rows.at(row);
+            any = true;
+        }
+    });
+    *total = sum;
+    *seen = any;
+}
+
+/// Folds the survivors' values into a running integer sum.
+///
+/// The sum **saturates** at the `i64` bounds rather than wrapping, so an
+/// overflowing sum is loud rather than wrong.
+fn fold_sum_i64<R: RowValues<Value = i64>>(
+    total: &mut i64,
+    seen: &mut bool,
+    rows: &R,
+    validity: &NullBitmap,
+    selection: &SelectionVector,
+) {
+    let mut sum = *total;
+    let mut any = *seen;
+    selection.for_each(|row| {
+        let row = usize::try_from(row).expect("a row fits in a usize");
+        if row < validity.len() && validity.is_valid(row) {
+            sum = sum.saturating_add(rows.at(row));
+            any = true;
+        }
+    });
+    *total = sum;
+    *seen = any;
+}
+
+/// Folds the survivors' values into a running minimum or maximum.
+fn fold_extreme<R: RowValues>(
+    current: &mut Option<R::Value>,
+    extreme: Extreme,
+    rows: &R,
+    validity: &NullBitmap,
+    selection: &SelectionVector,
+) where
+    R::Value: Orderable,
+{
+    let mut best = *current;
+    selection.for_each(|row| {
+        let row = usize::try_from(row).expect("a row fits in a usize");
+        if row < validity.len() && validity.is_valid(row) {
+            let value = rows.at(row);
+            let better = match best {
+                None => true,
+                Some(best) => match extreme {
+                    Extreme::Min => value.is_less(&best),
+                    Extreme::Max => value.is_greater(&best),
+                },
+            };
+            if better {
+                best = Some(value);
+            }
+        }
+    });
+    *current = best;
+}
+
+/// Folds the survivors' non-NULL rows into a count.
+///
+/// A count reads **no values at all**: it only asks which rows hold one.
+/// The gathered column's fold had to read the values to find out, because a
+/// gathered column carries its NULLs in a mask the count had to walk.
+fn fold_count(count: &mut i64, validity: &NullBitmap, selection: &SelectionVector) {
+    let mut counted = *count;
+    selection.for_each(|row| {
+        let row = usize::try_from(row).expect("a row fits in a usize");
+        if row < validity.len() && validity.is_valid(row) {
+            counted += 1;
+        }
+    });
+    *count = counted;
+}
+
 /// Computes the hash aggregate.
 ///
 /// `group_by` holds the gathered group-by columns, in `group_by` order.
 /// `values` holds the gathered value column of each aggregate, in the order
 /// the aggregates were declared; `None` marks `COUNT(*)`, which reads no
 /// column. `rows` is the number of rows the aggregation covers.
+///
+/// This is the **grouped** path's entry point. A global aggregation -- one
+/// with no GROUP BY -- is better served by [`aggregate_global`], which can
+/// read the columns where they lie instead of gathering them.
 #[must_use]
 pub fn aggregate<'a>(
     spec: &AggregateSpec,
@@ -95,10 +437,18 @@ pub fn aggregate<'a>(
     // same answer every time, which is why the first version of this
     // operator spent 48 ms counting six million rows.
     //
-    // This path also handles `COUNT(*)` in the way the module documentation
-    // promises: it reads no column at all, and the answer is the row count.
+    // The global fold itself is [`global_group`], and it is the *same* fold
+    // [`aggregate_global`] runs: one implementation, so there is no second
+    // answer to disagree with this one.
     if group_by.is_empty() {
-        return vec![global_group(spec, values, rows)];
+        let sources: Vec<ValueSource<'a>> = values
+            .iter()
+            .map(|value| match value {
+                None => ValueSource::Rows,
+                Some(column) => ValueSource::Gathered(column),
+            })
+            .collect();
+        return vec![global_group(spec, &sources, rows)];
     }
 
     let mut slots: HashMap<Vec<KeyPart>, usize> = HashMap::new();
@@ -138,29 +488,53 @@ pub fn aggregate<'a>(
 
 /// Computes the single group of a global aggregate.
 ///
+/// This is the global path's entry point, and it is the one that can read a
+/// column where it lies: a [`ValueSource::Selected`] column is folded over
+/// the selection, and no column of the survivors is ever built.
+///
+/// `values` holds the source of each aggregate's values, in the order the
+/// aggregates were declared. `rows` is the number of rows the aggregation
+/// covers.
+#[must_use]
+pub fn aggregate_global(
+    spec: &AggregateSpec,
+    values: &[ValueSource<'_>],
+    rows: usize,
+) -> Vec<Group> {
+    vec![global_group(spec, values, rows)]
+}
+
+/// Computes the single group of a global aggregate.
+///
 /// Each aggregate is folded on its own, so that `COUNT(*)` never reads a
 /// column and never touches the row loop at all.
-fn global_group(spec: &AggregateSpec, values: &[Option<&BatchColumn>], rows: usize) -> Group {
+fn global_group(spec: &AggregateSpec, values: &[ValueSource<'_>], rows: usize) -> Group {
     let mut accumulators: Vec<Accumulator> = spec
         .aggregates
         .iter()
         .zip(values.iter())
-        .map(|(aggregate, column)| Accumulator::new(aggregate, *column))
+        .map(|(aggregate, source)| Accumulator::new(aggregate, source.is_float()))
         .collect();
 
-    for (index, (aggregate, column)) in spec.aggregates.iter().zip(values.iter()).enumerate() {
-        match (aggregate, column) {
+    for (index, (aggregate, source)) in spec.aggregates.iter().zip(values.iter()).enumerate() {
+        match (aggregate, source) {
             // `COUNT(*)` counts rows, not values. The answer is the row
             // count, so no column is read and no row is visited.
             (Aggregate::CountStar, _) => accumulators[index].set_row_count(rows),
-            (_, Some(column)) => {
+            // The column is read where it lies: the survivors' values are
+            // folded straight out of the source, and no column of the
+            // survivors is ever built.
+            (_, ValueSource::Selected { column, validity, selection }) => {
+                accumulators[index].fold_selected(column, validity, selection);
+            }
+            (_, ValueSource::Gathered(column)) => {
                 for row in 0..rows {
                     if let Some(value) = raw_at(column, row) {
                         accumulators[index].add(value);
                     }
                 }
             }
-            (_, None) => {
+            (_, ValueSource::Rows) => {
                 for _ in 0..rows {
                     accumulators[index].add(RawValue::Unit);
                 }
@@ -186,7 +560,11 @@ impl GroupState {
             .aggregates
             .iter()
             .zip(values.iter())
-            .map(|(aggregate, column)| Accumulator::new(aggregate, *column))
+            .map(|(aggregate, column)| {
+                let is_float =
+                    column.is_some_and(|column| matches!(column.data, BatchData::Float64(_)));
+                Accumulator::new(aggregate, is_float)
+            })
             .collect();
         Self { key: key.to_vec(), accumulators }
     }
@@ -260,8 +638,7 @@ impl Accumulator {
     ///
     /// The accumulator's type comes from the column's type, so the type
     /// check the plan resolution made is carried through to the fold.
-    fn new(aggregate: &Aggregate, column: Option<&BatchColumn>) -> Self {
-        let is_float = column.is_some_and(|column| matches!(column.data, BatchData::Float64(_)));
+    fn new(aggregate: &Aggregate, is_float: bool) -> Self {
         match aggregate {
             Aggregate::Sum { .. } => {
                 if is_float {
@@ -326,6 +703,70 @@ impl Accumulator {
             }
             // The accumulator's type is chosen from the column's type, so a
             // value of another type cannot reach here.
+            (_, _) => {}
+        }
+    }
+
+    /// Folds a column read in place over the rows that survived.
+    ///
+    /// The survivors are visited in **ascending order** -- the order the
+    /// gathered column's fold visits them in -- so a float sum is bit for bit
+    /// the sum the gathered column produced. A NULL row is skipped, exactly
+    /// as `raw_at` skips it, and so is a row beyond the validity mask's
+    /// length: a row the engine cannot vouch for is a NULL row.
+    ///
+    /// The accumulator's type and the column's type agree -- the accumulator
+    /// was built from the column's type -- so the match below has one arm per
+    /// **pair** that can occur. Each arm is a tight loop: the column's kind
+    /// and the accumulator's state are both resolved before the loop starts.
+    fn fold_selected(
+        &mut self,
+        column: &SelectedColumn<'_>,
+        validity: &NullBitmap,
+        selection: &SelectionVector,
+    ) {
+        match (&mut *self, column) {
+            (Self::SumFloat { total, seen }, SelectedColumn::Float64(values)) => {
+                fold_sum_f64(total, seen, values, validity, selection);
+            }
+            (Self::SumFloat { total, seen }, SelectedColumn::Float64Dict { dict, indices }) => {
+                fold_sum_f64(total, seen, &DictF64 { dict, indices }, validity, selection);
+            }
+            (Self::SumInt { total, seen }, SelectedColumn::Int64(values)) => {
+                fold_sum_i64(total, seen, values, validity, selection);
+            }
+            (Self::SumInt { total, seen }, SelectedColumn::Int64Dict { dict, indices }) => {
+                fold_sum_i64(total, seen, &DictI64 { dict, indices }, validity, selection);
+            }
+            // A count reads no values: it only asks which rows hold one.
+            (Self::Count { count }, _) => fold_count(count, validity, selection),
+            (Self::MinInt { value }, SelectedColumn::Int64(values)) => {
+                fold_extreme(value, Extreme::Min, values, validity, selection);
+            }
+            (Self::MinInt { value }, SelectedColumn::Int64Dict { dict, indices }) => {
+                fold_extreme(value, Extreme::Min, &DictI64 { dict, indices }, validity, selection);
+            }
+            (Self::MaxInt { value }, SelectedColumn::Int64(values)) => {
+                fold_extreme(value, Extreme::Max, values, validity, selection);
+            }
+            (Self::MaxInt { value }, SelectedColumn::Int64Dict { dict, indices }) => {
+                fold_extreme(value, Extreme::Max, &DictI64 { dict, indices }, validity, selection);
+            }
+            (Self::MinFloat { value }, SelectedColumn::Float64(values)) => {
+                fold_extreme(value, Extreme::Min, values, validity, selection);
+            }
+            (Self::MinFloat { value }, SelectedColumn::Float64Dict { dict, indices }) => {
+                fold_extreme(value, Extreme::Min, &DictF64 { dict, indices }, validity, selection);
+            }
+            (Self::MaxFloat { value }, SelectedColumn::Float64(values)) => {
+                fold_extreme(value, Extreme::Max, values, validity, selection);
+            }
+            (Self::MaxFloat { value }, SelectedColumn::Float64Dict { dict, indices }) => {
+                fold_extreme(value, Extreme::Max, &DictF64 { dict, indices }, validity, selection);
+            }
+            // The accumulator's type is chosen from the column's type, so a
+            // value of another type cannot reach here -- and a sum over a
+            // string column is refused by the plan before it runs.
             (_, _) => {}
         }
     }

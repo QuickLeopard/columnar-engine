@@ -50,16 +50,16 @@ $ just compare
 cold · read the Parquet file and answer in one go
 query          engine   engine-lazy   duckdb   polars
 --------------------------------------------------------
-scan         559.7           0.1      2.0      1.0
-filter-numeric     559.7           5.3     22.0     43.9
-filter-string      560.8          17.5     21.0    161.5
-filter-range       567.2          26.6     31.0     14.9
-q6          568.5          26.2     32.0    189.1
-q6-revenue   572.5          70.2     68.0    197.6
+scan         557.7           0.1      2.0      1.0
+filter-numeric     558.0           5.2     22.0     44.8
+filter-string      555.0          17.4     22.0    162.3
+filter-range       557.0          19.9     31.0     15.7
+q6          562.7          26.0     32.0    191.2
+q6-revenue   575.7          70.7     69.0    195.2
 ```
 
 **The lazy path is 21.7× faster than the eager one on `q6`**, and it beats Polars on every cold
-query except `filter-range`. It beats DuckDB on `filter-numeric` — 5.3 ms against 22.0 ms — and
+query except `filter-range`. It beats DuckDB on `filter-numeric` — 5.2 ms against 22.0 ms — and
 on `filter-string`, and on `scan`. On `q6` it is **1.2× ahead**, where it used to be 2.6×
 behind. The gap was never pruning: DuckDB prunes nothing on this file either (its own plan says
 `Row Groups Scanned: 6 / 6`, and the file has no page index). It was the engine's own mask, on
@@ -67,11 +67,19 @@ its way to the reader as a **list of 2.78 million row ranges**, applied one rang
 Measured and attributed in [`PERF.md`](PERF.md), not glossed.
 
 **`q6-revenue` is TPC-H Q6 itself** — `sum(l_extendedprice * (1 - l_discount))` — and the engine
-runs it: 70.2 ms cold against DuckDB's 68.0 ms, and 14.6 ms resident against DuckDB's 45.0 ms.
+runs it: 70.7 ms cold against DuckDB's 69.0 ms, and 14.9 ms resident against DuckDB's 47.0 ms.
 The arithmetic is **0.2 ms of the 70 ms**, because it is evaluated over the 110,915 rows that
 survived the filter and not over the 6,000,000 rows of the file. The query's cost is reading
 `l_extendedprice`, not computing with it. See
 [ADR-0012](docs/adr/0012-arithmetic-expression.md).
+
+**And the query the engine used to lose, it now wins.** `filter-range` — `sum(l_quantity)` over a
+two-predicate range — was the one loss in the table: 14.6 ms resident against Polars' 11.5 ms,
+because the projection materialised a column that the aggregate only streamed over. The aggregate
+now folds the source **where it lies**, over the filter's selection, and the projection materialises
+nothing at all: **6.9 ms resident against Polars' 12.2 ms and DuckDB's 18.0 ms**, and the
+projection stage is 0.0 ms. See
+[ADR-0016](docs/adr/0016-the-aggregate-reads-in-place.md).
 
 **And the engine now has threads too.** The read splits the file's row groups across the workers
 and merges them back in the file's order, so the answer does not depend on the scheduler. On the
@@ -338,10 +346,10 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place |
 | Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 198, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the performance-gate suite and the x86-64 cross-check |
+| Tests | 209, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |
-| Next | **Fuse the projection into the aggregate.** `filter-range` is the only query the engine loses — 26.6 ms against Polars' 14.9 ms cold, 14.6 ms against 11.5 ms resident — and `PERF.md` §2a already names the cause: the projection materialises a column that the aggregate only streams over, and the projection stage is 7.3 ms of the 14.6 ms resident query. The aggregate can sum over the filter's selection instead of over a materialised chunk. After that: narrowing the predicates in the engine's own domain, the morsel driver, and the x86-64 measurement, which stays blocked until there is an x86-64 machine |
+| Next | **The cold path's remaining gap is `filter-range`, and it is a scan gap, not an operator gap.** The lazy path is 19.9 ms against Polars' 15.7 ms, and the aggregate that used to cost 7.8 ms of materialisation now costs 2.0 ms — so what is left is the 17.6 ms scan. After that: narrowing the predicates in the engine's own domain (recover the 12M-row evaluation, at the cost of a scatter), the morsel driver (still worth ~0 ms in the cold path, because the pushdown leaves the operators nothing to do), and the x86-64 measurement, which stays blocked until there is an x86-64 machine |

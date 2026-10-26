@@ -132,7 +132,7 @@ Anything not implemented MUST be written down as out of scope, with the reason.
   document.
 - **MUST**: a simplification that a measurement says does not matter yet be **measured and
   published as such**, rather than assumed. The arithmetic aggregate is scalar, and the
-  measurement says the arithmetic is 0.2 ms of the real Q6's 142 ms — so the scalar path is the
+  measurement says the arithmetic is 0.2 ms of the real Q6's 70 ms — so the scalar path is the
   right amount of work for now, and the number is published rather than the omission.
 - **MUST**: a limit that is not the implementation's own be named as such. The parallel read is
   capped by the **file's row groups**, not by the machine's cores, and a published curve that
@@ -203,6 +203,15 @@ These are the standards any change must hold or improve. They are the floor.
   costs several times the decode it was meant to save. The engine's mask is one bit per row, and
   it stays that way: the reader is given **no** row filter, and there is no range list anywhere in
   the engine.
+- **A column that one operator streams over MUST NOT be materialised**: an intermediate that
+  exists only to be read once, in order, and thrown away is a copy of the data for nothing. A
+  **global** aggregate has one group and folds the survivors one after another, so it never needs
+  their values aligned with anything, and the engine reads them where they lie — the projection
+  materialises nothing, and the copy is never made. A column that an **expression** reads, or
+  that a **grouped** aggregate keys on, *is* aligned with something, and it MUST be materialised.
+  The distinction is a property of the operator's shape, so it is measured rather than assumed:
+  the fold that follows the selection and the fold that tests it per row differ by a factor of
+  ten, and the engine's answer is the first one.
 
 ---
 
@@ -249,9 +258,39 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.7.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
+**Version**: 1.8.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-26
 
 ### Amendment history
+
+**1.8.0 — 2026-10-26 — the aggregate reads the source where it lies, and the last loss is gone.**
+`filter-range` was the one query the engine lost: 14.6 ms resident against Polars' 11.5 ms, and
+26.6 ms cold against Polars' 14.9 ms. Its stages said why — filter 1.5 ms, **project 7.0 ms**,
+aggregate 2.4 ms — and the projection was materialising a column that **nobody would ever see**:
+the aggregate summed it and threw it away, and a plan *with* an aggregation ignores the projection,
+because the aggregate result is the output.
+
+The fusion was prototyped and measured before it was built. Four ways of getting the same answer
+over the real file and the real selection: gather the survivors and fold the gathered column
+**9.06 ms**; **fold the source at the selection's rows 1.83 ms**; fold the source, testing the
+selection for every row **17.68 ms**; and the whole column, with no selection at all, 3.73 ms. All
+four produced bit-identical sums. The engine now folds the source where it lies, and the
+projection materialises nothing: **`filter-range` is 6.9 ms resident against Polars' 12.2 ms**,
+and the projection stage is 0.0 ms.
+
+*Rationale*: the requirement added is that **a column that one operator streams over MUST NOT be
+materialised**. The projection was the engine's most expensive habit, and it was paying for a copy
+that no operator asked for: the aggregate reads the survivors once, in order, and discards them.
+The same reasoning as the row selection's single representation — *one representation, and the cheap
+one* — applied to a different thing. And the shape of the fold is a measurement, not a preference:
+following the selection and testing it per row differ by a factor of ten, so "fold the source" is
+not a single decision but two, and only one of them is the right one.
+
+*Principles touched*: IV is extended, not changed; the Performance Standards gain one requirement.
+Neither I, III nor II is touched, so it is a MINOR bump.
+*Migration plan*: the headline table was re-measured, because the committed reports carry the
+figures. The **sweeps were not re-measured**: they measure `q6`, whose aggregate is `count(*)` over
+no column, and the fusion does not reach it. The **load sweep** was not re-measured either: it is a
+measurement of the eager decode, which this increment does not touch.
 
 **1.7.0 — 2026-10-25 — the engine keeps the mask, and the last big gap is gone.** The engine's
 lazy scan of the two columns TPC-H Q6 needs took 82.4 ms against DuckDB's 32.0 ms on the same file

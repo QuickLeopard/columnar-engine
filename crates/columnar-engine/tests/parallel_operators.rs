@@ -257,12 +257,23 @@ fn the_plan_reports_the_workers_that_ran() {
     // A plan that materialises a column, so the projection has work to do.
     // `COUNT(*)` alone materialises nothing, and a projection that gathered
     // nothing has one worker by definition.
+    //
+    // The sum is over an **expression**: a sum over a plain column is folded
+    // where the column lies, and the projection never gathers it. An
+    // expression's columns are gathered, because the expression is evaluated
+    // over the survivors.
     let summing = QueryPlan {
         filter: mixed_plan().filter,
         projection: Vec::new(),
         aggregate: Some(AggregateSpec {
             group_by: Vec::new(),
-            aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("x") }],
+            aggregates: vec![Aggregate::Sum {
+                expr: columnar_core::Expr::binary(
+                    columnar_core::ArithOp::Mul,
+                    columnar_core::Expr::column("x"),
+                    columnar_core::Expr::constant(2i64),
+                ),
+            }],
         }),
     };
 

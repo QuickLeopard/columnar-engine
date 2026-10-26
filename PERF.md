@@ -38,13 +38,13 @@ The AVX2 path's *correctness*, however, is verified on this machine: see
 [AVX2 correctness](#avx2-correctness-verified-on-an-arm64-mac) below.
 
 **This machine is shared, and it shows.** Three full runs of the comparison, back to back, gave
-the lazy `q6` cold figure 25.8, 26.2 and 26.3 ms — a 2.0% spread, which is comfortable. The
-*eager* figures spread 556 to 567 ms, because the eager path reads 231 MiB and every stall in
+the lazy `q6` cold figure 25.9, 25.9 and 26.5 ms — a 2.2% spread, which is comfortable. The
+*eager* figures spread 553 to 572 ms, because the eager path reads 231 MiB and every stall in
 that read lands in the number. DuckDB's spread furthest of all, 31.0 to 32.0 ms on `q6` and
-43.9 to 46.0 ms on Polars' `filter-numeric`, because it is a separate process on a busy machine.
+43.8 to 44.9 ms on Polars' `filter-numeric`, because it is a separate process on a busy machine.
 
 **The engine's lazy figure and DuckDB's move together; the engine's does not.** The lazy `q6`
-figure and the sweep's one-thread figure are 26.2 ms and 26.1 ms, and they now **agree**. They
+figure and the sweep's one-thread figure are 26.0 ms and 26.1 ms, and they now **agree**. They
 used not to: the comparison harness measures the *eager* path first and the *lazy* path second,
 for each query, so the lazy measurement runs after a 231 MiB decode has churned the allocator and
 the page cache, and it used to pay for that. The lazy path is now fast enough that the
@@ -189,21 +189,30 @@ The like-for-like comparison: all three systems hold the data in memory and answ
 | query | **engine** | duckdb | polars | |
 |---|---|---|---|---|
 | `scan` | **0.0 ms** | 1.0 ms | 0.2 ms | engine wins |
-| `filter-numeric` | **2.5 ms** | 12.0 ms | 9.0 ms | engine wins |
-| `filter-string` | **3.1 ms** | 32.0 ms | 37.1 ms | engine wins |
-| `filter-range` | 14.6 ms | 18.0 ms | **11.5 ms** | polars wins, engine 1.27× slower |
-| `q6` | **9.4 ms** | 44.0 ms | 68.1 ms | engine wins |
-| `q6-revenue` | **14.6 ms** | 45.0 ms | 72.5 ms | engine wins, by 3.1× |
+| `filter-numeric` | **2.9 ms** | 12.0 ms | 11.2 ms | engine wins |
+| `filter-string` | **3.1 ms** | 31.0 ms | 37.1 ms | engine wins |
+| `filter-range` | **6.9 ms** | 18.0 ms | 12.2 ms | engine wins, by 1.8× |
+| `q6` | **9.2 ms** | 45.0 ms | 69.6 ms | engine wins |
+| `q6-revenue` | **14.9 ms** | 47.0 ms | 73.4 ms | engine wins, by 4.9× |
 
-**The engine wins five of the six, and loses one.**
+**The engine wins all six.**
 
-The loss is `filter-range`, and it is not a filter problem. That query's stages are: filter
-1.6 ms, project 7.3 ms, aggregate 2.2 ms. The engine materialises the projected column and then
-sums it; `Polars` streams the sum over the selection without materialising anything. The pinned
-optimization order says "late materialization", but the projection and the aggregate are two
-separate stages rather than one fused operator, and the gap is the materialisation.
+`filter-range` was the loss, and it was not a filter problem. That query's stages were filter 1.4 ms,
+**project 7.8 ms**, aggregate 2.2 ms: the projection was materialising a column that **nobody would ever
+see**. The aggregate sums it and throws it away, and a plan *with* an aggregation ignores the projection,
+because the aggregate result is the output. The engine now folds the column **where it lies**, over the
+filter's selection, and the projection materialises nothing at all:
 
-**The engine's query is 4.7× faster than `DuckDB`'s** (9.4 ms against 44.0 ms, resident) and 7.2×
+| | before | after |
+|---|---|---|
+| `filter-range` resident | 14.6 ms | **6.9 ms** |
+| its **project** stage | 7.0 ms | **0.0 ms** |
+| its aggregate stage | 2.4 ms | **1.9 ms** |
+
+That is the whole of the loss, and it is gone: **6.9 ms against Polars' 12.2 ms and DuckDB's 18.0 ms.**
+See [ADR-0016](docs/adr/0016-the-aggregate-reads-in-place.md).
+
+**The engine's query is 4.9× faster than `DuckDB`'s** (9.2 ms against 45.0 ms, resident) and 7.6×
 faster than `Polars`'s. The lazy path does not change this: it reads the file *during* the query,
 so it has no resident form and does not compete in this table.
 
@@ -216,22 +225,22 @@ by construction.
 
 | query | **engine** (eager) | **engine** (lazy) | duckdb | polars |
 |---|---|---|---|---|
-| `scan` | 559.7 ms | **0.1 ms** | 2.0 ms | 1.0 ms |
-| `filter-numeric` | 559.7 ms | **5.3 ms** | 22.0 ms | 43.9 ms |
-| `filter-string` | 560.8 ms | **17.5 ms** | 21.0 ms | 161.5 ms |
-| `filter-range` | 567.2 ms | 26.6 ms | 31.0 ms | **14.9 ms** |
-| `q6` | 568.5 ms | **26.2 ms** | 32.0 ms | 189.1 ms |
-| `q6-revenue` | 572.5 ms | 70.2 ms | **68.0 ms** | 197.6 ms |
+| `scan` | 557.7 ms | **0.1 ms** | 2.0 ms | 1.0 ms |
+| `filter-numeric` | 558.0 ms | **5.2 ms** | 22.0 ms | 44.8 ms |
+| `filter-string` | 555.0 ms | **17.4 ms** | 22.0 ms | 162.3 ms |
+| `filter-range` | 557.0 ms | 19.9 ms | 31.0 ms | **15.7 ms** |
+| `q6` | 562.7 ms | **26.0 ms** | 32.0 ms | 191.2 ms |
+| `q6-revenue` | 575.7 ms | 70.7 ms | **69.0 ms** | 195.2 ms |
 
-**The lazy path is 21.7× faster than the eager one on `q6`, and it is now ahead of DuckDB on it** —
-26.2 ms against 32.0 ms, where it was 2.6× behind. It beats Polars on every cold query except
+**The lazy path is 21.7× faster than the eager one on `q6`, and it is ahead of DuckDB on it** —
+26.0 ms against 32.0 ms, where it was 2.6× behind. It beats Polars on every cold query except
 `filter-range` — and on the real Q6 it beats Polars by 2.8× while DuckDB is ahead by 3%.
 
-**It also beats DuckDB on `filter-numeric`** — 5.3 ms against 22.0 ms, 4.2× — and on
-`filter-string`, by 1.2×. Those are the first cold queries the engine wins against DuckDB on this
+**It also beats DuckDB on `filter-numeric`** — 5.2 ms against 22.0 ms, 4.2× — and on
+`filter-string`, by 1.3×. Those are the first cold queries the engine wins against DuckDB on this
 file, and they are published as what they are.
 
-**The real Q6 is 70.2 ms against DuckDB's 68.0 ms — and the arithmetic is 0.2 ms of it.** The
+**The real Q6 is 70.7 ms against DuckDB's 69.0 ms — and the arithmetic is 0.2 ms of it.** The
 engine's own plan output says so: the scan is 68.4 ms, the filter 0.3 ms, the projection 0.9 ms,
 the **evaluate** stage 0.2 ms and the aggregate 0.1 ms. The arithmetic aggregate costs *a
 seventh of a millisecond* — 0.14% of the query — because it is evaluated over the 110,915 rows
@@ -259,13 +268,12 @@ The two engines' answers are identical, row for row — the comparison harness r
 they are not — and so are the answers of all three systems, cross-checked at a relative tolerance
 of 1e-9.
 
-**These tables were re-measured under the engine-keeps-the-mask code.** The lazy path moved a
-lot — the previous `q6` lazy was **82.4 ms** and this one is **26.2 ms**, and the previous
-`q6-revenue` lazy was **143.7 ms** and this one is **70.2 ms** — while the **eager load went from
-546.6 ms to 559.7 ms**, which is the machine's noise and not the engine's. DuckDB's `q6` cold
-was **32.0 ms** and is **32.0 ms**, and its load was **1218.0 ms** and is **1222.0 ms**. So the
-change is the engine's, and the engine's lazy path is now **ahead** of DuckDB's on `q6` where it
-was **2.6× behind**.
+**These tables were re-measured under the aggregate-reads-in-place code.** The lazy path moved on
+`filter-range` — the previous **26.6 ms** and this one is **19.9 ms** — while the **eager load went
+from 559.7 ms to 557.7 ms**, which is the machine's noise and not the engine's. DuckDB's `q6` cold
+was **32.0 ms** and is **32.0 ms**, and its load was **1222.0 ms** and is **1277.0 ms**. So the
+change is the engine's, and the change is on the query whose projection used to materialise a column
+nobody would ever see.
 
 Both sets are published here rather than the second one quietly replacing the first, because the
 difference is the engine's and a reader who compares this file against the last commit's should
@@ -356,8 +364,8 @@ What is left is throughput, and it decomposes cleanly:
 
 | | engine | duckdb | ratio |
 |---|---|---|---|
-| **Reader speed**, same job: decode all 16 columns into memory | **559.7 ms** | 1222.0 ms | **2.18× — the engine is ahead** |
-| **Architecture**: read 2 columns and push the predicate down | **26.2 ms** | 32.0 ms | **0.82× — the engine is ahead** |
+| **Reader speed**, same job: decode all 16 columns into memory | **557.7 ms** | 1277.0 ms | **2.29× — the engine is ahead** |
+| **Architecture**: read 2 columns and push the predicate down | **26.0 ms** | 32.0 ms | **0.81× — the engine is ahead** |
 
 **Both terms now favour the engine.** The reader-speed term was **1.58×** in DuckDB's favour when
 ADR-0008 recorded it; the shared decode path and the dictionary fix closed it; spec 008's parallel
@@ -390,7 +398,7 @@ DuckDB's 32.0 ms, and **5.9 ms** against DuckDB's 10.0 ms at six workers. The en
 every thread count in §2e.
 
 The residue that is left is the engine's own plan output, and it is small: the pushdown costs
-13.7 ms of a 26.6 ms scan, and that 13.7 ms is the comparison over 12,000,000 rows — twice the
+13.7 ms of a 26.0 ms scan, and that 13.7 ms is the comparison over 12,000,000 rows — twice the
 rows it used to be evaluated over, because the second predicate's column is no longer narrowed by
 the first. That is the price of not building the range list, and it is paid in full view.
 
@@ -398,10 +406,10 @@ the first. That is the price of not building the range list, and it is paid in f
 
 | system | load (file → queryable) | subprocess wall clock |
 |---|---|---|
-| **engine** (eager, `Dataset::read_parquet`) | **559.7 ms** | — (a resident process) |
+| **engine** (eager, `Dataset::read_parquet`) | **557.7 ms** | — (a resident process) |
 | **engine** (lazy, `ParquetSource::open`) | **0.1 ms** | — (a resident process) |
-| duckdb (`CREATE TEMP TABLE ... AS SELECT *`) | 1222.0 ms | 20.2 ms |
-| polars (`pl.read_parquet`) | 1015.0 ms | 92.3 ms |
+| duckdb (`CREATE TEMP TABLE ... AS SELECT *`) | 1277.0 ms | 20.2 ms |
+| polars (`pl.read_parquet`) | 1043.2 ms | 92.3 ms |
 
 Several things are worth separating here.
 
@@ -409,14 +417,14 @@ Several things are worth separating here.
 is read during the query, which is why the lazy path has no resident form.
 
 **The eager path's decode is now 2.3× faster than it was, and it still decodes too much.** 231.6
-MiB in 0.56 s is about 425 MiB/s. That is the `arrow-rs` Parquet reader going through every
+MiB in 0.56 s is about 415 MiB/s. That is the `arrow-rs` Parquet reader going through every
 column of every row group and materialising all sixteen columns into the engine's own chunk
 format, eagerly, whether the query needs them or not. Spec 008 took the load from 1277.8 ms to
 546.6 ms; this increment does not touch the eager path, and the figure moved by the machine's
 noise alone. See [§2g](#2g-the-load-sweep--where-the-engines-biggest-number-was).
 
 **The incumbents are pinned to one thread in the headline table.** `Polars` reads the file in
-1027 ms single-threaded and in about 184 ms with all fourteen cores. That 5.6× is the price of
+1043 ms single-threaded and in about 184 ms with all fourteen cores. That 5.7× is the price of
 comparing a one-thread engine against a one-thread engine. It is the right price for the
 *single-threaded* comparison, but it belongs in the reader's column, not the query's — and §2e is
 where the other thread counts live.
@@ -619,7 +627,11 @@ took it the rest of the way to **550.2 ms**. The full account is in
 
 ## 3. What the engine's own stages say
 
-The plan output splits the engine's work by stage. For the Q6 predicate set, resident:
+The plan output splits the engine's work by stage. The two blocks in [§3b](#3b-the-query-that-no-longer-materialises-anything)
+are the **median of three runs of each build**, measured back to back on this machine, so the two are
+comparable rather than two runs of the same code on a busy afternoon.
+
+For the Q6 predicate set, resident:
 
 ```
 stage      rows in  rows out  elapsed
@@ -656,46 +668,115 @@ That is the **one-thread** scan. At six workers the same stage takes **16.2 ms**
 output says `read threads: 6` — the workers that ran, not the threads that were asked for, because
 the file's six row groups are the cap. See [§2e](#2e-the-thread-count-sweep).
 
-### 3b. The real Q6's stages, and what the arithmetic costs
+### 3b. The query that no longer materialises anything
+
+`filter-range` is the query this increment changed, so here are its stages, before and after. **The
+projection went from 7.8 ms to 0.0 ms, and the aggregate took over the folding.**
+
+Resident, before:
+
+```
+stage      rows in  rows out  elapsed
+scan       6000000  6000000   0.0 ms
+filter     6000000  2178861   1.5 ms
+project    2178861  2178861   7.0 ms
+aggregate  2178861  1         2.4 ms
+```
+
+Resident, after:
+
+```
+stage      rows in  rows out  elapsed
+scan       6000000  6000000   0.0 ms
+filter     6000000  2178861   1.4 ms
+project    2178861  2178861   0.0 ms
+aggregate  2178861  1         1.9 ms
+```
+
+**The projection's rows in and rows out are still 2,178,861.** The stage did not stop running — it
+stopped *copying*. The survivors are still counted, and the aggregate still folds 2,178,861 of them;
+it just reads them out of the source instead of out of a column of its own.
+
+And the plan output still names the column:
+
+```
+materialised columns: l_quantity
+```
+
+It was **read**, so it is named. A column the query read is a column the query read, whether or not
+the engine copied it.
+
+The lazy way, the same query:
+
+```
+stage      rows in  rows out  elapsed
+scan       6000000  2178861   18.1 ms
+project    2178861  2178861   0.0 ms
+aggregate  2178861  1         1.4 ms
+```
+
+There is no filter stage, because the filter ran *inside* the reader — and the projection still
+materialises nothing.
+
+**The two builds were measured back to back, on this machine, in the same session.** The CLI's own
+median wall clock over five runs:
+
+| | before | after |
+|---|---|---|
+| resident | 10.9 ms | **3.3 ms** |
+| lazy (cold) | 26.4 ms | **19.9 ms** |
+
+The lazy figure is the same number the comparison harness publishes for the cold path — 19.9 ms —
+and the resident figure is lower than the harness's 6.9 ms because the harness measures all six
+queries in one process, after a 231 MiB decode has churned the allocator. Both are published; the
+harness's is the one the table in §2a uses, because the harness measures the incumbents the same way.
+
+### 3c. The real Q6's stages, and what the arithmetic costs
 
 The real Q6 has one more stage, and it is the one this increment added:
 
 ```
 stage      rows in  rows out  elapsed
-scan       6000000  407082    140.2 ms
-filter     407082   110915    0.2 ms
-project    110915   110915    0.8 ms
+scan       6000000  407082    67.3 ms
+filter     407082   110915    0.3 ms
+project    110915   110915    0.9 ms
 evaluate   110915   110915    0.2 ms
 aggregate  110915   1         0.1 ms
 ```
 
-**The `evaluate` stage is 0.2 ms of a 142 ms query — 0.14%.** That is the whole cost of the
+**The `evaluate` stage is 0.2 ms of a 70 ms query — 0.3%.** That is the whole cost of the
 arithmetic aggregate, and it is small for a reason that was a design decision rather than an
 accident: the expression is evaluated over the **110,915 rows that survived the filter**, not
 over the 6,000,000 rows of the file. SQL applies `WHERE` before the aggregate, and so does this.
 
-The scan is 140.2 ms because the real Q6 reads `l_extendedprice`, which is the biggest column
+The scan is 67.3 ms because the real Q6 reads `l_extendedprice`, which is the biggest column
 in the file. **The cost of the real Q6 is the cost of reading a column, not the cost of
 computing with it** — and that is why there is no vectorised arithmetic kernel in this
 increment. See [ADR-0012](docs/adr/0012-arithmetic-expression.md).
 
-### 3c. The same query, on six workers
+**The `project` stage is 0.9 ms, and it is not fused away.** The aggregate reads
+`l_extendedprice` and `l_discount` through an **expression**, and an expression is evaluated over
+the survivors — so its operands have to be aligned with them, and they are gathered. The fusion
+in §3b reaches a column that only a **plain** aggregate reads, and not one that an expression
+reads.
+
+### 3d. The same query, on six workers
 
 The plan output reports the workers that ran, and the stages show what they did:
 
 ```
 stage      rows in  rows out  elapsed
 scan       6000000  6000000   0.0 ms
-filter     6000000  110915    2.0 ms
-project    110915   110915    0.8 ms
-evaluate   110915   110915    0.2 ms
-aggregate  110915   1         0.1 ms
+filter     6000000  110915    2.1 ms
+project    110915   110915    0.9 ms
+evaluate   110915   110915    0.3 ms
+aggregate  110915   1         0.2 ms
 read threads: 1
 operator workers: 6 filter, 6 projection
 ```
 
-**The filter stage falls from 7.3 ms to 2.0 ms — 3.6× from six workers.** The projection falls
-from 1.3 ms to 0.8 ms, and the two stages that do not parallelise — `evaluate` and `aggregate` —
+**The filter stage falls from 6.3 ms to 2.1 ms — 3.0× from six workers.** The projection falls
+from 1.3 ms to 0.9 ms, and the two stages that do not parallelise — `evaluate` and `aggregate` —
 are unchanged, because they are not parallelised.
 
 **The `evaluate` and `aggregate` stages do not move, and they are not going to.** `evaluate` is
@@ -711,7 +792,7 @@ the CLI's end-to-end test checks it against DuckDB's answer on the real file.
 
 ## 4. The defects the increments found
 
-Thirteen, all found by measurement, all recorded with their before-and-after numbers in the ADRs
+Fourteen, all found by measurement, all recorded with their before-and-after numbers in the ADRs
 and in the commit history.
 
 | | before | after | where |
@@ -729,6 +810,7 @@ and in the commit history.
 | The merge was a **fold**, so it copied the accumulated result once per part and grew with the square of the number of parts. For the validity masks that was an allocation storm — a fresh 750 KB mask at every step | 6-thread eager load 366.7 ms | 6-thread eager load **276.4 ms** | `columnar-core/src/null.rs` |
 | The merge **repointed the NULL rows' dictionary indices** at real values. A NULL row's index is undefined — the convention is slot zero, and the validity mask says the row is NULL — but the merge treated the placeholder as a live reference. No answer changed; the chunk's bytes did | the parallel chunk's bytes differed from the serial chunk's | identical | `columnar-engine/src/dataset.rs` |
 | **The pushdown's mask was handed to the reader as a row filter, and a row filter is not a mask.** parquet-rs turned it into a list of **2,775,138 row ranges** for 2,178,861 surviving rows, and applied the list one range at a time | reading `l_shipdate` through the list: **50.0 ms** · `q6` cold **82.4 ms** | reading it without the list: **7.8 ms** · `q6` cold **26.2 ms** | `columnar-engine/src/pushdown.rs` |
+| **The projection materialised a column that nobody would ever see.** A global aggregate gathered the survivors into a column of their own and then summed it — and a plan with an aggregation ignores the projection, because the aggregate result is the output | `filter-range` resident **14.6 ms** · project stage **7.8 ms** | `filter-range` resident **6.9 ms** · project stage **0.0 ms** | `columnar-engine/src/operators/aggregate.rs` |
 
 The global aggregate is the one worth calling out from the first increment: the module
 documentation promised that `COUNT(*)` was an in-place fast path that reads no column, and it did
@@ -759,6 +841,14 @@ and the comparison turned out to be 42.9 ms of it — the larger half of the sin
 and 6.4× slower than the engine's own filter on the same work. A total is not an explanation,
 and the plan output now says which half is which.
 
+**The last row is spec 010's, and it is the same kind of defect again: work done for a shape the
+problem does not have.** The projection gathered 2,178,861 survivors into a column of their own —
+17.4 MB of values — and the aggregate summed that column and threw it away, because a plan with
+an aggregation ignores the projection. The global aggregate has one group and never needs its
+values aligned with anything, so the copy was never needed. It cost **7.8 ms of a 14.6 ms query**,
+and it is the whole of the one query the engine used to lose. See
+[ADR-0016](docs/adr/0016-the-aggregate-reads-in-place.md).
+
 **The last three rows are spec 008's, and they are the same kind of mistake again** — this time
 about *constants* and about *how work is combined* rather than about work done per batch. The
 batch size was inherited rather than measured. The merge grew with the square of the number of
@@ -775,14 +865,14 @@ change the bytes. See [ADR-0014](docs/adr/0014-parallel-eager-decode.md).
 | **x86-64 / AVX2 kernel numbers** | There is no x86-64 machine. The machine this was built on is an Apple Silicon Mac. | The AVX2 path's **correctness** is verified — on this machine, under Rosetta 2, with the row counter proving the instructions ran. See [AVX2 correctness](#avx2-correctness-verified-on-an-arm64-mac) and [ADR-0009](docs/adr/0009-avx2-without-x86-hardware.md). Its **performance** numbers do not exist and are not estimated here. |
 | **The blueprint's "AVX2 6.7× scalar"** | It was measured on an EPYC / DDR5 / NVMe machine that is not this one. | Not reproduced, not quoted as this project's own. |
 | **Page-level pruning** | The `ArrowPredicate` path evaluates over the decoded batch, so the reader fetches every page of the predicate's column — but so does DuckDB, because **this file has no page index**: the generator writes `EnabledStatistics::Chunk`. DuckDB's own plan says `Row Groups Scanned: 6 / 6`. | **Not the gap.** It was published as the gap once and was wrong. Page pruning would be a *further* win on top, and it needs a `RowSelection` computed from a page index that does not exist in this file, or the row-format predicate — which computes a different function. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md) and [§2c](#2c-the-lazy-scan-and-what-it-reads). |
-| **A vectorised arithmetic kernel** | The expression evaluator is a scalar loop over the rows that survived the filter. | **Not implemented, and the measurement says it does not matter yet**: the `evaluate` stage is **0.2 ms** of the real Q6's 142 ms — 0.14%. The query's cost is reading `l_extendedprice`, not computing with it. The arithmetic is evaluated over the **survivors**, not over the file, which is the design decision that makes it cheap. See [§3b](#3b-the-real-q6s-stages-and-what-the-arithmetic-costs) and [ADR-0012](docs/adr/0012-arithmetic-expression.md). |
+| **A vectorised arithmetic kernel** | The expression evaluator is a scalar loop over the rows that survived the filter. | **Not implemented, and the measurement says it does not matter yet**: the `evaluate` stage is **0.2 ms** of the real Q6's 70 ms — 0.3%. The query's cost is reading `l_extendedprice`, not computing with it. The arithmetic is evaluated over the **survivors**, not over the file, which is the design decision that makes it cheap. See [§3c](#3c-the-real-q6s-stages-and-what-the-arithmetic-costs) and [ADR-0012](docs/adr/0012-arithmetic-expression.md). |
 | **Parallel decode** | **Measured — spec 005.** The read splits the file's row groups across the workers and preserves the file's row order. The engine gets **5.1×** from six workers, against DuckDB's **3.2×**, on the identical query and file. | **The gap narrowed from 2.6× at one thread to 1.6× at six.** The reader-speed term has since changed sign — the engine's full-file decode is now **2.2× faster** than DuckDB's — and the architecture term is now mostly *how much of the query is scan*: the engine parallelises nearly all of its work, DuckDB parallelises its scan and its filter over the survivors. See [§2e](#2e-the-thread-count-sweep) and [ADR-0011](docs/adr/0011-parallel-decode.md). |
 | **The parallelism above the file's row-group count** | The read splits *row groups*, and this file has **six**. Six workers is the ceiling, whatever the machine has — for the lazy read, the operators *and* the eager decode alike. | **The cap is the file's, not the engine's**, and the report says so: it records the threads asked for and the workers that ran. A file with larger row groups would go further. **Not measured on such a file** — there is not one in this repository. |
 | **The parallel operators** | **Measured — spec 007.** The filter and the projection split their work across the workers, and the answer does not depend on the thread count. The **aggregate** is not parallelised, and never will be: `SUM` is not associative. | **The engine's resident query gets 3.6× from fourteen workers** on `q6`, against DuckDB's 6.1× — and the engine is ahead at every thread count measured: **6.5× faster at one thread, 3.9× faster at fourteen**. The operators' worker count is not capped by the file's row groups, so it goes to fourteen where the read's stops at six. See [§2f](#2f-the-resident-sweep-where-the-operators-are-the-measurement) and [ADR-0013](docs/adr/0013-parallel-operators.md). |
 | **The eager path's parallel decode** | **Measured — spec 008.** The eager path splits the file's row groups across the workers and merges the parts in block order, and the merged dataset is bit-identical to the serial one's. | **The load went from 1277.8 ms to 550.2 ms** — 2.32× — and the engine went from **behind** DuckDB to **2.2× ahead** of it at one thread. Most of the win was a batch size the eager path had inherited rather than measured; the rest was the parallel decode. See [§2g](#2g-the-load-sweep--where-the-engines-biggest-number-was) and [ADR-0014](docs/adr/0014-parallel-eager-decode.md). |
 | **The lazy scan's decomposition** | The plan output reports the scan stage and the pushdown's cost inside it — 26.6 ms and 13.7 ms of it — but **not** how much of the scan is Arrow's own decode and how much is the engine's own work. | **Measured — spec 009.** The decomposition is in the tree, as `crates/columnar-engine/examples/lazy_scan_decomposition.rs`: Arrow's own decode of the two columns is **11.9 ms**, the engine's kernel **6.0 ms**, and the mask — applied in the engine's own domain — the rest. Splitting the scan the way the eager decode was split is what found the range list, and the range list was 76% of the scan. See [ADR-0015](docs/adr/0015-the-engine-keeps-the-mask.md). |
 | **The official TPC-H SF-1 file** | The generator produces a TPC-H-*shaped* file with approximated distributions, UTF-8 dates and a seeded PRNG. | Said in as many words in the manifest and in [constitution principle VI](constitution.md). |
-| **`SUM` over a computed expression** | **Measured — spec 006.** The arithmetic aggregate evaluates `l_extendedprice * (1 - l_discount)` over the rows that survived the filter and sums the result. | **Measured, and it is cheap.** The `evaluate` stage is **0.2 ms** of the real Q6's 144 ms — 0.14% — because the arithmetic runs over the **survivors** and not over the file. The comparison publishes Q6 itself as `q6-revenue`, beside Q6's *predicate* set. See [§3b](#3b-the-real-q6s-stages-and-what-the-arithmetic-costs) and [ADR-0012](docs/adr/0012-arithmetic-expression.md). |
+| **`SUM` over a computed expression** | **Measured — spec 006.** The arithmetic aggregate evaluates `l_extendedprice * (1 - l_discount)` over the rows that survived the filter and sums the result. | **Measured, and it is cheap.** The `evaluate` stage is **0.2 ms** of the real Q6's 70 ms — 0.3% — because the arithmetic runs over the **survivors** and not over the file. The comparison publishes Q6 itself as `q6-revenue`, beside Q6's *predicate* set. See [§3c](#3c-the-real-q6s-stages-and-what-the-arithmetic-costs) and [ADR-0012](docs/adr/0012-arithmetic-expression.md). |
 | **Hash join, sort, window functions, decimal, dates, nested types, GPU** | Out of scope for spec 001. | Listed in the spec's out-of-scope table. |
 
 ---

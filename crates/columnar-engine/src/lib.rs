@@ -67,7 +67,6 @@ pub mod plan;
 pub mod pushdown;
 pub mod source;
 
-use columnar_core::SelectionVector;
 use columnar_kernels::Flavor;
 
 use crate::plan::ColumnSchema;
@@ -408,11 +407,6 @@ fn run_pipeline(
     let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
     let total_rows = dataset.len();
     let mut stages: Vec<StageStats> = vec![scan];
-    let mut materialised = operators::project::Materialised::with_workers(
-        dataset,
-        SelectionVector::empty(total_rows),
-        options.threads.unwrap_or(1),
-    );
     // How many workers the operators may use. The filter's blocks are
     // 64-row aligned and the projection's are larger, so the two can end up
     // with different worker counts -- and the plan reports the count that
@@ -447,15 +441,34 @@ fn run_pipeline(
         });
         selection
     };
-    materialised.set_selection(selection.clone());
+
+    // The materialisation set is built **after** the filter, because it needs
+    // the filter's selection: the columns it gathers are the survivors'
+    // rows.
+    let mut materialised = operators::project::Materialised::with_workers(
+        dataset,
+        selection,
+        options.threads.unwrap_or(1),
+    );
 
     // --- project ----------------------------------------------------------
     // The project stage materialises exactly the columns the rest of the
     // plan reads. A column that is neither filtered nor aggregated is never
     // decoded: that is the late materialisation the plan output reports.
+    //
+    // A column that only a **global** aggregate reads, and reads as a plain
+    // column, is not materialised at all: the aggregate folds it where it
+    // lies, over the filter's selection, and the copy this stage would have
+    // made is never made. See
+    // [ADR-0016](../../../docs/adr/0016-the-aggregate-reads-in-place.md).
+    let fusable = fusable_columns(resolved, dataset);
     let start = std::time::Instant::now();
     for &column in &resolved.materialised {
-        materialised.gather(column);
+        if fusable.contains(&column) {
+            materialised.note_read_in_place(column);
+        } else {
+            materialised.gather(column);
+        }
     }
     let selected_rows = materialised.selection().len();
     stages.push(StageStats {
@@ -491,24 +504,8 @@ fn run_pipeline(
     let mut groups: Vec<Group> = Vec::new();
     if let Some(aggregate) = &resolved.aggregate {
         let start = std::time::Instant::now();
-        let group_by: Vec<&columnar_core::BatchColumn> =
-            aggregate.group_by.iter().map(|&index| materialised.gathered_ref(index)).collect();
-        let values: Vec<Option<&columnar_core::BatchColumn>> = aggregate
-            .aggregates
-            .iter()
-            .zip(computed.iter())
-            .map(|(function, computed)| {
-                if let plan::ResolvedAggregateFn::Sum { expr } = function {
-                    if let plan::ResolvedExpr::Column { index, .. } = expr {
-                        return Some(materialised.gathered_ref(*index));
-                    }
-                    return computed.as_ref();
-                }
-                function.columns().first().map(|&index| materialised.gathered_ref(index))
-            })
-            .collect();
         groups =
-            operators::aggregate::aggregate(&aggregate.spec, &group_by, &values, selected_rows);
+            run_aggregate(aggregate, dataset, &materialised, &computed, &fusable, selected_rows);
         stages.push(StageStats {
             stage: "aggregate".to_owned(),
             rows_in: rows(selected_rows),
@@ -533,6 +530,164 @@ fn run_pipeline(
     };
 
     Ok(AggregateResult { groups, stages, plan_output })
+}
+
+/// Runs the aggregation over the rows that survived the filter.
+///
+/// A **global** aggregation folds the survivors one after another, so it never
+/// needs the survivors' values aligned with anything: the columns it reads
+/// are read where they lie, and no column of the survivors is built.
+///
+/// A **grouped** aggregation needs its keys aligned with its values, and the
+/// hash table wants both. Every column is gathered there.
+fn run_aggregate(
+    aggregate: &plan::ResolvedAggregate,
+    dataset: &Dataset,
+    materialised: &operators::project::Materialised<'_>,
+    computed: &[Option<columnar_core::BatchColumn>],
+    fusable: &[usize],
+    selected_rows: usize,
+) -> Vec<Group> {
+    if aggregate.group_by.is_empty() {
+        let values = global_value_sources(aggregate, dataset, materialised, computed, fusable);
+        return operators::aggregate::aggregate_global(&aggregate.spec, &values, selected_rows);
+    }
+
+    let group_by: Vec<&columnar_core::BatchColumn> =
+        aggregate.group_by.iter().map(|&index| materialised.gathered_ref(index)).collect();
+    let values: Vec<Option<&columnar_core::BatchColumn>> = aggregate
+        .aggregates
+        .iter()
+        .zip(computed.iter())
+        .map(|(function, computed)| {
+            if let plan::ResolvedAggregateFn::Sum { expr } = function {
+                if let plan::ResolvedExpr::Column { index, .. } = expr {
+                    return Some(materialised.gathered_ref(*index));
+                }
+                return computed.as_ref();
+            }
+            function.columns().first().map(|&index| materialised.gathered_ref(index))
+        })
+        .collect();
+    operators::aggregate::aggregate(&aggregate.spec, &group_by, &values, selected_rows)
+}
+
+/// The columns the aggregate can read where they lie.
+///
+/// A column qualifies when three things are true:
+///
+/// 1. The aggregation is **global** -- one group. A grouped aggregation
+///    needs the survivors' values aligned with the survivors' keys, and the
+///    gathered column is that alignment.
+/// 2. The column is read by a **plain** aggregate -- a sum over the column, a
+///    count, a min or a max -- and by nothing else. A column an
+///    *expression* reads needs its values aligned with the survivors too,
+///    because the expression is evaluated over the survivors.
+/// 3. The column's **encoding** can be read one row at a time. A
+///    run-length-encoded column holds runs, not values, so reading one of its
+///    rows means finding the run the row falls in.
+///
+/// A column that fails any of the three is gathered, exactly as it always
+/// was.
+fn fusable_columns(resolved: &plan::ResolvedPlan, dataset: &Dataset) -> Vec<usize> {
+    let Some(aggregate) = &resolved.aggregate else {
+        return Vec::new();
+    };
+    if !aggregate.group_by.is_empty() {
+        return Vec::new();
+    }
+
+    let mut plain: Vec<usize> = Vec::new();
+    let mut expression: Vec<usize> = Vec::new();
+    for function in &aggregate.aggregates {
+        match function {
+            plan::ResolvedAggregateFn::Sum { expr } => match expr {
+                plan::ResolvedExpr::Column { index, .. } => plain.push(*index),
+                other => expression.extend(other.columns()),
+            },
+            plan::ResolvedAggregateFn::Count { column }
+            | plan::ResolvedAggregateFn::Min { column }
+            | plan::ResolvedAggregateFn::Max { column } => plain.push(*column),
+            plan::ResolvedAggregateFn::CountStar => {}
+        }
+    }
+
+    // A column an expression reads is gathered, whatever else reads it.
+    plain.retain(|column| !expression.contains(column));
+    plain.retain(|column| {
+        dataset
+            .chunks
+            .get(*column)
+            .and_then(operators::aggregate::SelectedColumn::from_chunk)
+            .is_some()
+    });
+    plain.sort_unstable();
+    plain.dedup();
+    plain
+}
+
+/// The source of each global aggregate's values.
+///
+/// A column that only a plain aggregate reads, and whose encoding can be read
+/// where it lies, is read where it lies: the aggregate folds it over the
+/// filter's selection, and the projection never copies it. Everything else is
+/// gathered.
+fn global_value_sources<'x>(
+    aggregate: &plan::ResolvedAggregate,
+    dataset: &'x Dataset,
+    materialised: &'x operators::project::Materialised<'_>,
+    computed: &'x [Option<columnar_core::BatchColumn>],
+    fusable: &[usize],
+) -> Vec<operators::aggregate::ValueSource<'x>> {
+    aggregate
+        .aggregates
+        .iter()
+        .zip(computed.iter())
+        .map(|(function, computed)| match function {
+            plan::ResolvedAggregateFn::Sum { expr } => match expr {
+                plan::ResolvedExpr::Column { index, .. } => {
+                    if fusable.contains(index) {
+                        selected_source(dataset, materialised, *index)
+                    } else {
+                        operators::aggregate::ValueSource::Gathered(
+                            materialised.gathered_ref(*index),
+                        )
+                    }
+                }
+                _ => operators::aggregate::ValueSource::Gathered(
+                    computed
+                        .as_ref()
+                        .expect("an aggregate over an expression has a computed column"),
+                ),
+            },
+            plan::ResolvedAggregateFn::CountStar => operators::aggregate::ValueSource::Rows,
+            plan::ResolvedAggregateFn::Count { column }
+            | plan::ResolvedAggregateFn::Min { column }
+            | plan::ResolvedAggregateFn::Max { column } => {
+                if fusable.contains(column) {
+                    selected_source(dataset, materialised, *column)
+                } else {
+                    operators::aggregate::ValueSource::Gathered(materialised.gathered_ref(*column))
+                }
+            }
+        })
+        .collect()
+}
+
+/// The source of a column the aggregate reads where it lies.
+fn selected_source<'x>(
+    dataset: &'x Dataset,
+    materialised: &'x operators::project::Materialised<'_>,
+    index: usize,
+) -> operators::aggregate::ValueSource<'x> {
+    let chunk = dataset.chunks.get(index).expect("a materialised column index is in range");
+    let column = operators::aggregate::SelectedColumn::from_chunk(chunk)
+        .expect("a fusable column's encoding can be read where it lies");
+    operators::aggregate::ValueSource::Selected {
+        column,
+        validity: &chunk.validity,
+        selection: materialised.selection(),
+    }
 }
 
 /// Evaluates the aggregates' expressions over the rows that survived the

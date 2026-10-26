@@ -221,6 +221,13 @@ pub struct Materialised<'a> {
     dense: HashMap<usize, BatchColumn>,
     /// The columns gathered by the selection, by column index.
     gathered: HashMap<usize, BatchColumn>,
+    /// The columns the aggregate reads in place, over the selection.
+    ///
+    /// A column in this list was **read** but not materialised: the aggregate
+    /// folded it where it lies, over the selection, and no copy of it was
+    /// made. It is still a column the query read, so the plan output names
+    /// it.
+    read_in_place: Vec<usize>,
     /// How many threads the gathers may use.
     workers: usize,
     /// How many workers the last gather ran.
@@ -244,6 +251,7 @@ impl<'a> Materialised<'a> {
             selection,
             dense: HashMap::new(),
             gathered: HashMap::new(),
+            read_in_place: Vec::new(),
             workers: workers.max(1),
             projection_workers: 1,
         }
@@ -257,11 +265,6 @@ impl<'a> Materialised<'a> {
     #[must_use]
     pub fn projection_workers(&self) -> usize {
         self.projection_workers
-    }
-
-    /// Replaces the selection the columns are gathered by.
-    pub fn set_selection(&mut self, selection: SelectionVector) {
-        self.selection = selection;
     }
 
     /// The rows that survived the filter.
@@ -322,11 +325,27 @@ impl<'a> Materialised<'a> {
         self.gathered.get(&index).expect("the column was gathered before the aggregate stage")
     }
 
-    /// The names of the columns that were decoded, in schema order.
+    /// Records that a column is read in place rather than gathered.
+    ///
+    /// The column is read -- the aggregate folds it over the selection -- but
+    /// it is never materialised into a column of its own. The plan output
+    /// still names it, because a column the query read is a column the query
+    /// read.
+    pub fn note_read_in_place(&mut self, index: usize) {
+        if !self.read_in_place.contains(&index) {
+            self.read_in_place.push(index);
+        }
+    }
+
+    /// The names of the columns that were read, in schema order.
+    ///
+    /// A column read in place is named too: it was read, even though it was
+    /// never materialised into a column of its own.
     #[must_use]
     pub fn materialised_names(&self) -> Vec<String> {
         let mut indices: Vec<usize> = self.dense.keys().copied().collect();
         indices.extend(self.gathered.keys().copied());
+        indices.extend(self.read_in_place.iter().copied());
         indices.sort_unstable();
         indices.dedup();
         indices

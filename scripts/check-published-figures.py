@@ -50,6 +50,14 @@ CHECKS = [
     ("PERF.md", "duckdb q6-revenue cold", "duckdb", "-", "cold", "q6-revenue", 1),
     ("PERF.md", "polars q6-revenue cold", "polars", "-", "cold", "q6-revenue", 1),
     ("README.md", "lazy q6-revenue cold", "engine", "lazy", "cold", "q6-revenue", 1),
+    # `filter-range` is the query the aggregate reads in place, so its two
+    # figures are the ones a reader would quote to check that the fusion is
+    # still there.
+    ("PERF.md", "filter-range resident", "engine", "eager", "resident", "filter-range", 1),
+    ("PERF.md", "filter-range lazy cold", "engine", "lazy", "cold", "filter-range", 1),
+    ("PERF.md", "polars filter-range resident", "polars", "-", "resident", "filter-range", 1),
+    ("PERF.md", "polars filter-range cold", "polars", "-", "cold", "filter-range", 1),
+    ("README.md", "filter-range resident", "engine", "eager", "resident", "filter-range", 1),
 ]
 
 # (document, label, thread count, system, places)
