@@ -275,13 +275,16 @@ fn render_cold(out: &mut String, engine: &[EngineQueryResult], external: &[Exter
 /// open -- reading the footer, and nothing else.
 fn render_load(out: &mut String, engine: &[EngineQueryResult], external: &[ExternalComparison]) {
     writeln!(out, "\nfile load \u{b7} the Parquet file becoming queryable \u{b7} ms").ok();
-    writeln!(out, "system        load ms   subprocess wall ms").ok();
+    // The name field is fourteen wide, so the three comparators' names line
+    // up under the header and the peer's longer name does not push the
+    // columns out of place.
+    writeln!(out, "{:<14}{:>9}   {:>18}", "system", "load ms", "subprocess wall ms").ok();
     writeln!(out, "--------------------------------------------------------").ok();
     if let Some(query) = engine.iter().find(|query| query.mode == "eager") {
-        writeln!(out, "{:<7}  {:>9.1}   {:>18}", "engine", query.load_ms, "-").ok();
+        writeln!(out, "{:<14}{:>9.1}   {:>18}", "engine", query.load_ms, "-").ok();
     }
     if let Some(query) = engine.iter().find(|query| query.mode == "lazy") {
-        writeln!(out, "{:<12}  {:>9.1}   {:>18}", "engine lazy", query.load_ms, "-").ok();
+        writeln!(out, "{:<14}{:>9.1}   {:>18}", "engine lazy", query.load_ms, "-").ok();
     }
     for comparator in COMPARATORS {
         let load = worst(
@@ -296,7 +299,7 @@ fn render_load(out: &mut String, engine: &[EngineQueryResult], external: &[Exter
                 .filter(|e| e.comparator == comparator && e.mode == "cold")
                 .map(|e| e.elapsed_ms),
         );
-        writeln!(out, "{comparator:<7}  {load:>9.1}   {wall:>18}").ok();
+        writeln!(out, "{comparator:<14}{load:>9.1}   {wall:>18}").ok();
     }
 }
 

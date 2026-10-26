@@ -18,9 +18,10 @@ just demo
 ```
 
 One command, about a minute, three things: the kernel measured four ways, the engine's own plan,
-and the engine against DuckDB and Polars. It generates the dataset if it is not there. The third
-part needs `DuckDB` on `PATH` and the `polars` Python package; if they are missing, the comparator
-is **skipped and named**, not faked — the engine's own numbers still print.
+and the engine against DuckDB, Polars and DataFusion. It generates the dataset if it is not there.
+The third part needs `DuckDB` on `PATH`, the `polars` Python package, and the Rust peer built with
+`just peer-build`; if any of them is missing, the comparator is **skipped and named**, not faked —
+the engine's own numbers still print.
 
 **The kernel: four implementations, one answer.**
 
@@ -345,7 +346,8 @@ just query-lazy                   # the same, reading only what the plan needs
 # 5. Measure the kernel, four ways.
 just bench
 
-# 6. Measure the engine against DuckDB and Polars.
+# 6. Measure the engine against DuckDB, Polars and DataFusion.
+just peer-build               # the Rust peer: a separate project, built once
 just compare
 
 # 7. Verify the AVX2 path's correctness, under Rosetta 2.
@@ -361,10 +363,11 @@ just web                     # then open the URL it prints
 `columnar-kernels` for `wasm32-unknown-unknown` with the `simd128` feature, so the browser's
 path cannot rot silently — the way the AVX2 path rotted once already.
 
-`just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, and the `polars` Python package
-installed. It says so and skips the missing comparator rather than failing quietly — and it
-cross-checks every answer against the engine's own, because a comparison where the two sides
-computed different values is not a benchmark.
+`just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, the `polars` Python package installed,
+and the Rust peer built (`just peer-build`, which puts it in `tools/bin/` next to DuckDB). It says
+so and skips the missing comparator rather than failing quietly — and it cross-checks every answer
+against the engine's own, because a comparison where the two sides computed different values is not
+a benchmark.
 
 ---
 
