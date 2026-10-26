@@ -65,6 +65,7 @@ pub mod memory;
 pub mod operators;
 pub mod plan;
 pub mod pushdown;
+pub mod queries;
 pub mod source;
 
 use columnar_kernels::Flavor;
@@ -79,6 +80,7 @@ pub use operators::aggregate::{AggregateResult, AggregateValue, Group};
 pub use operators::filter::FilterStats;
 pub use plan::{Aggregate, AggregateSpec, QueryPlan, ResolvedAggregateFn};
 pub use pushdown::{PushdownMetrics, PushdownPlan};
+pub use queries::{BuiltinQuery, QueryDefinition, TableAddress, QUERIES};
 pub use source::{ParquetSource, SourceColumn};
 
 /// Everything that can go wrong while executing a plan.

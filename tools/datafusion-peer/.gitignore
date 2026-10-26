@@ -1,0 +1,4 @@
+# Build artefacts of this standalone workspace. The repository's root
+# `.gitignore` only anchors `/target` at the repository root, so without this
+# file the peer binary's build directory would show up as untracked.
+/target

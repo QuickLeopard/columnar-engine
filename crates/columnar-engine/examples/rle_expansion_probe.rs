@@ -75,6 +75,8 @@
 
 #![allow(clippy::indexing_slicing)]
 
+mod common;
+
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -85,6 +87,9 @@ use arrow::datatypes::{DataType as ArrowType, Field, Schema};
 use columnar_core::ComparisonOp;
 use columnar_engine::pushdown::{Pushdown, PushdownPlan};
 use columnar_engine::ParquetSource;
+use common::{
+    decode_dictionary, decode_indices, for_each_page, repeat, split_v1_page, Scratch, Timing,
+};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::arrow::ProjectionMask;
@@ -106,386 +111,13 @@ const ITERATIONS: usize = 5;
 /// The rows the parquet reader hands over at a time.
 const BATCH_ROWS: usize = 65_536;
 
-/// Milliseconds, for printing.
-fn ms(duration: Duration) -> f64 {
-    duration.as_secs_f64() * 1000.0
-}
-
-// ---------------------------------------------------------------------------
-// The RLE/bit-packed hybrid
-// ---------------------------------------------------------------------------
-
-/// The Parquet format's RLE/bit-packed hybrid decoder.
-///
-/// The format is a sequence of runs, and each run's header is an unsigned
-/// varint. The low bit says which kind of run it is:
-///
-/// - **0** -- an RLE run. The rest of the header is the number of values,
-///   and the value itself follows in `ceil(bit_width / 8)` bytes.
-/// - **1** -- a bit-packed run. The rest of the header is the number of
-///   *groups* of eight values, and the groups follow, each `bit_width`
-///   bytes wide, with the values packed LSB-first.
-///
-/// Eight values of `bit_width` bits are `8 * bit_width` bits, which is
-/// `bit_width` bytes: the groups are byte-aligned, and a group's width is
-/// *not* `ceil(bit_width / 8)`. That is the width of an RLE run's repeated
-/// value, which is one value and not eight.
-struct Rle<'a> {
-    /// How many bits each value occupies.
-    bit_width: u8,
-    /// The bytes of the run stream.
-    data: &'a [u8],
-    /// How far into `data` the decoder has read.
-    position: usize,
-    /// How many values are left in the current RLE run.
-    run_left: usize,
-    /// The value the current RLE run repeats.
-    run_value: u32,
-    /// How many values are left in the current bit-packed run.
-    packed_left: usize,
-    /// The bytes of the current bit-packed run.
-    packed: &'a [u8],
-    /// When counting, the value the decoder counts.
-    count_target: Option<u32>,
-    /// How many values the decoder has seen equal to `count_target`.
-    count: usize,
-}
-
-impl<'a> Rle<'a> {
-    /// A decoder over `data`, with `bit_width` bits per value.
-    fn new(bit_width: u8, data: &'a [u8]) -> Self {
-        Self {
-            bit_width,
-            data,
-            position: 0,
-            run_left: 0,
-            run_value: 0,
-            packed_left: 0,
-            packed: &[],
-            count_target: None,
-            count: 0,
-        }
-    }
-
-    /// A decoder that counts the values equal to `target`.
-    fn counting(bit_width: u8, data: &'a [u8], target: u32) -> Self {
-        Self { count_target: Some(target), ..Self::new(bit_width, data) }
-    }
-
-    /// How many bytes one group of eight values occupies.
-    fn group_bytes(&self) -> usize {
-        usize::from(self.bit_width)
-    }
-
-    /// How many bytes an RLE run's repeated value occupies.
-    fn value_bytes(&self) -> usize {
-        usize::from(self.bit_width.div_ceil(8))
-    }
-
-    /// Decodes as many values as fit into `out`, and returns how many it wrote.
-    fn decode(&mut self, out: &mut [u32]) -> usize {
-        let mut written = 0;
-        while written < out.len() {
-            if self.run_left > 0 {
-                let take = (out.len() - written).min(self.run_left);
-                out[written..written + take].fill(self.run_value);
-                if self.count_target == Some(self.run_value) {
-                    self.count += take;
-                }
-                written += take;
-                self.run_left -= take;
-            } else if self.packed_left > 0 {
-                written += self.unpack(out, written);
-            } else if !self.next_run() {
-                break;
-            }
-        }
-        written
-    }
-
-    /// Unpacks the bit-packed run into `out`, starting at `out[written..]`.
-    fn unpack(&mut self, out: &mut [u32], written: usize) -> usize {
-        let group_bytes = self.group_bytes();
-        let mask = if self.bit_width >= 32 { u32::MAX } else { (1u32 << self.bit_width) - 1 };
-        let width = self.bit_width as usize;
-
-        let mut done = 0usize;
-        while done < self.packed_left && written + done < out.len() {
-            let group = done / 8;
-            let within = done % 8;
-            let take = (self.packed_left - done).min(8 - within).min(out.len() - written - done);
-
-            let start = group * group_bytes;
-            let bytes = &self.packed[start..start + group_bytes];
-
-            if width <= 8 {
-                // The group's eight values fit in one little-endian word.
-                let mut word = 0u32;
-                for (index, &byte) in bytes.iter().enumerate() {
-                    word |= u32::from(byte) << (8 * index);
-                }
-                for offset in 0..take {
-                    let shift = (within + offset) * width;
-                    let value = (word >> shift) & mask;
-                    if self.count_target == Some(value) {
-                        self.count += 1;
-                    }
-                    out[written + done + offset] = value;
-                }
-            } else {
-                // Wider than a word: the values are read a bit at a time.
-                for offset in 0..take {
-                    let bit_offset = (within + offset) * width;
-                    let value = read_bits(bytes, bit_offset, width);
-                    if self.count_target == Some(value) {
-                        self.count += 1;
-                    }
-                    out[written + done + offset] = value;
-                }
-            }
-            done += take;
-        }
-        self.packed_left -= done;
-        done
-    }
-
-    /// Reads the next run's header, and sets the decoder up for it.
-    fn next_run(&mut self) -> bool {
-        let Some(header) = self.read_varint() else {
-            return false;
-        };
-        if header & 1 == 1 {
-            let groups = usize::try_from(header >> 1).unwrap_or(0);
-            let bytes = groups * self.group_bytes();
-            let end = self.position + bytes;
-            if end > self.data.len() {
-                return false;
-            }
-            let data = self.data;
-            self.packed = &data[self.position..end];
-            self.position = end;
-            self.packed_left = groups * 8;
-        } else {
-            self.run_left = usize::try_from(header >> 1).unwrap_or(0);
-            let width = self.value_bytes();
-            let end = self.position + width;
-            if end > self.data.len() {
-                return false;
-            }
-            let mut value = 0u32;
-            for (index, &byte) in self.data[self.position..end].iter().enumerate() {
-                value |= u32::from(byte) << (8 * index);
-            }
-            self.position = end;
-            self.run_value = value;
-        }
-        true
-    }
-
-    /// Reads an unsigned varint.
-    fn read_varint(&mut self) -> Option<u64> {
-        let mut result = 0u64;
-        let mut shift = 0u32;
-        loop {
-            let byte = *self.data.get(self.position)?;
-            self.position += 1;
-            result |= u64::from(byte & 0x7F) << shift;
-            if byte & 0x80 == 0 {
-                return Some(result);
-            }
-            shift += 7;
-            if shift > 63 {
-                return None;
-            }
-        }
-    }
-}
-
-/// Reads `width` bits out of `bytes`, starting at `bit_offset`.
-///
-/// The bits are LSB-first: the first bit of the value is the lowest bit of
-/// the first byte. This is the general path, for a bit width too wide for
-/// the word-at-a-time unpack.
-fn read_bits(bytes: &[u8], bit_offset: usize, width: usize) -> u32 {
-    let mut value = 0u32;
-    for bit in 0..width {
-        let absolute = bit_offset + bit;
-        let byte = bytes[absolute / 8];
-        let bit_in_byte = absolute % 8;
-        value |= u32::from((byte >> bit_in_byte) & 1) << bit;
-    }
-    value
-}
-
 // ---------------------------------------------------------------------------
 // The file's pages
 // ---------------------------------------------------------------------------
 
-/// How many bits a level of `max_level` needs.
-fn bits_for(max_level: i16) -> u8 {
-    if max_level <= 0 {
-        0
-    } else {
-        u8::try_from(u32::from(max_level.unsigned_abs()).ilog2()).unwrap_or(0) + 1
-    }
-}
-
-/// The buffers the probe reuses across pages.
-///
-/// The probe measures a decode, and a decode that reallocates its buffers
-/// every page measures the allocator as much as the decoder.
-struct Scratch {
-    /// The decoded indices.
-    indices: Vec<u32>,
-    /// The expanded values.
-    values: Vec<f64>,
-}
-
-impl Scratch {
-    /// A scratch space with room for `rows` indices.
-    fn new(rows: usize) -> Self {
-        Self { indices: vec![0u32; rows], values: Vec::new() }
-    }
-}
-
-/// The definition levels of a v1 data page, and the values section after them.
-///
-/// A v1 page holds the repetition levels, then the definition levels, then
-/// the values. Each of the two level sections is a four-byte length followed
-/// by that many bytes of RLE.
-///
-/// The levels are decoded into `levels`, and the number of values the page
-/// holds -- the rows that are not NULL -- is returned with them.
-fn split_v1_page<'a>(
-    buf: &'a [u8],
-    max_rep_level: i16,
-    max_def_level: i16,
-    rows: usize,
-    levels: &mut Vec<u16>,
-) -> (usize, &'a [u8]) {
-    // The repetition levels come first, but a flat column has none of them,
-    // and the format does not write a section it does not need.
-    let offset = if max_rep_level > 0 { read_level_section(buf, 0).0 } else { 0 };
-
-    let (def_bytes, def_data) = read_level_section(buf, offset);
-    let offset = offset + def_bytes;
-
-    let values = if max_def_level == 0 {
-        0
-    } else {
-        if levels.len() < rows {
-            levels.resize(rows, 0);
-        }
-        let max_level = u32::from(max_def_level.unsigned_abs());
-        let mut decoder = Rle::counting(bits_for(max_def_level), def_data, max_level);
-        let mut words = vec![0u32; rows];
-        let read = decoder.decode(&mut words);
-        for (index, &word) in words[..read].iter().enumerate() {
-            levels[index] = u16::try_from(word).unwrap_or(0);
-        }
-        decoder.count
-    };
-
-    (values, &buf[offset..])
-}
-
-/// Reads a level section's length prefix, and returns its size and its bytes.
-fn read_level_section(buf: &[u8], offset: usize) -> (usize, &[u8]) {
-    let length_bytes = buf.get(offset..offset + 4).expect("the level section has a length");
-    let length = i32::from_le_bytes(length_bytes.try_into().expect("four bytes"));
-    let size = 4 + usize::try_from(length).unwrap_or(0);
-    (size, buf.get(offset + 4..offset + size).expect("the level section is there"))
-}
-
-/// The dictionary page's values, in the dictionary's order.
-///
-/// A PLAIN dictionary of doubles is eight bytes per value, little-endian.
-fn decode_dictionary(buf: &[u8], num_values: u32) -> Vec<f64> {
-    assert_eq!(buf.len(), num_values as usize * 8, "the dictionary is PLAIN doubles");
-    buf.chunks_exact(8)
-        .map(|bytes| f64::from_le_bytes(bytes.try_into().expect("eight bytes")))
-        .collect()
-}
-
-/// Walks a column's pages, and hands each data page to `visit`.
-///
-/// The pages are fetched and decompressed by the parquet crate's own page
-/// reader, which is what the crate's own column reader does under it. The
-/// visitor is handed the page's definition levels, the number of values the
-/// page holds, and the page's values section.
-fn for_each_page(
-    path: &Path,
-    column: usize,
-    max_rep_level: i16,
-    max_def_level: i16,
-    mut visit: impl FnMut(&[f64], &[u16], usize, &[u8]),
-) {
-    let file = File::open(path).expect("the file opens");
-    let reader = SerializedFileReader::new(file).expect("the reader opens");
-    let mut levels: Vec<u16> = Vec::new();
-    for group in 0..reader.num_row_groups() {
-        let group = reader.get_row_group(group).expect("the row group reads");
-        let mut pages = group.get_column_page_reader(column).expect("the page reader opens");
-        let mut dictionary: Vec<f64> = Vec::new();
-        while let Some(page) = pages.get_next_page().expect("the page reads") {
-            match page {
-                Page::DictionaryPage { buf, num_values, .. } => {
-                    dictionary = decode_dictionary(&buf, num_values);
-                }
-                Page::DataPage { buf, num_values, .. } => {
-                    let rows = num_values as usize;
-                    let (values, section) =
-                        split_v1_page(&buf, max_rep_level, max_def_level, rows, &mut levels);
-                    visit(&dictionary, &levels[..rows], values, section);
-                }
-                Page::DataPageV2 { .. } => {
-                    // A v2 page holds its level sections with their lengths in
-                    // the page header, which the parquet crate's `Page` does
-                    // not carry. This file's pages are v1, so this is a
-                    // refusal rather than a guess.
-                    panic!("the file holds a v2 data page, which this probe does not read");
-                }
-            }
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The measurements
 // ---------------------------------------------------------------------------
-
-/// A measurement, with its median and its spread.
-struct Timing {
-    /// The median, in milliseconds.
-    median: f64,
-    /// The fastest sample, in milliseconds.
-    min: f64,
-    /// The slowest sample, in milliseconds.
-    max: f64,
-}
-
-impl Timing {
-    /// The timing of a set of samples.
-    fn of(samples: &[Duration]) -> Self {
-        let mut sorted = samples.to_vec();
-        sorted.sort();
-        let middle = sorted.len() / 2;
-        Self { median: ms(sorted[middle]), min: ms(sorted[0]), max: ms(sorted[sorted.len() - 1]) }
-    }
-}
-
-/// Repeats a measurement, and returns its median and its spread.
-fn repeat<T>(mut measure: impl FnMut() -> (Duration, T)) -> (Timing, T) {
-    let mut samples: Vec<Duration> = Vec::with_capacity(ITERATIONS);
-    let mut last = None;
-    for _ in 0..ITERATIONS {
-        let (elapsed, value) = measure();
-        samples.push(elapsed);
-        last = Some(value);
-    }
-    let timing = Timing::of(&samples);
-    (timing, last.expect("the measurement ran at least once"))
-}
 
 /// The parquet crate's own decode of one column, into plain values.
 ///
@@ -567,7 +199,7 @@ fn probe_decode(
         column,
         max_rep_level,
         max_def_level,
-        |dictionary, _levels, values, section| {
+        |_encoding, dictionary, _levels, values, section| {
             decode_indices(section, values, &mut scratch.indices);
             scratch
                 .values
@@ -598,7 +230,7 @@ fn probe_indices(
         column,
         max_rep_level,
         max_def_level,
-        |_dictionary, _levels, values, section| {
+        |_encoding, _dictionary, _levels, values, section| {
             decode_indices(section, values, &mut scratch.indices);
             count += values;
         },
@@ -606,17 +238,6 @@ fn probe_indices(
     let elapsed = started.elapsed();
     std::hint::black_box(&scratch.indices);
     (elapsed, count)
-}
-
-/// Decodes a page's values section into `out`, and returns how many it wrote.
-///
-/// The values section of a dictionary-encoded page is one byte of bit width,
-/// and then the RLE/bit-packed hybrid.
-fn decode_indices(section: &[u8], count: usize, out: &mut [u32]) {
-    let bit_width = section[0];
-    let mut decoder = Rle::new(bit_width, &section[1..]);
-    let read = decoder.decode(&mut out[..count]);
-    assert_eq!(read, count, "the page holds the values it says");
 }
 
 /// What the expansion costs, in the three parts it is made of.
@@ -859,7 +480,7 @@ fn probe_dictionary_compare(
         column,
         max_rep_level,
         max_def_level,
-        |dictionary, levels, values, section| {
+        |_encoding, dictionary, levels, values, section| {
             // The predicate, once per distinct value.
             let pass_word = pass_word_for_threshold(dictionary, flavor, threshold);
             let mut lookup = [0u8; 256];
@@ -1108,12 +729,14 @@ fn read_shape(path: &Path) -> (Vec<GroupShape>, i16, i16) {
 /// Measures the decodes.
 fn measure_decodes(path: &Path, max_rep_level: i16, max_def_level: i16) -> Decodes {
     let mut scratch = Scratch::new(1_000_000);
-    let (parquet, values) = repeat(|| parquet_decode(path, DISCOUNT));
-    let (arrow, _) = repeat(|| arrow_decode(path, DISCOUNT));
-    let (probe, probe_values) =
-        repeat(|| probe_decode(path, DISCOUNT, max_rep_level, max_def_level, &mut scratch));
-    let (indices, rows) =
-        repeat(|| probe_indices(path, DISCOUNT, max_rep_level, max_def_level, &mut scratch));
+    let (parquet, values) = repeat(ITERATIONS, || parquet_decode(path, DISCOUNT));
+    let (arrow, _) = repeat(ITERATIONS, || arrow_decode(path, DISCOUNT));
+    let (probe, probe_values) = repeat(ITERATIONS, || {
+        probe_decode(path, DISCOUNT, max_rep_level, max_def_level, &mut scratch)
+    });
+    let (indices, rows) = repeat(ITERATIONS, || {
+        probe_indices(path, DISCOUNT, max_rep_level, max_def_level, &mut scratch)
+    });
 
     // The probe's decoder is checked against the parquet crate's, bit for bit.
     assert_eq!(values.len(), probe_values.len(), "the same number of values");
@@ -1132,9 +755,9 @@ fn measure_decodes(path: &Path, max_rep_level: i16, max_def_level: i16) -> Decod
     }
     write_plain(plain_path, &values);
     let plain_bytes = std::fs::metadata(plain_path).expect("the plain file").len();
-    let (plain, plain_values) = repeat(|| parquet_decode(plain_path, 0));
+    let (plain, plain_values) = repeat(ITERATIONS, || parquet_decode(plain_path, 0));
     assert_eq!(plain_values.len(), values.len(), "the same number of values");
-    let (plain_arrow, _) = repeat(|| arrow_decode(plain_path, 0));
+    let (plain_arrow, _) = repeat(ITERATIONS, || arrow_decode(plain_path, 0));
 
     // The expansion, in its three parts.
     let groups = indices_by_group(path, DISCOUNT, max_rep_level, max_def_level, &mut scratch);
@@ -1143,16 +766,18 @@ fn measure_decodes(path: &Path, max_rep_level: i16, max_def_level: i16) -> Decod
     assert_eq!(all_indices.len(), rows, "the same number of indices");
     let dictionary = first_dictionary(path);
     let (expansion_time, expanded) =
-        repeat(|| expansion(&dictionary, &all_indices, ExpansionPart::Both));
+        repeat(ITERATIONS, || expansion(&dictionary, &all_indices, ExpansionPart::Both));
     assert_eq!(expanded, rows, "the expansion wrote every value");
-    let (buffers, _) = repeat(|| expansion(&dictionary, &all_indices, ExpansionPart::Buffers));
-    let (gather, _) = repeat(|| expansion(&dictionary, &all_indices, ExpansionPart::Gather));
+    let (buffers, _) =
+        repeat(ITERATIONS, || expansion(&dictionary, &all_indices, ExpansionPart::Buffers));
+    let (gather, _) =
+        repeat(ITERATIONS, || expansion(&dictionary, &all_indices, ExpansionPart::Gather));
 
     // The mask the dictionary comparison would have to build.
-    let (mask, survivors) = repeat(|| mask_from_indices(&groups));
+    let (mask, survivors) = repeat(ITERATIONS, || mask_from_indices(&groups));
 
     // The hypothesis's shape, end to end.
-    let (prototype, prototype_rows) = repeat(|| {
+    let (prototype, prototype_rows) = repeat(ITERATIONS, || {
         probe_dictionary_compare(path, DISCOUNT, max_rep_level, max_def_level, 0.04, &mut scratch)
     });
     assert_eq!(survivors, prototype_rows, "the mask and the prototype agree");
@@ -1342,13 +967,13 @@ fn main() {
     print_decode(&decodes);
 
     let mut predicate_samples: Vec<Duration> = Vec::with_capacity(ITERATIONS);
-    let (scan, _) = repeat(|| {
+    let (scan, _) = repeat(ITERATIONS, || {
         let (elapsed, rows, predicate) = engine_scan(&path, &plan());
         predicate_samples.push(predicate);
         (elapsed, (rows, ()))
     });
     let predicate = Timing::of(&predicate_samples);
-    let (query, query_rows) = repeat(|| engine_scan_full(&path));
+    let (query, query_rows) = repeat(ITERATIONS, || engine_scan_full(&path));
     assert_eq!(query_rows, decodes.survivors, "the scan and the prototype agree");
     print_scan(&scan, &predicate, &query, decodes.survivors);
 
@@ -1371,119 +996,7 @@ mod tests {
     //! **not monotonic**. An implementation that assumed the dictionary was
     //! sorted would pass on the real file and fail on these.
 
-    use super::{decode_dictionary, mask_from_indices, mask_words, pass_word_for, Rle};
-
-    /// Decodes a whole stream into a vector.
-    fn decode(bit_width: u8, stream: &[u8], count: usize) -> Vec<u32> {
-        let mut out = vec![0u32; count];
-        let mut decoder = Rle::new(bit_width, stream);
-        let read = decoder.decode(&mut out);
-        assert_eq!(read, count, "the stream holds the values it says");
-        out
-    }
-
-    /// Packs eight values into one bit-packed group.
-    ///
-    /// A group of eight values of `bit_width` bits is `bit_width` bytes: the
-    /// values are packed LSB-first, and each one takes the next `bit_width`
-    /// bits of the stream.
-    fn pack(values: &[u32], bit_width: usize) -> Vec<u8> {
-        assert_eq!(values.len(), 8, "a group is eight values");
-        let mut packed = vec![0u8; bit_width];
-        for (index, &value) in values.iter().enumerate() {
-            for bit in 0..bit_width {
-                if value >> bit & 1 == 1 {
-                    let absolute = index * bit_width + bit;
-                    packed[absolute / 8] |= 1u8 << (absolute % 8);
-                }
-            }
-        }
-        packed
-    }
-
-    /// A stream holding one bit-packed group of eight values.
-    fn group(values: &[u32], bit_width: usize) -> Vec<u8> {
-        let mut stream = vec![0x03];
-        stream.extend_from_slice(&pack(values, bit_width));
-        stream
-    }
-
-    /// The reference vector from the Parquet format's own documentation:
-    /// eight values of three bits, one bit-packed group.
-    #[test]
-    fn decodes_the_formats_reference_vector() {
-        let values = decode(3, &[0x03, 0x88, 0xC6, 0xFA], 8);
-        assert_eq!(values, vec![0, 1, 2, 3, 4, 5, 6, 7]);
-    }
-
-    /// An RLE run: the header is the count shifted left, and the value
-    /// follows in `ceil(bit_width / 8)` bytes.
-    #[test]
-    fn decodes_an_rle_run() {
-        // Five values of the value 9, at a bit width of four.
-        let values = decode(4, &[0x0A, 0x09], 5);
-        assert_eq!(values, vec![9, 9, 9, 9, 9]);
-    }
-
-    /// An RLE run and then a bit-packed group, in one stream.
-    #[test]
-    fn decodes_a_mixed_stream() {
-        // Three values of 7, then eight values of four bits.
-        let mut stream = vec![0x06, 0x07];
-        stream.extend_from_slice(&group(&[0, 1, 2, 3, 4, 5, 6, 7], 4));
-        let values = decode(4, &stream, 11);
-        assert_eq!(values, vec![7, 7, 7, 0, 1, 2, 3, 4, 5, 6, 7]);
-    }
-
-    /// A bit width too wide for one word: the values are read a bit at a
-    /// time, and the decoder has to agree with itself about where they are.
-    #[test]
-    fn decodes_a_wide_bit_width() {
-        let values: Vec<u32> = (0..8).map(|index| index * 1000 + 7).collect();
-        let stream = group(&values, 13);
-        assert_eq!(decode(13, &stream, 8), values);
-    }
-
-    /// The counting decoder: it counts the values equal to the maximum
-    /// level, which is how many values a page holds.
-    #[test]
-    fn counts_the_levels_that_are_the_maximum() {
-        // Six levels of one, in an RLE run, then eight levels from a
-        // bit-packed group: three of them are ones.
-        let mut stream = vec![0x0C, 0x01];
-        stream.extend_from_slice(&group(&[1, 1, 1, 0, 0, 0, 0, 0], 1));
-        let mut words = vec![0u32; 14];
-        let mut decoder = Rle::counting(1, &stream, 1);
-        let read = decoder.decode(&mut words);
-        assert_eq!(read, 14);
-        assert_eq!(decoder.count, 9, "nine of the fourteen levels are the maximum");
-    }
-
-    /// A dictionary whose values are **not sorted**, and whose indices are
-    /// **not monotonic**. The gather must still produce the right values.
-    #[test]
-    fn gathers_an_unsorted_dictionary_with_non_monotonic_indices() {
-        let dictionary_values = [3.5f64, -1.0, 99.25, 0.5, 7.0];
-        let mut buffer = Vec::with_capacity(dictionary_values.len() * 8);
-        for value in dictionary_values {
-            buffer.extend_from_slice(&value.to_le_bytes());
-        }
-        let dictionary = decode_dictionary(&buffer, dictionary_values.len() as u32);
-        assert_eq!(dictionary, dictionary_values.to_vec());
-
-        // The indices: 4, 0, 4, 2, 1, 3, 0, 4 -- not monotonic, and not
-        // sorted either.
-        let indices = [4u32, 0, 4, 2, 1, 3, 0, 4];
-        let decoded = decode(3, &group(&indices, 3), indices.len());
-        assert_eq!(decoded, indices.to_vec());
-
-        let gathered: Vec<f64> = decoded.iter().map(|&index| dictionary[index as usize]).collect();
-        assert_eq!(
-            gathered,
-            vec![7.0, 3.5, 7.0, 99.25, -1.0, 0.5, 3.5, 7.0],
-            "the gather follows the indices, not the order of the values"
-        );
-    }
+    use super::{mask_from_indices, mask_words, pass_word_for};
 
     /// The mask the hypothesis builds: one bit per row, out of the indices.
     ///

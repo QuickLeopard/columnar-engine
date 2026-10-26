@@ -67,6 +67,14 @@ pub enum Comparator {
     DuckDb,
     /// `Polars`, through `tools/polars-run.py`.
     Polars,
+    /// `DataFusion`, through `tools/datafusion-peer`.
+    ///
+    /// The peer is a **Rust** engine reading the same Parquet through the
+    /// same Arrow stack this engine's reader uses. It is a separate project
+    /// under `tools/`, built separately: it is an instrument, not a
+    /// dependency, and the engine's dependency graph does not move because of
+    /// it.
+    DataFusion,
 }
 
 impl Comparator {
@@ -76,6 +84,7 @@ impl Comparator {
         match self {
             Self::DuckDb => "duckdb",
             Self::Polars => "polars",
+            Self::DataFusion => "datafusion-peer",
         }
     }
 
@@ -85,6 +94,7 @@ impl Comparator {
         match self {
             Self::DuckDb => "DUCKDB_BIN",
             Self::Polars => "POLARS_BIN",
+            Self::DataFusion => "DATAFUSION_PEER_BIN",
         }
     }
 }
@@ -344,7 +354,7 @@ struct ParsedOutput {
 fn parse_output(comparator: Comparator, output: &str) -> ParsedOutput {
     match comparator {
         Comparator::DuckDb => parse_duckdb(output),
-        Comparator::Polars => parse_polars(output),
+        Comparator::Polars | Comparator::DataFusion => parse_markers(output),
     }
 }
 
@@ -386,11 +396,13 @@ fn parse_duckdb(output: &str) -> ParsedOutput {
     ParsedOutput { load_ms, query_ms, result, result_value }
 }
 
-/// Parses the `Polars` driver's output.
+/// Parses the output of a driver that prints its timings as markers.
 ///
-/// The driver prints `LOAD_MS=`, `QUERY_MS=` and `VALUE=` markers ahead of the
-/// result frame.
-fn parse_polars(output: &str) -> ParsedOutput {
+/// The `Polars` driver and the `DataFusion` peer both print `LOAD_MS=`,
+/// `QUERY_MS=` and `VALUE=` markers ahead of the result, and both are parsed
+/// the same way: the marker protocol is the contract between a driver and
+/// this harness, so a new driver is a new binary and not a new parser.
+fn parse_markers(output: &str) -> ParsedOutput {
     let mut load_ms = 0.0;
     let mut query_ms = 0.0;
     let mut value = None;
@@ -508,6 +520,24 @@ fn invocation(
             }
             Ok((binary, args, Vec::new()))
         }
+        Comparator::DataFusion => {
+            let binary = find_binary(comparator)
+                .ok_or(ExternalError::NotFound(comparator.name(), comparator.env_var()))?;
+            let mut args = vec![
+                "--sql".to_owned(),
+                query.sql.clone(),
+                "--path".to_owned(),
+                data_path.display().to_string(),
+                // The thread count is pinned, so the peer's runtime and its
+                // partition count are both the engine's.
+                "--threads".to_owned(),
+                threads.to_string(),
+            ];
+            if mode == Mode::Resident {
+                args.push("--resident".to_owned());
+            }
+            Ok((binary, args, Vec::new()))
+        }
         Comparator::Polars => {
             let script = repository_root().map_or_else(
                 |_| PathBuf::from("tools/polars-run.py"),
@@ -581,6 +611,23 @@ fn version_of(comparator: Comparator, data_path: &Path) -> String {
                     |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
                 )
         }
+        Comparator::DataFusion => {
+            // The peer prints its own version, and the version matters: a
+            // number measured against DataFusion 49 is not the same claim as
+            // one measured against DataFusion 50.
+            let Some(binary) = find_binary(comparator) else {
+                return "unknown".to_owned();
+            };
+            Command::new(binary)
+                .arg("--version")
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map_or_else(
+                    || "unknown".to_owned(),
+                    |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+                )
+        }
         Comparator::Polars => {
             // The Python driver knows the Polars version; ask it directly.
             let script = repository_root().map_or_else(
@@ -604,7 +651,7 @@ fn version_of(comparator: Comparator, data_path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_duckdb, parse_polars, strip_ansi};
+    use super::{parse_duckdb, parse_markers, strip_ansi};
 
     /// `DuckDB` prefixes its timing lines with an ANSI colour reset. The
     /// first version of the parser stopped at the `[` of the escape sequence,
@@ -650,7 +697,7 @@ mod tests {
             "shape: (1, 1)\n",
             "6000000\n",
         );
-        let parsed = parse_polars(output);
+        let parsed = parse_markers(output);
         assert!((parsed.load_ms - 1033.6).abs() < 0.001, "load was {}", parsed.load_ms);
         assert!((parsed.query_ms - 0.2).abs() < 0.001, "query was {}", parsed.query_ms);
         assert_eq!(parsed.result_value, Some(6_000_000.0));

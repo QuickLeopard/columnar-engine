@@ -1,0 +1,38 @@
+# DataFusion peer -- a standalone measuring instrument for the benchmark
+# harness, not a member of the columnar-engine workspace.
+#
+# The `[workspace]` table below is the load-bearing part of this file. Without
+# it, cargo walks up the directory tree, finds the parent workspace root, and
+# refuses to build this package because it is not listed in `members`. With it,
+# this directory is its own workspace root and the published dependency graph of
+# `columnar-engine` cannot move because a third incumbent was added to the
+# comparison.
+
+[package]
+name = "datafusion-peer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Runs a SQL query against a Parquet file with DataFusion and reports timing markers for the columnar-engine benchmark harness."
+license = "MIT OR Apache-2.0"
+
+# Empty on purpose: this package is the only member of its own workspace.
+[workspace]
+
+[dependencies]
+# `default-features = false` keeps the comparison honest: DataFusion's default
+# feature set pulls in encryption, compression and a pile of expression modules
+# that the engine under test does not have. The two features that are enabled
+# are the ones the benchmark actually needs -- Parquet I/O, and the Unicode
+# string kernels.
+datafusion = { version = "49", default-features = false, features = [
+    "parquet",
+    "unicode_expressions",
+] }
+
+# The runtime is ours so that the thread count the harness asks for is the
+# thread count the engine actually gets.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+# Used directly for the Arrow result types and for the result table.
+arrow = "55"

@@ -32,7 +32,7 @@ use columnar_bench::{
 use columnar_core::ComparisonOp;
 use columnar_engine::{Dataset, ExecOptions};
 
-use columnar_cli::queries::{BuiltinQuery, QueryDefinition, QUERIES};
+use columnar_cli::queries::{self, BuiltinQuery, QueryDefinition, QUERIES};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -503,10 +503,12 @@ fn run_compare(data: &Path, iterations: usize, threads: usize, out: &Path) -> Re
                 engine_queries.extend(measured);
 
                 for mode in [external::Mode::Resident, external::Mode::Cold] {
-                    for comparator in [Comparator::DuckDb, Comparator::Polars] {
+                    for comparator in
+                        [Comparator::DuckDb, Comparator::Polars, Comparator::DataFusion]
+                    {
                         let query = ExternalQuery::new(
                             definition.query.name(),
-                            definition.sql_for(comparator, mode, data),
+                            queries::sql_for(definition, comparator, mode, data),
                         );
                         match external::run(comparator, mode, &query, data, threads, iterations) {
                             Ok(outcome) => {
@@ -790,8 +792,10 @@ fn measure_incumbents(
 
     let mut incumbents = Vec::new();
     for comparator in [Comparator::DuckDb, Comparator::Polars] {
-        let query_sql =
-            ExternalQuery::new(definition.query.name(), definition.sql_for(comparator, mode, data));
+        let query_sql = ExternalQuery::new(
+            definition.query.name(),
+            queries::sql_for(definition, comparator, mode, data),
+        );
         match external::run(comparator, mode, &query_sql, data, threads, iterations) {
             Ok(outcome) => {
                 if let (Some(ours), Some(theirs)) = (ours, outcome.result_value) {
@@ -871,7 +875,7 @@ fn measure_engine_resident_at(
 /// The filter, the projection, the expression evaluation and the aggregate --
 /// everything except the scan. It is the number the operators' parallelism
 /// moves, and in the resident mode it *is* the measurement.
-fn operator_stage_ms(result: &columnar_engine::AggregateResult) -> f64 {
+pub(crate) fn operator_stage_ms(result: &columnar_engine::AggregateResult) -> f64 {
     result
         .stages
         .iter()
@@ -1061,7 +1065,7 @@ fn measure_engine_lazy(
 /// where the parallelism is. A reader who sees the total fall while the scan
 /// does not knows immediately that the parallelism went somewhere other than
 /// where they hoped.
-fn measure_engine_lazy_at(
+pub(crate) fn measure_engine_lazy_at(
     definition: &QueryDefinition,
     data: &Path,
     iterations: usize,
@@ -1106,7 +1110,7 @@ fn measure_engine_lazy_at(
 ///
 /// The scan stage is the read: the Parquet decode, the pushed-down
 /// predicates and the merge. It is the stage the thread count acts on.
-fn scan_stage_ms(result: &columnar_engine::AggregateResult) -> f64 {
+pub(crate) fn scan_stage_ms(result: &columnar_engine::AggregateResult) -> f64 {
     result
         .plan_output
         .stages
@@ -1119,7 +1123,7 @@ fn scan_stage_ms(result: &columnar_engine::AggregateResult) -> f64 {
 ///
 /// The median rather than the mean, because a single scheduling hiccup on a
 /// shared machine should not move the number.
-fn median(samples: &[f64]) -> f64 {
+pub(crate) fn median(samples: &[f64]) -> f64 {
     if samples.is_empty() {
         return 0.0;
     }
@@ -1135,7 +1139,7 @@ fn median(samples: &[f64]) -> f64 {
 /// repository's generator -- the scale factor, seed and null rate are
 /// reported as unknown rather than as zero. A report that says "scale factor
 /// 0" for a dataset it knows nothing about is not a report.
-fn dataset_report(path: &Path, dataset: &Dataset) -> DatasetReport {
+pub(crate) fn dataset_report(path: &Path, dataset: &Dataset) -> DatasetReport {
     let bytes = std::fs::metadata(path).map_or(0, |meta| meta.len());
     let manifest = columnar_testdata::DatasetManifest::read_json(path).ok();
     DatasetReport {
