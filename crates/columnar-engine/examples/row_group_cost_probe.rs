@@ -63,6 +63,35 @@ const READER_BATCH_ROWS: usize = 65_536;
 /// How many times each measurement is repeated.
 const ITERATIONS: usize = 5;
 
+/// The commit the working tree is at, for the report.
+fn commit() -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success());
+    output.map_or_else(
+        || "unknown".to_owned(),
+        |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+    )
+}
+
+/// The host's load average, for the report.
+fn load_average() -> f64 {
+    std::process::Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<f64>().ok())
+        })
+        .unwrap_or_default()
+}
+
 /// The median of a set of durations.
 fn median(samples: &mut [Duration]) -> Duration {
     samples.sort_unstable();
@@ -361,6 +390,83 @@ fn row_groups(path: &Path) -> usize {
     reader.metadata().num_row_groups()
 }
 
+/// The crate's own read, measured on its own.
+fn measure_crate_reads(path: &Path, projection: &[usize]) -> serde_json::Value {
+    let discount_ms = ms(repeat(|| crate_read(path, &[DISCOUNT]).0));
+    let shipdate_ms = ms(repeat(|| crate_read(path, &[SHIPDATE]).0));
+    let price_ms = ms(repeat(|| crate_read(path, &[EXTENDEDPRICE]).0));
+    let both_ms = ms(repeat(|| crate_read(path, projection).0));
+    let shipdate_dict_ms = ms(repeat(|| crate_read_as_dictionary(path, &[SHIPDATE]).0));
+    let both_dict_ms = ms(repeat(|| crate_read_as_dictionary(path, projection).0));
+    println!("--- the parquet crate's read, no pushdown, no materialisation ---");
+    println!("l_discount only   : {discount_ms:7.2} ms");
+    println!("l_shipdate only   : {shipdate_ms:7.2} ms");
+    println!("l_extendedprice   : {price_ms:7.2} ms");
+    println!("both columns      : {both_ms:7.2} ms");
+    println!("--- the same read, with the strings as dictionary arrays ---");
+    println!("l_shipdate only   : {shipdate_dict_ms:7.2} ms");
+    println!("both columns      : {both_dict_ms:7.2} ms");
+    let skipping_ms = ms(repeat(|| crate_read_skipping(path, projection, 6_000_000).0));
+    let _ = skipping_ms;
+    let one_batch_ms = ms(repeat(|| crate_read_with_batch(path, projection, 1_000_000).0));
+    println!("--- the same read, with every row skipped ---");
+    println!("both columns      : {skipping_ms:7.2} ms");
+    println!("--- the same read, with one batch a row group ---");
+    println!("both columns      : {one_batch_ms:7.2} ms");
+    println!();
+    serde_json::json!({
+        "crate_discount": discount_ms,
+        "crate_shipdate": shipdate_ms,
+        "crate_price": price_ms,
+        "crate_both": both_ms,
+    })
+}
+
+/// The engine's own scan, and the ladder of reader batch sizes.
+fn measure_engine_scan(path: &Path, plan: &PushdownPlan) -> (f64, f64, Vec<serde_json::Value>) {
+    let engine_predicates_ms = ms(repeat(|| engine_scan(path, plan, &[]).0));
+    let engine_full_ms = ms(repeat(|| engine_scan(path, plan, &[EXTENDEDPRICE]).0));
+    println!("--- the engine's own scan ---");
+    println!("the predicates    : {engine_predicates_ms:7.2} ms");
+    println!("and the price     : {engine_full_ms:7.2} ms");
+    println!("--- the engine's own scan, by reader batch size ---");
+    let mut ladder: Vec<serde_json::Value> = Vec::new();
+    for batch_rows in [12_500usize, 25_000, 31_250, 50_000, 62_500, 65_536, 125_000, 250_000] {
+        let elapsed = ms(repeat(|| engine_scan_with_batch(path, plan, &[], batch_rows).0));
+        println!("batch {batch_rows:>7} rows : {elapsed:7.2} ms");
+        ladder.push(serde_json::json!({ "batch": batch_rows, "scan_ms": elapsed }));
+    }
+    println!();
+    (engine_predicates_ms, engine_full_ms, ladder)
+}
+
+/// The file's own shape, and the pages of the two predicate columns.
+fn measure_shape(path: &Path, projection: &[usize], groups: usize) -> (u64, u64) {
+    let (compressed, dictionary) = row_group_bytes(path, projection);
+    let compressed_total: u64 = compressed.iter().sum();
+    let dictionary_total: u64 = dictionary.iter().sum();
+    println!("--- the file's shape, for the two predicate columns ---");
+    println!("compressed bytes  : {compressed_total} over {groups} row groups");
+    println!("dictionary bytes  : {dictionary_total} over {groups} row groups");
+    println!();
+    println!("--- the pages of each column, and the cost of reading them ---");
+    for (name, column) in [("l_discount", DISCOUNT), ("l_shipdate", SHIPDATE)] {
+        let (values, pages, elapsed) = page_shape(path, column);
+        let total_values: u32 = values.iter().sum();
+        let total_pages: usize = pages.iter().sum();
+        println!(
+            "{name:<12}: {total_values} dictionary values over {groups} row groups \
+             ({:.0} a group), {total_pages} data pages, pages read in {:.2} ms",
+            f64::from(
+                u16::try_from(total_values / u32::try_from(groups).unwrap_or(1)).unwrap_or(0)
+            ),
+            ms(elapsed)
+        );
+    }
+    println!();
+    (compressed_total, dictionary_total)
+}
+
 fn main() {
     let mut arguments = std::env::args().skip(1);
     let path = arguments.next().unwrap_or_else(|| "data/lineitem.parquet".to_owned());
@@ -380,28 +486,7 @@ fn main() {
     println!("row groups: {groups}, iterations: {ITERATIONS}\n");
 
     // --- The crate's read, on its own ---------------------------------------
-    let discount_ms = ms(repeat(|| crate_read(path, &[DISCOUNT]).0));
-    let shipdate_ms = ms(repeat(|| crate_read(path, &[SHIPDATE]).0));
-    let price_ms = ms(repeat(|| crate_read(path, &[EXTENDEDPRICE]).0));
-    let both_ms = ms(repeat(|| crate_read(path, &projection).0));
-    let shipdate_dict_ms = ms(repeat(|| crate_read_as_dictionary(path, &[SHIPDATE]).0));
-    let both_dict_ms = ms(repeat(|| crate_read_as_dictionary(path, &projection).0));
-    println!("--- the parquet crate's read, no pushdown, no materialisation ---");
-    println!("l_discount only   : {discount_ms:7.2} ms");
-    println!("l_shipdate only   : {shipdate_ms:7.2} ms");
-    println!("l_extendedprice   : {price_ms:7.2} ms");
-    println!("both columns      : {both_ms:7.2} ms");
-    println!("--- the same read, with the strings as dictionary arrays ---");
-    println!("l_shipdate only   : {shipdate_dict_ms:7.2} ms");
-    println!("both columns      : {both_dict_ms:7.2} ms");
-    let skipping_ms = ms(repeat(|| crate_read_skipping(path, &projection, 6_000_000).0));
-    let _ = skipping_ms;
-    let one_batch_ms = ms(repeat(|| crate_read_with_batch(path, &projection, 1_000_000).0));
-    println!("--- the same read, with every row skipped ---");
-    println!("both columns      : {skipping_ms:7.2} ms");
-    println!("--- the same read, with one batch a row group ---");
-    println!("both columns      : {one_batch_ms:7.2} ms");
-    println!();
+    let crate_reads = measure_crate_reads(path, &projection);
 
     // --- The crate's read, with the pushdown on top -------------------------
     let pushdown_ms = ms(repeat(|| crate_read_with_pushdown(path, &projection, &plan).0));
@@ -410,54 +495,24 @@ fn main() {
     println!();
 
     // --- The engine's own scan ----------------------------------------------
-    let engine_predicates_ms = ms(repeat(|| engine_scan(path, &plan, &[]).0));
-    let engine_full_ms = ms(repeat(|| engine_scan(path, &plan, &[EXTENDEDPRICE]).0));
-    println!("--- the engine's own scan ---");
-    println!("the predicates    : {engine_predicates_ms:7.2} ms");
-    println!("and the price     : {engine_full_ms:7.2} ms");
-    println!("--- the engine's own scan, by reader batch size ---");
-    for batch_rows in [12_500usize, 25_000, 31_250, 50_000, 62_500, 65_536, 125_000, 250_000] {
-        let elapsed = ms(repeat(|| engine_scan_with_batch(path, &plan, &[], batch_rows).0));
-        println!("batch {batch_rows:>7} rows : {elapsed:7.2} ms");
-    }
-    println!();
+    let (engine_predicates_ms, engine_full_ms, ladder) = measure_engine_scan(path, &plan);
 
     // --- The file's own shape ------------------------------------------------
-    let (compressed, dictionary) = row_group_bytes(path, &projection);
-    let compressed_total: u64 = compressed.iter().sum();
-    let dictionary_total: u64 = dictionary.iter().sum();
-    println!("--- the file's shape, for the two predicate columns ---");
-    println!("compressed bytes  : {compressed_total} over {groups} row groups");
-    println!("dictionary bytes  : {dictionary_total} over {groups} row groups");
-    println!();
-
-    // --- The pages, and what the crate does with them ------------------------
-    println!("--- the pages of each column, and the cost of reading them ---");
-    for (name, column) in [("l_discount", DISCOUNT), ("l_shipdate", SHIPDATE)] {
-        let (values, pages, elapsed) = page_shape(path, column);
-        let total_values: u32 = values.iter().sum();
-        let total_pages: usize = pages.iter().sum();
-        println!(
-            "{name:<12}: {total_values} dictionary values over {groups} row groups \
-             ({:.0} a group), {total_pages} data pages, pages read in {:.2} ms",
-            f64::from(
-                u16::try_from(total_values / u32::try_from(groups).unwrap_or(1)).unwrap_or(0)
-            ),
-            ms(elapsed)
-        );
-    }
-    println!();
+    let (compressed_total, dictionary_total) = measure_shape(path, &projection, groups);
 
     let report = serde_json::json!({
         "probe": "row-group-cost",
         "file": path.display().to_string(),
         "row_groups": groups,
         "iterations": ITERATIONS,
+        "commit": commit(),
+        "host_load_average": load_average(),
+        "ladder": ladder,
         "measurements_ms": {
-            "crate_discount": discount_ms,
-            "crate_shipdate": shipdate_ms,
-            "crate_price": price_ms,
-            "crate_both": both_ms,
+            "crate_discount": crate_reads["crate_discount"],
+            "crate_shipdate": crate_reads["crate_shipdate"],
+            "crate_price": crate_reads["crate_price"],
+            "crate_both": crate_reads["crate_both"],
             "crate_with_pushdown": pushdown_ms,
             "engine_predicates": engine_predicates_ms,
             "engine_full": engine_full_ms,

@@ -214,8 +214,8 @@ probe-cost data="data/lineitem.parquet" out="bench-results/row-group-cost.json":
 # each one derives for the file, and then measures the two candidates against
 # each other with the order alternating -- over both shapes the lazy path
 # serves.
-probe-batch-size data="data/lineitem.parquet":
-    cargo run --release -p columnar-engine --example lazy_batch_size -- {{data}}
+probe-batch-size data="data/lineitem.parquet" out="bench-results/batch-size.json":
+    cargo run --release -p columnar-engine --example lazy_batch_size -- {{data}} --out {{out}}
 
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.

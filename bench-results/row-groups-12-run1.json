@@ -12,15 +12,15 @@
       "dictionary_values": 11,
       "encoding": "RLE_DICTIONARY",
       "measurements_ms": {
-        "arrow_decode": 3.72125,
-        "counterfactual_arrow_decode": 19.863875,
-        "counterfactual_parquet_decode": 21.776332999999997,
-        "expansion": 2.14375,
-        "expansion_buffers": 0.209125,
-        "expansion_gather": 1.550083,
-        "parquet_decode": 7.280375,
-        "probe_decode": 6.3890839999999995,
-        "probe_indices": 4.1225000000000005
+        "arrow_decode": 6.803208,
+        "counterfactual_arrow_decode": 36.462250000000004,
+        "counterfactual_parquet_decode": 39.25816699999999,
+        "expansion": 3.3155419999999998,
+        "expansion_buffers": 0.39225000000000004,
+        "expansion_gather": 2.911834,
+        "parquet_decode": 10.732166,
+        "probe_decode": 11.08725,
+        "probe_indices": 7.878792000000001
       },
       "name": "l_discount",
       "plain_data_bytes": 0,
@@ -29,40 +29,40 @@
       "rows": 6000000,
       "spreads_ms": {
         "arrow_decode": [
-          3.5798750000000004,
-          3.818708
+          6.773542,
+          7.224958
         ],
         "counterfactual_arrow_decode": [
-          19.735916999999997,
-          20.002
+          36.350958000000006,
+          36.48225
         ],
         "counterfactual_parquet_decode": [
-          21.104625,
-          22.2045
+          39.067459,
+          39.536292
         ],
         "expansion": [
-          1.945292,
-          3.607875
+          3.30925,
+          3.319667
         ],
         "expansion_buffers": [
-          0.204334,
-          0.231209
+          0.39225000000000004,
+          0.392417
         ],
         "expansion_gather": [
-          1.523417,
-          1.6173330000000001
+          2.911,
+          2.916541
         ],
         "parquet_decode": [
-          6.992,
-          7.404958
+          10.552083,
+          11.408458999999999
         ],
         "probe_decode": [
-          5.766542,
-          8.268832999999999
+          11.047208,
+          14.445375
         ],
         "probe_indices": [
-          4.1225000000000005,
-          4.1225000000000005
+          7.878792000000001,
+          7.878792000000001
         ]
       }
     },
@@ -78,15 +78,15 @@
       "dictionary_values": 4901,
       "encoding": "RLE_DICTIONARY",
       "measurements_ms": {
-        "arrow_decode": 5.3156669999999995,
-        "counterfactual_arrow_decode": 33.562709000000005,
-        "counterfactual_parquet_decode": 37.355167,
-        "expansion": 1.7495,
-        "expansion_buffers": 0.205,
-        "expansion_gather": 1.509542,
-        "parquet_decode": 7.615292,
-        "probe_decode": 8.466833,
-        "probe_indices": 6.720125
+        "arrow_decode": 9.329333,
+        "counterfactual_arrow_decode": 55.513292,
+        "counterfactual_parquet_decode": 57.493207999999996,
+        "expansion": 2.9611669999999997,
+        "expansion_buffers": 0.361417,
+        "expansion_gather": 2.913083,
+        "parquet_decode": 12.437625,
+        "probe_decode": 13.641541,
+        "probe_indices": 11.071708
       },
       "name": "l_quantity",
       "plain_data_bytes": 0,
@@ -95,40 +95,40 @@
       "rows": 6000000,
       "spreads_ms": {
         "arrow_decode": [
-          4.961208,
-          5.68175
+          8.267958,
+          9.41625
         ],
         "counterfactual_arrow_decode": [
-          33.433625,
-          35.269042
+          55.423458000000004,
+          55.7885
         ],
         "counterfactual_parquet_decode": [
-          35.323375,
-          37.410958
+          57.267292,
+          58.5655
         ],
         "expansion": [
-          1.734167,
-          1.82175
+          2.9360839999999997,
+          3.319083
         ],
         "expansion_buffers": [
-          0.204708,
-          0.205458
+          0.361,
+          0.367667
         ],
         "expansion_gather": [
-          1.505084,
-          1.530042
+          2.91075,
+          2.914167
         ],
         "parquet_decode": [
-          7.234292,
-          7.776708
+          11.232583,
+          13.799334
         ],
         "probe_decode": [
-          8.189584,
-          9.306208
+          13.509167000000001,
+          14.825625
         ],
         "probe_indices": [
-          6.720125,
-          6.720125
+          11.071708,
+          11.071708
         ]
       }
     },
@@ -144,14 +144,14 @@
       "dictionary_values": 131137,
       "encoding": "PLAIN",
       "measurements_ms": {
-        "arrow_decode": 33.482125,
-        "counterfactual_arrow_decode": 35.667042,
-        "counterfactual_parquet_decode": 39.985417000000005,
-        "expansion": 1.138625,
-        "expansion_buffers": 0.25133300000000003,
-        "expansion_gather": 0.920583,
-        "parquet_decode": 36.939666,
-        "probe_decode": 40.52125
+        "arrow_decode": 48.827833,
+        "counterfactual_arrow_decode": 51.362083000000005,
+        "counterfactual_parquet_decode": 49.402708,
+        "expansion": 1.651959,
+        "expansion_buffers": 0.385625,
+        "expansion_gather": 1.291666,
+        "parquet_decode": 58.667209,
+        "probe_decode": 57.151125
       },
       "name": "l_extendedprice",
       "plain_data_bytes": 35290624,
@@ -160,77 +160,77 @@
       "rows": 6000000,
       "spreads_ms": {
         "arrow_decode": [
-          33.355125,
-          34.327875
+          48.74225,
+          49.218208
         ],
         "counterfactual_arrow_decode": [
-          35.518958000000005,
-          35.967709
+          46.931667000000004,
+          51.646542
         ],
         "counterfactual_parquet_decode": [
-          39.641125,
-          41.211541999999994
+          49.188584,
+          49.554708000000005
         ],
         "expansion": [
-          1.1227500000000001,
-          1.296916
+          1.644958,
+          1.688709
         ],
         "expansion_buffers": [
-          0.241666,
-          0.25179100000000004
+          0.375917,
+          0.387041
         ],
         "expansion_gather": [
-          0.8959579999999999,
-          0.969584
+          1.2897500000000002,
+          1.297708
         ],
         "parquet_decode": [
-          35.836125,
-          37.383041
+          56.772709,
+          60.065458
         ],
         "probe_decode": [
-          38.887333000000005,
-          52.669417
+          57.123459000000004,
+          57.252458
         ]
       }
     }
   ],
-  "commit": "805284c",
+  "commit": "4e04e3e",
   "file": "data/lineitem-rg12.parquet",
-  "host_load_average": 6.98,
+  "host_load_average": 5.85,
   "iterations": 5,
   "machine": "14 logical cores",
   "probe": "materialised-column",
   "query": {
     "measurements_ms": {
-      "predicates_and_both": 65.58812499999999,
-      "predicates_and_discount": 32.076,
-      "predicates_and_price": 65.340791,
-      "predicates_only": 30.264415999999997,
-      "q6_revenue": 66.64487500000001,
-      "q6_revenue_operators": 1.383167,
-      "q6_revenue_scan": 64.594708
+      "predicates_and_both": 81.32516700000001,
+      "predicates_and_discount": 30.9305,
+      "predicates_and_price": 80.339542,
+      "predicates_only": 29.647916,
+      "q6_revenue": 82.589459,
+      "q6_revenue_operators": 2.045125,
+      "q6_revenue_scan": 80.532209
     },
     "name": "q6-revenue",
     "spreads_ms": {
       "predicates_and_both": [
-        65.242542,
-        66.138125
+        81.272958,
+        81.584041
       ],
       "predicates_and_discount": [
-        30.814208,
-        36.925417
+        30.919459,
+        31.219791999999998
       ],
       "predicates_and_price": [
-        65.025667,
-        65.72925000000001
+        80.269166,
+        80.511
       ],
       "predicates_only": [
-        29.683542,
-        30.806167
+        29.595209,
+        30.664083
       ],
       "q6_revenue": [
-        65.99149999999999,
-        68.622666
+        82.453208,
+        82.87070800000001
       ]
     },
     "sql": "SELECT sum(l_extendedprice * (1 - l_discount)) FROM {table} WHERE l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01' AND l_discount >= 0.05 AND l_discount <= 0.07 AND l_quantity < 24",

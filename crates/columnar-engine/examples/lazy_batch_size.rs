@@ -5,7 +5,8 @@
 //! shape?**
 //!
 //! ```text
-//! cargo run --release -p columnar-engine --example lazy_batch_size -- data/lineitem.parquet
+//! cargo run --release -p columnar-engine --example lazy_batch_size -- data/lineitem.parquet \
+//!     --out bench-results/batch-size-run1.json
 //! ```
 //!
 //! The limit is a *tuning constant*, and the repository's rule for one is
@@ -126,7 +127,13 @@ fn read(
 }
 
 /// An **interleaved** A/B of two batch sizes.
-fn a_b(path: &Path, old: usize, new: usize, plan: &PushdownPlan, materialised: &[usize]) {
+fn a_b(
+    path: &Path,
+    old: usize,
+    new: usize,
+    plan: &PushdownPlan,
+    materialised: &[usize],
+) -> Vec<f64> {
     let sizes = [old, new];
     let mut samples: Vec<Vec<Duration>> = sizes.iter().map(|_| Vec::new()).collect();
     for round in 0..ITERATIONS {
@@ -162,11 +169,49 @@ fn a_b(path: &Path, old: usize, new: usize, plan: &PushdownPlan, materialised: &
         new_ms - old_ms,
         (new_ms - old_ms) / old_ms * 100.0
     );
+    medians
+}
+
+/// The commit the working tree is at, for the report.
+fn commit() -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success());
+    output.map_or_else(
+        || "unknown".to_owned(),
+        |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+    )
+}
+
+/// The host's load average, for the report.
+fn load_average() -> f64 {
+    std::process::Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<f64>().ok())
+        })
+        .unwrap_or_default()
 }
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| "data/lineitem.parquet".to_owned());
-    let path = Path::new(&path);
+    let mut file = "data/lineitem.parquet".to_owned();
+    let mut out: Option<String> = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--out" => out = args.next(),
+            _ => file = arg,
+        }
+    }
+    let path = Path::new(&file);
 
     let source = ParquetSource::open(path).expect("the source opens");
     let current = source.batch_rows_under(MAX_READER_BATCH_ROWS);
@@ -182,11 +227,14 @@ fn main() {
         ("the real Q6's predicate set", q6_plan(), &[]),
     ];
 
+    let mut reported: Vec<serde_json::Value> = Vec::with_capacity(shapes.len());
+
     for (name, plan, materialised) in shapes {
         println!("=== {name} ===");
         println!("    limit      batch     engine scan     rows");
         println!("------------------------------------------------");
 
+        let mut limits: Vec<serde_json::Value> = Vec::with_capacity(LIMITS.len());
         for limit in LIMITS {
             let batch_rows = source.batch_rows_under(limit);
             let mut samples = Vec::with_capacity(ITERATIONS);
@@ -200,9 +248,40 @@ fn main() {
             let marker =
                 if limit == MAX_READER_BATCH_ROWS { "  <- the limit in the tree" } else { "" };
             println!("{limit:>10} {batch_rows:>10}  {scan_ms:8.2} ms  {rows:>8}{marker}");
+            limits.push(serde_json::json!({
+                "limit": limit,
+                "batch": batch_rows,
+                "scan_ms": scan_ms,
+                "rows": rows,
+            }));
         }
         println!();
-        a_b(path, OLD_BATCH_ROWS, current, &plan, materialised);
+        let candidates = a_b(path, OLD_BATCH_ROWS, current, &plan, materialised);
         println!();
+        reported.push(serde_json::json!({
+            "shape": name,
+            "limits": limits,
+            "candidates": [
+                { "batch": OLD_BATCH_ROWS, "scan_ms": candidates.first().copied().unwrap_or_default() },
+                { "batch": current, "scan_ms": candidates.get(1).copied().unwrap_or_default() },
+            ],
+        }));
+    }
+
+    if let Some(out) = out {
+        let report = serde_json::json!({
+            "probe": "batch-size",
+            "file": path.display().to_string(),
+            "commit": commit(),
+            "iterations": ITERATIONS,
+            "host_load_average": load_average(),
+            "old_batch_rows": OLD_BATCH_ROWS,
+            "limit_in_the_tree": MAX_READER_BATCH_ROWS,
+            "batch_in_the_tree": current,
+            "shapes": reported,
+        });
+        std::fs::write(&out, serde_json::to_string_pretty(&report).expect("the report is written"))
+            .expect("the report is written");
+        println!("report written to {out}");
     }
 }

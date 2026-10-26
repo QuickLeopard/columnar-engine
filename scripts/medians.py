@@ -706,6 +706,160 @@ def print_curve(runs: list[dict]) -> None:
         print(line)
 
 
+def print_batch_size(runs: list[dict]) -> None:
+    """Print the reader batch limit's medians.
+
+    This is spec 016: the limit on the reader's batch size, swept over the
+    two shapes the lazy path serves, and the A/B of the fixed batch size the
+    tree used before against the batch it derives now.
+
+    Every figure is the median over the campaigns, with the spread.
+    """
+    if not runs:
+        return
+
+    shapes: dict[str, dict[str, dict[int, list[float]]]] = {}
+    candidates: dict[str, dict[int, list[float]]] = {}
+    order: list[str] = []
+    for run in runs:
+        for shape in run.get("shapes", []):
+            name = shape["shape"]
+            if name not in order:
+                order.append(name)
+            limits = shapes.setdefault(name, {})
+            for entry in shape.get("limits", []):
+                bucket = limits.setdefault(str(entry["limit"]), {})
+                bucket.setdefault("scan_ms", []).append(entry["scan_ms"])
+                bucket.setdefault("batch", []).append(entry["batch"])
+            pair = candidates.setdefault(name, {})
+            for entry in shape.get("candidates", []):
+                pair.setdefault(str(entry["batch"]), []).append(entry["scan_ms"])
+
+    print(f"\n=== THE READER'S BATCH LIMIT, {len(runs)} campaigns ===")
+    for name in order:
+        limits = shapes.get(name, {})
+        print(f"\n-- {name} --")
+        print(f"{'the limit':>12}{'the batch':>12}{'the scan':>22}")
+        for key in sorted(limits, key=lambda value: int(value)):
+            bucket = limits.get(key, {})
+            scans = bucket.get("scan_ms", [])
+            batches = bucket.get("batch", [])
+            if not scans:
+                continue
+            print(
+                f"{int(key):>12}{int(statistics.median(batches)):>12}"
+                + cell((statistics.median(scans), min(scans), max(scans)))
+            )
+        pair = candidates.get(name, {})
+        print("  the two candidates, interleaved:")
+        for key in sorted(pair, key=lambda value: int(value)):
+            scans = pair.get(key, [])
+            if scans:
+                print(f"{int(key):>12}{'':>12}" + cell(
+                    (statistics.median(scans), min(scans), max(scans))))
+        if len(pair) == 2:
+            keys = sorted(pair, key=lambda value: int(value))
+            old = statistics.median(pair.get(keys[0], [0.0]))
+            new = statistics.median(pair.get(keys[1], [0.0]))
+            print(f"  the difference: {new - old:8.2f} ms  ({(new - old) / old * 100.0:+.1f}%)")
+
+    print(f"\n{'the host load average':<44}"
+          f"{statistics.median([run.get('host_load_average', 0.0) for run in runs]):.1f}")
+
+
+def print_row_group_cost(files: list[tuple[str, list[dict]]]) -> None:
+    """Print the per-row-group cost's medians.
+
+    This is spec 016: the same probe on the six-row-group file, the
+    twelve-row-group one and the twenty-four-row-group one, measured in one
+    session. The probe reports the crate's read at the **fixed** batch size the
+    tree used, the engine's own scan at the **derived** batch size, and a
+    ladder of reader batch sizes.
+
+    The slope is the cost of one more row group: the 24-group figure minus
+    the 6-group figure, over the eighteen row groups between them.
+    """
+    if not files:
+        return
+
+    measurements: dict[str, dict[str, dict[str, list[float]]]] = {}
+    ladders: dict[str, dict[int, dict[str, list[float]]]] = {}
+    groups: dict[str, int] = {}
+    order: list[str] = []
+    for name, runs in files:
+        order.append(name)
+        for run in runs:
+            groups[name] = int(run.get("row_groups", 0))
+            for key, value in run.get("measurements_ms", {}).items():
+                measurements.setdefault(name, {}).setdefault(key, {}).setdefault(
+                    "value", []).append(value)
+            for entry in run.get("ladder", []):
+                ladders.setdefault(name, {}).setdefault(int(entry["batch"]), {}).setdefault(
+                    "scan_ms", []).append(entry["scan_ms"])
+
+    def slope(name: str, key: str) -> float:
+        """The cost of one more row group, in milliseconds."""
+        if len(files) < 2:
+            return float("nan")
+        first = statistics.median(
+            measurements.get(files[0][0], {}).get(key, {}).get("value", [float("nan")]))
+        last = statistics.median(
+            measurements.get(files[-1][0], {}).get(key, {}).get("value", [float("nan")]))
+        span = groups[files[-1][0]] - groups[files[0][0]]
+        if not span:
+            return float("nan")
+        return (last - first) / span
+
+    campaigns = min(len(runs) for _, runs in files)
+    print(f"\n=== THE PER-ROW-GROUP COST, {len(files)} files, {campaigns} campaigns each ===")
+    print(f"{'the figure':<52}" + "".join(f"{name + ', ' + str(groups[name]) + ' groups':>20}"
+                                          for name, _ in files)
+          + f"{'ms/row group':>16}")
+
+    rows = [
+        ("crate_shipdate", "the crate's read of l_shipdate, fixed batch"),
+        ("crate_discount", "the crate's read of l_discount, fixed batch"),
+        ("crate_price", "the crate's read of l_extendedprice, fixed batch"),
+        ("crate_both", "the crate's read of both predicate columns"),
+        ("crate_with_pushdown", "the crate's read, with the pushdown on top"),
+        ("engine_predicates", "the engine's own scan, the derived batch"),
+        ("engine_full", "the engine's own scan, and the materialised column"),
+    ]
+    for key, label in rows:
+        line = f"{label:<52}"
+        for name, _ in files:
+            values = measurements.get(name, {}).get(key, {}).get("value", [])
+            line += f"{statistics.median(values):>20.2f}" if values else f"{'-':>20}"
+        line += f"{slope(name, key):>16.3f}"
+        print(line)
+
+    print("\n-- the ladder: the engine's own scan, by reader batch size --")
+    header = f"{'the batch':>12}"
+    for name, _ in files:
+        header += f"{name + ', ' + str(groups[name]) + ' groups':>26}"
+    print(header)
+    batches = sorted({batch for buckets in ladders.values() for batch in buckets})
+    for batch in batches:
+        line = f"{batch:>12}"
+        for name, _ in files:
+            values = ladders.get(name, {}).get(batch, {}).get("scan_ms", [])
+            line += f"{statistics.median(values):>26.2f}" if values else f"{'-':>26}"
+        print(line)
+
+    print("\n-- the same ladder, as the cost of one more row group --")
+    print(f"{'the batch':>12}{'ms/row group':>16}"
+          f"   (the 24-group figure less the 6-group one, over 18 row groups)")
+    for batch in batches:
+        first = statistics.median(
+            ladders.get(files[0][0], {}).get(batch, {}).get("scan_ms", [float("nan")]))
+        last = statistics.median(
+            ladders.get(files[-1][0], {}).get(batch, {}).get("scan_ms", [float("nan")]))
+        span = groups[files[-1][0]] - groups[files[0][0]]
+        line = f"{batch:>12}"
+        line += f"{(last - first) / span:>16.3f}" if span else f"{'-':>16}"
+        print(line)
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -846,6 +1000,26 @@ def main() -> int:
     curve_paths = sorted(Path("bench-results").glob("curve-run*.json"))
     if curve_paths:
         print_curve([load(p) for p in curve_paths])
+
+    batch_size_paths = sorted(Path("bench-results").glob("batch-size-run*.json"))
+    if batch_size_paths:
+        print_batch_size([load(p) for p in batch_size_paths])
+
+    # Spec 016's cost probe: the same instrument on the six-row-group file, on
+    # the twelve-row-group one and on the twenty-four-row-group one, in one
+    # session, with the ladder of reader batch sizes.
+    cost_files = [
+        ("A", "row-group-cost-6-run*.json"),
+        ("B", "row-group-cost-12-run*.json"),
+        ("C", "row-group-cost-24-run*.json"),
+    ]
+    loaded_costs = [
+        (name, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
+        for name, pattern in cost_files
+    ]
+    loaded_costs = [(name, runs) for name, runs in loaded_costs if runs]
+    if loaded_costs:
+        print_row_group_cost(loaded_costs)
 
     return 0
 

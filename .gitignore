@@ -27,3 +27,7 @@
 .idea/
 .vscode/
 *.swp
+
+# Python's bytecode cache. The repository's scripts are Python, and running
+# one writes this next to it.
+__pycache__/

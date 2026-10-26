@@ -15,12 +15,12 @@ python3 scripts/medians.py
 | `compare.json` | the **representative** comparison run — the run whose figures sit nearest the medians |
 | `compare-run1.json` | the first of the three runs the published table is the median of |
 | `compare-run2.json` | the second |
-| `compare-run3.json` | the third, and the one `compare.json` is a copy of |
+| `compare-run3.json` | the third |
 | `scaling-run1.json` | the first of the three **thread-count sweeps** of `q6` the §2e table is the median of |
 | `scaling-run2.json` | the second |
-| `scaling-run3.json` | the third, and the one `scaling.json` is a copy of |
+| `scaling-run3.json` | the third |
 | `scaling-revenue-run1.json` | the first of the three **thread-count sweeps of the real Q6** the §2e table is the median of |
-| `scaling-revenue-run2.json` | the second, and the one `scaling-revenue.json` is a copy of |
+| `scaling-revenue-run2.json` | the second |
 | `scaling-revenue-run3.json` | the third |
 | `scaling-resident-run1.json` | the first of the three **resident sweeps of `q6`** the §2f table is the median of |
 | `scaling-resident-run2.json` | the second |
@@ -31,13 +31,13 @@ python3 scripts/medians.py
 | `scaling-load-run1.json` | the first of the three **load sweeps** the §2g table is the median of |
 | `scaling-load-run2.json` | the second |
 | `scaling-load-run3.json` | the third |
-| `compare.json` | a copy of `compare-run3.json`, the run whose figures sit nearest the medians |
-| `scaling.json` | a copy of `scaling-run3.json`, the sweep run nearest the medians |
-| `scaling-revenue.json` | a copy of `scaling-revenue-run2.json`, the sweep run nearest the medians |
+| `compare.json` | a copy of `compare-run2.json`, the run whose figures sit nearest the medians |
+| `scaling.json` | a copy of `scaling-run1.json`, the sweep run nearest the medians |
+| `scaling-revenue.json` | a copy of `scaling-revenue-run1.json`, the sweep run nearest the medians |
 | `browser-run1.json` | the first of the three **browser campaigns** the §1a table is the median of |
 | `browser-run2.json` | the second |
 | `browser-run3.json` | the third |
-| `browser.json` | a copy of `browser-run3.json`, the campaign whose figures sit nearest the medians |
+| `browser.json` | a copy of `browser-run1.json`, the campaign whose figures sit nearest the medians |
 | `rle-expansion-run1.json` | the first of the three **RLE expansion campaigns** the §3g table is the median of |
 | `rle-expansion-run2.json` | the second |
 | `rle-expansion-run3.json` | the third |
@@ -62,11 +62,23 @@ python3 scripts/medians.py
 | `row-groups-24-run1.json` | the first of the three **probe campaigns on the twenty-four-row-group file** |
 | `row-groups-24-run2.json` | the second |
 | `row-groups-24-run3.json` | the third |
-| `scaling-rg12.json` | a copy of `scaling-rg12-run1.json`, the run nearest the medians |
+| `scaling-rg12.json` | a copy of `scaling-rg12-run2.json`, the run nearest the medians |
 | `scaling-rg24.json` | a copy of `scaling-rg24-run2.json`, the run nearest the medians |
-| `row-groups-6.json` | a copy of `row-groups-6-run2.json`, the campaign nearest the medians |
-| `row-groups-12.json` | a copy of `row-groups-12-run2.json`, the campaign nearest the medians |
+| `row-groups-6.json` | a copy of `row-groups-6-run1.json`, the campaign nearest the medians |
+| `row-groups-12.json` | a copy of `row-groups-12-run3.json`, the campaign nearest the medians |
 | `row-groups-24.json` | a copy of `row-groups-24-run2.json`, the campaign nearest the medians |
+| `row-group-cost-6-run1.json` | the first of the three **per-row-group cost campaigns on the six-row-group file** — the crate's read, the engine's scan and the ladder of reader batch sizes the §3j mechanism table is the median of |
+| `row-group-cost-6-run2.json` | the second |
+| `row-group-cost-6-run3.json` | the third |
+| `row-group-cost-12-run1.json` | the first of the three **per-row-group cost campaigns on the twelve-row-group file** |
+| `row-group-cost-12-run2.json` | the second |
+| `row-group-cost-12-run3.json` | the third |
+| `row-group-cost-24-run1.json` | the first of the three **per-row-group cost campaigns on the twenty-four-row-group file** |
+| `row-group-cost-24-run2.json` | the second |
+| `row-group-cost-24-run3.json` | the third |
+| `batch-size-run1.json` | the first of the three **reader batch limit campaigns** the §3e table is the median of — the limit swept over the two shapes the lazy path serves, and the A/B of the old constant against the derived batch |
+| `batch-size-run2.json` | the second |
+| `batch-size-run3.json` | the third |
 | `experiment-dictionary-copy.json` | **not a normal run.** A measurement taken with a deliberate perturbation of the decode path — see below |
 
 ## The experiment file
@@ -86,7 +98,8 @@ The working tree is the unperturbed code. The perturbation was applied, measured
 
 ## The published tables
 
-There is **one headline table** and **three sweeps**, and they answer different questions.
+There is **one headline table** and **a set of sweeps and probes**, and they answer different
+questions.
 
 | table | question | reports |
 |---|---|---|
@@ -99,8 +112,14 @@ There is **one headline table** and **three sweeps**, and they answer different 
 | §1a | *what does the kernel do in a browser* | `browser-run*.json` |
 | §3g | *what does the expansion of the RLE indices cost* | `rle-expansion-run*.json` |
 | §3h | *what is the materialised column made of* | `materialised-run*.json` |
+| §3e | *what the reader's batch limit should be* | `batch-size-run*.json` |
 | §3i | *what does the query cost per million rows* | `curve-run*.json` |
-| §3j | *what does the row-group count cap, and what does it cost* | `scaling-rg12-run*.json`, `scaling-rg24-run*.json`, `row-groups-*-run*.json` |
+| §3j | *what does the row-group count cap, and what does it cost* | `scaling-rg12-run*.json`, `scaling-rg24-run*.json`, `row-groups-*-run*.json`, `row-group-cost-*-run*.json` |
+
+The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and
+the **attribution** — the crate's read of each column against the engine's own scan. The ladder is
+what shows the mechanism (a batch size that divides a row group's row count is fast; one that does
+not is not), and the attribution is what shows which column carries the cost.
 
 The first is the like-for-like **single-threaded** comparison, and it has been the headline since
 the first set of numbers in this repository. The sweeps exist because a one-thread table on its
@@ -176,6 +195,15 @@ cargo run --release -p columnar-cli -- sweep \
     --out bench-results/scaling-rg24-run1.json
 cargo run --release -p columnar-engine --example materialised_column_probe -- \
     data/lineitem-rg24.parquet --out bench-results/row-groups-24-run1.json
+```
+
+The per-row-group cost and the reader's batch limit are written by their probes, the same way:
+
+```bash
+just probe-cost data="data/lineitem-rg24.parquet" \
+    out="bench-results/row-group-cost-24-run1.json"
+just probe-batch-size data="data/lineitem.parquet" \
+    out="bench-results/batch-size-run1.json"
 ```
 
 The three files are swept and probed **interleaved**, because this machine is shared and a

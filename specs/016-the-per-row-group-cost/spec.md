@@ -1,6 +1,6 @@
 # Spec 016 — The per-row-group cost, and what it is
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-26
 **ADR**: [ADR-0023](../../docs/adr/0023-the-per-row-group-cost.md)
 **Predecessor**: [015-the-row-group-count-is-a-knob](../015-the-row-group-count-is-a-knob/spec.md)
@@ -52,12 +52,20 @@ batch** at the end of a row group.
 - [x] The crate's reader reads a row group at a time, and the reader's **batch size** decides how
       many rows a batch holds. When the batch size does not **divide** a row group's row count, the
       row group's last batch is **partial**.
-- [x] **A partial batch costs about 0.85 ms**, and the engine's batch size of 65,536 rows divides
+- [x] **A partial batch costs 1.32 ms**, and the engine's batch size of 65,536 rows divides
       none of the three files' row-group sizes — 1,000,000, 500,000 and 250,000 — so the engine paid
       it once per row group, which is the whole of the cost spec 015 found.
-- [x] Every batch size that **does** divide the row count is faster, and the sizes that do not are
-      catastrophically slower: at 65,536 rows the twenty-four-row-group file's scan costs **35.99 ms**
-      and at 125,000 rows, which divides 250,000, it costs **15.43 ms**.
+- [x] Every batch size that **does** divide the row count is faster, and the size that does not is
+      catastrophically slower: at 65,536 rows the twenty-four-row-group file's scan costs **54.48 ms**
+      and at 125,000 rows, which divides all three row counts, it costs **24.01 ms**.
+- [x] The ladder is **eight batch sizes on each of the three files**, in one session, and the seven
+      that divide the row count all cost 0.06–0.10 ms a row group. The mechanism is the *shape* of the
+      number and not its size.
+
+- [x] The **limit** is measured over both shapes the lazy path serves — one materialised column
+      with one predicate, and the real Q6's predicate set — and it is **131,072**, which derives
+      **125,000 rows** for the published file: the best measured batch on the one-column shape, and
+      within 2% of the best on the Q6 shape. The limit 262,144 was measured and rejected.
 
 ### R2 — The fix, in the read path
 
@@ -91,18 +99,31 @@ batch** at the end of a row group.
 
 - **The cost is the parquet crate's, and it is a partial batch.** The crate's reader reads a row
   group at a time; the reader's batch size decides where a batch ends, and a batch that ends in the
-  middle of a row group is a **partial batch**, and a partial batch costs about **0.85 ms**. The
+  middle of a row group is a **partial batch**, and a partial batch costs **1.32 ms**. The
   engine's batch size of 65,536 rows divides none of the three files' row-group sizes, so the engine
   paid it once per row group — which was the whole of what spec 015 found.
 - **The engine's own work is not it.** Above the crate's read the engine's work is a constant: the
-  pushdown's mask and the materialisation's copy do not scale with the row-group count.
+  pushdown's mask and the materialisation's copy do not scale with the row-group count. The engine's
+  own scan, at the derived batch, is flat at **0.096 ms a row group**.
+- **One column carries it.** The crate's read of `l_discount` and of `l_extendedprice` is flat across
+  the three files — 0.010 and 0.015 ms a row group — and the crate's read of `l_shipdate` is
+  **1.373 ms** a row group. The dictionary's bytes are not it: eleven kilobytes a row group against
+  1.373 ms. Which of that column's properties makes it the one that pays is **not separated** by
+  this measurement.
 - **The fix is one line of arithmetic**: the reader's batch size is the largest divisor of the row
-  groups' row count that fits under the limit, so no row group ends with a partial batch.
-- **The engine's scan, at one thread**, across the three files: **19.65 → 15.51 ms** (six row
-  groups), **24.91 → 14.58 ms** (twelve) and **35.11 → 16.12 ms** (twenty-four). The per-row-group
-  cost is gone: the three files are within 11% of each other where they were 76% apart.
+  groups' row count that fits under the limit, so no row group ends with a partial batch. The limit
+  is **131,072**, measured over both shapes the lazy path serves, and it derives **125,000 rows**
+  for the published file.
+- **The engine's scan, at one thread**, across the three files, with the two batch sizes measured
+  back to back in one session: **30.79 → 23.22 ms** (six row groups), **38.53 → 23.31 ms**
+  (twelve) and **54.48 → 24.01 ms** (twenty-four). The per-row-group cost is gone: **1.32 ms →
+  0.04 ms**, and the three files are within 3.4% of each other where they were 76% apart.
 - **The incumbents do not move**, which is the control: they read the same bytes and their readers
   do not leave a partial batch behind.
+- **The absolute figures moved because the host did.** The campaign ran on a machine under another
+  tenant's memory pressure, so every number in this set is larger than the set before it, for every
+  system. The fix is therefore measured **back to back**, with the two batch sizes alternating round
+  by round, and the *ratio* — **24% faster on the real Q6's predicate set** — is the claim.
 
 See [ADR-0023](../../docs/adr/0023-the-per-row-group-cost.md) and
 [`PERF.md` §3j](../PERF.md#3j-the-row-group-count-and-what-it-costs).
@@ -116,3 +137,13 @@ See [ADR-0023](../../docs/adr/0023-the-per-row-group-cost.md) and
   comparable.
 - **The parallelism cap does not move.** `min(threads, row_groups)` is the file's and it is published
   as such.
+- **Why the crate charges for a partial batch is not established.** It is in a dependency. The
+  *cost* is measured and published; the *reason* is not, and it is not guessed at.
+- **The residual per-row-group cost on the three-predicate shape is not separated.** The real Q6's
+  three predicates still rise by about 0.5 ms a row group, and the third predicate's column,
+  `l_quantity`, is the one the two shapes differ by. Whether the crate's per-row-group dictionary
+  build or the engine's per-row-group comparison of the distinct values is the cost is not settled
+  by this measurement, and it is written down as the next question.
+- **Which of `l_shipdate`'s properties makes it the one column that pays is not separated.** The
+  read of the other two columns is flat and the string column's read is not; the encoding, the
+  dictionary, the page count and the size are not told apart by this measurement.

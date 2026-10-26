@@ -26,62 +26,62 @@
     {
       "threads": 1,
       "workers": 1,
-      "engine_ms": 20.204125,
-      "engine_scan_ms": 20.1875,
-      "engine_operators_ms": 0.000833,
-      "duckdb_ms": 34.0,
-      "polars_ms": 192.888,
-      "datafusion_ms": 35.23
+      "engine_ms": 24.494374999999998,
+      "engine_scan_ms": 24.486125,
+      "engine_operators_ms": 0.000209,
+      "duckdb_ms": 51.0,
+      "polars_ms": 401.993,
+      "datafusion_ms": 74.413
     },
     {
       "threads": 2,
       "workers": 2,
-      "engine_ms": 9.939375,
-      "engine_scan_ms": 9.923124999999999,
-      "engine_operators_ms": 0.001209,
-      "duckdb_ms": 21.0,
-      "polars_ms": 104.601,
-      "datafusion_ms": 27.324
+      "engine_ms": 18.263499999999997,
+      "engine_scan_ms": 18.244959,
+      "engine_operators_ms": 0.000708,
+      "duckdb_ms": 44.0,
+      "polars_ms": 211.929,
+      "datafusion_ms": 55.958
     },
     {
       "threads": 4,
       "workers": 4,
-      "engine_ms": 7.15875,
-      "engine_scan_ms": 7.145375,
-      "engine_operators_ms": 0.000751,
-      "duckdb_ms": 14.0,
-      "polars_ms": 69.265,
-      "datafusion_ms": 16.477
+      "engine_ms": 11.912625,
+      "engine_scan_ms": 11.895125,
+      "engine_operators_ms": 0.000458,
+      "duckdb_ms": 29.0,
+      "polars_ms": 140.658,
+      "datafusion_ms": 35.644
     },
     {
       "threads": 6,
       "workers": 6,
-      "engine_ms": 3.9883330000000004,
-      "engine_scan_ms": 3.9742500000000005,
-      "engine_operators_ms": 0.0007080000000000001,
-      "duckdb_ms": 9.0,
-      "polars_ms": 38.679,
-      "datafusion_ms": 16.494
+      "engine_ms": 7.44625,
+      "engine_scan_ms": 7.432208,
+      "engine_operators_ms": 0.000459,
+      "duckdb_ms": 19.0,
+      "polars_ms": 94.758,
+      "datafusion_ms": 33.949
     },
     {
       "threads": 8,
       "workers": 6,
-      "engine_ms": 3.683834,
-      "engine_scan_ms": 3.673125,
-      "engine_operators_ms": 0.000583,
-      "duckdb_ms": 10.0,
-      "polars_ms": 39.698,
-      "datafusion_ms": 12.485
+      "engine_ms": 7.5576669999999995,
+      "engine_scan_ms": 7.541667,
+      "engine_operators_ms": 0.000293,
+      "duckdb_ms": 19.0,
+      "polars_ms": 75.432,
+      "datafusion_ms": 22.196
     },
     {
       "threads": 14,
       "workers": 6,
-      "engine_ms": 3.980292,
-      "engine_scan_ms": 3.9699169999999997,
-      "engine_operators_ms": 0.00037499999999999995,
-      "duckdb_ms": 10.0,
-      "polars_ms": 38.222,
-      "datafusion_ms": 12.936
+      "engine_ms": 7.402,
+      "engine_scan_ms": 7.3862499999999995,
+      "engine_operators_ms": 0.0005,
+      "duckdb_ms": 19.0,
+      "polars_ms": 62.721,
+      "datafusion_ms": 19.876
     }
   ]
 }

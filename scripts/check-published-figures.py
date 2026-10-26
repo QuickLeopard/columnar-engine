@@ -291,6 +291,131 @@ def load_reports(pattern: str) -> list[dict]:
     return [json.loads(path.read_text()) for path in sorted((ROOT / "bench-results").glob(pattern))]
 
 
+# Spec 016: the reader's batch limit. The published table is the limit sweep
+# over the two shapes the lazy path serves, and the A/B of the fixed batch size
+# the tree used before against the batch it derives now.
+#
+# The keys are `shape.limit` for a row of the sweep and `shape.candidate` for a
+# row of the A/B, and the shape names are the probe's own.
+BATCH_SIZE_CHECKS = [
+    ("PERF.md", "the limit's scan, one column", "one column, one predicate", "limit", 131072, 2),
+    (
+        "PERF.md",
+        "the limit's scan, the real Q6",
+        "the real Q6's predicate set",
+        "limit",
+        131072,
+        2,
+    ),
+    (
+        "PERF.md",
+        "the old batch, the real Q6",
+        "the real Q6's predicate set",
+        "candidate",
+        65536,
+        2,
+    ),
+    (
+        "PERF.md",
+        "the derived batch, the real Q6",
+        "the real Q6's predicate set",
+        "candidate",
+        None,
+        2,
+    ),
+]
+
+
+def batch_size_figure(
+    runs: list[dict], shape: str, kind: str, key: int | None
+) -> float | None:
+    """The median of one figure in the batch-size reports.
+
+    `kind` is `limit` for a row of the sweep -- keyed by the limit -- and
+    `candidate` for a row of the A/B -- keyed by the batch, or by the batch the
+    tree derives now when the key is `None`.
+    """
+    values: list[float] = []
+    for run in runs:
+        for entry in run.get("shapes", []):
+            if entry.get("shape") != shape:
+                continue
+            if kind == "limit":
+                for limit in entry.get("limits", []):
+                    if limit.get("limit") == key:
+                        values.append(limit["scan_ms"])
+            else:
+                for candidate in entry.get("candidates", []):
+                    batch = candidate.get("batch")
+                    if key is None:
+                        if batch == run.get("batch_in_the_tree"):
+                            values.append(candidate["scan_ms"])
+                    elif batch == key:
+                        values.append(candidate["scan_ms"])
+    return statistics.median(values) if values else None
+
+
+# Spec 016's cost probe: the same instrument on the three files, in one
+# session. The published figures are the ladder's two rows -- the fixed batch
+# size the tree used and the batch it derives now -- and the attribution.
+#
+# The keys are `ladder.<batch>` for a row of the ladder and
+# `measurements.<key>` for a row of the attribution.
+ROW_GROUP_COST_CHECKS = [
+    ("PERF.md", "the fixed batch, 6 groups", "ladder", 65536, "A", 2),
+    ("PERF.md", "the fixed batch, 12 groups", "ladder", 65536, "B", 2),
+    ("PERF.md", "the fixed batch, 24 groups", "ladder", 65536, "C", 2),
+    ("PERF.md", "the derived batch, 6 groups", "ladder", 125000, "A", 2),
+    ("PERF.md", "the derived batch, 12 groups", "ladder", 125000, "B", 2),
+    ("PERF.md", "the derived batch, 24 groups", "ladder", 125000, "C", 2),
+    ("PERF.md", "the crate's read of l_shipdate, 6 groups", "measurements",
+     "crate_shipdate", "A", 2),
+    ("PERF.md", "the crate's read of l_shipdate, 24 groups", "measurements",
+     "crate_shipdate", "C", 2),
+    ("PERF.md", "the engine's own scan, 6 groups", "measurements",
+     "engine_predicates", "A", 2),
+    ("PERF.md", "the engine's own scan, 24 groups", "measurements",
+     "engine_predicates", "C", 2),
+]
+
+# The cost of one more row group, in milliseconds: the 24-group figure less the
+# 6-group one, over the eighteen row groups between them.
+ROW_GROUP_COST_SLOPE_CHECKS = [
+    ("PERF.md", "the fixed batch's cost a row group", "ladder", 65536, 2),
+    ("PERF.md", "the derived batch's cost a row group", "ladder", 125000, 2),
+    ("PERF.md", "the crate's read of l_shipdate's cost a row group",
+     "measurements", "crate_shipdate", 3),
+]
+
+
+def row_group_cost_figure(
+    files: dict[str, list[dict]], kind: str, key: str | int, which: str
+) -> float | None:
+    """The median of one figure in the row-group cost reports."""
+    values: list[float] = []
+    for run in files.get(which, []):
+        if kind == "ladder":
+            for entry in run.get("ladder", []):
+                if int(entry.get("batch", -1)) == int(key):
+                    values.append(float(entry["scan_ms"]))
+        else:
+            measurements = run.get("measurements_ms", {})
+            if key in measurements:
+                values.append(float(measurements[key]))
+    return statistics.median(values) if values else None
+
+
+def row_group_cost_slope(
+    files: dict[str, list[dict]], kind: str, key: str | int
+) -> float | None:
+    """The cost of one more row group, in milliseconds."""
+    first = row_group_cost_figure(files, kind, key, "A")
+    last = row_group_cost_figure(files, kind, key, "C")
+    if first is None or last is None:
+        return None
+    return (last - first) / 18.0
+
+
 
 def main() -> int:
     if not REPORTS:
@@ -581,6 +706,60 @@ def main() -> int:
         failures.append(
             f"the row-group campaigns disagree on the surviving rows: {sorted(survivors)}"
         )
+
+    # Spec 016: the reader's batch limit, swept over the two shapes the lazy
+    # path serves.
+    batch_runs = load_reports("batch-size-run*.json")
+    if batch_runs:
+        for doc, label, shape, kind, key, places in BATCH_SIZE_CHECKS:
+            figure = batch_size_figure(batch_runs, shape, kind, key)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the batch-size reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<40} {rendered}")
+
+    # Spec 016's cost probe: the ladder, and the attribution, on the three
+    # files.
+    cost_files = {
+        "A": load_reports("row-group-cost-6-run*.json"),
+        "B": load_reports("row-group-cost-12-run*.json"),
+        "C": load_reports("row-group-cost-24-run*.json"),
+    }
+    if any(cost_files.values()):
+        for doc, label, kind, key, which, places in ROW_GROUP_COST_CHECKS:
+            figure = row_group_cost_figure(cost_files, kind, key, which)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the cost reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
+
+        for doc, label, kind, key, places in ROW_GROUP_COST_SLOPE_CHECKS:
+            figure = row_group_cost_slope(cost_files, kind, key)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the cost reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
 
     if RLE_EXPANSION_REPORTS:
         expansion_runs = [json.loads(path.read_text()) for path in RLE_EXPANSION_REPORTS]
