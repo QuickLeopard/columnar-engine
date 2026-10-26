@@ -41,6 +41,17 @@ pub struct DatasetManifest {
     pub seed: u64,
     /// The null rate used.
     pub null_rate: f64,
+    /// The number of rows written per Parquet row group.
+    ///
+    /// This is the knob the parallelism cap hangs on: the read splits the
+    /// file's **row groups** across the workers, so the number of workers is
+    /// bounded by the number of row groups, and the number of row groups is
+    /// this number and the row count.
+    #[serde(default)]
+    pub row_group_rows: usize,
+    /// How many row groups were actually written.
+    #[serde(default)]
+    pub row_groups: u64,
     /// Free-form note stating the dataset is TPC-H-shaped, not the official file.
     pub provenance: String,
     /// Version of the generator that produced it.

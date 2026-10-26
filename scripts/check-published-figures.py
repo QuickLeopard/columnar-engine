@@ -204,11 +204,92 @@ def collect_scaling(runs: list[dict]) -> dict[int, dict[str, list[float]]]:
                 ("engine", "engine_ms"),
                 ("duckdb", "duckdb_ms"),
                 ("polars", "polars_ms"),
+                ("datafusion", "datafusion_ms"),
+                ("workers", "workers"),
             ):
                 value = point.get(field)
                 if value is not None:
                     out.setdefault(threads, {}).setdefault(key, []).append(value)
     return out
+
+
+# Spec 015's claim is that the engine's parallelism is capped by the **file's**
+# row-group count rather than by the machine, and the confound is that the
+# row-group size changes the file as well. These are the figures both halves
+# of the claim rest on: the workers that ran against the threads asked for,
+# the engine's number at each end of the sweep, and the incumbents' numbers on
+# the same files -- which are the control.
+#
+# The three files are the same query, the same rows and the same seed; they
+# differ in one thing, the row-group size.
+ROW_GROUP_SWEEPS = [
+    ("A", "scaling-run[0-9].json"),
+    ("B", "scaling-rg12-run*.json"),
+    ("C", "scaling-rg24-run*.json"),
+]
+
+ROW_GROUP_PROBES = [
+    ("A", "row-groups-6-run*.json"),
+    ("B", "row-groups-12-run*.json"),
+    ("C", "row-groups-24-run*.json"),
+]
+
+# (document, label, file, threads, system, places)
+ROW_GROUP_SCALING_CHECKS = [
+    ("PERF.md", "the engine at 14 threads, 6 groups", "A", 14, "engine", 1),
+    ("PERF.md", "the engine at 14 threads, 12 groups", "B", 14, "engine", 1),
+    ("PERF.md", "the engine at 14 threads, 24 groups", "C", 14, "engine", 1),
+    ("PERF.md", "the engine at 1 thread, 6 groups", "A", 1, "engine", 1),
+    ("PERF.md", "the engine at 1 thread, 24 groups", "C", 1, "engine", 1),
+    ("PERF.md", "duckdb at 1 thread, 6 groups", "A", 1, "duckdb", 1),
+    ("PERF.md", "duckdb at 1 thread, 24 groups", "C", 1, "duckdb", 1),
+    ("PERF.md", "polars at 1 thread, 6 groups", "A", 1, "polars", 1),
+    ("PERF.md", "polars at 1 thread, 24 groups", "C", 1, "polars", 1),
+    ("PERF.md", "datafusion at 1 thread, 6 groups", "A", 1, "datafusion", 1),
+    ("PERF.md", "datafusion at 1 thread, 24 groups", "C", 1, "datafusion", 1),
+]
+
+# (document, label, file, threads, places)
+#
+# The worker count is the **cap** itself, and the speedup is what the cap
+# costs. The worker count is a small integer, so the speedup is checked too:
+# it is the figure a reader would quote.
+ROW_GROUP_CAP_CHECKS = [
+    ("PERF.md", "the workers at 14 threads, 6 groups", "A", 14, 0),
+    ("PERF.md", "the workers at 14 threads, 12 groups", "B", 14, 0),
+    ("PERF.md", "the workers at 14 threads, 24 groups", "C", 14, 0),
+    ("PERF.md", "the workers at 8 threads, 6 groups", "A", 8, 0),
+    ("PERF.md", "the workers at 8 threads, 12 groups", "B", 8, 0),
+    ("PERF.md", "the workers at 8 threads, 24 groups", "C", 8, 0),
+]
+
+# (document, label, file, threads, places)
+ROW_GROUP_SPEEDUP_CHECKS = [
+    ("PERF.md", "the engine's speedup at 14 threads, 6 groups", "A", 14, 2),
+    ("PERF.md", "the engine's speedup at 14 threads, 12 groups", "B", 14, 2),
+    ("PERF.md", "the engine's speedup at 14 threads, 24 groups", "C", 14, 2),
+]
+
+# (document, label, file, key, places)
+#
+# The probe's figures are the **confound**: what the same predicates and the
+# same materialised column cost on each file, measured in one session.
+ROW_GROUP_PROBE_CHECKS = [
+    ("PERF.md", "the predicates alone, 6 groups", "A", "query.predicates_only", 2),
+    ("PERF.md", "the predicates alone, 12 groups", "B", "query.predicates_only", 2),
+    ("PERF.md", "the predicates alone, 24 groups", "C", "query.predicates_only", 2),
+    ("PERF.md", "the whole query, 6 groups", "A", "query.q6_revenue", 2),
+    ("PERF.md", "the whole query, 12 groups", "B", "query.q6_revenue", 2),
+    ("PERF.md", "the whole query, 24 groups", "C", "query.q6_revenue", 2),
+    ("PERF.md", "the materialised column's decode, 6 groups", "A", "l_extendedprice.arrow_decode", 2),
+    ("PERF.md", "the materialised column's decode, 24 groups", "C", "l_extendedprice.arrow_decode", 2),
+]
+
+
+def load_reports(pattern: str) -> list[dict]:
+    """The committed reports matching a glob, loaded."""
+    return [json.loads(path.read_text()) for path in sorted((ROOT / "bench-results").glob(pattern))]
+
 
 
 def main() -> int:
@@ -390,6 +471,116 @@ def main() -> int:
         answers = {run.get("query", {}).get("value") for run in materialised_runs}
         if len(answers) != 1:
             failures.append(f"the materialised campaigns disagree on the answer: {answers}")
+
+    # Spec 015: the row-group cap, the sweep on each file, and the probe that
+    # measures the confound.
+    sweeps = {
+        name: collect_scaling(load_reports(pattern)) for name, pattern in ROW_GROUP_SWEEPS
+    }
+    sweeps = {name: sweep for name, sweep in sweeps.items() if sweep}
+
+    for doc, label, name, threads, system, places in ROW_GROUP_SCALING_CHECKS:
+        sweep = sweeps.get(name)
+        if not sweep:
+            # No reports, no figures to check: the same rule the other
+            # sections follow, so a report set that is not committed yet does
+            # not fail the gate.
+            continue
+        values = sweep.get(threads, {}).get(system)
+        if not values:
+            failures.append(f"{doc}: no figure for {label} in the row-group sweeps")
+            continue
+        figure = statistics.median(values)
+        rendered = f"{figure:.{places}f}"
+        if rendered not in texts[doc]:
+            failures.append(
+                f"{doc}: {label} is {rendered} in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {doc:<10} {label:<40} {rendered}")
+
+    for doc, label, name, threads, places in ROW_GROUP_CAP_CHECKS:
+        sweep = sweeps.get(name)
+        if not sweep:
+            # No reports, no figures to check: the same rule the other
+            # sections follow, so a report set that is not committed yet does
+            # not fail the gate.
+            continue
+        values = sweep.get(threads, {}).get("workers")
+        if not values:
+            failures.append(f"{doc}: no worker count for {label}")
+            continue
+        figure = statistics.median(values)
+        rendered = f"{figure:.{places}f}"
+        if rendered not in texts[doc]:
+            failures.append(
+                f"{doc}: {label} is {rendered} in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {doc:<10} {label:<40} {rendered}")
+
+    for doc, label, name, threads, places in ROW_GROUP_SPEEDUP_CHECKS:
+        sweep = sweeps.get(name)
+        if not sweep:
+            # No reports, no figures to check: the same rule the other
+            # sections follow, so a report set that is not committed yet does
+            # not fail the gate.
+            continue
+        base = sweep.get(1, {}).get("engine")
+        now = sweep.get(threads, {}).get("engine")
+        if not base or not now:
+            failures.append(f"{doc}: no speedup for {label}")
+            continue
+        figure = statistics.median(base) / statistics.median(now)
+        # The documents write the multiplier sign; the plain one is accepted
+        # too, because it is the same figure and a stranger may type either.
+        rendered = f"{figure:.{places}f}"
+        if not any(f"{rendered}{sign}" in texts[doc] for sign in ("x", "×")):
+            failures.append(
+                f"{doc}: {label} is {rendered}x in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {doc:<10} {label:<40} {rendered}x")
+
+    for doc, label, name, key, places in ROW_GROUP_PROBE_CHECKS:
+        pattern = dict(ROW_GROUP_PROBES)[name]
+        probe = load_reports(pattern)
+        if not probe:
+            # No reports, no figures to check: the same rule the other
+            # sections follow, so a report set that is not committed yet does
+            # not fail the gate.
+            continue
+        figure = materialised_figure(probe, key)
+        if figure is None:
+            failures.append(f"{doc}: no figure for {label} in the row-group probes")
+            continue
+        rendered = f"{figure:.{places}f}"
+        if rendered not in texts[doc]:
+            failures.append(
+                f"{doc}: {label} is {rendered} in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {doc:<10} {label:<40} {rendered}")
+
+    # The three files must agree on the answer: they are the same rows in a
+    # different arrangement, and a different answer would mean the row-group
+    # size changed the query rather than the schedule.
+    answers = set()
+    survivors = set()
+    for name, pattern in ROW_GROUP_PROBES:
+        for run in load_reports(pattern):
+            answers.add(run.get("query", {}).get("value"))
+            survivors.add(run.get("query", {}).get("survivors"))
+    if len(answers) != 1:
+        failures.append(f"the row-group campaigns disagree on the answer: {answers}")
+    if len(survivors) != 1:
+        failures.append(
+            f"the row-group campaigns disagree on the surviving rows: {sorted(survivors)}"
+        )
 
     if RLE_EXPANSION_REPORTS:
         expansion_runs = [json.loads(path.read_text()) for path in RLE_EXPANSION_REPORTS]

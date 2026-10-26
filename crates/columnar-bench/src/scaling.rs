@@ -77,6 +77,14 @@ pub struct ScalingPoint {
     pub duckdb_ms: f64,
     /// `Polars`' cold number, at the same thread count.
     pub polars_ms: f64,
+    /// The `DataFusion` peer's cold number, at the same thread count.
+    ///
+    /// `Option` because the peer joined the sweep after the first campaigns
+    /// were run, and an older report has no such figure. `None` means *not
+    /// measured*, never *fast*: a missing figure is reported as a dash rather
+    /// than as a zero, so it cannot be read as a speed.
+    #[serde(default)]
+    pub datafusion_ms: Option<f64>,
 }
 
 /// The whole sweep.
@@ -139,6 +147,14 @@ impl ScalingReport {
     pub fn render(&self) -> String {
         let mut out = String::new();
         out.push_str("COLUMNAR ENGINE \u{b7} THREAD-COUNT SWEEP\n");
+        self.render_conditions(&mut out);
+        writeln!(out).ok();
+        self.render_table(&mut out);
+        out
+    }
+
+    /// Renders the header: the machine, the file, the query and the mode.
+    fn render_conditions(&self, out: &mut String) {
         writeln!(
             out,
             "machine   {} \u{b7} {} \u{b7} {} cores \u{b7} SIMD {}",
@@ -186,14 +202,20 @@ impl ScalingReport {
             self.row_groups
         )
         .ok();
-        writeln!(out).ok();
+    }
 
+    /// Renders the table: the header row and one row per point.
+    fn render_table(&self, out: &mut String) {
         if self.mode == "load" {
-            writeln!(out, "threads   workers        engine      duckdb     polars   engine x").ok();
+            writeln!(
+                out,
+                "threads   workers        engine      duckdb     polars  datafusion   engine x"
+            )
+            .ok();
         } else {
             writeln!(
                 out,
-                "threads   workers     engine   engine-scan  engine-ops     duckdb     polars   engine x    duckdb x"
+                "threads   workers     engine   engine-scan  engine-ops     duckdb     polars  datafusion   engine x    duckdb x"
             )
             .ok();
         }
@@ -203,15 +225,20 @@ impl ScalingReport {
         for point in &self.points {
             let engine_speedup = ratio(base.map(|base| base.engine_ms), point.engine_ms);
             let duckdb_speedup = ratio(base.map(|base| base.duckdb_ms), point.duckdb_ms);
+            let peer = match point.datafusion_ms {
+                Some(ms) if ms.is_finite() => format!("{ms:>10.1}"),
+                _ => format!("{:>10}", "-"),
+            };
             if self.mode == "load" {
                 writeln!(
                     out,
-                    "{:>7}  {:>7}  {:>10.1}   {:>8.1}   {:>8.1}   {:>8.2}x",
+                    "{:>7}  {:>7}  {:>10.1}   {:>8.1}   {:>8.1}   {:>10}   {:>8.2}x",
                     point.threads,
                     point.workers,
                     point.engine_ms,
                     point.duckdb_ms,
                     point.polars_ms,
+                    peer,
                     engine_speedup
                 )
                 .ok();
@@ -219,7 +246,7 @@ impl ScalingReport {
             }
             writeln!(
                 out,
-                "{:>7}  {:>7}  {:>8.1}   {:>11.1}   {:>10.1}   {:>8.1}   {:>8.1}   {:>8.2}x   {:>7.2}x",
+                "{:>7}  {:>7}  {:>8.1}   {:>11.1}   {:>10.1}   {:>8.1}   {:>8.1}   {:>10}   {:>8.2}x   {:>7.2}x",
                 point.threads,
                 point.workers,
                 point.engine_ms,
@@ -227,13 +254,12 @@ impl ScalingReport {
                 point.engine_operators_ms,
                 point.duckdb_ms,
                 point.polars_ms,
+                peer,
                 engine_speedup,
                 duckdb_speedup
             )
             .ok();
         }
-
-        out
     }
 }
 

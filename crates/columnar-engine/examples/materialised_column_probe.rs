@@ -1015,6 +1015,17 @@ fn load_average() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// How many row groups the file has, for the report.
+///
+/// The row-group count is the cap on the engine's read parallelism, so a
+/// report that measures a file without saying how many row groups it has is
+/// a report a reader cannot compare with another one.
+fn row_groups(path: &Path) -> usize {
+    let file = File::open(path).expect("the file opens");
+    let reader = SerializedFileReader::new(file).expect("the reader opens");
+    reader.num_row_groups()
+}
+
 /// The number of logical cores, for the report.
 fn cores() -> usize {
     std::thread::available_parallelism().map_or(0, usize::from)
@@ -1176,6 +1187,7 @@ fn write_report(out: &str, path: &Path, decodes: &[ColumnDecodes], query: &Query
         "host_load_average": load_average(),
         "writer_dictionary_page_limit": WRITER_DICTIONARY_LIMIT,
         "rows": decodes.first().map_or(0, |column| column.rows),
+        "row_groups": row_groups(path),
         "columns": columns,
         "query": {
             "name": "q6-revenue",

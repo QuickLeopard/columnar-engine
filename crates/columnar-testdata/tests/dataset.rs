@@ -113,7 +113,8 @@ fn comment_text(path: &Path) -> String {
 /// Writes a dataset of `rows` rows with the given spec.
 fn write(spec: &DatasetSpec, rows: u64, name: &str) -> (PathBuf, DatasetManifest) {
     let path = test_path(name);
-    let manifest = write_dataset(spec, rows, &path).expect("the dataset is written");
+    let manifest =
+        write_dataset(spec, rows, &path, ROW_GROUP_ROWS).expect("the dataset is written");
     (path, manifest)
 }
 
@@ -448,7 +449,8 @@ fn a_small_dataset_is_generated_quickly() {
     let path = test_path("small.parquet");
 
     let started = Instant::now();
-    let manifest = write_dataset(&spec, TEST_ROWS, &path).expect("the dataset is written");
+    let manifest =
+        write_dataset(&spec, TEST_ROWS, &path, ROW_GROUP_ROWS).expect("the dataset is written");
     let elapsed = started.elapsed();
 
     assert_eq!(manifest.rows, TEST_ROWS);
@@ -480,7 +482,7 @@ fn generate_writes_the_scale_factor_row_count() {
 fn an_out_of_range_null_rate_is_rejected() {
     let spec = DatasetSpec { scale_factor: 1, seed: 0x5EED, null_rate: 1.5 };
     let path = test_path("invalid.parquet");
-    let error = write_dataset(&spec, 10, &path).expect_err("the spec is rejected");
+    let error = write_dataset(&spec, 10, &path, ROW_GROUP_ROWS).expect_err("the spec is rejected");
 
     assert!(
         matches!(error, columnar_testdata::DatasetError::InvalidSpec(_)),
@@ -531,6 +533,64 @@ fn the_row_group_size_is_bounded() {
         Some(500_000),
         "the last row group should hold the remainder"
     );
+}
+
+/// How many row groups the file on disk has.
+fn row_group_count(path: &Path) -> usize {
+    let file = File::open(path).expect("the dataset file exists");
+    let builder =
+        ParquetRecordBatchReaderBuilder::try_new(file).expect("the file is a parquet file");
+    builder.metadata().row_groups().len()
+}
+
+#[test]
+fn the_row_group_size_is_the_knob() {
+    let spec = DatasetSpec::default();
+    let path = test_path("row_group_knob.parquet");
+
+    // A fifth of the default, so that the count is a fifth too.
+    let rows_per_group = ROW_GROUP_ROWS / 5;
+    let manifest =
+        write_dataset(&spec, 1_500_000, &path, rows_per_group).expect("the dataset is written");
+
+    // One and a half groups of two hundred thousand rows: three groups.
+    let expected = 1_500_000_u64.div_ceil(u64::try_from(rows_per_group).expect("the size fits"));
+    assert_eq!(
+        row_group_count(&path),
+        usize::try_from(expected).expect("the count fits in a usize"),
+        "the file should have the row groups the knob asked for"
+    );
+
+    // The manifest says what was asked for and what was written, so a reader
+    // of the manifest knows the file's shape without opening it.
+    assert_eq!(manifest.row_group_rows, rows_per_group);
+    assert_eq!(manifest.row_groups, expected);
+}
+
+#[test]
+fn the_default_row_group_size_does_not_move() {
+    let spec = DatasetSpec::default();
+    let path = test_path("row_group_default.parquet");
+
+    let manifest =
+        write_dataset(&spec, 1_500_000, &path, ROW_GROUP_ROWS).expect("the dataset is written");
+
+    assert_eq!(manifest.row_group_rows, ROW_GROUP_ROWS);
+    assert_eq!(manifest.row_groups, 2);
+    assert_eq!(row_group_count(&path), 2);
+}
+
+#[test]
+fn the_manifest_records_the_row_group_count_of_the_generated_file() {
+    // Scale factor zero is the only end-to-end run of `generate` that is
+    // cheap enough for a test; the row-group rule itself is checked above.
+    let spec = DatasetSpec { scale_factor: 0, seed: 0x5EED, null_rate: 0.0 };
+    let path = test_path("generate_row_groups.parquet");
+    let manifest = columnar_testdata::generate_with_row_groups(&spec, &path, ROW_GROUP_ROWS / 4)
+        .expect("the dataset is written");
+
+    assert_eq!(manifest.row_group_rows, ROW_GROUP_ROWS / 4);
+    assert_eq!(manifest.row_groups, 0, "an empty file has no row groups");
 }
 
 /// Whether a string looks like a `YYYY-MM-DD` date.

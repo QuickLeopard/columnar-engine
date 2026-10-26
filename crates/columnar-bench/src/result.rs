@@ -57,6 +57,14 @@ pub struct DatasetReport {
     /// The null rate it was generated with, if the manifest says so.
     #[serde(default)]
     pub null_rate: Option<f64>,
+    /// How many Parquet row groups it has, if the manifest says so.
+    ///
+    /// The read splits the file's row groups across the workers, so this
+    /// number is the ceiling on the read's parallelism -- and a sweep that
+    /// does not say how many row groups the file had cannot show where the
+    /// ceiling is.
+    #[serde(default)]
+    pub row_groups: Option<u64>,
 }
 
 /// The engine's own result for one query.
@@ -142,12 +150,13 @@ impl BenchReport {
         writeln!(out, "os        {}", self.machine.os).ok();
         writeln!(
             out,
-            "dataset   {} \u{b7} {} rows \u{b7} {:.1} MiB \u{b7} sf {} \u{b7} seed {}",
+            "dataset   {} \u{b7} {} rows \u{b7} {:.1} MiB \u{b7} sf {} \u{b7} seed {} \u{b7} {} row groups",
             self.dataset.path,
             self.dataset.rows,
             self.dataset.bytes as f64 / (1024.0 * 1024.0),
             self.dataset.scale_factor.map_or_else(|| String::from("unknown"), |sf| sf.to_string()),
-            self.dataset.seed.map_or_else(|| String::from("unknown"), |seed| seed.to_string())
+            self.dataset.seed.map_or_else(|| String::from("unknown"), |seed| seed.to_string()),
+            self.dataset.row_groups.map_or_else(|| String::from("unknown"), |groups| groups.to_string()),
         )
         .ok();
         // The kernel A/B section is printed only when there **is** a kernel
@@ -342,6 +351,7 @@ mod tests {
             scale_factor: Some(1),
             seed: Some(24001),
             null_rate: Some(0.0),
+            row_groups: Some(6),
         }
     }
 

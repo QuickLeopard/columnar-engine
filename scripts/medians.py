@@ -118,6 +118,7 @@ def collect_scaling(runs: list[dict]) -> dict[int, dict[str, list[float]]]:
             push(threads, "engine_operators", point.get("engine_operators_ms"))
             push(threads, "duckdb", point.get("duckdb_ms"))
             push(threads, "polars", point.get("polars_ms"))
+            push(threads, "datafusion", point.get("datafusion_ms"))
 
     return out
 
@@ -130,10 +131,21 @@ def print_scaling(runs: list[dict], label: str = "q6", mode: str = "cold") -> No
     if not sweep:
         return
 
+    # The file and its row-group count are printed with the table, because
+    # there is more than one sweep now and the row-group count is the cap on
+    # the engine's parallelism -- a reader who does not see it cannot read the
+    # curve.
+    dataset = runs[0].get("dataset", {})
+    row_groups = runs[0].get("row_groups")
+
     print(f"\n=== THREAD-COUNT SWEEP, {label} ({mode}, {len(runs)} runs) ===")
     print(
+        f"file     {dataset.get('path', '?')} · {dataset.get('rows', '?')} rows · "
+        f"{row_groups if row_groups is not None else '?'} row groups"
+    )
+    print(
         f"{'threads':>8}{'workers':>9}{'engine':>26}{'engine scan':>26}{'engine ops':>26}"
-        f"{'duckdb':>26}{'polars':>26}"
+        f"{'duckdb':>26}{'polars':>26}{'datafusion':>26}"
     )
     for threads in sorted(sweep):
         figures = sweep[threads]
@@ -146,6 +158,7 @@ def print_scaling(runs: list[dict], label: str = "q6", mode: str = "cold") -> No
             f"{cell(figures.get('engine_operators'))}"
             f"{cell(figures.get('duckdb'))}"
             f"{cell(figures.get('polars'))}"
+            f"{cell(figures.get('datafusion'))}"
         )
         print(row)
 
@@ -165,6 +178,86 @@ def print_scaling(runs: list[dict], label: str = "q6", mode: str = "cold") -> No
                 f"duckdb {base_duckdb / duckdb:5.2f}x  "
                 f"engine / duckdb {engine / duckdb:5.2f}x"
             )
+
+
+def print_row_groups(
+    files: list[tuple[str, list[dict]]], label: str = "q6", mode: str = "cold"
+) -> None:
+    """Print the sweeps of every file, side by side.
+
+    The claim under test is that the engine's parallelism is capped by the
+    **file's** row-group count rather than by the machine, so the table that
+    settles it is the one that puts the files' curves beside each other: the
+    worker count asked for against the worker count that ran, and the speedup
+    each file's curve achieved.
+
+    The incumbents are printed too, and they are the control: they are **not**
+    capped by the row-group count, so their numbers are the same on every
+    file up to the machine's noise. A reader who sees the engine's curve move
+    with the row-group count and the incumbents' not has seen the effect
+    separated from the noise.
+    """
+    sweeps = [(name, collect_scaling(runs)) for name, runs in files]
+    sweeps = [(name, sweep) for name, sweep in sweeps if sweep]
+    if not sweeps:
+        return
+
+    print(f"\n=== THE ROW-GROUP CAP, {label} ({mode}, {len(files[0][1])} runs each) ===")
+    for name, runs in files:
+        print(
+            f"file {name}  {runs[0].get('dataset', {}).get('path', '?')} "
+            f"· {runs[0].get('row_groups')} row groups"
+        )
+
+    def figure(sweep: dict, threads: int, key: str) -> float | None:
+        values = sweep.get(threads, {}).get(key)
+        return median(values) if values else None
+
+    def speedup(sweep: dict, threads: int, key: str) -> float:
+        base = figure(sweep, 1, key)
+        now = figure(sweep, threads, key)
+        if not base or not now or now <= 0:
+            return float("nan")
+        return base / now
+
+    def shown(value: float | None, width: int = 8) -> str:
+        if value is None or value != value:  # noqa: PLR0124 -- NaN is missing
+            return format("-", f">{width}")
+        return f"{value:.1f}".rjust(width)
+
+    threads_list = sorted({threads for _, sweep in sweeps for threads in sweep})
+
+    print("\n-- the engine, and the cap --")
+    header = f"{'threads':>8}"
+    for name, _ in sweeps:
+        header += f"{name + ' workers':>16}{name + ' engine':>14}{name + ' x':>10}"
+    print(header)
+    for threads in threads_list:
+        row = f"{threads:>8}"
+        for _, sweep in sweeps:
+            workers = figure(sweep, threads, "workers")
+            engine = figure(sweep, threads, "engine")
+            row += (
+                f"{(f'{workers:.0f}' if workers is not None else '-'):>16}"
+                f"{shown(engine, 14):>14}"
+                f"{speedup(sweep, threads, 'engine'):>9.2f}x"
+            )
+        print(row)
+
+    print("\n-- the incumbents, the control --")
+    header = f"{'threads':>8}"
+    for name, _ in sweeps:
+        header += f"{name + ' duckdb':>15}{name + ' polars':>14}{name + ' datafusion':>17}"
+    print(header)
+    for threads in threads_list:
+        row = f"{threads:>8}"
+        for _, sweep in sweeps:
+            row += (
+                f"{shown(figure(sweep, threads, 'duckdb'), 15):>15}"
+                f"{shown(figure(sweep, threads, 'polars'), 14):>14}"
+                f"{shown(figure(sweep, threads, 'datafusion'), 17):>17}"
+            )
+        print(row)
 
 
 def print_browser(runs: list[dict]) -> None:
@@ -406,6 +499,155 @@ def print_materialised(runs: list[dict]) -> None:
     )
 
 
+def print_row_group_probe(files: list[tuple[str, list[dict]]]) -> None:
+    """Print the files' shapes and their decodes, side by side.
+
+    This is spec 015's confound: the row-group size is not only a parallelism
+    knob, it changes the **file**. The writer's dictionary page limit is per
+    row group, so a smaller row group carries a smaller dictionary and a
+    different page mix, and the files are not the same shape.
+
+    The files are therefore printed **together**, from one session's campaigns,
+    so that a difference between them is a difference between the files and
+    not a difference between two times on a shared machine.
+    """
+    if not files:
+        return
+
+    def shapes(runs: list[dict]) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for run in runs:
+            for entry in run.get("columns", []):
+                out.setdefault(entry["name"], entry)
+        return out
+
+    def timings(runs: list[dict]) -> dict[str, dict[str, list[float]]]:
+        out: dict[str, dict[str, list[float]]] = {}
+        for run in runs:
+            for entry in run.get("columns", []):
+                bucket = out.setdefault(entry["name"], {})
+                for key, value in entry.get("measurements_ms", {}).items():
+                    bucket.setdefault(key, []).append(value)
+        return out
+
+    all_shapes = [shapes(runs) for _, runs in files]
+    all_times = [timings(runs) for _, runs in files]
+
+    def figure(times: dict, name: str, key: str, width: int = 24) -> str:
+        values = times.get(name, {}).get(key, [])
+        if not values:
+            return format("-", f">{width}")
+        return f"{statistics.median(values):.2f} ({min(values):.2f}-{max(values):.2f})".rjust(width)
+
+    def shape_line(entry: dict) -> str:
+        return (
+            f"{entry['encoding']}, "
+            f"{entry['dictionary_pages']} dictionary pages and "
+            f"{entry['plain_pages']} plain ones, "
+            f"{entry['dictionary_values']} dictionary values, "
+            f"{entry['bit_width']}-bit indices"
+        )
+
+    groups = [runs[0].get("row_groups") for _, runs in files]
+    print(f"\n=== THE ROW-GROUP FILE, {len(files[0][1])} campaigns each ===")
+    for (name, runs), group in zip(files, groups):
+        print(f"file {name}  {runs[0].get('file', '?')} \u00b7 {group} row groups")
+
+    names = list(all_shapes[0].keys())
+    print("\n-- the shape --")
+    for column in names:
+        first = all_shapes[0].get(column)
+        if first is None:
+            continue
+        print(f"\n{column} ({first['role']})")
+        for (name, _), file_shapes in zip(files, all_shapes):
+            entry = file_shapes.get(column)
+            if entry is None:
+                continue
+            print(f"   {name}  {shape_line(entry)}")
+        for (name, _), file_shapes in zip(files, all_shapes):
+            entry = file_shapes.get(column)
+            if entry is None:
+                continue
+            print(
+                f"   {name}  {entry['compressed_bytes']:,} bytes on disk "
+                f"({entry['dictionary_page_bytes']:,} dictionary-page, "
+                f"{entry['plain_data_bytes']:,} plain-data)"
+            )
+
+    print("\n-- the decode --")
+    header = f"{'':4}{'figure':<34}"
+    for name, group in zip((name for name, _ in files), groups):
+        header += f"{name + ', ' + str(group) + ' groups':>24}"
+    print(header)
+    rows = [
+        ("P", "the parquet crate's decode", "parquet_decode"),
+        ("A", "Arrow's decode", "arrow_decode"),
+        ("V", "the probe's decode", "probe_decode"),
+    ]
+    for column in names:
+        print(f"\n{column}")
+        for key, label, measurement in rows:
+            if not any(measurement in times.get(column, {}) for times in all_times):
+                continue
+            row = f"{key:<4}{label:<34}"
+            for times in all_times:
+                row += figure(times, column, measurement)
+            print(row)
+
+    def ladder(runs: list[dict]) -> dict[str, list[float]]:
+        out: dict[str, list[float]] = {}
+        for run in runs:
+            for key, value in run.get("query", {}).get("measurements_ms", {}).items():
+                out.setdefault(key, []).append(value)
+        return out
+
+    all_ladders = [ladder(runs) for _, runs in files]
+
+    print("\n-- the real Q6, as a ladder --")
+    header = f"{'':4}{'rung':<34}"
+    for name, group in zip((name for name, _ in files), groups):
+        header += f"{name + ', ' + str(group) + ' groups':>24}"
+    print(header)
+    rungs = [
+        ("Q0", "the predicates alone", "predicates_only"),
+        ("Q1", "the predicates, and the price", "predicates_and_price"),
+        ("Q2", "the predicates, and the discount", "predicates_and_discount"),
+        ("Q3", "the predicates, and both", "predicates_and_both"),
+        ("Q4", "the whole query", "q6_revenue"),
+    ]
+    for key, label, measurement in rungs:
+        row = f"{key:<4}{label:<34}"
+        for rung_ladder in all_ladders:
+            values = rung_ladder.get(measurement, [])
+            text = f"{statistics.median(values):.2f} ({min(values):.2f}-{max(values):.2f})" if values else "-"
+            row += f"{text:>24}"
+        print(row)
+
+    print()
+    for (name, _), rung_ladder in zip(files, all_ladders):
+        print(f"{'the scan stage, ' + name:<40}{statistics.median(rung_ladder.get('q6_revenue_scan', [0.0])):.2f} ms")
+    for name, runs in files:
+        print(
+            f"{'the host load average, ' + name:<40}"
+            f"{statistics.median([run.get('host_load_average', 0.0) for run in runs]):.1f}"
+        )
+
+    # The materialised column's share is derived from the **campaigns**, not
+    # from the medians of the medians: each campaign's share is measured, and
+    # the median of those is the figure.
+    print()
+    for name, runs in files:
+        shares = [
+            run["query"]["measurements_ms"]["predicates_and_price"]
+            - run["query"]["measurements_ms"]["predicates_only"]
+            for run in runs
+            if "query" in run
+        ]
+        if shares:
+            print(f"{'the materialised column share, ' + name:<40}{statistics.median(shares):.2f} ms")
+
+
 def print_curve(runs: list[dict]) -> None:
     """Print the size curve's medians.
 
@@ -545,7 +787,9 @@ def main() -> int:
         print(f"{query:<16} {detail}   best: {best}")
 
     for pattern, label, mode in (
-        ("scaling-run*.json", "q6", "cold"),
+        ("scaling-run[0-9].json", "q6", "cold"),
+        ("scaling-rg12-run*.json", "q6", "cold"),
+        ("scaling-rg24-run*.json", "q6", "cold"),
         ("scaling-revenue-run*.json", "q6-revenue", "cold"),
         ("scaling-resident-run*.json", "q6", "resident"),
         ("scaling-resident-revenue-run*.json", "q6-revenue", "resident"),
@@ -555,6 +799,21 @@ def main() -> int:
         if scaling_paths:
             scaling_runs = [load(p) for p in scaling_paths]
             print_scaling(scaling_runs, label, mode)
+
+    # The row-group cap's own table: the same sweep on a file with six row
+    # groups, on one with twelve, and on one with twenty-four.
+    sweep_files = [
+        ("A", "scaling-run[0-9].json"),
+        ("B", "scaling-rg12-run*.json"),
+        ("C", "scaling-rg24-run*.json"),
+    ]
+    loaded_sweeps = [
+        (name, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
+        for name, pattern in sweep_files
+    ]
+    loaded_sweeps = [(name, runs) for name, runs in loaded_sweeps if runs]
+    if len(loaded_sweeps) >= 2:
+        print_row_groups(loaded_sweeps)
 
     browser_paths = sorted(Path("bench-results").glob("browser-run*.json"))
     if browser_paths:
@@ -567,6 +826,22 @@ def main() -> int:
     materialised_paths = sorted(Path("bench-results").glob("materialised-run*.json"))
     if materialised_paths:
         print_materialised([load(p) for p in materialised_paths])
+
+    # Spec 015's paired probe: the same instrument on the six-row-group file,
+    # on the twelve-row-group one and on the twenty-four-row-group one,
+    # measured in one session.
+    probe_files = [
+        ("A", "row-groups-6-run*.json"),
+        ("B", "row-groups-12-run*.json"),
+        ("C", "row-groups-24-run*.json"),
+    ]
+    loaded_probes = [
+        (name, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
+        for name, pattern in probe_files
+    ]
+    loaded_probes = [(name, runs) for name, runs in loaded_probes if runs]
+    if loaded_probes:
+        print_row_group_probe(loaded_probes)
 
     curve_paths = sorted(Path("bench-results").glob("curve-run*.json"))
     if curve_paths:

@@ -59,6 +59,13 @@ enum Command {
         /// scale factor.
         #[arg(long, default_value_t = 24001)]
         seed: u64,
+        /// The number of rows per Parquet row group.
+        ///
+        /// The read splits the file's row groups across the workers, so this
+        /// number decides how many workers the read can use: a file with
+        /// smaller row groups has more of them.
+        #[arg(long, default_value_t = columnar_testdata::writer::ROW_GROUP_ROWS)]
+        row_group_rows: usize,
         /// The fraction of rows whose `l_discount` and `l_comment` are NULL.
         #[arg(long, default_value_t = 0.0)]
         null_rate: f64,
@@ -312,8 +319,8 @@ fn run(cli: Cli) -> Result<()> {
     }
 
     match cli.command {
-        Command::Dataset { scale_factor, seed, null_rate, output } => {
-            run_dataset(scale_factor, seed, null_rate, &output)
+        Command::Dataset { scale_factor, seed, null_rate, row_group_rows, output } => {
+            run_dataset(scale_factor, seed, null_rate, row_group_rows, &output)
         }
         Command::Query { data, query, iterations, lazy, threads } => {
             run_query(&data, query, iterations, lazy, threads)
@@ -363,13 +370,21 @@ fn run(cli: Cli) -> Result<()> {
 }
 
 /// Generates the benchmark dataset.
-fn run_dataset(scale_factor: u32, seed: u64, null_rate: f64, output: &Path) -> Result<()> {
+fn run_dataset(
+    scale_factor: u32,
+    seed: u64,
+    null_rate: f64,
+    row_group_rows: usize,
+    output: &Path,
+) -> Result<()> {
     {
         {
             let spec = columnar_testdata::DatasetSpec { scale_factor, seed, null_rate };
-            let manifest = columnar_testdata::generate(&spec, output).with_context(|| {
-                format!("could not generate the dataset at {}", output.display())
-            })?;
+            let manifest =
+                columnar_testdata::generate_with_row_groups(&spec, output, row_group_rows)
+                    .with_context(|| {
+                        format!("could not generate the dataset at {}", output.display())
+                    })?;
             manifest.write_json().context("could not write the dataset manifest")?;
             println!("wrote {}", manifest.path);
             println!("  rows         {}", manifest.rows);
@@ -377,6 +392,10 @@ fn run_dataset(scale_factor: u32, seed: u64, null_rate: f64, output: &Path) -> R
             println!("  scale factor {}", manifest.scale_factor);
             println!("  seed         {}", manifest.seed);
             println!("  null rate    {}", manifest.null_rate);
+            println!(
+                "  row groups   {} ({} rows each)",
+                manifest.row_groups, manifest.row_group_rows
+            );
             println!("  provenance   {}", manifest.provenance);
         }
     }
@@ -736,7 +755,7 @@ fn run_sweep(
         }
 
         // The incumbents, at the same thread count.
-        let (duckdb_ms, polars_ms) = measure_incumbents(
+        let (duckdb_ms, polars_ms, datafusion_ms) = measure_incumbents(
             definition,
             data,
             external_mode,
@@ -754,10 +773,11 @@ fn run_sweep(
             engine_operators_ms,
             duckdb_ms,
             polars_ms,
+            datafusion_ms: Some(datafusion_ms).filter(|ms| ms.is_finite()),
         });
 
         println!(
-            "{count:>3} threads ({engine_workers:>2} workers) \u{b7} engine {engine_ms:.1} ms \u{b7} scan {engine_scan_ms:.1} ms \u{b7} operators {engine_operators_ms:.1} ms \u{b7} duckdb {duckdb_ms:.1} ms \u{b7} polars {polars_ms:.1} ms"
+            "{count:>3} threads ({engine_workers:>2} workers) \u{b7} engine {engine_ms:.1} ms \u{b7} scan {engine_scan_ms:.1} ms \u{b7} operators {engine_operators_ms:.1} ms \u{b7} duckdb {duckdb_ms:.1} ms \u{b7} polars {polars_ms:.1} ms \u{b7} datafusion {datafusion_ms:.1} ms"
         );
     }
 
@@ -814,11 +834,11 @@ fn measure_engine_load(data: &Path, iterations: usize, threads: usize) -> Result
     Ok(median(&loads))
 }
 
-/// Measures both incumbents at one thread count.
+/// Measures every incumbent at one thread count.
 ///
-/// Returns `(DuckDB's ms, Polars' ms)`. A system that could not be measured
-/// is reported as a NaN rather than as a zero, so a missing figure cannot be
-/// read as a fast one.
+/// Returns `(DuckDB's ms, Polars' ms, the peer's ms)`. A system that could not
+/// be measured is reported as a NaN rather than as a zero, so a missing figure
+/// cannot be read as a fast one.
 ///
 /// Each incumbent's answer is cross-checked against the engine's. A sweep that
 /// published timings for systems computing different answers would be a sweep
@@ -827,6 +847,7 @@ fn measure_engine_load(data: &Path, iterations: usize, threads: usize) -> Result
 /// In the **load** mode the figure is the incumbent's *load* -- how long it
 /// took to get the file into memory -- rather than its query, because the
 /// engine's figure is its load too.
+#[allow(clippy::too_many_arguments)]
 fn measure_incumbents(
     definition: &QueryDefinition,
     data: &Path,
@@ -835,7 +856,7 @@ fn measure_incumbents(
     iterations: usize,
     engine_result: Option<&columnar_engine::AggregateResult>,
     load_only: bool,
-) -> Result<(f64, f64)> {
+) -> Result<(f64, f64, f64)> {
     let ours = engine_result.and_then(|result| {
         result.groups.first().and_then(|group| group.values.first()).and_then(|value| match value {
             columnar_engine::AggregateValue::Int(v) => Some(*v as f64),
@@ -845,7 +866,7 @@ fn measure_incumbents(
     });
 
     let mut incumbents = Vec::new();
-    for comparator in [Comparator::DuckDb, Comparator::Polars] {
+    for comparator in [Comparator::DuckDb, Comparator::Polars, Comparator::DataFusion] {
         let query_sql = ExternalQuery::new(
             definition.query.name(),
             queries::sql_for(definition, comparator, mode, data),
@@ -879,7 +900,11 @@ fn measure_incumbents(
         incumbents.iter().find(|(name, _)| *name == "duckdb").map_or(f64::NAN, |(_, ms)| *ms);
     let polars_ms =
         incumbents.iter().find(|(name, _)| *name == "polars").map_or(f64::NAN, |(_, ms)| *ms);
-    Ok((duckdb_ms, polars_ms))
+    let datafusion_ms = incumbents
+        .iter()
+        .find(|(name, _)| *name == "datafusion-peer")
+        .map_or(f64::NAN, |(_, ms)| *ms);
+    Ok((duckdb_ms, polars_ms, datafusion_ms))
 }
 
 /// Measures the engine on one query, against data that is already in memory.
@@ -1213,6 +1238,7 @@ pub(crate) fn dataset_report(path: &Path, dataset: &Dataset) -> DatasetReport {
         scale_factor: manifest.as_ref().map(|m| m.scale_factor),
         seed: manifest.as_ref().map(|m| m.seed),
         null_rate: manifest.as_ref().map(|m| m.null_rate),
+        row_groups: manifest.as_ref().map(|m| m.row_groups),
     }
 }
 

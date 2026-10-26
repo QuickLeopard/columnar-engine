@@ -90,6 +90,27 @@ deny:
 dataset scale="1" seed="24001" out="data/lineitem.parquet":
     cargo run --release --quiet -p columnar-cli -- dataset --scale-factor {{scale}} --seed {{seed}} --output {{out}}
 
+# Generate the dataset with a **row-group size** of the given number of rows.
+#
+# The row-group count is the cap on the engine's read parallelism, so this is
+# the knob that opens it: a million rows a group is six row groups over six
+# million rows, and a quarter of a million is twenty-four of them.
+#
+# The file is named after the row-group count it has, because the count is
+# what the measurement is about. Override with
+# `just dataset-row-groups 500000 seed=24001 scale=1`.
+dataset-row-groups rows="250000" seed="24001" scale="1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/.cargo/bin:$PATH"
+    total=$((6000000 * {{scale}}))
+    groups=$(( (total + {{rows}} - 1) / {{rows}} ))
+    out="data/lineitem-rg${groups}.parquet"
+    cargo run --release --quiet -p columnar-cli -- dataset \
+        --scale-factor {{scale}} --seed {{seed}} \
+        --row-group-rows {{rows}} --output "$out"
+    echo "wrote $out with $groups row groups"
+
 # Remove the generated dataset.
 clean-data:
     rm -rf data bench-results

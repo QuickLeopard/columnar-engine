@@ -47,12 +47,15 @@ pub const BATCH_ROWS: usize = 65_536;
 pub const ROW_GROUP_ROWS: usize = 1_000_000;
 
 /// The writer properties used for every dataset file.
+///
+/// The row-group size is the one thing the caller chooses, because the
+/// number of row groups is the number of workers the read can use.
 #[must_use]
-pub fn writer_properties() -> WriterProperties {
+pub fn writer_properties(row_group_rows: usize) -> WriterProperties {
     WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_dictionary_enabled(true)
-        .set_max_row_group_size(ROW_GROUP_ROWS)
+        .set_max_row_group_size(row_group_rows)
         .set_statistics_enabled(EnabledStatistics::Chunk)
         .set_writer_version(WriterVersion::PARQUET_1_0)
         .set_bloom_filter_enabled(false)
@@ -65,7 +68,7 @@ pub fn writer_properties() -> WriterProperties {
 /// Generates a dataset of `rows` rows and writes it to `output`.
 ///
 /// The rows are written in batches of [`BATCH_ROWS`] and flushed into row
-/// groups of [`ROW_GROUP_ROWS`].
+/// groups of `row_group_rows` rows.
 ///
 /// # Errors
 ///
@@ -76,8 +79,9 @@ pub fn write_dataset(
     spec: &DatasetSpec,
     rows: u64,
     output: &Path,
+    row_group_rows: usize,
 ) -> Result<DatasetManifest, DatasetError> {
-    let properties = writer_properties();
+    let properties = writer_properties(row_group_rows);
     // Create the parent directory if it does not exist, so that
     // `columnar dataset --output data/lineitem.parquet` works on a fresh
     // clone without a separate `mkdir` step. The "one command" promise
@@ -108,6 +112,16 @@ pub fn write_dataset(
 
     let bytes = std::fs::metadata(output)?.len();
 
+    // The number of row groups the file has, which is the number of workers
+    // the read can use. It is counted from the row count and the row-group
+    // size rather than read back from the file, because the writer's own
+    // count is the one the read will see.
+    let row_groups = if row_group_rows == 0 {
+        0
+    } else {
+        rows.div_ceil(u64::try_from(row_group_rows).unwrap_or(u64::MAX))
+    };
+
     // The manifest records an absolute path, so that a manifest found
     // somewhere else still says which file it describes.
     let absolute = std::path::absolute(output).unwrap_or_else(|_| output.to_path_buf());
@@ -120,6 +134,8 @@ pub fn write_dataset(
         scale_factor: spec.scale_factor,
         seed: spec.seed,
         null_rate: spec.null_rate,
+        row_group_rows,
+        row_groups,
         provenance: PROVENANCE.to_string(),
         generator_version: env!("CARGO_PKG_VERSION").to_string(),
     })

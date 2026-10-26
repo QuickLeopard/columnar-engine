@@ -133,6 +133,25 @@ impl Default for DatasetSpec {
 /// [`DatasetError::Io`] if the file cannot be created or written, and
 /// [`DatasetError::Parquet`] if the Parquet writer rejects the data.
 pub fn generate(spec: &DatasetSpec, output: &Path) -> Result<DatasetManifest, DatasetError> {
+    generate_with_row_groups(spec, output, writer::ROW_GROUP_ROWS)
+}
+
+/// Generates the dataset with a chosen row-group size, and writes it to `output`.
+///
+/// The row-group size is the knob the parallelism cap hangs on: the read
+/// splits the file's row groups across the workers, so a file with more, and
+/// smaller, row groups can use more workers.
+///
+/// # Errors
+///
+/// Returns [`DatasetError::InvalidSpec`] if the spec is not usable,
+/// [`DatasetError::Io`] if the file cannot be created or written, and
+/// [`DatasetError::Parquet`] if the Parquet writer rejects the data.
+pub fn generate_with_row_groups(
+    spec: &DatasetSpec,
+    output: &Path,
+    row_group_rows: usize,
+) -> Result<DatasetManifest, DatasetError> {
     let rows = schema::rows_for_scale_factor(spec.scale_factor);
-    writer::write_dataset(spec, rows, output)
+    writer::write_dataset(spec, rows, output, row_group_rows)
 }
