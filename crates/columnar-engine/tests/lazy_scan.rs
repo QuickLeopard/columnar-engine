@@ -2,10 +2,11 @@
 //!
 //! # Why this file exists
 //!
-//! The lazy path pushes predicates into the Parquet reader. The reader is
-//! Arrow's, and Arrow's comparison semantics are **not** the engine's:
+//! The lazy path applies the plan's predicates during the scan, over the
+//! reader's Arrow arrays. Arrow's comparison semantics are **not** the
+//! engine's:
 //!
-//! - Arrow returns `null` for a comparison against a NULL, and `RowFilter`
+//! - Arrow returns `null` for a comparison against a NULL, and a row filter
 //!   keeps a row whose predicate is `null`. The engine drops NULL rows, for
 //!   every operator, including `!=`.
 //! - In IEEE-754, `NaN != 5.0` is **true**. The engine says a NaN never
@@ -20,6 +21,11 @@
 //! that matter are exactly the ones a generator would smooth over: NULLs at
 //! particular rows, NaN values, a NaN *threshold*, and row counts around
 //! the 64-row block boundary the comparison kernel works in.
+
+// The chunk indices below are literals into a one-chunk dataset whose length
+// the test has just asserted, so the panic the lint guards against cannot
+// happen.
+#![allow(clippy::indexing_slicing)]
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -586,11 +592,11 @@ fn the_lazy_path_reads_only_the_columns_the_plan_needs() {
     assert_eq!(
         result.plan_output.pushed_down,
         vec!["l_discount >= 0.05".to_owned()],
-        "the predicate was not pushed into the reader"
+        "the predicate was not applied during the scan"
     );
 }
 
-/// A predicate on a column nothing else reads is pushed into the reader.
+/// A predicate on a column nothing else reads is applied during the scan.
 #[test]
 fn a_predicate_on_an_unread_column_is_pushed_down() {
     let file = TempFile::new("pushdown");
@@ -683,9 +689,10 @@ fn an_aggregate_column_is_read_and_the_predicate_is_pushed_down() {
 
 /// A predicate on a column the plan also aggregates is **not** pushed down.
 ///
-/// Pushing it would make the reader decode that column twice: once to
-/// evaluate the predicate and once to produce the output. That is slower
-/// than not pushing it, so the predicate stays with the engine's filter.
+/// The engine's filter stage applies the predicates the scan did not, over the
+/// rows that survived the scan. Pushing this one into the scan would evaluate
+/// it over every row of the file *and* leave the filter to evaluate it again
+/// over the survivors, so the predicate stays with the engine's filter.
 #[test]
 fn a_predicate_on_an_aggregated_column_is_not_pushed_down() {
     let file = TempFile::new("not-pushed");
@@ -813,4 +820,76 @@ fn a_plain_utf8_column_pushes_down() {
         let plan = count_plan("l_shipdate", op, ScalarValue::Utf8("1994-01-01".to_owned()));
         both_paths(&file.path, &plan);
     }
+}
+
+/// The predicates' columns are read, and they are **not** materialised.
+///
+/// The engine evaluates the predicates over the reader's arrays, so the
+/// predicates' columns have to be read -- and the query did not ask for
+/// them, so the dataset must not hold them. A dataset that held them would
+/// hold every row of the file for a column nobody wanted, and the memory
+/// estimate would be wrong by exactly that much.
+#[test]
+fn the_predicates_columns_are_read_but_not_materialised() {
+    use columnar_engine::pushdown::Pushdown;
+
+    let file = TempFile::new("not-materialised");
+    write(&file.path, &edge_case_batch());
+
+    let mut plan = PushdownPlan::new();
+    plan.push(Pushdown::new(0, "l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04)));
+    plan.push(Pushdown::new(
+        1,
+        "l_shipdate",
+        ComparisonOp::Lt,
+        ScalarValue::Utf8("1995-01-01".to_owned()),
+    ));
+
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    let dataset = source.read(&[], &plan, columnar_kernels::best(), 1).expect("the read runs");
+
+    assert!(
+        dataset.chunks.is_empty(),
+        "the dataset materialised the predicates' columns: {:?}",
+        dataset.chunks.iter().map(|chunk| chunk.name.clone()).collect::<Vec<_>>()
+    );
+    // Rows 1 and 7 are the ones that satisfy both predicates.
+    assert_eq!(dataset.len(), 2, "the scan kept the wrong rows");
+}
+
+/// The materialised columns keep their own values.
+///
+/// The scan reads the materialised columns *and* the predicates' columns, in
+/// one projection, and the predicates' columns sit between the materialised
+/// ones in the file's order. A column that came out of the projection at the
+/// wrong position would hold another column's values, and the answer would be
+/// wrong in a way a row count would not catch.
+#[test]
+fn the_materialised_columns_keep_their_own_values() {
+    use columnar_engine::pushdown::Pushdown;
+
+    let file = TempFile::new("positions");
+    write(&file.path, &edge_case_batch());
+
+    let mut plan = PushdownPlan::new();
+    plan.push(Pushdown::new(0, "l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04)));
+    plan.push(Pushdown::new(
+        1,
+        "l_shipdate",
+        ComparisonOp::Lt,
+        ScalarValue::Utf8("1995-01-01".to_owned()),
+    ));
+
+    // The materialised column is the *third* one, so its position in the
+    // projected batch is not its position in the file.
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    let dataset = source.read(&[2], &plan, columnar_kernels::best(), 1).expect("the read runs");
+
+    assert_eq!(dataset.chunks.len(), 1, "the dataset materialised the wrong columns");
+    assert_eq!(dataset.chunks[0].name, "l_quantity");
+    assert_eq!(
+        resolved_rows(&dataset.chunks[0]),
+        vec![Some("2".to_owned()), Some("8".to_owned())],
+        "the materialised column holds another column's values"
+    );
 }

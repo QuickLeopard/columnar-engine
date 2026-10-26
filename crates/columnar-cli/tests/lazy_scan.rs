@@ -98,9 +98,9 @@ fn the_lazy_path_reads_two_of_the_sixteen_columns_for_q6() {
         "the lazy path did not read exactly Q6's two columns"
     );
 
-    // All four of Q6's predicates are pushed into the reader -- as two
-    // conjunctions, one per column, because the reader decodes a column once
-    // per projection mask that mentions it.
+    // All four of Q6's predicates are applied during the scan -- as two
+    // conjunctions, one per column, because a column is read once and the
+    // two comparisons on it are one comparison of two bounds.
     assert_eq!(
         result.plan_output.pushed_down,
         vec![

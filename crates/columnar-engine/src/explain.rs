@@ -82,7 +82,7 @@ pub struct PlanOutput {
     pub projection_workers: usize,
     /// What the pushed-down predicates cost.
     ///
-    /// The pushdown runs inside the reader, so its cost is otherwise folded
+    /// The pushdown runs inside the scan, so its cost is otherwise folded
     /// into the scan stage. This separates the two halves of the scan: the
     /// reader's decode, and the comparison. They have different fixes.
     pub pushdown_metrics: PushdownMetrics,

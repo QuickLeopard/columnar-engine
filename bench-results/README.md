@@ -33,7 +33,7 @@ python3 scripts/medians.py
 | `scaling-load-run3.json` | the third |
 | `compare.json` | a copy of `compare-run2.json`, the run whose figures sit nearest the medians |
 | `scaling.json` | a copy of `scaling-run2.json`, the sweep run nearest the medians |
-| `scaling-revenue.json` | a copy of `scaling-revenue-run2.json`, the sweep run nearest the medians |
+| `scaling-revenue.json` | a copy of `scaling-revenue-run1.json`, the sweep run nearest the medians |
 | `experiment-dictionary-copy.json` | **not a normal run.** A measurement taken with a deliberate perturbation of the decode path — see below |
 
 ## The experiment file

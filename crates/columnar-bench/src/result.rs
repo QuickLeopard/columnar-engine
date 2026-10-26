@@ -68,7 +68,7 @@ pub struct EngineQueryResult {
     ///
     /// The eager path decodes every column of the file before the query
     /// runs. The lazy path reads only the columns the plan needs, with the
-    /// plan's predicates pushed into the reader.
+    /// plan's predicates applied during the scan.
     pub mode: String,
     /// The SQL the query corresponds to, for reference.
     pub sql: String,

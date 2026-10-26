@@ -37,7 +37,10 @@ use arrow::array::{
 };
 use arrow::datatypes::{DataType as ArrowType, Int32Type, SchemaRef};
 use columnar_core::{ColumnChunk, DataType, Encoding, NullBitmap};
+use columnar_kernels::Flavor;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+use crate::pushdown::PushdownPlan;
 /// Everything that can go wrong while reading a dataset.
 #[derive(Debug, thiserror::Error)]
 pub enum DatasetError {
@@ -308,6 +311,85 @@ pub(crate) fn decode_batches(
         chunks.push(builder.finish(rows)?);
     }
     Ok(Dataset::with_rows(chunks, rows))
+}
+
+/// Decodes record batches into column chunks, applying the pushed-down
+/// predicates **in the engine's own domain**.
+///
+/// `materialised` names the file's root columns the dataset holds, and
+/// `projection` names the columns the reader projects: the materialised ones
+/// and the ones the predicates read. The predicates' columns are read so the
+/// engine can evaluate the predicates over them, and dropped afterwards --
+/// the query did not ask for them.
+///
+/// The engine keeps the predicates' **mask**, one bit per row, and applies it
+/// to the batch. A row filter would instead turn that mask into a list of row
+/// ranges, and the reader would apply the list one range at a time; for a
+/// predicate over scattered data that list is longer than the number of rows
+/// it selects. See ADR-0015.
+///
+/// The row count is taken from the batches rather than from the file's
+/// metadata: a scan with pushed-down predicates returns fewer rows than the
+/// file holds, and it is the surviving rows that were decoded.
+pub(crate) fn decode_batches_filtered(
+    reader: impl Iterator<Item = Result<arrow::record_batch::RecordBatch, arrow::error::ArrowError>>,
+    schema: &SchemaRef,
+    materialised: &[usize],
+    projection: &[usize],
+    pushdown: &PushdownPlan,
+    flavor: Flavor,
+) -> Result<Dataset, DatasetError> {
+    let mut builders = builders_for(schema, materialised)?;
+    let positions = positions_in(materialised, projection)?;
+    let mut rows = 0usize;
+    for batch in reader {
+        let batch = batch.map_err(|error| DatasetError::Parquet(error.to_string()))?;
+        let batch = match pushdown.evaluate_batch(&batch, flavor) {
+            Ok(None) => batch,
+            Ok(Some(mask)) => {
+                if materialised.is_empty() {
+                    // The query asked for no columns, so the engine needs the
+                    // number of surviving rows and not the rows themselves.
+                    // Filtering the batch would be work nobody asked for.
+                    rows += mask.count();
+                    continue;
+                }
+                arrow::compute::filter_record_batch(&batch, &mask.into_array())
+                    .map_err(|error| DatasetError::Parquet(error.to_string()))?
+            }
+            Err(error) => return Err(DatasetError::Parquet(error.to_string())),
+        };
+        for (builder, position) in builders.iter_mut().zip(positions.iter()) {
+            let Some(column) = batch.columns().get(*position) else {
+                return Err(DatasetError::Parquet(
+                    "the record batch holds fewer columns than were projected".to_owned(),
+                ));
+            };
+            builder.push(column.as_ref(), rows)?;
+        }
+        rows += batch.num_rows();
+    }
+
+    let mut chunks = Vec::with_capacity(builders.len());
+    for builder in builders {
+        chunks.push(builder.finish(rows)?);
+    }
+    Ok(Dataset::with_rows(chunks, rows))
+}
+
+/// The position of each materialised column in the projected batch.
+///
+/// Both lists are in ascending root-index order, so the positions are in
+/// ascending order too.
+fn positions_in(materialised: &[usize], projection: &[usize]) -> Result<Vec<usize>, DatasetError> {
+    materialised
+        .iter()
+        .map(|column| {
+            projection.iter().position(|candidate| candidate == column).ok_or_else(|| {
+                DatasetError::Parquet(format!("the scan projects no column at index {column}"))
+            })
+        })
+        .collect()
 }
 
 /// Accumulates one column across the record batches of a file.

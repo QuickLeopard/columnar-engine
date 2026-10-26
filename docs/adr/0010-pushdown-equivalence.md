@@ -95,6 +95,39 @@ The differential test is not weakened — it still runs, over every operator and
 it now checks two paths that share a function, rather than two paths that have to be made to
 agree. See [spec 003](../../specs/003-kernel-pushdown/spec.md).
 
+## Second amendment — the pushdown is the engine's, and the engine calls it
+
+**Amended 2026-10-25 by spec 009.** The decision above stands unchanged, and the
+reasoning behind it is now stronger still. What changed is the mechanism.
+
+The pushdown was an `ArrowPredicate`, handed to the Parquet reader as part of a
+`RowFilter`: the reader called it, once per batch, and the reader dropped the rows
+it rejected. A row filter is not a mask. parquet-rs turns the mask into a **list of
+row ranges** — for Q6's discount predicate, **2,775,138 ranges for 2,178,861
+surviving rows** — and applies the list one range at a time, through one
+`read_records` call per range. Reading a column through that list cost **50.0 ms**
+against **7.8 ms** without it.
+
+**The engine now calls the pushdown itself.** The reader is given no row filter; the
+engine evaluates the predicates over the reader's arrays, keeps the **mask** — one
+bit per row, in the engine's own layout — and applies it. There is no range list
+anywhere, and no second representation of a row selection that could drift from
+the first.
+
+So the equivalence argument changes shape once more. It was:
+
+> for numeric columns the pushdown **is** the filter's comparison code.
+
+It is now:
+
+> the pushdown and the filter are **the same function**, called from two places by
+> the same engine.
+
+The differential test is not weakened — it still runs, over every operator and every
+edge — and it now checks two paths that share a function *and* share its caller.
+See [ADR-0015](0015-the-engine-keeps-the-mask.md) and
+[spec 009](../../specs/009-the-engine-keeps-the-mask/spec.md).
+
 ## Consequences
 
 **Good.**

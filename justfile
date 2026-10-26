@@ -87,7 +87,7 @@ query data="data/lineitem.parquet" lazy="":
     cargo run --release -p columnar-cli -- query --data {{data}} --query q6 {{lazy}}
 
 # Run the query the lazy way: read only the columns the plan needs, with
-# the plan's predicates pushed into the Parquet reader.
+# the plan's predicates applied during the scan.
 query-lazy data="data/lineitem.parquet":
     cargo run --release -p columnar-cli -- query --data {{data}} --query q6 --lazy
 

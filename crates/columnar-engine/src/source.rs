@@ -47,7 +47,7 @@ use columnar_core::DataType;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 
-use crate::dataset::{decode_batches, Dataset, DatasetError};
+use crate::dataset::{decode_batches_filtered, Dataset, DatasetError};
 use crate::plan::ColumnSchema;
 use crate::pushdown::PushdownPlan;
 use columnar_kernels::Flavor;
@@ -282,32 +282,43 @@ impl ParquetSource {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .map_err(|error| DatasetError::Parquet(error.to_string()))?;
 
-        // The schema descriptor is needed to build the projection mask and
-        // the predicates' own masks, and it is borrowed from the builder --
-        // which `with_projection` consumes. The borrow therefore ends before
-        // the builder is consumed.
-        let (mask, filter) = {
-            let descriptor = builder.parquet_schema();
-            let mask = ProjectionMask::roots(descriptor, columns.iter().copied());
-            let filter = if pushdown.is_empty() {
-                None
-            } else {
-                Some(pushdown.to_row_filter(descriptor, flavor))
-            };
-            (mask, filter)
-        };
+        // The reader projects the columns the query **materialises** and the
+        // columns the **predicates** read. The engine applies the predicates
+        // itself, over the reader's arrays, and keeps the mask: a row filter
+        // would turn that mask into a range list, and the reader would apply
+        // the list one range at a time. See ADR-0015.
+        let projection = scan_projection(columns, pushdown);
+
+        // The schema descriptor is needed to build the projection mask, and it
+        // is borrowed from the builder -- which `with_projection` consumes. The
+        // borrow therefore ends before the builder is consumed.
+        let mask = ProjectionMask::roots(builder.parquet_schema(), projection.iter().copied());
 
         let mut builder = builder.with_projection(mask).with_batch_size(READER_BATCH_ROWS);
         if let Some(row_groups) = row_groups {
             builder = builder.with_row_groups(row_groups);
         }
-        if let Some(filter) = filter {
-            builder = builder.with_row_filter(filter);
-        }
 
         let reader = builder.build().map_err(|error| DatasetError::Parquet(error.to_string()))?;
-        decode_batches(reader, &self.schema, columns)
+        decode_batches_filtered(reader, &self.schema, columns, &projection, pushdown, flavor)
     }
+}
+
+/// The columns the scan reads from the file.
+///
+/// The columns the query **materialises**, and the columns the **predicates**
+/// read. Both are needed: the engine applies the predicates over the reader's
+/// arrays, so the predicates' columns have to be read -- but they are dropped
+/// afterwards, because the query did not ask for them.
+///
+/// The list is in ascending root-index order, which is the order the reader
+/// hands the columns over in.
+fn scan_projection(columns: &[usize], pushdown: &PushdownPlan) -> Vec<usize> {
+    let mut projection = columns.to_vec();
+    projection.extend(pushdown.columns());
+    projection.sort_unstable();
+    projection.dedup();
+    projection
 }
 
 impl ColumnSchema for ParquetSource {

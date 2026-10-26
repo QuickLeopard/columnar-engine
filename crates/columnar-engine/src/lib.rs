@@ -189,8 +189,12 @@ pub fn execute(
 ///   or a type mismatch is reported before a single row is read.
 /// - **Only the columns the plan needs are read.** The bytes of the others
 ///   are never fetched from the file.
-/// - **The plan's predicates are pushed into the reader**, so the rows that
-///   fail them are dropped during the scan rather than after it.
+/// - **The plan's predicates are pushed down into the scan**, so the rows
+///   that fail them are dropped during the scan rather than after it. The
+///   engine evaluates them itself and keeps the mask; the reader is given
+///   no row filter, because a row filter is a list of row ranges and the
+///   list is longer than the mask. See
+///   [ADR-0015](../../../docs/adr/0015-the-engine-keeps-the-mask.md).
 ///
 /// The pushdown reproduces the engine's filter semantics exactly -- a NULL
 /// never matches, a NaN never matches, for every operator including `!=` --
@@ -296,9 +300,11 @@ impl ScanDecision {
 /// 1. The plan's materialised columns are read. That is the late
 ///    materialisation set: the group-by, the aggregate and the projection.
 /// 2. A predicate whose column is **already being read** is declined. The
-///    reader would decode that column twice -- once to evaluate the
-///    predicate and once to produce the output -- which is slower than not
-///    pushing it.
+///    engine's filter stage applies the predicates the scan did not, over the
+///    rows that survived the scan. Pushing this one into the scan would
+///    evaluate it over every row of the file *and* leave the filter to
+///    evaluate it again over the survivors; declining it leaves the work to
+///    the filter, once, over fewer rows.
 /// 3. A predicate the pushdown cannot evaluate **exactly** is declined. It
 ///    is never approximated.
 /// 4. A declined predicate's column is read, because the engine's filter

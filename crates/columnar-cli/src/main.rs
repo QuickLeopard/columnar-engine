@@ -77,7 +77,7 @@ enum Command {
         #[arg(long, default_value_t = 5)]
         iterations: usize,
         /// Read only the columns the query needs, with the query's predicates
-        /// pushed into the Parquet reader.
+        /// applied during the scan.
         ///
         /// The lazy path reads the file *during* the query, so its timing is
         /// a cold number: there is no resident form.

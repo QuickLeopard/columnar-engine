@@ -34,10 +34,10 @@ implementations of it exist in this repository, and they MUST agree bit for bit,
 | Rust SIMD | `columnar-kernels/src/rust_simd.rs` | measures what the FFI seam costs |
 | C++ SIMD fallback | inside the C++ dispatch | the no-SIMD-machine path |
 
-The pushdown into the Parquet reader is **not** a sixth implementation. It runs the same kernel
-the filter runs, over the reader's own value slice, so that the two paths cannot disagree by
-construction. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md) and
-[spec 003](specs/003-kernel-pushdown/spec.md).
+The pushdown is **not** a sixth implementation. It runs the same kernel the filter runs, over the
+reader's own value slice, so that the two paths cannot disagree by construction. See
+[ADR-0010](docs/adr/0010-pushdown-equivalence.md), [spec 003](specs/003-kernel-pushdown/spec.md)
+and [ADR-0015](docs/adr/0015-the-engine-keeps-the-mask.md).
 
 - **MUST**: every implementation agree with the oracle, bit for bit, on every input.
 - **MUST**: this be **machine-checked in CI** by a differential test suite, not asserted in prose.
@@ -68,10 +68,11 @@ not deleted after the SIMD path works.
 - **MUST**: a comparison involving a NaN value or a NaN threshold **never match**, for every
   operator, **including `!=`**. This is "unknown propagates", and it is stricter than SQL's
   treatment of NaN.
-- **MUST**: a predicate pushed into the Parquet reader compute **the engine's** answer, not the
+- **MUST**: a predicate pushed down into the scan compute **the engine's** answer, not the
   reader's. Arrow's own float comparison kernels use IEEE *totalOrder*, under which `NaN != 5.0`
   is true and `-0.0 != 0.0`; a pushdown that used them would answer a different question from
-  the filter, on the same query, on the same data. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md).
+  the filter, on the same query, on the same data. See [ADR-0010](docs/adr/0010-pushdown-equivalence.md)
+  and [ADR-0015](docs/adr/0015-the-engine-keeps-the-mask.md).
 
 **Rationale**: these two rules are the easiest thing in a vectorized engine to get wrong, and the
 failure is silent — the engine returns rows instead of an error. They are pinned by explicit tests
@@ -194,6 +195,14 @@ These are the standards any change must hold or improve. They are the floor.
 - **A parallel path's peak memory MUST be measured, not assumed**: a merge that copies its inputs
   holds two copies of the data at its peak, and one that moves them holds one. The difference is
   the difference between a budget that fits and one that does not.
+- **A row selection MUST have one representation, and it MUST be the cheap one**: a selection
+  carried as a mask and then converted into a list of row ranges has **two** representations, and
+  the conversion's cost is the list's length — a function of how *fragmented* the surviving rows
+  are rather than of how many of them there are. A scattered mask over a random column yields a
+  range per surviving run, so the list is longer than the row set it selects, and applying it
+  costs several times the decode it was meant to save. The engine's mask is one bit per row, and
+  it stays that way: the reader is given **no** row filter, and there is no range list anywhere in
+  the engine.
 
 ---
 
@@ -240,9 +249,40 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.6.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
+**Version**: 1.7.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-25
 
 ### Amendment history
+
+**1.7.0 — 2026-10-25 — the engine keeps the mask, and the last big gap is gone.** The engine's
+lazy scan of the two columns TPC-H Q6 needs took 82.4 ms against DuckDB's 32.0 ms on the same file
+at the same thread count, and that 2.6× had never been split. Split, it came out as: Arrow's own
+decode 11.9 ms, the engine's kernel 6.0 ms, the output 1.4 ms, and **~60 ms of nothing**. The
+nothing was the mask on its way to the reader: a Parquet row filter is not a mask but a **list of
+row ranges**, and Q6's discount predicate produced **2,775,138 ranges for 2,178,861 surviving
+rows**. Reading a column through that list cost 50.0 ms against 7.8 ms without it.
+
+The engine now evaluates the pushed-down predicates itself, over the reader's arrays, and keeps the
+**mask**. The lazy scan of Q6's two columns is **26.2 ms** against DuckDB's 32.0 ms — the engine is
+ahead on the headline query, where it was 2.6× behind — and the real Q6 is 70.2 ms against 68.0 ms,
+which is level.
+
+*Rationale*: the requirement added is that **a row selection MUST have one representation, and it
+MUST be the cheap one**. Two representations of a selection is one too many: the mask is one bit
+per row, and the range list is one entry per surviving *run*, so the list's length is a function of
+how scattered the data is and not of how much of it survives. A reader that is handed a mask and
+converts it to ranges pays for the conversion at every scan, on data the engine never chose, and
+the cost is invisible in the scan's elapsed time — it is inside the reader. The same mistake, in a
+different guise, is the one spec 008 found: a constant (the batch size) inherited rather than
+measured. Here it is a representation inherited rather than chosen.
+
+*Principles touched*: IV is extended, not changed; the Performance Standards gain one requirement.
+Neither I, III nor II is touched, so it is a MINOR bump. Principle I's note about the pushdown
+being "not a sixth implementation" is updated only in wording: the pushdown now runs the same
+kernel over the reader's value slice from the engine's own scan loop rather than from inside the
+reader, which makes the argument stronger rather than weaker.
+*Migration plan*: the headline table and both sweeps were re-measured, because the committed
+reports carry the figures. The load sweep was **not** re-measured: this increment does not touch
+the eager path, and the load is a measurement of the eager path.
 
 **1.6.0 — 2026-10-25 — the eager decode is parallel, and the last big number is gone.** The
 engine's eager load was 1277.8 ms — the largest number in the repository, 144× the cost of

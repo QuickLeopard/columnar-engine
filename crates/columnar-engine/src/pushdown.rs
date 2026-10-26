@@ -22,17 +22,32 @@
 //! question* from the one the eager path answers, and the two would disagree
 //! on any dataset with a NULL or a NaN. That is not a performance question.
 //!
-//! So this module implements its own [`ArrowPredicate`], whose `evaluate`
-//! returns the engine's answer exactly. The equivalence is argued in
+//! So this module evaluates the comparisons itself, over Arrow's raw value
+//! slice, with the engine's own kernel. The equivalence is argued in
 //! [ADR-0010](../../../docs/adr/0010-pushdown-equivalence.md) and checked by
 //! the differential test in `crates/columnar-engine/tests/lazy_scan.rs`.
 //!
+//! # Where the predicate runs
+//!
+//! The engine applies the predicate **itself**, over the arrays the reader
+//! hands it, and keeps the mask. It does *not* hand the reader a row filter.
+//!
+//! That is not a style choice. A row filter is a *range list*: parquet-rs
+//! turns the mask into a list of row ranges and then applies it one range at a
+//! time, through one `read_records` call per range. A predicate over scattered
+//! data produces a mask with a range per surviving run, and Q6's discount
+//! predicate -- a random float column, so the survivors are scattered --
+//! produces **2,775,138 ranges for 2,178,861 surviving rows**. Reading the
+//! next column through that list costs 50.0 ms; reading it without one costs
+//! 7.8 ms. The engine's own mask is one bit per row and costs nothing to
+//! apply. See [ADR-0015](../../../docs/adr/0015-the-engine-keeps-the-mask.md).
+//!
 //! # What the predicate sees
 //!
-//! Arrow hands the predicate a record batch holding exactly the columns in
-//! the predicate's own projection mask -- here, one column. The predicate
-//! returns a boolean per row, with no nulls: `false` means "this row does
-//! not match", and the reader drops it.
+//! The predicate sees a record batch holding the columns the scan reads -- the
+//! columns the query materialises, and the columns the predicates themselves
+//! need. It returns a boolean per row, with no nulls: `false` means "this row
+//! does not match", and the row is dropped.
 //!
 //! # Dictionary columns
 //!
@@ -44,11 +59,11 @@
 //!
 //! # What the pushdown costs
 //!
-//! The pushdown runs *inside* the Parquet reader, so its cost is otherwise
-//! invisible: it is part of the scan stage's elapsed time, and nothing says
-//! how much of that is the reader's decode and how much is the predicate. The
-//! two have different fixes -- one is a faster reader, the other a faster
-//! comparison -- so the engine measures them apart. [`PushdownMetrics`] is that
+//! The pushdown runs *inside* the scan, so its cost is otherwise invisible:
+//! it is part of the scan stage's elapsed time, and nothing says how much of
+//! that is the reader's decode and how much is the predicate. The two have
+//! different fixes -- one is a faster reader, the other a faster comparison
+//! -- so the engine measures them apart. [`PushdownMetrics`] is that
 //! measurement, and the plan output prints it.
 
 use arrow::array::{
@@ -60,9 +75,6 @@ use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use columnar_core::{ComparisonOp, DataType, NullBitmap, ScalarValue};
 use columnar_kernels::Flavor;
-use parquet::arrow::arrow_reader::ArrowPredicate;
-use parquet::arrow::ProjectionMask;
-use parquet::schema::types::SchemaDescriptor;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -70,7 +82,7 @@ use std::time::Duration;
 /// What the pushed-down predicates cost.
 ///
 /// The pushdown is invisible in the scan stage's elapsed time: it is part of
-/// it, because it runs inside the reader. These numbers separate the two
+/// it, because it runs inside the scan. These numbers separate the two
 /// halves, because they have different fixes. A slower decode is a reader
 /// problem; a slower comparison is a kernel problem.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -139,7 +151,7 @@ impl PushdownCounter {
 }
 
 /// A predicate that has been checked against the file's schema and can be
-/// evaluated inside the Parquet reader.
+/// evaluated over the reader's arrays.
 ///
 /// A predicate belongs to a **column**, and a column may carry several
 /// predicates: the engine's filter is a conjunction, and two predicates on
@@ -259,32 +271,51 @@ impl PushdownPlan {
         self.counter.snapshot()
     }
 
-    /// Builds the reader's row filter.
+    /// The file's root indices of the columns this plan's predicates read.
     ///
-    /// Each predicate gets its own projection mask over the single column it
-    /// reads, so the reader fetches that column's pages to evaluate it and
-    /// nothing else.
+    /// These columns are read because the predicates need them, not because
+    /// the query materialises them. The engine evaluates the predicates over
+    /// the reader's arrays and drops the columns afterwards.
     #[must_use]
-    pub fn to_row_filter(
+    pub fn columns(&self) -> Vec<usize> {
+        let mut columns: Vec<usize> =
+            self.predicates.iter().map(|predicate| predicate.column).collect();
+        columns.sort_unstable();
+        columns.dedup();
+        columns
+    }
+
+    /// Evaluates the plan's predicates over a record batch.
+    ///
+    /// Returns the mask of the rows that satisfy **all** of the plan's
+    /// predicates, or `None` when the plan is empty and every row survives.
+    ///
+    /// The predicates are evaluated with the engine's own kernel over Arrow's
+    /// raw value slice -- the same function the filter runs -- so the pushdown
+    /// and the filter cannot disagree about which rows match.
+    ///
+    /// The masks of the individual predicates are `AND`ed together. They are
+    /// aligned because every column of a record batch holds the same rows.
+    pub fn evaluate_batch(
         &self,
-        descriptor: &SchemaDescriptor,
+        batch: &RecordBatch,
         flavor: Flavor,
-    ) -> parquet::arrow::arrow_reader::RowFilter {
-        let predicates: Vec<Box<dyn ArrowPredicate>> = self
-            .predicates
-            .iter()
-            .map(|predicate| {
-                let projection = ProjectionMask::roots(descriptor, [predicate.column]);
-                Box::new(EnginePredicate {
-                    projection,
-                    name: predicate.name.clone(),
-                    comparisons: predicate.comparisons.clone(),
-                    flavor,
-                    counter: Arc::clone(&self.counter),
-                }) as Box<dyn ArrowPredicate>
-            })
-            .collect();
-        parquet::arrow::arrow_reader::RowFilter::new(predicates)
+    ) -> Result<Option<RowMask>, ArrowError> {
+        if self.predicates.is_empty() {
+            return Ok(None);
+        }
+        let mut combined: Option<RowMask> = None;
+        for predicate in &self.predicates {
+            let column = find_column(batch, &predicate.name)?;
+            let started = std::time::Instant::now();
+            let mask = evaluate(column.as_ref(), &predicate.comparisons, flavor)?;
+            self.counter.record(started.elapsed(), u64::try_from(column.len()).unwrap_or(u64::MAX));
+            combined = Some(match combined {
+                None => mask,
+                Some(kept) => kept.and(&mask),
+            });
+        }
+        Ok(combined)
     }
 }
 
@@ -297,14 +328,18 @@ impl PushdownPlan {
 /// Arrow's `BooleanBuilder`. The builder checks its capacity and shifts a
 /// bit per element, and at six million rows that is not free: the
 /// predicate over Q6's two columns cost more than decoding them.
-struct MatchMask {
+///
+/// The mask is the engine's own, and it stays the engine's own: it is never
+/// turned into a row-range list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowMask {
     /// The bits, LSB-first.
     words: Vec<u64>,
     /// How many rows the mask describes.
     len: usize,
 }
 
-impl MatchMask {
+impl RowMask {
     /// An empty mask over `len` rows.
     fn new(len: usize) -> Self {
         Self { words: vec![0u64; len.div_ceil(64)], len }
@@ -326,8 +361,28 @@ impl MatchMask {
         }
     }
 
+    /// The number of rows the mask keeps.
+    ///
+    /// The mask's last word may hold bits past the mask's length. They are
+    /// zero, but the count masks them off anyway: a count that depended on
+    /// the padding would be a count that depended on the allocator.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        let mut count = 0usize;
+        for (index, word) in self.words.iter().enumerate() {
+            let bits = self.len.saturating_sub(index * 64).min(64);
+            if bits == 64 {
+                count += word.count_ones() as usize;
+            } else {
+                count += (word & ((1u64 << bits) - 1)).count_ones() as usize;
+            }
+        }
+        count
+    }
+
     /// The mask as an Arrow boolean array, with no nulls.
-    fn into_array(self) -> BooleanArray {
+    #[must_use]
+    pub fn into_array(self) -> BooleanArray {
         if self.len == 0 {
             return BooleanArray::new(
                 BooleanBuffer::new(Buffer::from_vec(Vec::<u64>::new()), 0, 0),
@@ -336,33 +391,11 @@ impl MatchMask {
         }
         BooleanArray::new(BooleanBuffer::new(Buffer::from_vec(self.words), 0, self.len), None)
     }
-}
 
-/// The [`ArrowPredicate`] that reproduces the engine's filter semantics.
-struct EnginePredicate {
-    /// The column this predicate reads.
-    projection: ProjectionMask,
-    /// The column's name, used to find it in the record batch.
-    name: String,
-    /// The comparisons on this column, `AND`ed.
-    comparisons: Vec<Comparison>,
-    /// Which kernel flavor evaluates the comparisons.
-    flavor: Flavor,
-    /// Where the evaluation reports what it cost.
-    counter: Arc<PushdownCounter>,
-}
-
-impl ArrowPredicate for EnginePredicate {
-    fn projection(&self) -> &ProjectionMask {
-        &self.projection
-    }
-
-    fn evaluate(&mut self, batch: RecordBatch) -> Result<BooleanArray, ArrowError> {
-        let column = find_column(&batch, &self.name)?;
-        let started = std::time::Instant::now();
-        let result = evaluate(column.as_ref(), &self.comparisons, self.flavor);
-        self.counter.record(started.elapsed(), u64::try_from(column.len()).unwrap_or(u64::MAX));
-        result
+    /// The rows this mask keeps and `other` keeps.
+    fn and(mut self, other: &Self) -> Self {
+        and_words(&mut self.words, &other.words);
+        self
     }
 }
 
@@ -388,12 +421,12 @@ fn evaluate(
     column: &dyn Array,
     comparisons: &[Comparison],
     flavor: Flavor,
-) -> Result<BooleanArray, ArrowError> {
+) -> Result<RowMask, ArrowError> {
     // A NaN threshold matches nothing, for every operator. That is decided
     // once, here, rather than once per row. The kernel knows the rule too,
     // but deciding it here keeps the answer independent of the flavor.
     if comparisons.iter().any(|comparison| is_nan_threshold(&comparison.threshold)) {
-        return Ok(MatchMask::new(column.len()).into_array());
+        return Ok(RowMask::new(column.len()));
     }
 
     if let Some(array) = column.as_any().downcast_ref::<Int64Array>() {
@@ -431,7 +464,7 @@ fn evaluate_int64(
     array: &Int64Array,
     comparisons: &[Comparison],
     flavor: Flavor,
-) -> Result<BooleanArray, ArrowError> {
+) -> Result<RowMask, ArrowError> {
     let rows = array.len();
     let validity = validity_of(array);
     let mut mask = vec![0u64; rows.div_ceil(64)];
@@ -456,7 +489,7 @@ fn evaluate_int64(
             and_words(&mut mask, &word);
         }
     }
-    Ok(MatchMask::from_words(mask, rows).into_array())
+    Ok(RowMask::from_words(mask, rows))
 }
 
 /// Evaluates the comparisons over a floating-point column.
@@ -468,7 +501,7 @@ fn evaluate_float64(
     array: &Float64Array,
     comparisons: &[Comparison],
     flavor: Flavor,
-) -> Result<BooleanArray, ArrowError> {
+) -> Result<RowMask, ArrowError> {
     let rows = array.len();
     let validity = validity_of(array);
     let mut mask = vec![0u64; rows.div_ceil(64)];
@@ -493,7 +526,7 @@ fn evaluate_float64(
             and_words(&mut mask, &word);
         }
     }
-    Ok(MatchMask::from_words(mask, rows).into_array())
+    Ok(RowMask::from_words(mask, rows))
 }
 
 /// The conjunction of two match masks.
@@ -557,7 +590,7 @@ fn evaluate_dictionary(
     array: &DictionaryArray<Int32Type>,
     comparisons: &[Comparison],
     flavor: Flavor,
-) -> Result<BooleanArray, ArrowError> {
+) -> Result<RowMask, ArrowError> {
     let distinct = string_matches(array.values().as_ref(), comparisons)?;
     let keys = array.keys();
     let rows = keys.len();
@@ -584,14 +617,11 @@ fn evaluate_dictionary(
         }
     }
     let _ = flavor;
-    Ok(MatchMask::from_words(mask, rows).into_array())
+    Ok(RowMask::from_words(mask, rows))
 }
 
 /// Evaluates the comparisons over a UTF-8 column.
-fn evaluate_string(
-    array: &StringArray,
-    comparisons: &[Comparison],
-) -> Result<BooleanArray, ArrowError> {
+fn evaluate_string(array: &StringArray, comparisons: &[Comparison]) -> Result<RowMask, ArrowError> {
     // The threshold's type is an invariant of the predicate, so it is checked
     // once here rather than once per row.
     let mut bounds = Vec::with_capacity(comparisons.len());
@@ -601,7 +631,7 @@ fn evaluate_string(
         };
         bounds.push((comparison.op, bound.as_str()));
     }
-    let mut mask = MatchMask::new(array.len());
+    let mut mask = RowMask::new(array.len());
     let has_nulls = array.null_count() > 0;
     for row in 0..array.len() {
         if has_nulls && array.is_null(row) {
@@ -617,14 +647,14 @@ fn evaluate_string(
         }
         mask.set(row, matched);
     }
-    Ok(mask.into_array())
+    Ok(mask)
 }
 
 /// Evaluates the comparisons over a large UTF-8 column.
 fn evaluate_large_string(
     array: &LargeStringArray,
     comparisons: &[Comparison],
-) -> Result<BooleanArray, ArrowError> {
+) -> Result<RowMask, ArrowError> {
     // The threshold's type is an invariant of the predicate, so it is checked
     // once here rather than once per row.
     let mut bounds = Vec::with_capacity(comparisons.len());
@@ -634,7 +664,7 @@ fn evaluate_large_string(
         };
         bounds.push((comparison.op, bound.as_str()));
     }
-    let mut mask = MatchMask::new(array.len());
+    let mut mask = RowMask::new(array.len());
     let has_nulls = array.null_count() > 0;
     for row in 0..array.len() {
         if has_nulls && array.is_null(row) {
@@ -650,7 +680,7 @@ fn evaluate_large_string(
         }
         mask.set(row, matched);
     }
-    Ok(mask.into_array())
+    Ok(mask)
 }
 
 /// The match of every distinct value of a dictionary, in dictionary order.
