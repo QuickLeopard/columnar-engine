@@ -112,8 +112,12 @@ dataset-row-groups rows="250000" seed="24001" scale="1":
     echo "wrote $out with $groups row groups"
 
 # Remove the generated dataset.
+#
+# Only `data/`. The reports in `bench-results/` are **committed** -- they are
+# the evidence every published number is derived from -- so they are not
+# build artefacts and they are not removed here.
 clean-data:
-    rm -rf data bench-results
+    rm -rf data
 
 # ---------------------------------------------------------------------------
 # Running
@@ -194,6 +198,24 @@ peer-build:
 # real Q6 through the engine's own lazy path.
 probe data="data/lineitem.parquet" out="bench-results/materialised.json":
     cargo run --release -p columnar-engine --example materialised_column_probe -- {{data}} --out {{out}}
+
+# Take the **per-row-group cost** apart.
+#
+# This is spec 016's instrument: it measures the crate's own read of a single
+# column, the engine's scan, the page shape of every row group, and the cost
+# of the reader's batch size -- the measurement that found the partial batch.
+probe-cost data="data/lineitem.parquet" out="bench-results/row-group-cost.json":
+    cargo run --release -p columnar-engine --example row_group_cost_probe -- {{data}} --out {{out}}
+
+# Sweep the lazy path's **reader batch limit**.
+#
+# The limit is a tuning constant, and a constant has to be measured for the
+# shape of the work it is used on. This walks the limits, prints the batch
+# each one derives for the file, and then measures the two candidates against
+# each other with the order alternating -- over both shapes the lazy path
+# serves.
+probe-batch-size data="data/lineitem.parquet":
+    cargo run --release -p columnar-engine --example lazy_batch_size -- {{data}}
 
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.

@@ -71,14 +71,24 @@ pub struct SourceColumn {
     pub arrow_type: ArrowType,
 }
 
-/// The number of rows the Parquet reader hands over at a time.
+/// The limit on the number of rows the Parquet reader hands over at a time.
 ///
 /// The reader's own default is 1024 rows, which for a six-million-row file
 /// means 5,860 batches. Every batch costs a little: the readers are set up,
 /// the arrays are allocated, and the engine's builders are extended.
 ///
-/// **This constant is measured for the lazy shape**, and the lazy shape reads
-/// one to three columns. It was 8,192 rows for a long time, and it was
+/// **This constant is a limit, not a batch size.** The reader's batch size is
+/// the largest **divisor of the row group's row count** that fits under it,
+/// so that no row group ends with a partial batch. A partial batch is
+/// expensive: the parquet crate's reader pays about 0.85 ms for it, once per
+/// row group, and that was the whole of the engine's per-row-group cost.
+/// See [ADR-0023](../../../docs/adr/0023-the-per-row-group-cost.md).
+///
+/// The limit bounds the transient batch, so it is also the memory the read
+/// holds beyond the dataset it returns.
+///
+/// The constant itself is measured for the lazy shape, and the lazy shape
+/// reads one to three columns. It was 8,192 rows for a long time, and it was
 /// measured -- in spec 002, for a two-column lazy read. But the scan's shape
 /// has changed **three times** since that measurement: the pushdown became
 /// the engine's own kernel, the mask stopped going to the reader as a list of
@@ -87,17 +97,48 @@ pub struct SourceColumn {
 /// not a measured constant for the shape that does.
 ///
 /// Measured for the shape it is used on — the engine's own lazy scan, end to
-/// end, at each size, and then the two candidates against each other with the
+/// end, at each limit, and then the two candidates against each other with the
 /// order alternating so that a machine drifting through the run cannot bias
-/// the result — 65,536 rows is **10–12% faster** than 8,192. The sweep is
+/// the result — 65,536 rows was **10–12% faster** than 8,192. The sweep is
 /// `crates/columnar-engine/examples/lazy_batch_size.rs`, and it uses
-/// [`ParquetSource::read_with_batch_rows`] to change nothing but the
-/// constant.
+/// [`ParquetSource::batch_rows_under`] and
+/// [`ParquetSource::read_with_batch_rows`] to change nothing but the limit.
 ///
-/// Larger is not better: at 262,144 rows the batches get big enough that the
-/// allocation and the copy cost more than the per-batch overhead they save.
+/// The limit moves from 65,536 to **131,072** rows, because the limit is not
+/// the batch size any more and a bigger limit finds a bigger divisor of the
+/// row group's row count: at the old limit the published file's row group of a
+/// million rows divided by 62,500, and at the new one it divides by 125,000.
+///
+/// The limit is **measured**, and it is measured over the two shapes the lazy
+/// path serves, because the two pull in opposite directions: the scan with one
+/// materialised column and one predicate is fastest at 125,000 rows, and the
+/// real Q6's predicate set — two columns, one of them a dictionary-encoded
+/// string — is fastest at 250,000. 131,072 is the limit that is best on one
+/// shape and within 1% of the best on the other. See
+/// [§3e](../../PERF.md#3e-the-scans-decomposition-and-what-the-compaction-was-worth).
+///
 /// The engine's own operator batch size is a separate thing, and unrelated.
-pub const READER_BATCH_ROWS: usize = 65_536;
+pub const MAX_READER_BATCH_ROWS: usize = 131_072;
+
+/// The smallest batch size the reader may use, in rows.
+///
+/// A row group whose row count has no usable divisor — a prime, say — is read
+/// in batches of this size, and it ends with a partial batch. That is the cost
+/// of an awkward row count, and it is paid once per row group.
+pub(crate) const MIN_READER_BATCH_ROWS: usize = 4_096;
+
+/// How the reader's batch size is chosen for a read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BatchPlan {
+    /// A fixed number of rows, whatever the row groups hold.
+    ///
+    /// This is the **measurement seam**: it can leave a partial batch at the
+    /// end of every row group, which is what the probes measure and what the
+    /// engine's own read does not do.
+    Fixed(usize),
+    /// The largest divisor of the row groups' row count under a limit.
+    Derived(usize),
+}
 
 /// A Parquet file the engine can read without decoding it.
 #[derive(Debug, Clone)]
@@ -112,6 +153,11 @@ pub struct ParquetSource {
     rows: usize,
     /// How many row groups the file has.
     row_groups: usize,
+    /// How many rows each row group holds.
+    ///
+    /// The reader's batch size is a divisor of a row group's row count, so
+    /// the read needs to know them.
+    row_group_rows: Vec<usize>,
 }
 
 impl ParquetSource {
@@ -131,6 +177,11 @@ impl ParquetSource {
         let metadata = builder.metadata();
         let rows = usize::try_from(metadata.file_metadata().num_rows()).unwrap_or(0);
         let row_groups = metadata.num_row_groups();
+        let row_group_rows: Vec<usize> = metadata
+            .row_groups()
+            .iter()
+            .map(|group| usize::try_from(group.num_rows()).unwrap_or(0))
+            .collect();
 
         let columns = schema
             .fields()
@@ -144,7 +195,7 @@ impl ParquetSource {
             })
             .collect::<Result<Vec<SourceColumn>, DatasetError>>()?;
 
-        Ok(Self { path: path.to_path_buf(), schema, columns, rows, row_groups })
+        Ok(Self { path: path.to_path_buf(), schema, columns, rows, row_groups, row_group_rows })
     }
 
     /// Where the file is.
@@ -216,18 +267,27 @@ impl ParquetSource {
         flavor: Flavor,
         threads: usize,
     ) -> Result<Dataset, DatasetError> {
-        self.read_with_batch_rows(columns, pushdown, flavor, threads, READER_BATCH_ROWS)
+        self.read_with(
+            columns,
+            pushdown,
+            flavor,
+            threads,
+            BatchPlan::Derived(MAX_READER_BATCH_ROWS),
+        )
     }
 
     /// Reads the file with a given reader batch size.
     ///
-    /// This is the **measurement seam**. The lazy path's batch size is a
-    /// tuning constant, and the rule for one is that it must be measured for
-    /// the shape of the work it is used on: the eager path has its own, and
-    /// spec 008 measured it for sixteen columns. The lazy path reads two or
-    /// three, so its constant is measured separately -- by
-    /// `crates/columnar-engine/examples/lazy_batch_size.rs`, which uses this
-    /// method to sweep the constant and nothing else.
+    /// This is the **measurement seam**. The batch size the engine's own read
+    /// uses is *derived from the file* -- see
+    /// [`ParquetSource::batch_rows_under`] -- and this method overrides that
+    /// derivation with an explicit number, so that a probe can measure one
+    /// batch size against another.
+    ///
+    /// A batch size that does not divide a row group's row count leaves a
+    /// **partial batch** at the end of every row group, and a partial batch
+    /// costs the parquet crate's reader about 0.85 ms. That is what the seam
+    /// exists to measure, and it is why the engine does not use it.
     pub fn read_with_batch_rows(
         &self,
         columns: &[usize],
@@ -236,11 +296,24 @@ impl ParquetSource {
         threads: usize,
         batch_rows: usize,
     ) -> Result<Dataset, DatasetError> {
-        let workers = self.worker_count(threads);
-        if workers == 1 {
-            return self.read_row_groups(columns, pushdown, flavor, None, batch_rows);
-        }
-        self.read_parallel(columns, pushdown, flavor, workers, self.row_groups, batch_rows)
+        self.read_with(columns, pushdown, flavor, threads, BatchPlan::Fixed(batch_rows))
+    }
+
+    /// The reader's batch size under a given limit, for the whole file.
+    ///
+    /// The batch size is the **largest divisor of the row groups' row count**
+    /// that fits under `limit`, so that no row group ends with a partial
+    /// batch. A partial batch costs about 0.85 ms, once per row group, and
+    /// the incumbents do not pay it.
+    ///
+    /// A parallel read derives the batch **per worker**, from the row groups
+    /// that worker reads, because a row group is decoded independently of
+    /// every other one. For a file whose row groups hold the same number of
+    /// rows -- every file this repository's generator writes -- the two are
+    /// the same number.
+    #[must_use]
+    pub fn batch_rows_under(&self, limit: usize) -> usize {
+        self.batch_rows_for(None, limit)
     }
 
     /// The file's row group count.
@@ -255,6 +328,22 @@ impl ParquetSource {
         threads.min(self.row_groups).max(1)
     }
 
+    /// Reads the file, with the batch size the plan names.
+    fn read_with(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        flavor: Flavor,
+        threads: usize,
+        plan: BatchPlan,
+    ) -> Result<Dataset, DatasetError> {
+        let workers = self.worker_count(threads);
+        if workers == 1 {
+            return self.read_row_groups(columns, pushdown, flavor, None, plan);
+        }
+        self.read_parallel(columns, pushdown, flavor, workers, self.row_groups, plan)
+    }
+
     /// Reads the file with several threads.
     ///
     /// The row groups are split into contiguous blocks, one per thread, and
@@ -267,7 +356,7 @@ impl ParquetSource {
         flavor: Flavor,
         workers: usize,
         row_groups: usize,
-        batch_rows: usize,
+        plan: BatchPlan,
     ) -> Result<Dataset, DatasetError> {
         let per_worker = row_groups.div_ceil(workers);
         let blocks: Vec<Vec<usize>> = (0..workers)
@@ -289,13 +378,7 @@ impl ParquetSource {
                 .map(|block| {
                     let source = self;
                     scope.spawn(move || {
-                        source.read_row_groups(
-                            columns,
-                            pushdown,
-                            flavor,
-                            Some(block.clone()),
-                            batch_rows,
-                        )
+                        source.read_row_groups(columns, pushdown, flavor, Some(block.clone()), plan)
                     })
                 })
                 .collect();
@@ -312,6 +395,51 @@ impl ParquetSource {
         crate::dataset::merge(parts)
     }
 
+    /// The reader's batch size for a set of row groups.
+    ///
+    /// The batch size has to **divide** the row group's row count, or the row
+    /// group ends with a partial batch -- and a partial batch is expensive:
+    /// the parquet crate's reader pays about 0.85 ms for it, once per row
+    /// group. That was the whole of the engine's per-row-group cost, and the
+    /// incumbents do not pay it because their readers do not leave a partial
+    /// batch behind. See [ADR-0023](../../../docs/adr/0023-the-per-row-group-cost.md).
+    ///
+    /// The read therefore uses the **greatest common divisor** of the row
+    /// groups' row counts, which divides every one of them, rounded down to a
+    /// divisor that fits under the limit. For a file with uniform row groups
+    /// that is one batch a row group, and no partial batch anywhere.
+    ///
+    /// A divisor under the **floor** is not used: a batch of a handful of
+    /// rows would cost more in per-batch overhead than it saves. When the row
+    /// counts are awkward -- a prime, say -- the limit bounds the batch
+    /// instead, the smallest row count bounds it too, and the row group ends
+    /// with a partial batch. That is the cost of an awkward row count, and it
+    /// is paid once per row group.
+    fn batch_rows_for(&self, row_groups: Option<&[usize]>, limit: usize) -> usize {
+        let counts: Vec<usize> = match row_groups {
+            Some(groups) => {
+                groups.iter().filter_map(|index| self.row_group_rows.get(*index).copied()).collect()
+            }
+            None => self.row_group_rows.clone(),
+        };
+        if counts.is_empty() {
+            return limit;
+        }
+
+        let smallest = counts.iter().copied().min().unwrap_or(1).max(1);
+        let divisor = counts.iter().copied().fold(0usize, gcd).max(1);
+        let aligned = largest_divisor_at_most(divisor, limit);
+        if aligned >= MIN_READER_BATCH_ROWS {
+            return aligned;
+        }
+
+        // No usable divisor: the row counts are awkward — a prime, say. The
+        // limit then bounds the batch and the smallest row count bounds it
+        // too, and the row group ends with a partial batch. That is the cost
+        // of an awkward row count, and it is paid once per row group.
+        limit.min(smallest)
+    }
+
     /// Reads the given row groups -- or all of them, when `row_groups` is
     /// `None`.
     fn read_row_groups(
@@ -320,7 +448,7 @@ impl ParquetSource {
         pushdown: &PushdownPlan,
         flavor: Flavor,
         row_groups: Option<Vec<usize>>,
-        batch_rows: usize,
+        plan: BatchPlan,
     ) -> Result<Dataset, DatasetError> {
         let file = File::open(&self.path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
@@ -338,6 +466,10 @@ impl ParquetSource {
         // borrow therefore ends before the builder is consumed.
         let mask = ProjectionMask::roots(builder.parquet_schema(), projection.iter().copied());
 
+        let batch_rows = match plan {
+            BatchPlan::Fixed(rows) => rows,
+            BatchPlan::Derived(limit) => self.batch_rows_for(row_groups.as_deref(), limit),
+        };
         let mut builder = builder.with_projection(mask).with_batch_size(batch_rows);
         if let Some(row_groups) = row_groups {
             builder = builder.with_row_groups(row_groups);
@@ -346,6 +478,43 @@ impl ParquetSource {
         let reader = builder.build().map_err(|error| DatasetError::Parquet(error.to_string()))?;
         decode_batches_filtered(reader, &self.schema, columns, &projection, pushdown, flavor)
     }
+}
+
+/// The greatest common divisor of two numbers.
+pub(crate) fn gcd(left: usize, right: usize) -> usize {
+    let mut a = left;
+    let mut b = right;
+    while b != 0 {
+        let remainder = a % b;
+        a = b;
+        b = remainder;
+    }
+    a
+}
+
+/// The largest divisor of `rows` that is at most `limit`.
+///
+/// The divisors are found by trial division, which is `sqrt(rows)` steps, and
+/// a row group's row count is a few hundred thousand at most.
+pub(crate) fn largest_divisor_at_most(rows: usize, limit: usize) -> usize {
+    if rows <= limit {
+        return rows;
+    }
+    let mut best = 1usize;
+    let mut divisor = 1usize;
+    while divisor <= rows / divisor {
+        if rows % divisor == 0 {
+            if divisor <= limit {
+                best = best.max(divisor);
+            }
+            let other = rows / divisor;
+            if other <= limit {
+                best = best.max(other);
+            }
+        }
+        divisor += 1;
+    }
+    best
 }
 
 /// The columns the scan reads from the file.
@@ -392,5 +561,120 @@ fn engine_type(arrow_type: &ArrowType) -> Result<DataType, DatasetError> {
             ))),
         },
         other => Err(DatasetError::UnsupportedType(format!("{other}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+    use std::path::Path;
+
+    use super::{
+        gcd, largest_divisor_at_most, ParquetSource, MAX_READER_BATCH_ROWS, MIN_READER_BATCH_ROWS,
+    };
+
+    #[test]
+    fn the_greatest_common_divisor_is_the_greatest_one() {
+        assert_eq!(gcd(0, 7), 7);
+        assert_eq!(gcd(7, 0), 7);
+        assert_eq!(gcd(12, 18), 6);
+        assert_eq!(gcd(18, 12), 6);
+        assert_eq!(gcd(250_000, 1_000_000), 250_000);
+        assert_eq!(gcd(1_000_000, 1_000_000), 1_000_000);
+    }
+
+    #[test]
+    fn the_largest_divisor_under_the_limit_is_the_largest_one() {
+        // A million rows: the largest divisor under the limit is 125,000.
+        assert_eq!(largest_divisor_at_most(1_000_000, MAX_READER_BATCH_ROWS), 125_000);
+        // A quarter of a million rows: the largest divisor under the limit.
+        assert_eq!(largest_divisor_at_most(250_000, MAX_READER_BATCH_ROWS), 125_000);
+        // Under the limit, the row count is its own largest divisor.
+        assert_eq!(largest_divisor_at_most(1_024, MAX_READER_BATCH_ROWS), 1_024);
+        // A prime has one divisor, and it is one.
+        assert_eq!(largest_divisor_at_most(999_983, MAX_READER_BATCH_ROWS), 1);
+    }
+
+    #[test]
+    fn the_largest_divisor_always_divides_the_row_count() {
+        for rows in [1_000_000usize, 250_000, 500_000, 65_536, 131_072, 999_983] {
+            let divisor = largest_divisor_at_most(rows, MAX_READER_BATCH_ROWS);
+            assert_eq!(rows % divisor, 0, "{rows} is not divisible by {divisor}");
+            assert!(divisor <= MAX_READER_BATCH_ROWS);
+            assert!(divisor <= rows);
+        }
+    }
+
+    #[test]
+    fn the_batch_size_ends_a_row_group_without_a_partial_batch() {
+        // The rule is the point of the whole exercise: the reader's batch
+        // size has to divide a row group's row count, or the row group ends
+        // with a partial batch, and the crate's reader pays for it.
+        let rows = [1_000_000usize, 250_000, 500_000];
+        let divisor = rows.iter().copied().fold(0usize, gcd).max(1);
+        let batch = largest_divisor_at_most(divisor, MAX_READER_BATCH_ROWS);
+        assert!(batch >= MIN_READER_BATCH_ROWS);
+        for count in rows {
+            assert_eq!(count % batch, 0, "a row group of {count} rows ends with a partial batch");
+        }
+    }
+
+    #[test]
+    fn the_batch_size_of_a_file_is_the_one_its_row_groups_agree_on() {
+        let path = std::path::Path::new("/tmp/columnar-engine-batch-rows.parquet");
+        write_row_groups(path, &[1_000, 1_000, 500]);
+        let source = ParquetSource::open(path).expect("the source opens");
+
+        // The greatest common divisor of a thousand and five hundred is five
+        // hundred, and five hundred divides every row group.
+        let batch = source.batch_rows_under(MAX_READER_BATCH_ROWS);
+        assert_eq!(batch, 500);
+        for count in [1_000usize, 500] {
+            assert_eq!(count % batch, 0);
+        }
+    }
+
+    #[test]
+    fn a_limit_below_the_floor_takes_the_limit_and_says_so() {
+        let path = std::path::Path::new("/tmp/columnar-engine-batch-floor.parquet");
+        write_row_groups(path, &[1_000, 1_000, 500]);
+        let source = ParquetSource::open(path).expect("the source opens");
+
+        // Five hundred is under the floor, so the limit bounds the batch
+        // instead -- and the row group ends with a partial batch, which is
+        // the documented cost of an awkward row count.
+        assert_eq!(source.batch_rows_under(64), 64);
+        // Under the floor, the row count itself is the batch.
+        assert_eq!(source.batch_rows_under(1_000_000), 500);
+    }
+
+    /// Writes a Parquet file with one row group per batch.
+    fn write_row_groups(path: &Path, row_counts: &[usize]) {
+        use arrow::array::Int64Array;
+        use arrow::datatypes::{DataType, Field, Schema};
+        use arrow::record_batch::RecordBatch;
+        use parquet::arrow::ArrowWriter;
+        use parquet::file::properties::WriterProperties;
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Int64, false)]));
+        let file = File::create(path).expect("the file is created");
+        // The writer's own row-group size decides where the row groups fall,
+        // so it is set to the first batch's row count: the groups are then
+        // the batches, and the last one holds the remainder.
+        let properties = WriterProperties::builder()
+            .set_max_row_group_size(row_counts.first().copied().unwrap_or(1))
+            .build();
+        let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(properties))
+            .expect("the writer is built");
+        for count in row_counts {
+            let count = i64::try_from(*count).expect("the row count fits in an i64");
+            let values: Vec<i64> = (0..count).collect();
+            let batch =
+                RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(values))])
+                    .expect("the batch is built");
+            writer.write(&batch).expect("the batch is written");
+        }
+        writer.close().expect("the file is closed");
     }
 }

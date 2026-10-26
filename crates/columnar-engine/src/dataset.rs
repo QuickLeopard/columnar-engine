@@ -41,6 +41,7 @@ use columnar_kernels::Flavor;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use crate::pushdown::{PushdownPlan, RowMask};
+use crate::source::{gcd, largest_divisor_at_most, MIN_READER_BATCH_ROWS};
 /// Everything that can go wrong while reading a dataset.
 #[derive(Debug, thiserror::Error)]
 pub enum DatasetError {
@@ -142,8 +143,10 @@ impl Dataset {
         // time, however many cores the machine has.
         let workers = threads.min(row_groups).max(1);
         if workers == 1 {
+            let all: Vec<usize> = (0..row_groups).collect();
+            let batch_rows = eager_batch_rows(builder.metadata(), &all);
             let reader = builder
-                .with_batch_size(EAGER_BATCH_ROWS)
+                .with_batch_size(batch_rows)
                 .build()
                 .map_err(|error| DatasetError::Parquet(error.to_string()))?;
             return decode_batches(reader, &schema, &indices);
@@ -226,7 +229,7 @@ impl crate::plan::ColumnSchema for Dataset {
     }
 }
 
-/// The number of rows per record batch on the **eager** path.
+/// The limit on the number of rows per record batch on the **eager** path.
 ///
 /// The eager path reads **every** column, and the per-batch cost scales with
 /// the number of columns: each batch sets up its readers, allocates its
@@ -251,8 +254,17 @@ impl crate::plan::ColumnSchema for Dataset {
 /// reader uses -- 1,024 rows -- is the worst of the lot by a factor of two,
 /// and the eager path used it.
 ///
-/// The lazy path's own batch size is [`crate::source::READER_BATCH_ROWS`],
-/// which is smaller because it reads fewer columns.
+/// **This constant is a limit, not a batch size**, for the same reason the
+/// lazy path's is: the reader's batch size is the largest divisor of the
+/// row groups' row count that fits under it, so that no row group ends with
+/// a partial batch. The published file's row groups hold a million rows
+/// each, so the batch the eager path reads with is **32,000** rows -- the
+/// largest divisor of a million that fits under the limit. The table is the
+/// measurement that chose the limit; the effective batch is a divisor of the
+/// row count, not the limit itself.
+///
+/// The lazy path's own limit is [`crate::source::MAX_READER_BATCH_ROWS`],
+/// which is larger because it reads fewer columns.
 pub const EAGER_BATCH_ROWS: usize = 32_768;
 
 /// Reads the given row groups of a Parquet file into column chunks.
@@ -269,12 +281,43 @@ fn read_row_groups(
     let file = File::open(path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|error| DatasetError::Parquet(error.to_string()))?;
+    let batch_rows = eager_batch_rows(builder.metadata(), row_groups);
     let reader = builder
         .with_row_groups(row_groups.to_vec())
-        .with_batch_size(EAGER_BATCH_ROWS)
+        .with_batch_size(batch_rows)
         .build()
         .map_err(|error| DatasetError::Parquet(error.to_string()))?;
     decode_batches(reader, schema, indices)
+}
+
+/// The reader's batch size for the given row groups.
+///
+/// The batch size has to **divide** a row group's row count, or the row group
+/// ends with a partial batch -- and a partial batch costs the parquet crate's
+/// reader about 0.85 ms, once per row group. See
+/// [ADR-0023](../../../docs/adr/0023-the-per-row-group-cost.md).
+///
+/// The rule is the lazy path's: the greatest common divisor of the row
+/// groups' row counts, rounded down to a divisor that fits under the limit.
+fn eager_batch_rows(
+    metadata: &parquet::file::metadata::ParquetMetaData,
+    row_groups: &[usize],
+) -> usize {
+    let counts: Vec<usize> = row_groups
+        .iter()
+        .map(|index| metadata.row_group(*index))
+        .map(|group| usize::try_from(group.num_rows()).unwrap_or(0))
+        .collect();
+    if counts.is_empty() {
+        return EAGER_BATCH_ROWS;
+    }
+    let smallest = counts.iter().copied().min().unwrap_or(1).max(1);
+    let divisor = counts.iter().copied().fold(0usize, gcd).max(1);
+    let aligned = largest_divisor_at_most(divisor, EAGER_BATCH_ROWS);
+    if aligned >= MIN_READER_BATCH_ROWS {
+        return aligned;
+    }
+    EAGER_BATCH_ROWS.min(smallest)
 }
 
 /// Decodes record batches into column chunks.

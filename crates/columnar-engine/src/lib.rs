@@ -81,7 +81,7 @@ pub use operators::filter::FilterStats;
 pub use plan::{Aggregate, AggregateSpec, QueryPlan, ResolvedAggregateFn};
 pub use pushdown::{PushdownMetrics, PushdownPlan};
 pub use queries::{BuiltinQuery, QueryDefinition, TableAddress, QUERIES};
-pub use source::{ParquetSource, SourceColumn};
+pub use source::{ParquetSource, SourceColumn, MAX_READER_BATCH_ROWS};
 
 /// Everything that can go wrong while executing a plan.
 #[derive(Debug, thiserror::Error)]
