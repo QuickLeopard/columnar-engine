@@ -32,9 +32,11 @@
 //! - **Projection.** The reader is handed a [`ProjectionMask`] over the
 //!   file's root columns, so the bytes of the columns outside it are never
 //!   fetched from the file -- not read, not decompressed, not decoded.
-//! - **Pushdown.** The plan's predicates are handed to the reader as a
-//!   [`RowFilter`], so the rows that fail them are dropped during the scan
-//!   rather than after it.
+//! - **Pushdown.** The plan's predicates are evaluated by the engine over the
+//!   decoded batch, and the rows that fail them are dropped during the scan
+//!   rather than after it. The reader is given **no** row filter: a row
+//!   filter is a list of row ranges, and the list is longer than the mask.
+//!   See [ADR-0015](../../../docs/adr/0015-the-engine-keeps-the-mask.md).
 //!
 //! The pushdown's semantics are the engine's, not Arrow's, and that is the
 //! whole of [`crate::pushdown`].
@@ -73,15 +75,29 @@ pub struct SourceColumn {
 ///
 /// The reader's own default is 1024 rows, which for a six-million-row file
 /// means 5,860 batches. Every batch costs a little: the readers are set up,
-/// the arrays are allocated, and the engine's builders are extended. At
-/// 8,192 rows the file arrives in 733 batches and the read of Q6's two
-/// columns drops from 52.6 ms to 43.4 ms.
+/// the arrays are allocated, and the engine's builders are extended.
 ///
-/// Larger is not better: at 262,144 rows the batches get big enough that
-/// the allocation and the copy cost more than the per-batch overhead they
-/// save. The engine's own operator batch size is a separate thing, and
-/// unrelated.
-pub const READER_BATCH_ROWS: usize = 8_192;
+/// **This constant is measured for the lazy shape**, and the lazy shape reads
+/// one to three columns. It was 8,192 rows for a long time, and it was
+/// measured -- in spec 002, for a two-column lazy read. But the scan's shape
+/// has changed **three times** since that measurement: the pushdown became
+/// the engine's own kernel, the mask stopped going to the reader as a list of
+/// row ranges, and the scan stopped filtering the whole batch and copying the
+/// survivors twice. A constant measured for a shape that no longer exists is
+/// not a measured constant for the shape that does.
+///
+/// Measured for the shape it is used on — the engine's own lazy scan, end to
+/// end, at each size, and then the two candidates against each other with the
+/// order alternating so that a machine drifting through the run cannot bias
+/// the result — 65,536 rows is **10–12% faster** than 8,192. The sweep is
+/// `crates/columnar-engine/examples/lazy_batch_size.rs`, and it uses
+/// [`ParquetSource::read_with_batch_rows`] to change nothing but the
+/// constant.
+///
+/// Larger is not better: at 262,144 rows the batches get big enough that the
+/// allocation and the copy cost more than the per-batch overhead they save.
+/// The engine's own operator batch size is a separate thing, and unrelated.
+pub const READER_BATCH_ROWS: usize = 65_536;
 
 /// A Parquet file the engine can read without decoding it.
 #[derive(Debug, Clone)]
@@ -200,11 +216,31 @@ impl ParquetSource {
         flavor: Flavor,
         threads: usize,
     ) -> Result<Dataset, DatasetError> {
+        self.read_with_batch_rows(columns, pushdown, flavor, threads, READER_BATCH_ROWS)
+    }
+
+    /// Reads the file with a given reader batch size.
+    ///
+    /// This is the **measurement seam**. The lazy path's batch size is a
+    /// tuning constant, and the rule for one is that it must be measured for
+    /// the shape of the work it is used on: the eager path has its own, and
+    /// spec 008 measured it for sixteen columns. The lazy path reads two or
+    /// three, so its constant is measured separately -- by
+    /// `crates/columnar-engine/examples/lazy_batch_size.rs`, which uses this
+    /// method to sweep the constant and nothing else.
+    pub fn read_with_batch_rows(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        flavor: Flavor,
+        threads: usize,
+        batch_rows: usize,
+    ) -> Result<Dataset, DatasetError> {
         let workers = self.worker_count(threads);
         if workers == 1 {
-            return self.read_row_groups(columns, pushdown, flavor, None);
+            return self.read_row_groups(columns, pushdown, flavor, None, batch_rows);
         }
-        self.read_parallel(columns, pushdown, flavor, workers, self.row_groups)
+        self.read_parallel(columns, pushdown, flavor, workers, self.row_groups, batch_rows)
     }
 
     /// The file's row group count.
@@ -231,6 +267,7 @@ impl ParquetSource {
         flavor: Flavor,
         workers: usize,
         row_groups: usize,
+        batch_rows: usize,
     ) -> Result<Dataset, DatasetError> {
         let per_worker = row_groups.div_ceil(workers);
         let blocks: Vec<Vec<usize>> = (0..workers)
@@ -252,7 +289,13 @@ impl ParquetSource {
                 .map(|block| {
                     let source = self;
                     scope.spawn(move || {
-                        source.read_row_groups(columns, pushdown, flavor, Some(block.clone()))
+                        source.read_row_groups(
+                            columns,
+                            pushdown,
+                            flavor,
+                            Some(block.clone()),
+                            batch_rows,
+                        )
                     })
                 })
                 .collect();
@@ -277,6 +320,7 @@ impl ParquetSource {
         pushdown: &PushdownPlan,
         flavor: Flavor,
         row_groups: Option<Vec<usize>>,
+        batch_rows: usize,
     ) -> Result<Dataset, DatasetError> {
         let file = File::open(&self.path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
@@ -294,7 +338,7 @@ impl ParquetSource {
         // borrow therefore ends before the builder is consumed.
         let mask = ProjectionMask::roots(builder.parquet_schema(), projection.iter().copied());
 
-        let mut builder = builder.with_projection(mask).with_batch_size(READER_BATCH_ROWS);
+        let mut builder = builder.with_projection(mask).with_batch_size(batch_rows);
         if let Some(row_groups) = row_groups {
             builder = builder.with_row_groups(row_groups);
         }

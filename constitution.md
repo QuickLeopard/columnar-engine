@@ -212,6 +212,17 @@ These are the standards any change must hold or improve. They are the floor.
   The distinction is a property of the operator's shape, so it is measured rather than assumed:
   the fold that follows the selection and the fold that tests it per row differ by a factor of
   ten, and the engine's answer is the first one.
+- **A scan that filters MUST copy each surviving row once, and nothing else**: a scan that applies
+  a predicate MUST NOT copy the rows the predicate rejects, and MUST NOT copy a column the query
+  does not materialise. A predicate's column is read by the reader and then **dropped** — it is
+  the predicate's input, not the query's output — and a materialised column's surviving rows are
+  copied **once**, out of the reader's array and straight into the engine's own column, where the
+  copy *is* the output rather than a step towards it. Filtering the batch and then copying the
+  survivors out of the filtered batch copies every row twice and every column once, including the
+  ones nobody wanted, and the two shapes are measured against each other before either is
+  chosen: **the filter-and-copy cost 4.7 ms and the compaction 2.5 ms**. The scan's output is
+  unchanged by this — it still holds the survivors, in the file's order, and the plan output
+  still reports them — because the requirement is about the **copies**, not about the result.
 
 ---
 
@@ -258,9 +269,53 @@ ADRs under `docs/adr/`.
 
 ---
 
-**Version**: 1.8.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-26
+**Version**: 1.9.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-26
 
 ### Amendment history
+
+**1.9.0 — 2026-10-26 — the scan filters only what it keeps, and the cold path's last gap is 1.1 ms.**
+`filter-range` was the last query the engine lost on the cold path, and the plan output said it was
+a **scan** gap and not an operator gap: the scan was 17.6 ms of a 19.9 ms query, against Polars'
+15.7 ms. The scan was decomposed before anything was built, and the decomposition said something
+the repository had got wrong: **the predicates cost 0.7–1.4 ms of a 16 ms scan**, so the README's
+recommendation to "narrow the predicates in the engine's own domain" had nothing to recover, and it
+is corrected in the open rather than quietly dropped.
+
+What the decomposition did find was a defect in the scan's own shape. The lazy scan filtered the
+**whole** batch with Arrow's `filter_record_batch` — copying every column of it, including the
+predicate's column that the query does not materialise — and then copied the survivors a **second**
+time out of the filtered batch into the engine's own column. The same work in three shapes, on the
+same file, in the same process: **filter the whole batch, then copy — 4.7 ms**; **filter only what
+is kept — 3.3 ms**; **compact once, into the chunk — 2.5 ms**. The engine now takes the third: it
+writes the survivors straight out of the reader's array into its own column, one copy, of the values
+that are kept.
+
+The lazy path's **batch size** was found in the same place. The 8,192 rows *were* measured — in spec 002,
+for a two-column lazy read — but the scan's shape has changed **three times** since: the pushdown became
+the engine's own kernel, the mask stopped going to the reader as a list of row ranges, and the scan
+stopped filtering the whole batch and copying the survivors twice. A constant measured for a shape that
+no longer exists is not a measured constant for the shape that does. Swept for the lazy shape and then
+measured with the two candidates **against each other**, with the order alternating on every round so
+that a drifting machine cannot bias the result, 65,536 rows is **10–12% faster** than 8,192 —
+repeatable across three runs. The constant is now 65,536, and the measurement that chose it is published
+with it.
+
+*Rationale*: the requirement added is that **a scan that filters MUST copy each surviving row once,
+and nothing else**. It is the same reasoning as the two standards above it — *one representation,
+and the cheap one*, and *a column that one operator streams over MUST NOT be materialised* — applied
+to the scan's own copies. A copy of a row the predicate rejected, and a copy of a column the query
+never asked for, are copies for nothing, and the measurement says they cost **2.2 ms of a 16 ms
+scan**. The standard also says the *result* does not change: the scan still holds the survivors, in
+the file's order, and the plan output still reports them, because the requirement is about the
+copies and not about the answer.
+
+*Principles touched*: IV is extended, not changed; the Performance Standards gain one requirement.
+Neither I, III nor II is touched, so it is a MINOR bump.
+*Migration plan*: the headline table was re-measured, because the committed reports carry the
+figures. **The two cold sweeps were re-measured** — they measure the lazy scan, which this increment
+changed. The **resident sweeps and the load sweep were not**: they measure the eager path, whose
+code is untouched. The **load sweep** is a measurement of the eager decode, and the eager path does
+not go through the scan this increment changed.
 
 **1.8.0 — 2026-10-26 — the aggregate reads the source where it lies, and the last loss is gone.**
 `filter-range` was the one query the engine lost: 14.6 ms resident against Polars' 11.5 ms, and

@@ -380,6 +380,35 @@ impl RowMask {
         count
     }
 
+    /// Visits the rows the mask keeps, in ascending order.
+    ///
+    /// This is the mask's own iteration, and it is the order every consumer
+    /// of the mask has to preserve: a fold over the survivors adds them in
+    /// the order they appear in the file, because a `SUM` over floats is not
+    /// associative and a different order is a different answer.
+    pub fn for_each(&self, mut f: impl FnMut(usize)) {
+        let words = self.words.len();
+        for (word_index, &word) in self.words.iter().enumerate() {
+            let mut bits = word;
+            if word_index + 1 == words {
+                // The last word may hold bits past the mask's length. They
+                // are zero, but they are masked off anyway: a row that
+                // depended on the padding would be a row that depended on
+                // the allocator.
+                let rows = self.len.saturating_sub(word_index * 64).min(64);
+                if rows < 64 {
+                    bits &= (1u64 << rows) - 1;
+                }
+            }
+            let base = word_index * 64;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                f(base + bit);
+                bits &= bits - 1;
+            }
+        }
+    }
+
     /// The mask as an Arrow boolean array, with no nulls.
     #[must_use]
     pub fn into_array(self) -> BooleanArray {
@@ -742,4 +771,50 @@ fn mismatch(column: &dyn Array, threshold: DataType) -> ArrowError {
         column.data_type(),
         threshold.name()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RowMask;
+
+    /// The mask's own iteration visits the kept rows, and only those, in
+    /// ascending order.
+    ///
+    /// The order is not a convenience: a fold over the survivors adds them in
+    /// the order they appear in the file, because a `SUM` over floats is not
+    /// associative. A mask that visited its rows in another order would make
+    /// the answer depend on the order the bits happened to be walked in.
+    #[test]
+    fn the_mask_visits_the_kept_rows_in_ascending_order() {
+        let mask = RowMask::from_words(vec![0b1010_1010, 0b0000_0001], 128);
+        let mut visited = Vec::new();
+        mask.for_each(|row| visited.push(row));
+
+        assert_eq!(visited, vec![1, 3, 5, 7, 64], "the mask visited the wrong rows");
+    }
+
+    /// The mask's last word may hold bits past the mask's length. They are
+    /// zero, but the iteration masks them off anyway: a row that depended on
+    /// the padding would be a row that depended on the allocator.
+    #[test]
+    fn the_mask_does_not_visit_the_padding() {
+        // 65 rows: the first word holds all of them but one, and the second
+        // word holds a bit at row 67 -- past the end of the mask.
+        let mask = RowMask::from_words(vec![u64::MAX, 0b1000], 65);
+        assert_eq!(mask.count(), 64, "the count saw the padding");
+
+        let mut visited = Vec::new();
+        mask.for_each(|row| visited.push(row));
+        assert_eq!(visited.len(), 64, "the iteration visited the padding");
+        assert!(visited.iter().all(|&row| row < 65), "the iteration visited a row past the end");
+    }
+
+    /// An empty mask visits nothing.
+    #[test]
+    fn an_empty_mask_visits_nothing() {
+        let mask = RowMask::from_words(Vec::new(), 0);
+        let mut visited = 0usize;
+        mask.for_each(|_| visited += 1);
+        assert_eq!(visited, 0, "an empty mask visited a row");
+    }
 }

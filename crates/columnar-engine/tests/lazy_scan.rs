@@ -893,3 +893,277 @@ fn the_materialised_columns_keep_their_own_values() {
         "the materialised column holds another column's values"
     );
 }
+
+/// The rows of a dense column, resolved.
+///
+/// A NULL row is `None`. The values are compared as text, because the
+/// question is "are these the same rows", and a text form says that for a
+/// NaN as well -- `NaN != NaN`, so a float comparison would call two
+/// identical columns different.
+fn resolved_batch_rows(column: &columnar_core::BatchColumn) -> Vec<Option<String>> {
+    use columnar_core::BatchData;
+
+    let values: Vec<String> = match &column.data {
+        BatchData::Int64(values) => values.iter().map(ToString::to_string).collect(),
+        BatchData::Float64(values) => values.iter().map(ToString::to_string).collect(),
+        BatchData::Utf8(values) => values.clone(),
+    };
+
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| if column.validity.is_valid(row) { Some(value) } else { None })
+        .collect()
+}
+
+/// The eager path's answer for a predicate: the rows it keeps.
+///
+/// This is the engine's own filter over the whole file, and the engine's own
+/// gather of the survivors -- which is exactly what the eager path does when
+/// it runs a plan. The lazy path does the same work **during** the scan, so
+/// the two must land on the same rows.
+fn eager_survivors(
+    path: &Path,
+    predicate: Predicate,
+    column: &str,
+) -> (columnar_core::BatchColumn, usize) {
+    let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
+    let plan = QueryPlan { filter: vec![predicate], projection: Vec::new(), aggregate: None };
+    let resolved = plan.resolve(&dataset).expect("the plan resolves");
+    let (selection, _) = columnar_engine::operators::filter::filter_all(
+        &dataset,
+        &resolved.filter,
+        columnar_kernels::best(),
+    )
+    .expect("the filter runs");
+
+    let gathered = dataset.chunk(column).expect("the column is there").decode_gather(&selection);
+    (gathered, selection.len())
+}
+
+/// A batch of a dictionary column and an integer column.
+///
+/// The rows all hold the same discount, so a predicate over it keeps them
+/// all, and the dictionary column's values are the only thing that
+/// distinguishes one batch from another.
+fn dictionary_batch(shipdates: &[&str], quantities: &[i64]) -> RecordBatch {
+    let discount = floats(&vec![Some(0.05); shipdates.len()]);
+    let shipdate = dictionary(&shipdates.iter().copied().map(Some).collect::<Vec<_>>());
+    let quantity = integers(&quantities.iter().copied().map(Some).collect::<Vec<_>>());
+    RecordBatch::try_new(schema(), vec![discount, shipdate, quantity])
+        .expect("the batch matches the schema")
+}
+
+/// A compacted dictionary column holds the same rows across **row groups**.
+///
+/// Each row group brings its own dictionary, and the column ends up with one
+/// dictionary over the whole file. The rows must still be the rows, in the
+/// file's order, and they must be the rows the eager path gathers.
+///
+/// This is the test that makes the dictionary's merge observable through a
+/// file. The *repointing* of a row group's keys is not observable here -- a
+/// file written by Arrow gives every row group a dictionary that
+/// accumulates, so the remap is the identity -- and it is tested where it
+/// can be seen, in the unit test over hand-built arrays.
+#[test]
+fn a_compacted_dictionary_column_holds_the_same_rows_across_row_groups() {
+    use columnar_engine::pushdown::Pushdown;
+
+    let file = TempFile::new("dictionary-remap");
+    let batches = vec![
+        dictionary_batch(&["1993-01-01", "1994-01-01"], &[1, 2]),
+        dictionary_batch(&["1995-01-01", "1996-01-01"], &[3, 4]),
+    ];
+    write_row_groups(&file.path, &batches);
+
+    let mut pushdown = PushdownPlan::new();
+    pushdown.push(Pushdown::new(0, "l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04)));
+
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    let lazy = source.read(&[1], &pushdown, columnar_kernels::best(), 1).expect("the read runs");
+
+    let expected = vec![
+        Some("1993-01-01".to_owned()),
+        Some("1994-01-01".to_owned()),
+        Some("1995-01-01".to_owned()),
+        Some("1996-01-01".to_owned()),
+    ];
+    assert_eq!(
+        resolved_rows(lazy.chunk("l_shipdate").expect("the column is there")),
+        expected,
+        "the compacted dictionary holds the wrong rows"
+    );
+
+    // And the eager path agrees.
+    let (eager, survivors) = eager_survivors(
+        &file.path,
+        Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04)),
+        "l_shipdate",
+    );
+    assert_eq!(lazy.len(), survivors, "the scan and the eager path kept different rows");
+    assert_eq!(
+        resolved_batch_rows(&lazy.chunk("l_shipdate").expect("the column is there").decode()),
+        resolved_batch_rows(&eager),
+        "the compacted dictionary and the eager path's gather hold different rows"
+    );
+}
+
+/// The lazy scan **compacts** the survivors: it writes them straight into the
+/// engine's own column, one copy, instead of filtering the batch and copying
+/// the survivors out of the filtered batch.
+///
+/// The eager path reads everything and gathers the survivors afterwards. The
+/// two must land on the same bytes, because the two paths are one engine --
+/// and a compaction that quietly disagreed with the gather would make the
+/// lazy path's answers a different engine's answers.
+#[test]
+fn the_compacted_column_holds_the_same_rows_as_the_eager_path() {
+    use columnar_engine::pushdown::Pushdown;
+
+    let file = TempFile::new("compacted");
+    write(&file.path, &edge_case_batch());
+
+    // The predicate is on `l_shipdate`, which the scan reads but does not
+    // materialise, so it is pushed into the scan. `l_quantity` is the column
+    // the scan compacts.
+    //
+    // The predicate is chosen so that a **NULL row survives**: rows 2, 4, 5
+    // and 6 keep, and row 2 holds a NULL `l_quantity`. A compaction that
+    // recorded the NULL at the row it had in the file would record it at row
+    // 2, and the column would say row 2 is NULL -- while row 0, which holds
+    // the NULL's zero, would claim to hold a value.
+    let mut pushdown = PushdownPlan::new();
+    pushdown.push(Pushdown::new(
+        1,
+        "l_shipdate",
+        ComparisonOp::Gt,
+        ScalarValue::Utf8("1994-01-01".to_owned()),
+    ));
+
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    let lazy = source.read(&[2], &pushdown, columnar_kernels::best(), 1).expect("the read runs");
+
+    let (eager, survivors) = eager_survivors(
+        &file.path,
+        Predicate::new("l_shipdate", ComparisonOp::Gt, ScalarValue::Utf8("1994-01-01".to_owned())),
+        "l_quantity",
+    );
+
+    assert_eq!(lazy.len(), survivors, "the scan kept a different number of rows");
+    assert_eq!(survivors, 4, "the predicate kept the wrong rows");
+
+    let compacted = lazy.chunk("l_quantity").expect("the column is there").decode();
+    assert_eq!(
+        resolved_batch_rows(&compacted),
+        resolved_batch_rows(&eager),
+        "the compacted column holds different rows than the eager path's gather"
+    );
+    assert_eq!(
+        resolved_batch_rows(&compacted),
+        vec![None, Some("5".to_owned()), Some("6".to_owned()), Some("7".to_owned())],
+        "the compacted column holds the wrong rows"
+    );
+}
+
+/// A dictionary column is compacted the same way.
+///
+/// The dictionary's **order** is the reader's business, and two reads may
+/// number their dictionaries differently, so the comparison is over the
+/// resolved values and not over the indices.
+#[test]
+fn a_compacted_dictionary_column_holds_the_same_rows_as_the_eager_path() {
+    use columnar_engine::pushdown::Pushdown;
+
+    let file = TempFile::new("compacted-dictionary");
+    write(&file.path, &edge_case_batch());
+
+    let mut pushdown = PushdownPlan::new();
+    pushdown.push(Pushdown::new(0, "l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04)));
+
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    let lazy = source.read(&[1], &pushdown, columnar_kernels::best(), 1).expect("the read runs");
+
+    let (eager, survivors) = eager_survivors(
+        &file.path,
+        Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04)),
+        "l_shipdate",
+    );
+
+    assert_eq!(lazy.len(), survivors, "the scan kept a different number of rows");
+
+    let compacted = lazy.chunk("l_shipdate").expect("the column is there").decode();
+    assert_eq!(
+        resolved_batch_rows(&compacted),
+        resolved_batch_rows(&eager),
+        "the compacted dictionary holds different rows than the eager path's gather"
+    );
+    assert_eq!(
+        resolved_batch_rows(&compacted),
+        vec![
+            Some("1994-01-01".to_owned()),
+            Some("1995-01-01".to_owned()),
+            Some("1996-03-03".to_owned()),
+            Some("1993-06-06".to_owned()),
+        ],
+        "the compacted dictionary holds the wrong rows"
+    );
+}
+
+/// The parallel scan compacts each row group on its own worker, and the
+/// parts are merged back in the file's order.
+///
+/// So the compacted column must hold the same rows as the single-threaded
+/// scan's, and the eager path's, at every thread count.
+#[test]
+fn the_parallel_scan_compacts_the_same_rows_as_the_single_threaded_one() {
+    use columnar_engine::pushdown::Pushdown;
+
+    let file = TempFile::new("compacted-parallel");
+    write_row_groups(&file.path, &three_row_group_batches());
+
+    let mut pushdown = PushdownPlan::new();
+    pushdown.push(Pushdown::new(
+        1,
+        "l_shipdate",
+        ComparisonOp::Lt,
+        ScalarValue::Utf8("1995-01-01".to_owned()),
+    ));
+
+    let source = ParquetSource::open(&file.path).expect("the source can be opened");
+    assert_eq!(
+        source.row_groups(),
+        3,
+        "the file does not have three row groups, so the parallel path never engages"
+    );
+
+    let single = source.read(&[2], &pushdown, columnar_kernels::best(), 1).expect("the read runs");
+    let single_rows = resolved_rows(single.chunk("l_quantity").expect("the column is there"));
+
+    for threads in [2, 3, 4, 8] {
+        let parallel =
+            source.read(&[2], &pushdown, columnar_kernels::best(), threads).expect("the read runs");
+        assert_eq!(
+            parallel.len(),
+            single.len(),
+            "the parallel scan kept a different number of rows at {threads} threads"
+        );
+        assert_eq!(
+            resolved_rows(parallel.chunk("l_quantity").expect("the column is there")),
+            single_rows,
+            "the parallel scan holds different rows at {threads} threads"
+        );
+    }
+
+    // And the eager path agrees with them.
+    let (eager, survivors) = eager_survivors(
+        &file.path,
+        Predicate::new("l_shipdate", ComparisonOp::Lt, ScalarValue::Utf8("1995-01-01".to_owned())),
+        "l_quantity",
+    );
+    assert_eq!(single.len(), survivors, "the scan and the eager path kept different rows");
+    assert_eq!(
+        resolved_batch_rows(&single.chunk("l_quantity").expect("the column is there").decode()),
+        resolved_batch_rows(&eager),
+        "the compacted column and the eager path's gather hold different rows"
+    );
+}

@@ -50,25 +50,25 @@ $ just compare
 cold · read the Parquet file and answer in one go
 query          engine   engine-lazy   duckdb   polars
 --------------------------------------------------------
-scan         557.7           0.1      2.0      1.0
-filter-numeric     558.0           5.2     22.0     44.8
-filter-string      555.0          17.4     22.0    162.3
-filter-range       557.0          19.9     31.0     15.7
-q6          562.7          26.0     32.0    191.2
-q6-revenue   575.7          70.7     69.0    195.2
+scan         564.7           0.1      2.0      1.1
+filter-numeric     583.3           5.2     23.0     45.5
+filter-string      583.7          13.6     23.0    169.2
+filter-range       588.9          17.5     33.0     16.4
+q6          595.1          20.7     33.0    200.6
+q6-revenue   612.3          63.1     72.0    203.4
 ```
 
-**The lazy path is 21.7× faster than the eager one on `q6`**, and it beats Polars on every cold
-query except `filter-range`. It beats DuckDB on `filter-numeric` — 5.2 ms against 22.0 ms — and
-on `filter-string`, and on `scan`. On `q6` it is **1.2× ahead**, where it used to be 2.6×
-behind. The gap was never pruning: DuckDB prunes nothing on this file either (its own plan says
-`Row Groups Scanned: 6 / 6`, and the file has no page index). It was the engine's own mask, on
-its way to the reader as a **list of 2.78 million row ranges**, applied one range at a time.
-Measured and attributed in [`PERF.md`](PERF.md), not glossed.
+**The lazy path is 28.8× faster than the eager one on `q6`**, and it beats Polars on every cold
+query except `filter-range`. It beats DuckDB on `filter-numeric` — 5.2 ms against 23.0 ms — and
+on `filter-string`, and on `scan`, and on `q6-revenue`. On `q6` it is **1.6× ahead**, where it used
+to be 2.6× behind. The gap was never pruning: DuckDB prunes nothing on this file either (its own
+plan says `Row Groups Scanned: 6 / 6`, and the file has no page index). It was the engine's own
+mask, on its way to the reader as a **list of 2.78 million row ranges**, applied one range at a
+time. Measured and attributed in [`PERF.md`](PERF.md), not glossed.
 
 **`q6-revenue` is TPC-H Q6 itself** — `sum(l_extendedprice * (1 - l_discount))` — and the engine
-runs it: 70.7 ms cold against DuckDB's 69.0 ms, and 14.9 ms resident against DuckDB's 47.0 ms.
-The arithmetic is **0.2 ms of the 70 ms**, because it is evaluated over the 110,915 rows that
+runs it: 63.1 ms cold against DuckDB's 72.0 ms, and 16.6 ms resident against DuckDB's 51.0 ms.
+The arithmetic is **0.5 ms of the 63 ms**, because it is evaluated over the 110,915 rows that
 survived the filter and not over the 6,000,000 rows of the file. The query's cost is reading
 `l_extendedprice`, not computing with it. See
 [ADR-0012](docs/adr/0012-arithmetic-expression.md).
@@ -77,9 +77,19 @@ survived the filter and not over the 6,000,000 rows of the file. The query's cos
 two-predicate range — was the one loss in the table: 14.6 ms resident against Polars' 11.5 ms,
 because the projection materialised a column that the aggregate only streamed over. The aggregate
 now folds the source **where it lies**, over the filter's selection, and the projection materialises
-nothing at all: **6.9 ms resident against Polars' 12.2 ms and DuckDB's 18.0 ms**, and the
+nothing at all: **7.5 ms resident against Polars' 12.4 ms and DuckDB's 20.0 ms**, and the
 projection stage is 0.0 ms. See
 [ADR-0016](docs/adr/0016-the-aggregate-reads-in-place.md).
+
+**And the scan itself got faster, because it was copying rows nobody asked for.** The lazy scan
+used to filter the **whole** batch — including the column the predicates read and the query does
+not materialise — and then copy the survivors a **second** time out of the filtered batch. It now
+writes the survivors straight out of the reader's array into the engine's own column: one copy, of
+the values that are kept. The lazy path's batch size was swept for the lazy shape as well, and it
+was **inherited** rather than measured — 65,536 rows is 10–12% faster than the 8,192 it was
+using. The whole lazy path moved: `q6` **20.7 ms**, `q6-revenue` **63.1 ms**, `filter-string`
+**13.6 ms**, `filter-range` **17.5 ms**. See
+[ADR-0017](docs/adr/0017-the-scan-filters-only-what-it-keeps.md).
 
 **And the engine now has threads too.** The read splits the file's row groups across the workers
 and merges them back in the file's order, so the answer does not depend on the scheduler. On the
@@ -89,13 +99,13 @@ identical query, with the incumbents at the identical thread count:
 $ just sweep
 threads   workers     engine   engine-scan     duckdb     polars
 ---------------------------------------------------------------
-      1        1      26.1          26.1       32.0      190.0
-      2        2      14.1          14.1       21.0      100.7
-      4        4       9.9           9.9       14.0       66.0
-      6        6       5.9           5.9       10.0       37.7
+      1        1      20.5          20.4       33.0      196.9
+      2        2      10.3          10.3       22.0      103.7
+      4        4       7.2           7.2       15.0       69.9
+      6        6       4.0           3.9       10.0       39.6
 ```
 
-**The engine gets 4.4× from six workers, against DuckDB's 3.2× from six, and it is ahead at every
+**The engine gets 5.2× from six workers, against DuckDB's 3.3× from six, and it is ahead at every
 thread count.** The engine's curve is steeper because its query is almost entirely scan, and the
 scan is the part that parallelises. The parallelism is capped by the file's **six row groups**, so
 the curve is flat past six — the ceiling is the file's, not the machine's. See
@@ -164,14 +174,17 @@ memory stays at about one copy of the data. The merged dataset is **bit-identica
 one — checked row by row, including the dictionary's order and the indices of the rows that are
 NULL. See [ADR-0014](docs/adr/0014-parallel-eager-decode.md).
 
-**And the lazy path got faster third.** Its scan of Q6's two columns was **78.4 ms** and is now
-**26.2 ms**, against DuckDB's 32.0 ms on the same file at the same thread count: the engine is
-**ahead** on the headline query, where it was 2.6× behind. The cause was not the decode and not
-the comparison — it was the pushdown's mask, handed to the reader as a **row filter**, which
-parquet-rs turns into a list of **2,775,138 row ranges** for 2,178,861 surviving rows and applies
-one range at a time. Reading a column through that list costs 50.0 ms; without it, 7.8 ms. The
-engine keeps the mask now — one bit per row — and applies it itself. See
-[ADR-0015](docs/adr/0015-the-engine-keeps-the-mask.md).
+**And the lazy path got faster three times.** Its scan of Q6's two columns was **78.4 ms** and is
+now **20.7 ms**, against DuckDB's 33.0 ms on the same file at the same thread count: the engine is
+**1.6× ahead** on the headline query, where it was 2.6× behind. The first cause was not the decode
+and not the comparison — it was the pushdown's mask, handed to the reader as a **row filter**,
+which parquet-rs turns into a list of **2,775,138 row ranges** for 2,178,861 surviving rows and
+applies one range at a time. Reading a column through that list costs 50.0 ms; without it, 7.8 ms.
+The engine keeps the mask now — one bit per row — and applies it itself. See
+[ADR-0015](docs/adr/0015-the-engine-keeps-the-mask.md). The second and third were the scan's own
+shape: it was copying the rows it discards and the column nobody asked for, and its batch size was
+a constant measured for a scan shape that has since changed three times. See
+[ADR-0017](docs/adr/0017-the-scan-filters-only-what-it-keeps.md).
 
 (The table is the median of three full runs; `python3 scripts/medians.py` re-derives it from the
 committed raw reports.)
@@ -346,10 +359,10 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited |
 | Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
-| Tests | 209, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite and the x86-64 cross-check |
+| Tests | 222, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **This repository is private, so CI consumes the account's Actions minutes** — if billing is blocked, every job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |
-| Next | **The cold path's remaining gap is `filter-range`, and it is a scan gap, not an operator gap.** The lazy path is 19.9 ms against Polars' 15.7 ms, and the aggregate that used to cost 7.8 ms of materialisation now costs 2.0 ms — so what is left is the 17.6 ms scan. After that: narrowing the predicates in the engine's own domain (recover the 12M-row evaluation, at the cost of a scatter), the morsel driver (still worth ~0 ms in the cold path, because the pushdown leaves the operators nothing to do), and the x86-64 measurement, which stays blocked until there is an x86-64 machine |
+| Next | **The cold path's one remaining gap is `filter-range`, and it is 1.1 ms.** The lazy path is 17.5 ms against Polars' 16.4 ms, and the scan that holds it has a floor: Arrow's own decode of the two columns is 10.7 ms of the 16.1 ms the scan takes. **The next thing is *not* what this file used to say** — it used to say "narrowing the predicates in the engine's own domain", and the measurement says the predicates cost 0.7–1.4 ms of a 16 ms scan, so there was nothing there to recover. The scan's own copy was the defect, and it is fixed. What is left: the conversion from Arrow's arrays into the engine's own column format, the morsel driver (still worth ~0 ms in the cold path, because the pushdown leaves the operators nothing to do), and the x86-64 measurement, which stays blocked until there is an x86-64 machine |

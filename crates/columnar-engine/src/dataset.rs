@@ -40,7 +40,7 @@ use columnar_core::{ColumnChunk, DataType, Encoding, NullBitmap};
 use columnar_kernels::Flavor;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
-use crate::pushdown::PushdownPlan;
+use crate::pushdown::{PushdownPlan, RowMask};
 /// Everything that can go wrong while reading a dataset.
 #[derive(Debug, thiserror::Error)]
 pub enum DatasetError {
@@ -344,9 +344,25 @@ pub(crate) fn decode_batches_filtered(
     let mut rows = 0usize;
     for batch in reader {
         let batch = batch.map_err(|error| DatasetError::Parquet(error.to_string()))?;
-        let batch = match pushdown.evaluate_batch(&batch, flavor) {
-            Ok(None) => batch,
-            Ok(Some(mask)) => {
+        let mask = match pushdown.evaluate_batch(&batch, flavor) {
+            Ok(None) => None,
+            Ok(Some(mask)) => Some(mask),
+            Err(error) => return Err(DatasetError::Parquet(error.to_string())),
+        };
+        match mask {
+            None => {
+                // No predicate: every row survives.
+                for (builder, position) in builders.iter_mut().zip(positions.iter()) {
+                    let Some(column) = batch.columns().get(*position) else {
+                        return Err(DatasetError::Parquet(
+                            "the record batch holds fewer columns than were projected".to_owned(),
+                        ));
+                    };
+                    builder.push(column.as_ref(), rows)?;
+                }
+                rows += batch.num_rows();
+            }
+            Some(mask) => {
                 if materialised.is_empty() {
                     // The query asked for no columns, so the engine needs the
                     // number of surviving rows and not the rows themselves.
@@ -354,20 +370,23 @@ pub(crate) fn decode_batches_filtered(
                     rows += mask.count();
                     continue;
                 }
-                arrow::compute::filter_record_batch(&batch, &mask.into_array())
-                    .map_err(|error| DatasetError::Parquet(error.to_string()))?
+                // The survivors are written straight out of the reader's
+                // array, into the engine's own column. The batch is **not**
+                // filtered first: a filter would copy every column in it,
+                // including the columns the predicates read and the query
+                // does not materialise, and the survivors would then be
+                // copied a second time out of the filtered batch.
+                for (builder, position) in builders.iter_mut().zip(positions.iter()) {
+                    let Some(column) = batch.columns().get(*position) else {
+                        return Err(DatasetError::Parquet(
+                            "the record batch holds fewer columns than were projected".to_owned(),
+                        ));
+                    };
+                    builder.push_masked(column.as_ref(), &mask, rows)?;
+                }
+                rows += mask.count();
             }
-            Err(error) => return Err(DatasetError::Parquet(error.to_string())),
-        };
-        for (builder, position) in builders.iter_mut().zip(positions.iter()) {
-            let Some(column) = batch.columns().get(*position) else {
-                return Err(DatasetError::Parquet(
-                    "the record batch holds fewer columns than were projected".to_owned(),
-                ));
-            };
-            builder.push(column.as_ref(), rows)?;
         }
-        rows += batch.num_rows();
     }
 
     let mut chunks = Vec::with_capacity(builders.len());
@@ -547,6 +566,54 @@ impl ColumnBuilder {
         Ok(())
     }
 
+    /// Adds one record batch's worth of values, keeping only the rows the
+    /// mask keeps.
+    ///
+    /// The survivors are copied **once**: they are written straight out of the
+    /// reader's array into the column. The alternative -- filtering the batch
+    /// with Arrow and copying the survivors out of the filtered batch -- makes
+    /// two copies of them, and it makes the second one of every column in the
+    /// batch, including the columns the query does not even materialise.
+    ///
+    /// The values, their order and their NULLs are the same either way: the
+    /// survivors are visited in ascending order, and a NULL row's value is
+    /// the engine's convention of zero, exactly as the unmasked push sets it.
+    ///
+    /// `row_offset` is the position the batch's **first survivor** takes in
+    /// the column. A NULL row is recorded at the position it takes in the
+    /// column -- its position among the survivors -- and not at the row it
+    /// had in the file: the column holds the survivors only, so the file's
+    /// row numbers are not positions in it.
+    fn push_masked(
+        &mut self,
+        array: &dyn Array,
+        mask: &RowMask,
+        row_offset: usize,
+    ) -> Result<(), DatasetError> {
+        match self {
+            Self::Int64 { name, values, nulls } => {
+                let array = downcast::<Int64Array>(array, &format!("int64 column `{name}`"))?;
+                push_masked_int64(array, mask, values, nulls, row_offset);
+            }
+            Self::Float64 { name, values, nulls } => {
+                let array = downcast::<Float64Array>(array, &format!("float64 column `{name}`"))?;
+                push_masked_float64(array, mask, values, nulls, row_offset);
+            }
+            Self::Utf8 { name, values, nulls } => {
+                let strings = utf8_column(array, name)?;
+                push_masked_utf8(&strings, array, mask, values, nulls, row_offset);
+            }
+            Self::Utf8Dict { name, dict, lookup, indices, nulls } => {
+                let array = downcast::<DictionaryArray<Int32Type>>(
+                    array,
+                    &format!("dictionary column `{name}`"),
+                )?;
+                push_masked_utf8_dict(array, name, mask, dict, lookup, indices, nulls, row_offset)?;
+            }
+        }
+        Ok(())
+    }
+
     /// The finished chunk.
     fn finish(self, rows: usize) -> Result<ColumnChunk, DatasetError> {
         let validity = NullBitmap::with_nulls(rows, self.nulls());
@@ -591,6 +658,190 @@ fn string_values(array: &dyn Array, name: &str) -> Result<Vec<String>, DatasetEr
             .iter()
             .map(|value| value.map_or_else(String::new, ToOwned::to_owned))
             .collect());
+    }
+    Err(DatasetError::UnsupportedType(format!("column `{name}` is not a utf8 column")))
+}
+
+/// Pushes the survivors of an int64 column into the column.
+///
+/// The survivors are visited in ascending order, so the column holds them in
+/// the file's order. A NULL survivor's value is the engine's convention of
+/// zero, and it is recorded at the position it takes among the survivors.
+fn push_masked_int64(
+    array: &Int64Array,
+    mask: &RowMask,
+    values: &mut Vec<i64>,
+    nulls: &mut Vec<usize>,
+    row_offset: usize,
+) {
+    let has_nulls = array.null_count() > 0;
+    values.reserve(mask.count());
+    let mut written = 0usize;
+    mask.for_each(|row| {
+        if has_nulls && array.is_null(row) {
+            values.push(0);
+            nulls.push(row_offset + written);
+        } else {
+            values.push(array.values()[row]);
+        }
+        written += 1;
+    });
+}
+
+/// Pushes the survivors of a float64 column into the column.
+///
+/// See [`push_masked_int64`]; the rules are the same.
+fn push_masked_float64(
+    array: &Float64Array,
+    mask: &RowMask,
+    values: &mut Vec<f64>,
+    nulls: &mut Vec<usize>,
+    row_offset: usize,
+) {
+    let has_nulls = array.null_count() > 0;
+    values.reserve(mask.count());
+    let mut written = 0usize;
+    mask.for_each(|row| {
+        if has_nulls && array.is_null(row) {
+            values.push(0.0);
+            nulls.push(row_offset + written);
+        } else {
+            values.push(array.values()[row]);
+        }
+        written += 1;
+    });
+}
+
+/// Pushes the survivors of a string column into the column.
+///
+/// See [`push_masked_int64`]; the rules are the same.
+fn push_masked_utf8(
+    strings: &Utf8Column<'_>,
+    array: &dyn Array,
+    mask: &RowMask,
+    values: &mut Vec<String>,
+    nulls: &mut Vec<usize>,
+    row_offset: usize,
+) {
+    let has_nulls = array.null_count() > 0;
+    values.reserve(mask.count());
+    let mut written = 0usize;
+    mask.for_each(|row| {
+        if has_nulls && array.is_null(row) {
+            values.push(String::new());
+            nulls.push(row_offset + written);
+        } else {
+            values.push(strings.value(row).to_owned());
+        }
+        written += 1;
+    });
+}
+
+/// Pushes the survivors of a dictionary column into the column.
+///
+/// See [`push_masked_int64`]; the rules are the same, and the NULL row's
+/// index is the engine's convention of slot zero -- a value the validity
+/// mask says is not there.
+#[allow(clippy::too_many_arguments)]
+fn push_masked_utf8_dict(
+    array: &DictionaryArray<Int32Type>,
+    name: &str,
+    mask: &RowMask,
+    dict: &mut Vec<String>,
+    lookup: &mut HashMap<String, usize>,
+    indices: &mut Vec<i32>,
+    nulls: &mut Vec<usize>,
+    row_offset: usize,
+) -> Result<(), DatasetError> {
+    let strings = dictionary_values(array.values().as_ref(), name)?;
+
+    // Merge the batch's dictionary into the column's dictionary, so one
+    // dictionary covers the whole file. The values are borrowed: a value the
+    // column already holds is not copied, so this allocates once per
+    // *distinct* value over the whole file rather than once per batch.
+    //
+    // The merge is over the batch's **whole** dictionary, and not over the
+    // survivors' part of it: Arrow's own filter keeps a dictionary column's
+    // dictionary unchanged and filters only its keys, so the dictionary the
+    // column ends up with is the same either way.
+    let mut remap = Vec::with_capacity(strings.len());
+    for value in &strings {
+        let slot = if let Some(&slot) = lookup.get(*value) {
+            slot
+        } else {
+            let slot = dict.len();
+            dict.push((*value).to_owned());
+            lookup.insert((*value).to_owned(), slot);
+            slot
+        };
+        remap.push(slot);
+    }
+
+    let keys = array.keys();
+    let has_nulls = keys.null_count() > 0;
+    indices.reserve(mask.count());
+    let mut written = 0usize;
+    let mut bad_key: Option<i64> = None;
+    let mut too_many = false;
+    mask.for_each(|row| {
+        if has_nulls && keys.is_null(row) {
+            // A null key is a NULL value.
+            indices.push(0);
+            nulls.push(row_offset + written);
+            written += 1;
+            return;
+        }
+        let key = keys.value(row);
+        let slot = usize::try_from(key).ok().and_then(|key| remap.get(key)).copied();
+        let Some(slot) = slot else {
+            bad_key = bad_key.or(Some(i64::from(key)));
+            written += 1;
+            return;
+        };
+        match i32::try_from(slot) {
+            Ok(slot) => indices.push(slot),
+            Err(_) => too_many = true,
+        }
+        written += 1;
+    });
+    if let Some(key) = bad_key {
+        return Err(DatasetError::Parquet(format!(
+            "a dictionary key {key} is outside the dictionary"
+        )));
+    }
+    if too_many {
+        return Err(DatasetError::UnsupportedType(
+            "a dictionary holds more than i32::MAX values".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// A string column, in either of the two widths Arrow has.
+enum Utf8Column<'a> {
+    /// 32-bit offsets.
+    Narrow(&'a StringArray),
+    /// 64-bit offsets.
+    Wide(&'a LargeStringArray),
+}
+
+impl Utf8Column<'_> {
+    /// The value of `row`.
+    fn value(&self, row: usize) -> &str {
+        match self {
+            Self::Narrow(array) => array.value(row),
+            Self::Wide(array) => array.value(row),
+        }
+    }
+}
+
+/// The string column an array holds, if it holds one.
+fn utf8_column<'a>(array: &'a dyn Array, name: &str) -> Result<Utf8Column<'a>, DatasetError> {
+    if let Some(array) = array.as_any().downcast_ref::<StringArray>() {
+        return Ok(Utf8Column::Narrow(array));
+    }
+    if let Some(array) = array.as_any().downcast_ref::<LargeStringArray>() {
+        return Ok(Utf8Column::Wide(array));
     }
     Err(DatasetError::UnsupportedType(format!("column `{name}` is not a utf8 column")))
 }
@@ -923,4 +1174,261 @@ fn merge_dictionary(
         indices.append(part_indices);
     }
     (dict, indices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ArrowType, ColumnBuilder, DatasetError};
+    use crate::pushdown::{Pushdown, PushdownPlan, RowMask};
+    use arrow::array::{
+        ArrayRef, DictionaryArray, Int32Array, Int64Array, RecordBatch, StringArray,
+    };
+    use arrow::buffer::{NullBuffer, ScalarBuffer};
+    use arrow::datatypes::{Field, Int32Type, Schema};
+    use columnar_core::{ColumnChunk, ComparisonOp, Encoding, ScalarValue};
+    use std::sync::Arc;
+
+    /// An int64 array whose NULL slot holds a **non-zero** value.
+    ///
+    /// Arrow's own builders put a zero in a NULL slot, and so does the
+    /// Parquet reader: a NULL row has no value in the file, so the reader has
+    /// nothing to put there. That is why the engine's convention -- "a NULL
+    /// row's value is zero" -- cannot be observed through a file: it is
+    /// already true of every row a reader can produce, so a reader that left
+    /// the value alone would look exactly the same.
+    ///
+    /// So the array is built by hand, with a value in the NULL slot, and the
+    /// engine's own push is what has to overwrite it.
+    fn array_with_a_value_in_the_null_slot(null_row: usize) -> Int64Array {
+        let mut values = vec![1i64, 2, 3, 4];
+        values[null_row] = 999;
+        let mut validity = vec![true, true, true, true];
+        validity[null_row] = false;
+        Int64Array::new(ScalarBuffer::from(values), Some(NullBuffer::from(validity)))
+    }
+
+    /// A batch of two int64 columns: `a`, which may hold a NULL, and `b`,
+    /// which the predicate reads.
+    ///
+    /// The predicate is on a **different** column from `a` on purpose: a NULL
+    /// row never matches a predicate on its own column, so a NULL row can
+    /// only survive a predicate on another one.
+    fn batch(a: Int64Array, b: [i64; 4]) -> RecordBatch {
+        RecordBatch::try_new(
+            Schema::new(vec![
+                Field::new("a", ArrowType::Int64, true),
+                Field::new("b", ArrowType::Int64, true),
+            ])
+            .into(),
+            vec![Arc::new(a), Arc::new(Int64Array::from(b.to_vec()))],
+        )
+        .expect("the batch matches the schema")
+    }
+
+    /// The mask the predicate over `b` produces.
+    fn mask_over_b(batch: &RecordBatch, op: ComparisonOp, threshold: i64) -> RowMask {
+        let mut plan = PushdownPlan::new();
+        plan.push(Pushdown::new(1, "b", op, ScalarValue::Int64(threshold)));
+        plan.evaluate_batch(batch, columnar_kernels::best())
+            .expect("the pushdown evaluates")
+            .expect("the plan holds a predicate")
+    }
+
+    /// The values of an int64 column.
+    fn values_of(chunk: &ColumnChunk) -> Vec<i64> {
+        let Encoding::Int64 { values } = &chunk.encoding else {
+            panic!("the column is not an int64 one");
+        };
+        values.clone()
+    }
+
+    /// The masked push must give a NULL survivor the engine's convention: a
+    /// zero, and the validity mask saying the row is NULL.
+    ///
+    /// The mutation this catches is a push that leaves the reader's decoded
+    /// value alone. Through a file that mutation is invisible -- the reader
+    /// puts a zero there anyway -- so it takes an array with a value in the
+    /// NULL slot to catch it.
+    #[test]
+    fn the_masked_push_zeroes_a_null_survivors_value() {
+        // Row 2 is the NULL one, and it is the only row `b >= 5` keeps.
+        let batch = batch(array_with_a_value_in_the_null_slot(2), [0, 0, 5, 0]);
+        let mask = mask_over_b(&batch, ComparisonOp::GtEq, 5);
+        assert_eq!(mask.count(), 1, "the mask kept the wrong rows");
+
+        let mut builder = ColumnBuilder::new("a", &ArrowType::Int64).expect("the builder");
+        builder.push_masked(batch.column(0).as_ref(), &mask, 0).expect("the push runs");
+        let chunk = builder.finish(1).expect("the chunk is finished");
+
+        assert_eq!(chunk.validity.null_count(), 1, "the NULL row was not marked NULL");
+        assert!(!chunk.validity.is_valid(0), "the survivor was not marked NULL");
+        assert_eq!(
+            values_of(&chunk),
+            vec![0],
+            "the NULL survivor kept the value the reader decoded"
+        );
+    }
+
+    /// A NULL survivor is recorded at the position it takes **among the
+    /// survivors**, and not at the row it had in the file.
+    ///
+    /// The column holds the survivors only, so the file's row numbers are
+    /// not positions in it. A push that recorded the file's row number would
+    /// mark the wrong row as NULL -- or, when the file's row number is past
+    /// the end of the column, fail outright.
+    #[test]
+    fn a_null_survivor_is_recorded_at_its_own_position() {
+        // Row 3 is the NULL one, and `b >= 5` keeps rows 0 and 3.
+        let batch = batch(array_with_a_value_in_the_null_slot(3), [5, 0, 0, 5]);
+        let mask = mask_over_b(&batch, ComparisonOp::GtEq, 5);
+        assert_eq!(mask.count(), 2, "the mask kept the wrong rows");
+
+        let mut builder = ColumnBuilder::new("a", &ArrowType::Int64).expect("the builder");
+        builder.push_masked(batch.column(0).as_ref(), &mask, 0).expect("the push runs");
+        let chunk = builder.finish(2).expect("the chunk is finished");
+
+        assert_eq!(chunk.validity.null_count(), 1, "the NULL row was not marked NULL");
+        assert!(chunk.validity.is_valid(0), "the first survivor was marked NULL");
+        assert!(!chunk.validity.is_valid(1), "the second survivor was not marked NULL");
+        assert_eq!(values_of(&chunk), vec![1, 0], "the survivors hold the wrong values");
+    }
+
+    /// The masked push and the unmasked push must agree, row for row.
+    ///
+    /// The masked push is a different code path, and a compaction that
+    /// quietly disagreed with the plain push would make the lazy path and
+    /// the eager path two different engines.
+    #[test]
+    fn the_masked_push_and_the_unmasked_push_agree() {
+        let batch = batch(array_with_a_value_in_the_null_slot(2), [5, 5, 5, 5]);
+        let array = batch.column(0).as_ref();
+
+        let mut plain = ColumnBuilder::new("a", &ArrowType::Int64).expect("the builder");
+        plain.push(array, 0).expect("the push runs");
+        let plain = plain.finish(4).expect("the chunk is finished");
+
+        let mask = mask_over_b(&batch, ComparisonOp::GtEq, 0);
+        assert_eq!(mask.count(), 4, "the mask kept the wrong rows");
+        let mut masked = ColumnBuilder::new("a", &ArrowType::Int64).expect("the builder");
+        masked.push_masked(array, &mask, 0).expect("the push runs");
+        let masked = masked.finish(4).expect("the chunk is finished");
+
+        assert_eq!(masked.validity, plain.validity, "the two pushes disagree on the NULLs");
+        assert_eq!(values_of(&masked), values_of(&plain), "the two pushes disagree on the values");
+    }
+
+    /// The offset is the position the batch's first survivor takes, so a
+    /// second batch's NULL lands after the first batch's rows.
+    #[test]
+    fn the_offset_is_where_the_first_survivor_lands() {
+        let first = Int64Array::from(vec![10i64, 11, 12, 13, 14, 15, 16]);
+        let batch = batch(array_with_a_value_in_the_null_slot(3), [5, 0, 0, 5]);
+        let mask = mask_over_b(&batch, ComparisonOp::GtEq, 5);
+
+        let mut builder = ColumnBuilder::new("a", &ArrowType::Int64).expect("the builder");
+        builder.push(&first, 0).expect("the first push runs");
+        builder.push_masked(batch.column(0).as_ref(), &mask, 7).expect("the second push runs");
+        let chunk = builder.finish(9).expect("the chunk is finished");
+
+        assert!(chunk.validity.is_valid(7), "the first survivor is not at the offset");
+        assert!(!chunk.validity.is_valid(8), "the NULL survivor is not after the first one");
+        assert_eq!(
+            values_of(&chunk),
+            vec![10, 11, 12, 13, 14, 15, 16, 1, 0],
+            "the survivors hold the wrong values"
+        );
+    }
+
+    /// A dictionary column, built by hand.
+    ///
+    /// The values and the keys are given separately, so a dictionary can hold
+    /// a value in a slot the engine would not have put it in.
+    fn dictionary_array(values: &[&str], keys: &[i32]) -> DictionaryArray<Int32Type> {
+        let values: ArrayRef = Arc::new(StringArray::from(values.to_vec()));
+        DictionaryArray::try_new(Int32Array::from(keys.to_vec()), values)
+            .expect("the dictionary array is valid")
+    }
+
+    /// A batch of a dictionary column and an integer column.
+    fn dictionary_batch(shipdates: DictionaryArray<Int32Type>, marker: i64) -> RecordBatch {
+        let shipdates: ArrayRef = Arc::new(shipdates);
+        let marker: ArrayRef = Arc::new(Int64Array::from(vec![marker, marker]));
+        RecordBatch::try_new(
+            Schema::new(vec![
+                Field::new(
+                    "s",
+                    ArrowType::Dictionary(Box::new(ArrowType::Int32), Box::new(ArrowType::Utf8)),
+                    true,
+                ),
+                Field::new("b", ArrowType::Int64, true),
+            ])
+            .into(),
+            vec![shipdates, marker],
+        )
+        .expect("the batch matches the schema")
+    }
+
+    /// The dictionary and the indices of a utf8-dictionary column.
+    fn dictionary_of(chunk: &ColumnChunk) -> (Vec<String>, Vec<i32>) {
+        let Encoding::Utf8Dict { dict, indices } = &chunk.encoding else {
+            panic!("the column is not a dictionary one");
+        };
+        (dict.clone(), indices.clone())
+    }
+
+    /// A compacted dictionary column must repoint the batch's keys at the
+    /// column's own dictionary.
+    ///
+    /// The **first** batch's dictionary *is* the column's dictionary, so the
+    /// remap is the identity there -- and a compaction that skipped it would
+    /// look perfectly correct. The second batch holds a value the first one
+    /// already holds, in a **different slot**, so its keys have to be
+    /// repointed at the column's slots.
+    ///
+    /// The arrays are built by hand, because a Parquet file written by Arrow
+    /// gives every row group a dictionary that accumulates, and the remap is
+    /// the identity there too: a file written this way cannot tell a
+    /// compaction that repoints from one that does not.
+    #[test]
+    fn the_masked_push_repoints_a_dictionarys_keys() {
+        // The first batch's dictionary is ["b", "a"]; the second's is
+        // ["a", "c"], so "a" is at slot 1 in the first and at slot 0 in the
+        // second. The column's own dictionary ends up ["b", "a", "c"], and the
+        // second batch's keys have to be repointed from [0, 1] to [1, 2].
+        let first = dictionary_batch(dictionary_array(&["b", "a"], &[0, 1]), 0);
+        let second = dictionary_batch(dictionary_array(&["a", "c"], &[0, 1]), 0);
+
+        let mut builder = ColumnBuilder::new(
+            "s",
+            &ArrowType::Dictionary(Box::new(ArrowType::Int32), Box::new(ArrowType::Utf8)),
+        )
+        .expect("the builder");
+
+        for batch in [&first, &second] {
+            let mask = mask_over_b(batch, ComparisonOp::GtEq, 0);
+            assert_eq!(mask.count(), 2, "the mask kept the wrong rows");
+            builder.push_masked(batch.column(0).as_ref(), &mask, 0).expect("the push runs");
+        }
+
+        let chunk = builder.finish(4).expect("the chunk is finished");
+        let (dict, indices) = dictionary_of(&chunk);
+        assert_eq!(dict, vec!["b", "a", "c"], "the dictionary was merged wrongly");
+        assert_eq!(indices, vec![0, 1, 1, 2], "the keys were not repointed");
+    }
+
+    /// A push of an array of the wrong type is an error, not a panic.
+    #[test]
+    fn a_push_of_the_wrong_type_is_an_error() {
+        let batch = batch(array_with_a_value_in_the_null_slot(2), [0, 0, 5, 0]);
+        let mask = mask_over_b(&batch, ComparisonOp::GtEq, 5);
+
+        let mut builder = ColumnBuilder::new("a", &ArrowType::Float64).expect("the builder");
+        let error = builder
+            .push_masked(batch.column(0).as_ref(), &mask, 0)
+            .expect_err("an int64 array pushed into a float64 builder must fail");
+        assert!(
+            matches!(error, DatasetError::UnsupportedType(_)),
+            "the wrong error was reported: {error:?}"
+        );
+    }
 }

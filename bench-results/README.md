@@ -15,10 +15,10 @@ python3 scripts/medians.py
 | `compare.json` | the **representative** comparison run — the run whose figures sit nearest the medians |
 | `compare-run1.json` | the first of the three runs the published table is the median of |
 | `compare-run2.json` | the second |
-| `compare-run3.json` | the third |
+| `compare-run3.json` | the third, and the one `compare.json` is a copy of |
 | `scaling-run1.json` | the first of the three **thread-count sweeps** of `q6` the §2e table is the median of |
-| `scaling-run2.json` | the second, and the one `scaling.json` is a copy of |
-| `scaling-run3.json` | the third |
+| `scaling-run2.json` | the second |
+| `scaling-run3.json` | the third, and the one `scaling.json` is a copy of |
 | `scaling-revenue-run1.json` | the first of the three **thread-count sweeps of the real Q6** the §2e table is the median of |
 | `scaling-revenue-run2.json` | the second, and the one `scaling-revenue.json` is a copy of |
 | `scaling-revenue-run3.json` | the third |
@@ -31,9 +31,9 @@ python3 scripts/medians.py
 | `scaling-load-run1.json` | the first of the three **load sweeps** the §2g table is the median of |
 | `scaling-load-run2.json` | the second |
 | `scaling-load-run3.json` | the third |
-| `compare.json` | a copy of `compare-run1.json`, the run whose figures sit nearest the medians |
-| `scaling.json` | a copy of `scaling-run2.json`, the sweep run nearest the medians |
-| `scaling-revenue.json` | a copy of `scaling-revenue-run1.json`, the sweep run nearest the medians |
+| `compare.json` | a copy of `compare-run3.json`, the run whose figures sit nearest the medians |
+| `scaling.json` | a copy of `scaling-run3.json`, the sweep run nearest the medians |
+| `scaling-revenue.json` | a copy of `scaling-revenue-run2.json`, the sweep run nearest the medians |
 | `experiment-dictionary-copy.json` | **not a normal run.** A measurement taken with a deliberate perturbation of the decode path — see below |
 
 ## The experiment file

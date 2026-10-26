@@ -194,6 +194,11 @@ pub fn execute(
 ///   no row filter, because a row filter is a list of row ranges and the
 ///   list is longer than the mask. See
 ///   [ADR-0015](../../../docs/adr/0015-the-engine-keeps-the-mask.md).
+/// - **The scan copies each surviving row once.** The survivors are written
+///   straight out of the reader's array into the engine's own column: the
+///   batch is not filtered first, and a column the query does not
+///   materialise is never copied. See
+///   [ADR-0017](../../../docs/adr/0017-the-scan-filters-only-what-it-keeps.md).
 ///
 /// The pushdown reproduces the engine's filter semantics exactly -- a NULL
 /// never matches, a NaN never matches, for every operator including `!=` --
