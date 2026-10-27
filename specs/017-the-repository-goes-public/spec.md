@@ -1,6 +1,6 @@
 # Spec 017 — The repository goes public
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-27
 **ADR**: [ADR-0024](../../docs/adr/0024-the-repository-goes-public.md)
 **Predecessor**: [016-the-per-row-group-cost](../016-the-per-row-group-cost/spec.md)

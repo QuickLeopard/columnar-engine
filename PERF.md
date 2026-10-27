@@ -192,24 +192,26 @@ three campaigns.
 
 | flavor | ns/row (median) | spread | rows/sec | matches |
 |---|---|---|---|---|
-| `oracle` | **3.429** | 3.409–3.445 | 0.292 G | 12,726,115 |
-| `simd128` | **0.273** | 0.271–0.277 | 3.663 G | 12,726,115 |
+| `oracle` | **3.414** | 3.398–3.426 | 0.293 G | 12,726,115 |
+| `simd128` | **0.272** | 0.267–0.278 | 3.676 G | 12,726,115 |
 
-**`simd128` is 12.51× the oracle**, over the three campaigns (12.51×–12.56×).
+**`simd128` is 12.59× the oracle**, over the three campaigns (12.56×–12.64×). The published set
+before this one said **3.429** and **0.273** ns/row and **12.51×**; the figures moved by less than
+1%, because the browser's number is the most stable one in the repository.
 
 | | |
 |---|---|
 | browser | Chromium 148.0.7778.280, Electron 42.8.0, on macOS 27.0.1 |
 | engine | `wasm32-unknown-unknown`, `simd128`, release build, fat LTO, one codegen unit |
-| machine | Apple M4 Max, 14 cores — **the host's load average was 6.2–10.9 throughout** |
+| machine | Apple M4 Max, 14 cores — **the host's load average was 8.1–8.8 throughout** |
 | warm-up | one untimed pass per implementation before each timed run |
 | rounds | 5 per campaign, 3 campaigns, median published with the spread |
-| commit | `e23289b` |
+| commit | `e866e75` |
 
-**The spread is published.** The host's load average was between 6.2 and 10.9 while these were
+**The spread is published.** The host's load average was between 8.1 and 8.8 while these were
 taken — the machine is shared and it was busy — and the oracle's range across the campaigns is
-3.409–3.445 ns/row, a 1.1% range. The `simd128` path's is 0.271–0.277, a 2.2% range, and the
-**ratio**'s is 12.51×–12.56×. A browser's numbers are the least portable thing this repository
+3.398–3.426 ns/row, a 0.8% range. The `simd128` path's is 0.267–0.278, a 4.1% range, and the
+**ratio**'s is 12.56×–12.64×. A browser's numbers are the least portable thing this repository
 publishes, and they are published with their spread for that reason.
 
 **The masks are identical, bit for bit, in every campaign**, and so is the **edge check**: every

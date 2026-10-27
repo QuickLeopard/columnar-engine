@@ -1,39 +1,39 @@
 {
-  "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) MiniMaxAgent/3.1.4 Chrome/148.0.7778.280 Electron/42.8.0 Safari/537.36",
+  "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) MiniMaxAgent/3.1.6 Chrome/148.0.7778.280 Electron/42.8.0 Safari/537.36",
   "engine": "wasm32-unknown-unknown",
   "simd": "simd128",
-  "commit": "e23289b",
+  "commit": "e866e75",
   "machine": "14 logical cores",
   "rows": 20000000,
   "iterations": 5,
   "rounds": 5,
   "threshold": 0.04,
-  "column_build_ms": 350.40000009536743,
+  "column_build_ms": 351.40000009536743,
   "oracle_ns_per_row": [
-    3.4119999980926514,
-    3.4279999995231627,
-    3.4109999990463256,
-    3.415999999046326,
-    3.43
+    3.414000000953674,
+    3.414000000953674,
+    3.4260000014305114,
+    3.4090000009536743,
+    3.4070000004768373
   ],
   "simd_ns_per_row": [
-    0.27299999952316284,
-    0.2740000009536743,
-    0.2740000009536743,
-    0.27200000047683714,
-    0.27200000047683714
+    0.27799999952316284,
+    0.27199999809265135,
+    0.27,
+    0.2690000009536743,
+    0.26700000047683714
   ],
-  "oracle_median_ns_per_row": 3.415999999046326,
-  "simd_median_ns_per_row": 0.27299999952316284,
-  "ratio_median": 12.512820531182797,
+  "oracle_median_ns_per_row": 3.414000000953674,
+  "simd_median_ns_per_row": 0.27,
+  "ratio_median": 12.64444444797657,
   "matches": 12726115,
   "expected_matches": 12726115,
   "masks_agree": true,
   "edges_agree": true,
   "host_load_average": [
-    6.15380859375,
-    7.34619140625,
-    7.17724609375
+    8.34130859375,
+    8.39453125,
+    8.72998046875
   ],
   "host_cpu_count": 14
 }
