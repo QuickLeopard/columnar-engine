@@ -344,15 +344,17 @@ fn mask_for_chunk_range(
         }
         (Encoding::Utf8Dict { dict, indices }, ScalarValue::Utf8(threshold)) => {
             // One comparison per distinct value, then a map.
-            let matches: Vec<bool> =
-                dict.iter().map(|v| compare_str(v, predicate.op, threshold)).collect();
+            let matches: Vec<bool> = dict
+                .iter()
+                .map(|v| crate::dictionary::compare_str(v, predicate.op, threshold))
+                .collect();
             let dict_mask = mask_from_bools(&matches);
             Ok(map_dictionary(&dict_mask, slice_of(indices, start, end), rows, validity))
         }
         (Encoding::Utf8 { values }, ScalarValue::Utf8(threshold)) => {
             let matches: Vec<bool> = slice_of(values, start, end)
                 .iter()
-                .map(|v| compare_str(v, predicate.op, threshold))
+                .map(|v| crate::dictionary::compare_str(v, predicate.op, threshold))
                 .collect();
             let mask = mask_from_bools(&matches);
             Ok(apply_validity(mask, validity, rows))
@@ -425,27 +427,8 @@ fn map_dictionary(
     rows: usize,
     validity: Option<&NullBitmap>,
 ) -> Vec<u64> {
-    let entry_matches: Vec<bool> = (0..dict_mask.len() * 64)
-        .map(|entry| {
-            dict_mask.get(entry / 64).is_some_and(|word| word & (1u64 << (entry % 64)) != 0)
-        })
-        .collect();
-
-    let mut mask = vec![0u64; rows.div_ceil(64)];
-    for (chunk_index, chunk) in indices[..rows.min(indices.len())].chunks(64).enumerate() {
-        let mut word = 0u64;
-        for (bit, &index) in chunk.iter().enumerate() {
-            let entry = usize::try_from(index).unwrap_or(usize::MAX);
-            // Branchless: a date column's dictionary indices run in long
-            // stretches, so a conditional bit set is a mispredicted branch
-            // every time the run ends.
-            let matched = u64::from(entry_matches.get(entry).copied().unwrap_or(false));
-            word |= matched << bit;
-        }
-        if let Some(slot) = mask.get_mut(chunk_index) {
-            *slot = word;
-        }
-    }
+    let entry_matches = crate::dictionary::mask_to_bools(dict_mask);
+    let mask = crate::dictionary::map_mask(&entry_matches, indices, rows);
     apply_validity(mask, validity, rows)
 }
 
@@ -471,18 +454,6 @@ fn mask_from_bools(values: &[bool]) -> Vec<u64> {
         }
     }
     mask
-}
-
-/// Compares two strings, byte-wise, as `DuckDB`'s binary collation does.
-fn compare_str(value: &str, op: ComparisonOp, threshold: &str) -> bool {
-    match op {
-        ComparisonOp::Lt => value < threshold,
-        ComparisonOp::LtEq => value <= threshold,
-        ComparisonOp::Gt => value > threshold,
-        ComparisonOp::GtEq => value >= threshold,
-        ComparisonOp::Eq => value == threshold,
-        ComparisonOp::Ne => value != threshold,
-    }
 }
 
 /// Runs one predicate over an already-decoded column.

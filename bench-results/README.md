@@ -21,6 +21,8 @@ python3 scripts/medians.py
 | `compare-spec020-run1.json` … `compare-spec020-run3.json` | the set **before** the one published now: the code spec 021 replaced, on a busier host. Committed so the published old-and-new figures are derived rather than typed. |
 | `operator-probe-before.json` | the **operator probe** against the code spec 021 replaced — the join's probe and the sort, taken apart |
 | `operator-probe-after.json` | the operator probe against the code spec 021 wrote, measured back to back with the file above on the same host |
+| `dictionary-cost-{6,12,24}-run{1,2,3}.json` | the **dictionary probe** against the code spec 022 wrote — the same read in two shapes, the reader expanding the dictionary-encoded columns and the reader keeping them, on the six-, twelve- and twenty-four-row-group files |
+| `dictionary-cost-before-{6,12,24}-run{1,2,3}.json` | the same probe against the code spec 022 replaced, measured back to back on the same host |
 | `scaling-run1.json` | the first of the three **thread-count sweeps** of `q6` the §2e table is the median of |
 | `scaling-run2.json` | the second |
 | `scaling-run3.json` | the third |
@@ -127,6 +129,7 @@ questions.
 | §3e | *what the reader's batch limit should be* | `batch-size-run*.json` |
 | §3i | *what does the query cost per million rows* | `curve-run*.json` |
 | §3j | *what does the row-group count cap, and what does it cost* | `scaling-rg12-run*.json`, `scaling-rg24-run*.json`, `row-groups-*-run*.json`, `row-group-cost-*-run*.json` |
+| §3k | *what is the dictionary worth, and whose cost is the residual* | `dictionary-cost-*-run*.json`, `dictionary-cost-before-*-run*.json` |
 
 The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and
 the **attribution** — the crate's read of each column against the engine's own scan. The ladder is
@@ -185,6 +188,14 @@ the engine estimated. So the engine's own account of the work is in the
 committed reports too, and the guard checks the stage figures against them as
 well: the join stage's **21.9 ms**, the sort stage's **5.3 ms** and the old
 code's **107.4 ms** and **14.5 ms** are derived, not typed.
+
+The **dictionary probe** is written the same way, one report per campaign, and its set is
+measured against the code the increment replaced, back to back on the same host:
+
+```bash
+just probe-dictionary data="data/lineitem-rg24.parquet" \
+    out="bench-results/dictionary-cost-24-run1.json"
+```
 
 The **operator probe** writes its own two reports, one per code version:
 

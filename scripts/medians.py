@@ -1018,6 +1018,121 @@ def print_avx2(runs: list[dict]) -> None:
             print(f"   the flavours DISAGREE on the match count: {sorted(matches)}")
 
 
+def _probe_medians(files: list[tuple[str, list[dict]]], section: str) -> tuple[
+    dict[str, dict[str, list[float]]], dict[str, int]
+]:
+    """The medians of a probe's measurements, keyed by file and by shape."""
+    measurements: dict[str, dict[str, list[float]]] = {}
+    groups: dict[str, int] = {}
+    for name, runs in files:
+        for run in runs:
+            groups[name] = int(run.get("row_groups", 0))
+            for key, value in run.get(section, {}).items():
+                measurements.setdefault(name, {}).setdefault(key, []).append(value)
+    return measurements, groups
+
+
+def print_dictionary_cost(
+    after_files: list[tuple[str, list[dict]]],
+    before_files: list[tuple[str, list[dict]]],
+) -> None:
+    """Print the dictionary probe's medians.
+
+    This is spec 022: the same read in two shapes -- the reader expanding the
+    dictionary-encoded columns, and the reader keeping them -- with the
+    engine's own comparison measured on top of each. The "before" set is the
+    same probe against the code the increment replaced, measured back to back
+    on the same host.
+    """
+    for label, files in (("the new code", after_files), ("the old code", before_files)):
+        if not files:
+            continue
+        measurements, groups = _probe_medians(files, "measurements_ms")
+        columns, _ = _probe_medians(files, "columns_ms")
+        dictionary, _ = _probe_medians(files, "dictionary_ms")
+        campaigns = min(len(runs) for _, runs in files)
+        names = [name for name, _ in files]
+        print(f"\n=== THE DICTIONARY, COUNTED -- {label} ({campaigns} campaigns each) ===")
+        header = f"{'the shape':<52}" + "".join(
+            f"{names[index] + ', ' + str(groups[names[index]]) + ' groups':>20}"
+            for index in range(len(names))
+        )
+        print(header)
+        for key, shape in (
+            ("crate_expanded", "the crate's read, the dictionary expanded"),
+            ("crate_kept", "the crate's read, the dictionary kept"),
+            ("engine_expanded", "the engine's read, over the values"),
+            ("engine_kept", "the engine's read, over the distinct"),
+            ("engine_read", "the engine's own read"),
+        ):
+            line = f"{shape:<52}"
+            for name in names:
+                values = measurements.get(name, {}).get(key, [])
+                line += f"{statistics.median(values):>20.2f}" if values else f"{'-':>20}"
+            print(line)
+        line = f"{'the engine\'s comparison, over the values':<52}"
+        for name in names:
+            expanded = measurements.get(name, {}).get("engine_expanded", [])
+            crate = measurements.get(name, {}).get("crate_expanded", [])
+            if expanded and crate:
+                line += f"{statistics.median(expanded) - statistics.median(crate):>20.2f}"
+            else:
+                line += f"{'-':>20}"
+        print(line)
+
+        print("\n-- one column at a time --")
+        for key, column in (
+            ("quantity", "l_quantity"),
+            ("discount", "l_discount"),
+            ("shipdate", "l_shipdate"),
+        ):
+            line = f"{column:<52}"
+            for name in names:
+                expanded = columns.get(name, {}).get(f"crate_expanded_{key}", [])
+                kept = columns.get(name, {}).get(f"crate_kept_{key}", [])
+                if expanded and kept:
+                    line += (
+                        f"{statistics.median(expanded):>9.2f} -> {statistics.median(kept):>9.2f}"
+                    )
+                else:
+                    line += f"{'-':>20}"
+            print(line)
+
+        print("\n-- the alternative's own shape --")
+        for key, shape in (
+            ("distinct", "the distinct values, compared per batch"),
+            ("map", "the map, from the answer to the rows"),
+        ):
+            line = f"{shape:<52}"
+            for name in names:
+                values = dictionary.get(name, {}).get(key, [])
+                line += f"{statistics.median(values):>20.2f}" if values else f"{'-':>20}"
+            print(line)
+
+        if len(names) >= 2:
+            first, last = names[0], names[-1]
+            span = groups[last] - groups[first]
+
+            def comparison(name: str) -> float:
+                """The engine's own cost over the crate's read."""
+                expanded = measurements.get(name, {}).get("engine_expanded", [])
+                crate = measurements.get(name, {}).get("crate_expanded", [])
+                if not expanded or not crate:
+                    return float("nan")
+                return statistics.median(expanded) - statistics.median(crate)
+
+            print(f"\n-- the rate, over {span} row groups --")
+            for shape, rate in (
+                ("the crate's read", (
+                    statistics.median(measurements[last]["crate_expanded"])
+                    - statistics.median(measurements[first]["crate_expanded"])
+                ) / span),
+                ("the engine's comparison, over the values",
+                 (comparison(last) - comparison(first)) / span),
+            ):
+                print(f"{shape:<52}{rate:>20.3f}")
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -1178,6 +1293,30 @@ def main() -> int:
     loaded_costs = [(name, runs) for name, runs in loaded_costs if runs]
     if loaded_costs:
         print_row_group_cost(loaded_costs)
+
+    # Spec 022's dictionary probe: the same read in two shapes, the new code
+    # and the old one, measured back to back on the same host.
+    dictionary_files = [
+        ("A", "dictionary-cost-6-run*.json"),
+        ("B", "dictionary-cost-12-run*.json"),
+        ("C", "dictionary-cost-24-run*.json"),
+    ]
+    loaded_dictionary = [
+        (name, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
+        for name, pattern in dictionary_files
+    ]
+    loaded_dictionary = [(name, runs) for name, runs in loaded_dictionary if runs]
+    dictionary_before = [
+        (name, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
+        for name, pattern in [
+            ("A", "dictionary-cost-before-6-run*.json"),
+            ("B", "dictionary-cost-before-12-run*.json"),
+            ("C", "dictionary-cost-before-24-run*.json"),
+        ]
+    ]
+    dictionary_before = [(name, runs) for name, runs in dictionary_before if runs]
+    if loaded_dictionary:
+        print_dictionary_cost(loaded_dictionary, dictionary_before)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))

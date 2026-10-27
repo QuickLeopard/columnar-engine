@@ -624,18 +624,7 @@ fn evaluate_dictionary(
     let keys = array.keys();
     let rows = keys.len();
     let indices: &[i32] = keys.values();
-    let mut mask = vec![0u64; rows.div_ceil(64)];
-    for (chunk_index, chunk) in indices.chunks(64).enumerate() {
-        let mut word = 0u64;
-        for (bit, &key) in chunk.iter().enumerate() {
-            let entry = usize::try_from(key).unwrap_or(usize::MAX);
-            let matched = u64::from(distinct.get(entry).copied().unwrap_or(false));
-            word |= matched << bit;
-        }
-        if let Some(slot) = mask.get_mut(chunk_index) {
-            *slot = word;
-        }
-    }
+    let mut mask = crate::dictionary::map_mask(&distinct, indices, rows);
     // A NULL row is NULL regardless of what its dictionary entry says, so the
     // validity mask is applied to the answer rather than to the lookup.
     if let Some(validity) = validity_of(array) {
@@ -669,7 +658,7 @@ fn evaluate_string(array: &StringArray, comparisons: &[Comparison]) -> Result<Ro
         let value = array.value(row);
         let mut matched = true;
         for (op, bound) in &bounds {
-            if !compare_str(value, *op, bound) {
+            if !crate::dictionary::compare_str(value, *op, bound) {
                 matched = false;
                 break;
             }
@@ -702,7 +691,7 @@ fn evaluate_large_string(
         let value = array.value(row);
         let mut matched = true;
         for (op, bound) in &bounds {
-            if !compare_str(value, *op, bound) {
+            if !crate::dictionary::compare_str(value, *op, bound) {
                 matched = false;
                 break;
             }
@@ -714,29 +703,24 @@ fn evaluate_large_string(
 
 /// The match of every distinct value of a dictionary, in dictionary order.
 fn string_matches(values: &dyn Array, comparisons: &[Comparison]) -> Result<Vec<bool>, ArrowError> {
+    // The bounds are resolved **once**, before the loop over the values: a
+    // comparison per distinct value must not match on an enum per distinct
+    // value.
+    let mut bounds: Vec<(ComparisonOp, &str)> = Vec::with_capacity(comparisons.len());
+    for comparison in comparisons {
+        let ScalarValue::Utf8(bound) = &comparison.threshold else {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "the pushdown does not implement the dictionary value type `{}`",
+                values.data_type()
+            )));
+        };
+        bounds.push((comparison.op, bound.as_str()));
+    }
     if let Some(array) = values.as_any().downcast_ref::<StringArray>() {
-        return Ok((0..array.len())
-            .map(|row| {
-                comparisons.iter().all(|comparison| {
-                    let ScalarValue::Utf8(bound) = &comparison.threshold else {
-                        return false;
-                    };
-                    compare_str(array.value(row), comparison.op, bound)
-                })
-            })
-            .collect());
+        return Ok(crate::dictionary::distinct_matches(array.iter(), &bounds));
     }
     if let Some(array) = values.as_any().downcast_ref::<LargeStringArray>() {
-        return Ok((0..array.len())
-            .map(|row| {
-                comparisons.iter().all(|comparison| {
-                    let ScalarValue::Utf8(bound) = &comparison.threshold else {
-                        return false;
-                    };
-                    compare_str(array.value(row), comparison.op, bound)
-                })
-            })
-            .collect());
+        return Ok(crate::dictionary::distinct_matches(array.iter(), &bounds));
     }
     Err(ArrowError::InvalidArgumentError(format!(
         "the pushdown does not implement the dictionary value type `{}`",
@@ -747,21 +731,6 @@ fn string_matches(values: &dyn Array, comparisons: &[Comparison]) -> Result<Vec<
 /// Whether the threshold is a NaN.
 fn is_nan_threshold(threshold: &ScalarValue) -> bool {
     matches!(threshold, ScalarValue::Float64(value) if value.is_nan())
-}
-
-/// Compares two strings, byte-wise, as `DuckDB`'s binary collation does.
-///
-/// Rust's `str` ordering is byte-wise lexicographic, so the engine and
-/// `DuckDB` agree on the same bytes.
-fn compare_str(value: &str, op: ComparisonOp, threshold: &str) -> bool {
-    match op {
-        ComparisonOp::Lt => value < threshold,
-        ComparisonOp::LtEq => value <= threshold,
-        ComparisonOp::Gt => value > threshold,
-        ComparisonOp::GtEq => value >= threshold,
-        ComparisonOp::Eq => value == threshold,
-        ComparisonOp::Ne => value != threshold,
-    }
 }
 
 /// The error for a threshold that does not match the column's type.

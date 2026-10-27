@@ -252,6 +252,16 @@ probe-batch-size data="data/lineitem.parquet" out="bench-results/batch-size.json
 probe-operators data="data/lineitem.parquet" build="data/orders.parquet" out="bench-results/operator-probe-after.json":
     cargo run --release -p columnar-engine --example operator_probe -- --data {{data}} --build {{build}} --out {{out}}
 
+# Count the **dictionary**: the same read in two shapes, the reader expanding
+# the dictionary-encoded columns and the reader keeping them, with the
+# engine's own comparison measured on top of each.
+#
+# The probe asks the engine for the batch size it would use for the file, and
+# it checks that the two shapes answer the same question **before** it times
+# either of them.
+probe-dictionary data="data/lineitem.parquet" out="bench-results/dictionary-cost-6-run1.json":
+    cargo run --release -p columnar-engine --example dictionary_cost_probe -- {{data}} --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

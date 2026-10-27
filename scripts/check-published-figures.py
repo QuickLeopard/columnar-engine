@@ -124,6 +124,7 @@ SPEC020_CHECKS = [
     ("PERF.md", "the last set's duckdb sort-topk resident", "duckdb", "-", "resident", "sort-topk", 1),
 ]
 
+
 # (document, label, report, measurement, places)
 #
 # Spec 021's instrument is the **operator probe**, and its figures are the
@@ -625,6 +626,113 @@ def avx2_figure(runs: list[dict], flavour: str, key: str) -> float | None:
     return statistics.median(values) if values else None
 
 
+# Spec 022's dictionary probe: the same read in two shapes -- the reader
+# expanding the dictionary-encoded columns, and the reader keeping them --
+# with the engine's own comparison measured on top of each.
+#
+# The keys are `measurements.<key>` for a row of the shapes, `columns.<key>`
+# for a row of the per-column table, and `dictionary.<key>` for the
+# alternative's own shape. The `before` set is the same probe against the code
+# the increment replaced, measured back to back on the same host.
+DICTIONARY_COST_CHECKS = [
+    ("PERF.md", "the crate's read, expanded, 6 groups", "measurements",
+     "crate_expanded", "A", 2),
+    ("PERF.md", "the crate's read, expanded, 12 groups", "measurements",
+     "crate_expanded", "B", 2),
+    ("PERF.md", "the crate's read, expanded, 24 groups", "measurements",
+     "crate_expanded", "C", 2),
+    ("PERF.md", "the crate's read, kept, 6 groups", "measurements",
+     "crate_kept", "A", 2),
+    ("PERF.md", "the crate's read, kept, 24 groups", "measurements",
+     "crate_kept", "C", 2),
+    ("PERF.md", "the engine's read, over the values, 6 groups", "measurements",
+     "engine_expanded", "A", 2),
+    ("PERF.md", "the engine's read, over the values, 24 groups", "measurements",
+     "engine_expanded", "C", 2),
+    ("PERF.md", "the engine's read, over the distinct, 6 groups", "measurements",
+     "engine_kept", "A", 2),
+    ("PERF.md", "the engine's own read, 6 groups", "measurements",
+     "engine_read", "A", 2),
+    ("PERF.md", "l_quantity, expanded", "columns", "crate_expanded_quantity", "A", 2),
+    ("PERF.md", "l_quantity, kept", "columns", "crate_kept_quantity", "A", 2),
+    ("PERF.md", "l_discount, expanded", "columns", "crate_expanded_discount", "A", 2),
+    ("PERF.md", "l_discount, kept", "columns", "crate_kept_discount", "A", 2),
+    ("PERF.md", "l_shipdate, expanded", "columns", "crate_expanded_shipdate", "A", 2),
+    ("PERF.md", "l_shipdate, kept", "columns", "crate_kept_shipdate", "A", 2),
+    ("PERF.md", "the distinct values, compared, 6 groups", "dictionary",
+     "distinct", "A", 2),
+    ("PERF.md", "the map, 6 groups", "dictionary", "map", "A", 2),
+]
+
+DICTIONARY_COST_BEFORE_CHECKS = [
+    ("PERF.md", "the old crate's read, expanded, 6 groups", "measurements",
+     "crate_expanded", "A", 2),
+    ("PERF.md", "the old crate's read, expanded, 24 groups", "measurements",
+     "crate_expanded", "C", 2),
+    ("PERF.md", "the old crate's read, kept, 6 groups", "measurements",
+     "crate_kept", "A", 2),
+    ("PERF.md", "the old engine's read, over the values, 6 groups", "measurements",
+     "engine_expanded", "A", 2),
+    ("PERF.md", "the old engine's read, over the values, 24 groups", "measurements",
+     "engine_expanded", "C", 2),
+    ("PERF.md", "the old engine's read, over the distinct, 6 groups", "measurements",
+     "engine_kept", "A", 2),
+    ("PERF.md", "the old engine's own read, 6 groups", "measurements",
+     "engine_read", "A", 2),
+]
+
+# The engine's own cost over the crate's read: the difference between the two
+# shapes, and the rate of each over the eighteen row groups between the
+# six-row-group file and the twenty-four-row-group one.
+DICTIONARY_COST_DERIVED_CHECKS = [
+    ("PERF.md", "the engine's comparison, over the values", "comparison", "A", 2),
+    ("PERF.md", "the old engine's comparison, over the values", "comparison", "A", 2),
+]
+
+DICTIONARY_COST_SLOPE_CHECKS = [
+    ("PERF.md", "the crate's read's cost a row group", "crate_expanded", 2),
+    ("PERF.md", "the engine's comparison's cost a row group", "comparison", 2),
+]
+
+def dictionary_cost_figure(
+    files: dict[str, list[dict]], kind: str, key: str, which: str
+) -> float | None:
+    """The median of one figure in the dictionary cost reports."""
+    values: list[float] = []
+    for run in files.get(which, []):
+        section = run.get(f"{kind}_ms", {})
+        if key in section:
+            values.append(float(section[key]))
+    return statistics.median(values) if values else None
+
+
+def dictionary_cost_comparison(files: dict[str, list[dict]], which: str) -> float | None:
+    """The engine's own cost over the crate's read."""
+    expanded = dictionary_cost_figure(files, "measurements", "engine_expanded", which)
+    crate = dictionary_cost_figure(files, "measurements", "crate_expanded", which)
+    if expanded is None or crate is None:
+        return None
+    return expanded - crate
+
+
+def dictionary_cost_slope(
+    files: dict[str, list[dict]], kind: str, first: str, last: str
+) -> float | None:
+    """The cost of one more row group, in milliseconds."""
+    span = 18
+    if kind == "comparison":
+        low = dictionary_cost_comparison(files, first)
+        high = dictionary_cost_comparison(files, last)
+    else:
+        low = dictionary_cost_figure(files, "measurements", kind, first)
+        high = dictionary_cost_figure(files, "measurements", kind, last)
+    if low is None or high is None:
+        return None
+    return (high - low) / span
+
+
+
+
 def main() -> int:
     if not REPORTS:
         print("no comparison reports in bench-results/", file=sys.stderr)
@@ -637,7 +745,9 @@ def main() -> int:
             runs.append(json.load(handle))
 
     agg = collect(runs)
-    texts = {doc.name: doc.read_text() for doc in DOCS}
+    # The typographic minus sign is normalised to the ASCII one, so that a
+    # negative figure can be checked the way every other figure is.
+    texts = {doc.name: doc.read_text().replace("\u2212", "-") for doc in DOCS}
 
     failures: list[str] = []
     for doc, label, system, mode, metric, query, places in CHECKS:
@@ -1098,6 +1208,107 @@ def main() -> int:
             else:
                 print(f"ok  {doc:<10} {label:<46} {rendered}")
 
+    # Spec 022's dictionary probe: the two shapes of the read, the new code
+    # and the old one.
+    dictionary_files = {
+        "A": load_reports("dictionary-cost-6-run*.json"),
+        "B": load_reports("dictionary-cost-12-run*.json"),
+        "C": load_reports("dictionary-cost-24-run*.json"),
+    }
+    dictionary_before = {
+        "A": load_reports("dictionary-cost-before-6-run*.json"),
+        "B": load_reports("dictionary-cost-before-12-run*.json"),
+        "C": load_reports("dictionary-cost-before-24-run*.json"),
+    }
+    if any(dictionary_files.values()):
+        for doc, label, kind, key, which, places in DICTIONARY_COST_CHECKS:
+            figure = dictionary_cost_figure(dictionary_files, kind, key, which)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the dictionary reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
+
+        for doc, label, kind, key, which, places in DICTIONARY_COST_BEFORE_CHECKS:
+            figure = dictionary_cost_figure(dictionary_before, kind, key, which)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the before reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
+
+        for doc, label, kind, which, places in DICTIONARY_COST_DERIVED_CHECKS:
+            files = dictionary_before if "old" in label else dictionary_files
+            figure = dictionary_cost_comparison(files, which)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the dictionary reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
+
+        for doc, label, kind, places in DICTIONARY_COST_SLOPE_CHECKS:
+            figure = dictionary_cost_slope(dictionary_files, kind, "A", "C")
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the dictionary reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
+
+    # Spec 023's scan probe: the join's scan, taken apart.
+    scan_runs = load_reports("scan-cost-run*.json")
+    if scan_runs:
+        for doc, label, key, places in SCAN_COST_CHECKS:
+            figure = scan_cost_figure(scan_runs, key)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the scan reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
+
+        for doc, label, places in SCAN_COST_DERIVED_CHECKS:
+            figure = scan_cost_copy(scan_runs)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the scan reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
+
     if RLE_EXPANSION_REPORTS:
         expansion_runs = [json.loads(path.read_text()) for path in RLE_EXPANSION_REPORTS]
         for doc, label, key, places in RLE_EXPANSION_CHECKS:
@@ -1193,7 +1404,8 @@ def main() -> int:
     print(
         f"\nall published figures agree with the committed reports: "
         f"{len(REPORTS)} campaigns, {len(BEFORE_REPORTS)} before, "
-        f"{len(SPEC020_REPORTS)} of the last set, {len(PROBE_REPORTS)} probe, "
+        f"{len(SPEC020_REPORTS)} of the last set, "
+        f"{len(PROBE_REPORTS)} probe, "
         f"{len(STAGE_CHECKS)} of the plan output"
     )
     return 0

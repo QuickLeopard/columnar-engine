@@ -79,6 +79,7 @@
 #![allow(clippy::indexing_slicing)]
 
 pub mod dataset;
+pub mod dictionary;
 pub mod explain;
 pub mod memory;
 pub mod operators;

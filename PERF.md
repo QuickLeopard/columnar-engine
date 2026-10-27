@@ -1736,6 +1736,134 @@ spec 016 measured the mechanism and removed it. See
 
 ---
 
+### 3k. The dictionary, counted
+
+§3j left one cost unattributed. The real Q6's **three**-predicate shape rises by about **0.14 ms a
+row group** across the three files while the **two**-predicate shape is flat, and the two shapes
+differ by exactly one thing: `l_quantity`, the third predicate's column, which the Parquet writer
+fell back to dictionary-encoding. Two things could be paying that cost, and they have opposite
+answers — the **crate** rebuilding the column's dictionary per row group, or the **engine**
+comparing the dictionary's distinct values per row group. The first is a dependency and cannot be
+fixed here; the second is the engine's own.
+
+This increment separates them with an instrument rather than an argument.
+`crates/columnar-engine/examples/dictionary_cost_probe.rs` reads the same file in the same process
+and times the crate's decode and the engine's comparison separately, in **two shapes of the same
+read**: the **expanded** one, where the reader expands the dictionary-encoded columns into plain
+values and the engine compares the values, and the **kept** one, where the reader keeps the columns
+dictionary-encoded and the engine compares the **distinct values** and maps the answer back through
+the indices. The kept shape is the only way the engine could stop comparing every row, so it is
+measured rather than argued about.
+
+The probe reads at the **batch size the engine itself would use for the file** — **125,000** rows,
+asked of the engine rather than copied from a rule — so its shapes are the engine's shapes. And it
+checks that the two paths answer the same question before it times either: **both paths keep
+110,915 rows**.
+
+**The reading, and the engine's comparison on top of it** — the Q6 revenue query's three predicates,
+on the six-, twelve- and twenty-four-row-group files (`data/lineitem.parquet`,
+`data/lineitem-rg12.parquet`, `data/lineitem-rg24.parquet`), the medians of three campaigns each:
+
+| the shape | 6 groups | 12 groups | 24 groups |
+|---|---|---|---|
+| the crate's read, with the dictionaries expanded | 15.46 ms | 15.87 ms | 16.65 ms |
+| the crate's read, with the dictionaries **kept** | 282.25 ms | 285.01 ms | 287.73 ms |
+| the crate's read, and the engine's comparison over the values | 21.40 ms | 21.34 ms | 22.36 ms |
+| the crate's read, and the engine's comparison over the **distinct values** | 298.88 ms | 286.81 ms | 291.92 ms |
+| **the engine's own read** | 21.40 ms | 21.25 ms | 22.62 ms |
+
+**And the alternative is not a little slower: it is 18.3×.** On the six-row-group file the kept
+read is 282.25 ms against the expanded read's 15.46 ms, and with the engine's comparison on top of
+each the whole path is 298.88 ms against 21.40 ms — **14.0×**.
+
+**The mechanism is in the reader, and it is measured.** The crate hands back a **new** dictionary
+array for every batch: **0 of 23** consecutive batches share the same array, on all three files and
+in both versions of the code. The probe checks this on `l_shipdate`, the one column the file keeps
+as a dictionary, and it checks it by pointer identity rather than by comparing the values. So
+"compare the distinct values once a row group" is impossible with this reader: the engine cannot
+know the dictionary has not changed, because the reader gives it a different one every time. **The
+alternative is closed, and the expanded shape is kept.**
+
+**Per column, the same story and one exception.** The six-row-group file, one column at a time:
+
+| column | expanded | kept | |
+|---|---|---|---|
+| `l_quantity` | 5.09 ms | **177.47 ms** | **34.9× slower** |
+| `l_discount` | 3.75 ms | **99.35 ms** | **26.5× slower** |
+| `l_shipdate` | 6.38 ms | 6.32 ms | **unchanged** — the file's schema already says dictionary |
+
+`l_shipdate` is the one column the generator wrote as a dictionary, so the kept reader hands it
+over as a dictionary either way, and keeping it costs nothing. That is the one case where the
+dictionary is free, and it is the exception that proves the rule: **the price of the kept shape is
+the crate building a dictionary it was not asked to keep.**
+
+**And the engine's own work over the dictionaries is not what makes the kept shape slow.** The
+probe times the two halves of the engine's dictionary path on their own, over the whole file:
+
+| | 6 groups | 12 groups | 24 groups |
+|---|---|---|---|
+| the distinct values, compared | 1.43 ms | 1.33 ms | 1.37 ms |
+| the map, from the answer to the rows | 7.27 ms | 7.16 ms | 7.19 ms |
+
+The kept shape's cost is in the crate's read — 282.25 ms of it, before the engine compares anything
+at all.
+
+**And the residual is the crate's.** The engine's comparison — its own work, over the crate's read —
+does not grow with the row-group count at all:
+
+| | 6 groups | 12 groups | 24 groups | |
+|---|---|---|---|---|
+| the crate's read, with the dictionaries expanded | 15.46 ms | 15.87 ms | 16.65 ms | **0.07 ms a row group** |
+| the engine's comparison on top of it | 5.94 ms | 5.47 ms | 5.71 ms | **−0.01 ms a row group** |
+
+So the crate's read carries the rate and the engine's comparison is **flat**: the per-row-group
+cost §3j could not attribute is the crate's, and the engine's share of it does not grow with the
+file.
+
+**The before-and-after is published, and it is not a speed-up.** The old code — commit `3d5b220` —
+was measured back to back with the new one, on this host, on the same file, with the same probe:
+
+| the shape, old code | 6 groups | 12 groups | 24 groups |
+|---|---|---|---|
+| the crate's read, with the dictionaries expanded | 15.90 ms | 15.44 ms | 16.70 ms |
+| the crate's read, with the dictionaries **kept** | 289.42 ms | 275.37 ms | 284.99 ms |
+| the crate's read, and the engine's comparison over the values | 21.22 ms | 20.94 ms | 22.17 ms |
+| the crate's read, and the engine's comparison over the **distinct values** | 297.32 ms | 291.81 ms | 293.97 ms |
+| the engine's own read | 21.48 ms | 20.92 ms | 22.17 ms |
+
+The engine's comparison on the six-row-group file was **5.32 ms** before and is **5.94 ms** after.
+The per-campaign values behind them are 5.32, 5.48 and 5.27 before, and 5.33, 5.50 and 5.94 after:
+the two sets overlap, and the change moved the number by less than the spread of the measurement.
+**There is no measurable win here, and the increment does not claim one.** What the change was is a
+decomposition — the dictionary map and the string comparison were written **twice**, once in the
+pushdown and once in the filter — and the work each batch does is the same work.
+
+**And the engine's own read path adds nothing measurable over the crate's read plus its
+comparison.** The engine's own read is 21.40 ms on the six-row-group file, and the crate's read
+plus the engine's comparison is 15.46 ms + 5.94 ms = 21.40 ms. The two are the same number.
+
+**What the increment changed, and what it did not.** It changed one thing in the engine: the
+dictionary path is now **one implementation**, in `crates/columnar-engine/src/dictionary.rs`, shared
+by the pushdown and the filter — the bounds resolved once before the loop over the values rather
+than a match on an `enum` per distinct value, and the map still branchless, a word at a time. The
+pushdown and the filter cannot drift apart, and the differential suite holds them to the same
+answer, row for row; a NULL still never matches, in either path.
+
+It did not change the crate's dictionary reader. It is a dependency, and the measurement says the
+engine cannot have the dictionary cheaply, so the residual that belongs to it is published as a
+fact about the reader rather than fixed here. The alternative — asking the crate to keep the
+dictionaries — is measured and closed.
+
+All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **7.0–8.8**
+while the campaigns ran. The raw reports are
+`bench-results/dictionary-cost-{6,12,24}-run{1,2,3}.json` and
+`bench-results/dictionary-cost-before-{6,12,24}-run{1,2,3}.json`, and `python3 scripts/medians.py`
+derives the tables above from them. See
+[ADR-0029](docs/adr/0029-the-dictionary-counted.md).
+
+---
+
+
 ## 4. The defects the increments found
 
 Twenty-five, all found by measurement, all recorded with their before-and-after numbers in the ADRs
