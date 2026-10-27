@@ -32,24 +32,24 @@ without re-running a benchmark. See [`bench-results/README.md`](bench-results/RE
 | **Statistics** | The **median of three full campaigns** of `just compare` and of `just sweep`, each of which takes the median of five timed iterations. The set published before this one is committed beside it as `bench-results/compare-spec020-run{1,2,3}.json`, and the code it replaced was re-measured on this host as `bench-results/compare-before-run{1,2,3}.json`, so **every** figure in this file — the old ones and the new ones — is derived from a committed report by `python3 scripts/medians.py`. §1's kernel A/B is the median of **six** campaigns of eight iterations. §1b's x86-64 set is the median of **3 to 11** campaigns per processor. The raw reports are committed in `bench-results/`, and `python3 scripts/medians.py` re-derives every table in this file from them. The spread is published where it matters. |
 | **Warm/cold** | Stated per table. "Cold" means the Parquet file is read as part of the measurement. |
 | **Revisions** | Every figure is the median of at least 3 campaigns. The kernel's median reproduces to within 6% across two independent campaign sets; the per-flavor spread is much wider, because this machine is shared and a run in which the whole machine stalls drags every flavor down with it. |
-| **The host** | **Shared, and quieter than the set it replaces.** The load average was **5.53–7.17** while this campaign ran, against **9.8–13.2** for the set it replaces — the machine was quieter, and every figure in the tables below moved with it. The set before this one is committed, so the drift is **derived and published** rather than asserted, and the code's own contribution is measured **against the old code on this same host** ([§2h](#2h-the-hot-paths-taken-apart)). |
+| **The host** | **Shared, and busier at the start of the campaign than the set it replaces.** The load average was **3.6–8.9** while these campaigns ran, against **5.53–7.17** for the set it replaces — the machine started busy and settled as the campaigns went on, and every figure in the tables below moved with it. The set before this one is committed, so the drift is **derived and published** rather than asserted, and the code's own contribution is measured **against the old code on this same host** ([§2h](#2h-the-hot-paths-taken-apart)). |
 
 **This set replaced the one before it, and the machine is the reason most of the figures moved.** The
-set published before this one ran while the machine's load average was **9.8–13.2**; this one ran at
-**5.53–7.17**. The machine was quieter, so the engine's figures fell and so did the incumbents'.
-The drift is **in both systems**, and it is not hidden: the six single-table queries that this
-increment did not touch are the **control**, and in the cold lazy path they moved by **−5.8% to 0%**
-between the two sets while `DuckDB`'s cold `q6` moved from **34.0 ms** to **32.0 ms**
-and `Polars`' from **196.3 ms** to **191.4 ms**.
+set published before this one ran while the machine's load average was **5.53–7.17**; this one ran at
+**3.6–8.9** — busier when it started, quieter when it ended. The drift is **in both systems**, and it
+is not hidden: the seven queries this
+increment did not touch are the **control**, and in the cold lazy path they moved by **0% to −10.4%**
+between the two sets while `DuckDB`'s cold `q6` moved from **32.0 ms** to **33.0 ms**
+and `Polars`' from **191.4 ms** to **192.1 ms**.
 
-**Two figures moved for a different reason, and they are the two this increment is about.** The join's
-probe and the sort's bounded heap were taken apart, measured, and rewritten. So that the code's
+**One figure moved for a different reason, and it is the one this increment is about.** The join's
+probe was taken apart, measured, and moved **inside the scan**, so that the rows the join discards
+are never copied. So that the code's
 share is separated from the host's, the **old code was re-measured on this same host**, back to back,
 in its own three campaigns — committed as `bench-results/compare-before-run{1,2,3}.json`. The three
 measurements are in [§2h](#2h-the-hot-paths-taken-apart), and the control sits beside them:
-in the cold lazy path the six queries this increment did not touch moved by **0% to +14.0%** between
-the two host-matched sets, while the join moved by **−45.0%** cold and **−73.4%** resident, and the
-sort by **−5.9%** cold and **−44.2%** resident.
+in the cold lazy path the seven queries this increment did not touch moved by **0% to −10.4%** between
+the two host-matched sets, while the join moved by **−12.5%** cold and **−8.0%** resident.
 
 What the change does **not** do is move the comparisons: every table here measures the engine and
 every incumbent at the same moment, on the same file, at the same thread count, so the *ratios* are
@@ -366,15 +366,28 @@ The like-for-like comparison: all three systems hold the data in memory and answ
 | query | **engine** | duckdb | polars | datafusion | |
 |---|---|---|---|---|---|
 | `scan` | **0.0 ms** | 1.0 ms | 0.2 ms | 0.9 ms | engine wins |
-| `filter-numeric` | **2.7 ms** | 11.0 ms | 7.1 ms | 9.3 ms | engine wins |
-| `filter-string` | **3.4 ms** | 31.0 ms | 36.6 ms | 15.3 ms | engine wins |
-| `filter-range` | **6.2 ms** | 19.0 ms | 10.3 ms | 10.7 ms | engine wins |
-| `q6` | **9.6 ms** | 45.0 ms | 71.8 ms | 25.1 ms | engine wins, by 4.7× |
-| `q6-revenue` | **15.1 ms** | 46.0 ms | 71.0 ms | 64.0 ms | engine wins, by 3.0× |
-| `join-orders` | **30.7 ms** (29.9–30.8) | 35.0 ms (35.0–35.0) | 80.0 ms (76.6–82.0) | 88.2 ms (85.2–89.6) | engine wins — **and it reads the build side inside the clock** |
-| `sort-topk` | 11.0 ms (9.6–11.0) | **3.0 ms** (3.0–4.0) | 1347.6 ms (1303.0–1380.7) | 3.6 ms (3.5–3.6) | engine is 3.7× behind DuckDB, 122× ahead of Polars |
+| `filter-numeric` | **2.5 ms** | 12.0 ms | 9.6 ms | 10.0 ms | engine wins |
+| `filter-string` | **3.6 ms** | 31.0 ms | 38.5 ms | 15.8 ms | engine wins |
+| `filter-range` | **6.7 ms** | 18.0 ms | 10.8 ms | 9.9 ms | engine wins |
+| `q6` | **9.9 ms** | 44.0 ms | 70.3 ms | 23.9 ms | engine wins, by 4.4× |
+| `q6-revenue` | **14.9 ms** | 45.0 ms | 69.2 ms | 61.3 ms | engine wins, by 3.0× |
+| `join-orders` | **29.9 ms** (29.4–33.0) | 34.0 ms (33.0–38.0) | 79.0 ms (77.2–81.8) | 83.9 ms (81.4–86.9) | engine wins — **and it reads the build side inside the clock** |
+| `sort-topk` | 11.1 ms (10.5–11.2) | **3.0 ms** (3.0–4.0) | 1277.9 ms (1255.3–1443.8) | 4.0 ms (3.7–4.3) | engine is 3.7× behind DuckDB, 115× ahead of Polars |
 
-**The set before this one, for the same rows — every figure in the table above moved:**
+**The set this one replaces, for the same rows — every figure in the table above moved:**
+
+| query | **engine** | duckdb | polars | datafusion |
+|---|---|---|---|---|
+| `scan` | **0.0 ms** | 1.0 ms | 0.2 ms | 0.9 ms |
+| `filter-numeric` | **2.7 ms** | 11.0 ms | 7.1 ms | 9.3 ms |
+| `filter-string` | **3.4 ms** | 31.0 ms | 36.6 ms | 15.3 ms |
+| `filter-range` | **6.2 ms** | 19.0 ms | 10.3 ms | 10.7 ms |
+| `q6` | **9.6 ms** | 45.0 ms | 71.8 ms | 25.1 ms |
+| `q6-revenue` | **15.1 ms** | 46.0 ms | 71.0 ms | 64.0 ms |
+| `join-orders` | 30.7 ms (29.9–30.8) | 35.0 ms (35.0–35.0) | 80.0 ms (76.6–82.0) | 88.2 ms (85.2–89.6) |
+| `sort-topk` | 11.0 ms (9.6–11.0) | **3.0 ms** (3.0–4.0) | 1347.6 ms (1303.0–1380.7) | 3.6 ms (3.5–3.6) |
+
+**And the set before that one:**
 
 | query | **engine** | duckdb | polars | datafusion |
 |---|---|---|---|---|
@@ -387,15 +400,16 @@ The like-for-like comparison: all three systems hold the data in memory and answ
 | `join-orders` | 138.1 ms (134.1–148.1) | 41.0 ms (37.0–42.0) | 86.2 ms (84.2–89.4) | 93.5 ms (91.5–94.6) |
 | `sort-topk` | 23.6 ms (23.5–24.4) | **4.0 ms** (3.0–4.0) | 1452.7 ms (1405.2–1473.4) | 4.5 ms (4.2–4.7) |
 
-**The engine wins all six of the queries that were here before this increment, against a Rust peer on
-the same Arrow stack.** The `datafusion` column is `DataFusion` 49.0.2 reading the same Parquet
-through Arrow 55.2.0, one thread, in the same harness.
+**The engine wins seven of the eight queries in that table, against a Rust peer on the same Arrow
+stack.** The `datafusion` column is `DataFusion` 49.0.2 reading the same Parquet
+through Arrow 55.2.0, one thread, in the same harness. The one it does not win is the sort, and that is
+published as a loss.
 
 **The sort is a loss, and it is published as one.** The engine's
-resident `sort-topk` is **11.0 ms** — the median of a **9.6–11.0 ms** range across the three
-campaigns — against `DuckDB`'s **3.0 ms** and the `DataFusion` peer's **3.6 ms**: the engine is
-**3.7× behind DuckDB** and **3.1× behind the peer** on this query. And it is **122× ahead of
-`Polars`**, whose **1347.6 ms** (1303.0–1380.7 ms) is the price of sorting six million rows where
+resident `sort-topk` is **11.1 ms** — the median of a **10.5–11.2 ms** range across the three
+campaigns — against `DuckDB`'s **3.0 ms** and the `DataFusion` peer's **4.0 ms**: the engine is
+**3.7× behind DuckDB** and **2.8× behind the peer** on this query. And it is **115× ahead of
+`Polars`**, whose **1277.9 ms** (1255.3–1443.8 ms) is the price of sorting six million rows where
 the engine keeps a heap of ten — the plan says so: `sort: l_extendedprice DESC LIMIT 10 (10 rows
 kept)`. The same query is published cold in
 [§2b](#2b-cold--read-the-parquet-file-and-answer-in-one-go), where the engine is behind DuckDB and
@@ -407,23 +421,37 @@ table, `Polars` and the peer have registered both relations — while the engine
 **reads the build side inside the clock**: the join's build side is a file, and the engine does not
 hold it in memory before the query. The engine therefore does **more** work inside its clock than the
 incumbents do inside theirs. Spec 020 withheld the figure for exactly this reason; it is published
-now because the asymmetry **works against the engine** and the engine wins anyway — **30.7 ms**
-(29.9–30.8 ms) against `DuckDB`'s **35.0 ms** (35.0–35.0 ms), the peer's **88.2 ms** and `Polars`'
-**80.0 ms**. A figure that cannot be made fairly is named, not published; a figure that can be made
-*unfairly in the engine's favour* is published with the unfairness written down beside it.
+now because the asymmetry **works against the engine** and the engine wins anyway — **29.9 ms**
+(29.4–33.0 ms) against `DuckDB`'s **34.0 ms** (33.0–38.0 ms), the peer's **83.9 ms** (81.4–86.9 ms)
+and `Polars`' **79.0 ms** (77.2–81.8 ms). A figure that cannot be made fairly is named, not
+published; a figure that can be made *unfairly in the engine's favour* is published with the
+unfairness written down beside it.
 
-**What moved, and why.** The six queries this increment did not touch are the **control**, and they
-all moved because **the machine was quieter**: the engine's resident `q6` fell from **11.8 ms** to
-**9.6 ms**, `DuckDB`'s from **50.0 ms** to **45.0 ms**, `Polars`' from **73.5 ms** to **71.8 ms** —
-the same direction, the same order of magnitude, on a host whose load average fell from 9.8–13.2 to
-5.53–7.17. The two figures that moved for the **code's** reason are the join and the sort, and they
-are separated from the host's drift by measuring the old code on this same host: see
+**What moved, and why.** The figures in this table moved by a few percent, in both directions, and
+**the machine's share of them is the whole of it**: the engine's resident `q6` rose from **9.6 ms** to
+**9.9 ms**, `DuckDB`'s fell from **45.0 ms** to **44.0 ms**, `Polars`' from **71.8 ms** to
+**70.3 ms** — no common direction, and the campaigns ran on a **busier** host than the set they
+replace. The one figure that moved for the **code's** reason is the **join's cold** figure, and it is
+separated from the host's drift by measuring the old code on this same host, back to back: see
 [§2h](#2h-the-hot-paths-taken-apart).
 
 ### 2b. Cold — read the Parquet file and answer in one go
 
 The honest comparison: every system reads the file and answers in one go, at the same thread count,
 and every answer is cross-checked against the engine's.
+
+| query | **engine** (eager) | **engine** (lazy) | duckdb | polars | datafusion |
+|---|---|---|---|---|---|
+| `scan` | 554.3 ms | **0.1 ms** | 1.0 ms | 1.0 ms | 1.2 ms |
+| `filter-numeric` | 544.2 ms | **4.7 ms** | 22.0 ms | 42.7 ms | 15.2 ms |
+| `filter-string` | 546.3 ms | **9.6 ms** | 21.0 ms | 161.3 ms | 24.2 ms |
+| `filter-range` | 556.6 ms | 16.3 ms | 31.0 ms | **14.9 ms** | 20.0 ms |
+| `q6` | 547.9 ms | **15.3 ms** | 33.0 ms | 192.1 ms | 36.6 ms |
+| `q6-revenue` | 571.6 ms | **57.3 ms** | 68.0 ms | 193.9 ms | 111.9 ms |
+| `join-orders` | 563.2 ms | 91.8 ms (91.1–101.2) | **90.0 ms** (89.0–95.0) | 216.1 ms (210.8–219.1) | 163.5 ms (160.4–170.7) |
+| `sort-topk` | 544.3 ms | 45.6 ms (45.4–47.2) | **38.0 ms** (38.0–38.0) | 1301.9 ms (1283.4–1472.7) | 39.4 ms (38.2–41.2) |
+
+**The set this one replaces, for the same rows — every figure in the table above moved:**
 
 | query | **engine** (eager) | **engine** (lazy) | duckdb | polars | datafusion |
 |---|---|---|---|---|---|
@@ -436,7 +464,7 @@ and every answer is cross-checked against the engine's.
 | `join-orders` | 568.3 ms | 100.4 ms (100.4–102.4) | **93.0 ms** (91.0–94.0) | 221.2 ms (220.3–222.4) | 169.4 ms (166.5–169.8) |
 | `sort-topk` | 555.4 ms | 49.6 ms (45.6–50.6) | **38.0 ms** (37.0–40.0) | 1388.9 ms (1377.4–1400.6) | 39.1 ms (38.0–40.0) |
 
-**The set before this one, for the same rows — every figure in the table above moved:**
+**And the set before that one:**
 
 | query | **engine** (eager) | **engine** (lazy) | duckdb | polars | datafusion |
 |---|---|---|---|---|---|
@@ -449,24 +477,24 @@ and every answer is cross-checked against the engine's.
 | `join-orders` | 710.4 ms (700.7–719.1) | 216.1 ms (213.4–216.4) | **97.0 ms** (96.0–99.0) | 231.6 ms (227.4–237.9) | 177.3 ms (176.1–180.2) |
 | `sort-topk` | 583.8 ms (576.7–584.7) | 61.6 ms (59.4–62.7) | **40.0 ms** (39.0–42.0) | 1460.6 ms (1460.5–1484.5) | 41.3 ms (40.6–41.5) |
 
-**The join is still behind DuckDB, and the sort is still behind DuckDB and the peer — and both are
-much closer than they were.** The **join** — `lineitem` against `orders`, on the order key, with a
-date range on the build side — is **100.4 ms** for the engine (100.4–102.4 ms), cold, one thread, on
-the same `lineitem` file and the `orders` file beside it. `DuckDB` does it in **93.0 ms**
-(91.0–94.0 ms), the `DataFusion` peer in **169.4 ms** (166.5–169.8 ms) and `Polars` in **221.2 ms**
-(220.3–222.4 ms): the engine is **1.08× behind DuckDB**, **1.7× ahead of the peer**, and **2.2× ahead
-of `Polars`**. The **sort** — the ten largest `l_extendedprice` values — is **49.6 ms** for the
-engine (45.6–50.6 ms) against `DuckDB`'s **38.0 ms** (37.0–40.0 ms), the peer's **39.1 ms**
-(38.0–40.0 ms) and `Polars`' **1388.9 ms** (1377.4–1400.6 ms): the engine is **1.3× behind
-DuckDB**, **1.3× behind the peer**, and **28× ahead of `Polars`**.
+**The join is still behind DuckDB, and the sort is still behind DuckDB and the peer — and the join is
+much closer than it was.** The **join** — `lineitem` against `orders`, on the order key, with a
+date range on the build side — is **91.8 ms** for the engine (91.1–101.2 ms), cold, one thread, on
+the same `lineitem` file and the `orders` file beside it. `DuckDB` does it in **90.0 ms**
+(89.0–95.0 ms), the `DataFusion` peer in **163.5 ms** (160.4–170.7 ms) and `Polars` in **216.1 ms**
+(210.8–219.1 ms): the engine is **1.02× behind DuckDB**, **1.8× ahead of the peer**, and **2.4× ahead
+of `Polars`**. The **sort** — the ten largest `l_extendedprice` values — is **45.6 ms** for the
+engine (45.4–47.2 ms) against `DuckDB`'s **38.0 ms** (38.0–38.0 ms), the peer's **39.4 ms**
+(38.2–41.2 ms) and `Polars`' **1301.9 ms** (1283.4–1472.7 ms): the engine is **1.2× behind
+DuckDB**, **1.2× behind the peer**, and **28× ahead of `Polars`**.
 
 **Both are published as they are.** A hash join's build side has to be in memory before the probe
 side can be looked up, so the engine reads the `orders` file whole before it probes anything — and
 the incumbents do the same thing with their own build sides, which is why the **cold** numbers are
-the ones that can be compared at all. The join is behind DuckDB; the sort keeps a bounded heap of
-ten rows and DuckDB's sort is faster. Neither is hidden and neither is explained away: the numbers,
-the spreads and the conditions are in the table above, **the code's share of them is measured
-against the old code on this same host** in
+the ones that can be compared at all. The join is behind DuckDB by **1.8 ms**; the sort keeps a
+bounded heap of ten rows and DuckDB's sort is faster. Neither is hidden and neither is explained
+away: the numbers, the spreads and the conditions are in the table above, **the code's share of them
+is measured against the old code on this same host** in
 [§2h](#2h-the-hot-paths-taken-apart), and the defects this increment found are in
 [§4](#4-the-defects-the-increments-found). See
 [ADR-0028](docs/adr/0028-the-hot-paths-taken-apart.md).
@@ -476,7 +504,8 @@ against the old code on this same host** in
 Spec 001 recorded the eager path's cold `q6` at **1921 ms**. In the measurement set that followed
 it was **1181 ms** — 1.6× faster — and the cause was not the machine being quieter. It is a defect
 that spec 002 fixed on the way to building something else. (The eager path's figure in the
-current set is **541.3 ms**, where the set before this one had **586.2 ms**, and it moved again when
+current set is **547.9 ms**, where the set this one replaces had **541.3 ms** and the set before that
+had **586.2 ms**, and it moved again when
 spec 008 parallelised the decode — see the
 load table in §2d and [§2g](#2g-the-load-sweep--where-the-engines-biggest-number-was).)
 
@@ -500,7 +529,7 @@ its 2.6% spread — which is the control that makes the attribution credible: th
 path that copied and leaves the path that did not.
 
 Both columns are from the measurement set that preceded the pushdown rewrite, and they are the
-figures that set was made of. The eager path's current published figure is 541.3 ms and the
+figures that set was made of. The eager path's current published figure is 547.9 ms and the
 lazy path's is 15.3 ms. The lazy path moved because spec 003 rewrote the pushdown, and again when
 spec 016 aligned the reader's batch size with the file's row groups; the eager path moved twice
 more since — the dictionary fix above, and then spec 008's parallel decode, which is
@@ -557,14 +586,14 @@ What is left is throughput, and it decomposes cleanly:
 
 | | engine | duckdb | ratio |
 |---|---|---|---|
-| **Reader speed**, same job: decode all 16 columns into memory | **541.6 ms** | 1443.0 ms | **2.66× — the engine is ahead** |
-| **Architecture**: read 2 columns and push the predicate down | **15.3 ms** | 32.0 ms | **0.48× — the engine is ahead** |
+| **Reader speed**, same job: decode all 16 columns into memory | **554.3 ms** | 1367.0 ms | **2.47× — the engine is ahead** |
+| **Architecture**: read 2 columns and push the predicate down | **15.3 ms** | 33.0 ms | **0.46× — the engine is ahead** |
 
 **Both terms now favour the engine.** The reader-speed term was **1.58×** in DuckDB's favour when
 ADR-0008 recorded it; the shared decode path and the dictionary fix closed it; spec 008's parallel
-eager decode took it the other way, and the engine's full-file decode is now **2.7× faster** than
+eager decode took it the other way, and the engine's full-file decode is now **2.5× faster** than
 DuckDB's. The architecture term was the other way round — it was **2.6×** in DuckDB's favour until
-spec 009, and the engine's lazy scan of two columns is now **2.1× faster** than DuckDB's.
+spec 009, and the engine's lazy scan of two columns is now **2.2× faster** than DuckDB's.
 
 That is what the decomposition in [ADR-0015](docs/adr/0015-the-engine-keeps-the-mask.md) found.
 The architecture term was never about the architecture. It was about a **row-range list**: the
@@ -600,11 +629,11 @@ the first. That is the price of not building the range list, and it is paid in f
 
 | system | load (file → queryable) | subprocess wall clock |
 |---|---|---|
-| **engine** (eager, `Dataset::read_parquet`) | **541.6 ms** | — (a resident process) |
+| **engine** (eager, `Dataset::read_parquet`) | **554.3 ms** | — (a resident process) |
 | **engine** (lazy, `ParquetSource::open`) | **0.1 ms** | — (a resident process) |
-| duckdb (`CREATE TEMP TABLE ... AS SELECT *`) | 1443.0 ms | 38.1 ms |
-| polars (`pl.read_parquet`) | 1161.9 ms | 91.7 ms |
-| the Rust peer (`DataFusion`, reading the file where it lies) | 409.5 ms | 17.9 ms |
+| duckdb (`CREATE TEMP TABLE ... AS SELECT *`) | 1367.0 ms | 54.0 ms |
+| polars (`pl.read_parquet`) | 1147.0 ms | 285.4 ms |
+| the Rust peer (`DataFusion`, reading the file where it lies) | 389.9 ms | 42.5 ms |
 
 Several things are worth separating here.
 
@@ -612,32 +641,40 @@ Several things are worth separating here.
 is read during the query, which is why the lazy path has no resident form.
 
 **The eager path's decode is now 2.3× faster than it was, and it still decodes too much.** 231.6
-MiB in 0.54 s is about 429 MiB/s — the same work as the 275 MiB/s of an earlier set, which
+MiB in 0.55 s is about 418 MiB/s — the same work as the 275 MiB/s of an earlier set, which
 was measured on a host that was under another tenant's memory pressure. That is the `arrow-rs`
 Parquet reader going through every
 column of every row group and materialising all sixteen columns into the engine's own chunk
 format, eagerly, whether the query needs them or not. Spec 008 took the load from 1277.8 ms to
 550.2 ms; spec 016 gave the eager path the same derived batch rule the lazy path got — the batch is
 now the largest divisor of the row group's row count that fits under the limit, so no row group
-ends with a partial batch — and the figure has moved with the machine's state since: 844.6 ms two
-sets ago, **575.5 ms** in the set before this one and **541.6 ms** in this one. See
-[§2g](#2g-the-load-sweep--where-the-engines-biggest-number-was).
+ends with a partial batch — and the figure has moved with the machine's state since: 844.6 ms four
+sets ago, **575.5 ms** three sets ago, **541.6 ms** in the set this one replaces and **554.3 ms** in
+this one. See [§2g](#2g-the-load-sweep--where-the-engines-biggest-number-was).
 
 **The incumbents are pinned to one thread in the headline table.** `Polars` reads the file in
-1186 ms single-threaded, and the load sweep puts its fourteen-thread figure at about 205 ms. That
-**5.8×** is the price of comparing a one-thread engine against a one-thread engine. It is the right
+1147 ms single-threaded, and the load sweep puts its fourteen-thread figure at about 205 ms. That
+**5.6×** is the price of comparing a one-thread engine against a one-thread engine. It is the right
 price for the *single-threaded* comparison, but it belongs in the reader's column, not the query's —
 and §2e is where the other thread counts live. The other two loads moved the same way as DuckDB's:
-`Polars`' was **1186.2 ms** and is **1161.9 ms**, and the `DataFusion` peer's was **424.0 ms** and is
-**409.5 ms** — and the engine's own load went the same way, from **574.1 ms** to **541.6 ms**, which is
-what a shared machine looks like.
+`Polars`' was **1161.9 ms** and is **1147.0 ms**, and the `DataFusion` peer's was **409.5 ms** and is
+**389.9 ms** — and the engine's own load went the other way, from **541.6 ms** to **554.3 ms**, which
+is what a shared machine looks like.
 
 **The subprocess wall clock is not the query.** It is the tool's own overhead, outside its load and
-query timers: `DuckDB`'s command line client costs about 51 ms, and `Polars`' Python interpreter
-plus the `polars` import about 108 ms, which is more than most of the queries in the table above.
+query timers: `DuckDB`'s command line client costs about **21 ms**, and `Polars`' Python interpreter
+plus the `polars` import about **93 ms**, which is more than most of the queries in the table above.
 Both are excluded from the query figures — they come from the tools' own timers — and both are
-reported here. Both moved with the machine: `DuckDB`'s was **50.8 ms** in the set before this one
-and is **38.1 ms**, and `Polars`' was **108.0 ms** and is **91.7 ms**.
+reported here.
+
+**And this column was re-derived, because the figures it carried were not in any report.** The
+column is the `q6` query's **cold subprocess**, timed around the whole subprocess — the reports'
+own `elapsed_ms`, which is the harness's clock, against the tools' own `query_ms`. It said
+**38.1 ms**, **91.7 ms** and **17.9 ms** until now, and **no committed report carried any of them**:
+the same measurement over the set this one replaces is **52.2 ms**, **279.6 ms** and **41.8 ms**, and
+the figures in the table above are **54.0 ms**, **285.4 ms** and **42.5 ms**. The rule — the `q6`
+query's cold `elapsed_ms` — is the one the first published set used, and it is the one the guard
+reads the reports by now.
 
 ---
 
@@ -976,47 +1013,52 @@ reason: it consults nothing, so there is nothing for a filter to guard.
 old code was re-measured here, in its own three campaigns — committed as
 `bench-results/compare-before-run{1,2,3}.json` — so the host's drift is divided out:
 
-| | published set (old code, load 9.8–13.2) | old code, this host (load 2.95–4.22) | new code, this host (load 5.53–7.17) | the code's share |
-|---|---|---|---|---|
-| `join-orders` cold, lazy | 216.1 ms | 182.5 ms | 100.4 ms | **−45.0%** |
-| `join-orders` resident | 138.1 ms | 115.5 ms | 30.7 ms | **−73.4%** |
-| `sort-topk` cold, lazy | 61.6 ms | 52.7 ms | 49.6 ms | **−5.9%** |
-| `sort-topk` resident | 23.6 ms | 19.7 ms | 11.0 ms | **−44.2%** |
-| *`q6` cold, lazy — the control* | *15.8 ms* | *14.4 ms* | *15.3 ms* | *+6.3%* |
-| *`q6-revenue` cold, lazy — the control* | *60.6 ms* | *53.2 ms* | *59.8 ms* | *+12.4%* |
+| | the set before this one (load 9.8–13.2) | the set this one replaces (load 5.53–7.17) | old code, this host (load 3.6–8.9) | new code, this host (load 3.6–8.9) | the code's share |
+|---|---|---|---|---|---|
+| `join-orders` cold, lazy | 216.1 ms | 100.4 ms | 104.9 ms | **91.8 ms** | **−12.5%** |
+| `join-orders` resident | 138.1 ms | 30.7 ms | 32.5 ms | **29.9 ms** | −8.0% |
+| `sort-topk` cold, lazy | 61.6 ms | 49.6 ms | 50.9 ms | **45.6 ms** | −10.4% |
+| `sort-topk` resident | 23.6 ms | 11.0 ms | 10.8 ms | **11.1 ms** | +2.8% |
+| *`q6` cold, lazy — the control* | *15.8 ms* | *15.3 ms* | *16.2 ms* | *15.3 ms* | *−5.6%* |
+| *`q6-revenue` cold, lazy — the control* | *60.6 ms* | *59.8 ms* | *58.7 ms* | *57.3 ms* | *−2.4%* |
 
-**The control is the point.** The six queries this increment did not touch moved by **0% to +14.0%**
-in the cold lazy path between the two host-matched sets — the new set ran on a *busier* host than
-the old-code set did, so every one of those moves works **against** the change rather than for it.
-The join's **−45.0%** is far outside that band.
+**The control is the point.** The seven queries this increment did not touch moved by **0% to −10.4%**
+in the cold lazy path between the two host-matched sets — the host got **quieter** over the session,
+so every one of those movements flatters the join rather than working against it. The join's
+**−12.5%** is outside the band: the code's share of its fall is at least the **2.1 points** between
+the join's movement and the control's worst, and at most the whole **12.5%**.
 
 **The plan output reads it a stage at a time, and the stages are in the committed reports too.** The
 engine's own account of the same work, from the same three campaigns:
 
-| stage | published set (load 9.8–13.2) | old code, this host (load 2.95–4.22) | new code, this host (load 5.53–7.17) | the code's share |
+| stage | the set before this one (load 9.8–13.2) | the set this one replaces (load 5.53–7.17) | old code, this host (load 3.6–8.9) | new code, this host (load 3.6–8.9) |
 |---|---|---|---|---|
-| `join-orders` scan | 79.6 ms | 67.2 ms | 71.4 ms | the host's, **+6.3%** |
-| `join-orders` project | 2.6 ms | 1.3 ms | 0.9 ms | −30.8% |
-| `join-orders` **join** | **128.1 ms** | **107.4 ms** | **21.9 ms** | **−79.6%** |
-| `sort-topk` scan | 38.7 ms | 33.8 ms | 39.3 ms | the host's, **+16.3%** |
-| `sort-topk` **sort** | **16.3 ms** | **14.5 ms** | **5.3 ms** | **−63.4%** |
-
-**The two scan stages moved *against* the change** — the new set ran on a busier host, and the scan
-is Arrow's decode, which the code did not touch. The two stages the code *did* touch fell by **80%**
-and **63%** on the same host, in the same campaigns. That is the attribution, read from the engine's
-own plan output rather than from a clock around the whole query.
+| `join-orders` scan | 79.6 ms | 71.4 ms | 73.1 ms | **68.6 ms** |
+| `join-orders` project | 2.6 ms | 0.9 ms | 1.4 ms | **0.5 ms** |
+| `join-orders` **join** | **128.1 ms** | **21.9 ms** | **23.5 ms** | **22.8 ms** |
+| `sort-topk` scan | 38.7 ms | 39.3 ms | 38.2 ms | **35.7 ms** |
+| `sort-topk` **sort** | **16.3 ms** | **5.3 ms** | **5.2 ms** | **6.0 ms** |
 
 **And the project stage changed shape, not only its time.** It reports the **216,783 rows it
-gathered** now, where it used to report the 6,000,000 it was handed — the defect R6 removed. The
-stage table above is read from the reports, so the rows are in there too.
+gathered** now, where it used to report the 6,000,000 it was handed — the defect R6 removed, and
+the change spec 023 made to the scan's own rows out. The stage table above is read from the reports,
+so the rows are in there too.
 
-**The sort's end-to-end number is inside the band, and the honest reading says so.** The cold
-`sort-topk` fell by **5.9%** while the control rose by up to 14%, so the *query* number is not the
-place to read the sort's improvement: the query is dominated by the scan, which is Arrow's decode.
-The place to read it is the plan output, in the same campaigns and on the same files: the sort stage
-went from **14.5 ms** to **5.3 ms** on this host — **16.3 ms** in the published set — and the probe
-says the sort's own cost went from **13.3 ms** to **3.7 ms**. The query's number moved less because
-there was less of the engine's own work left in it to move.
+**The sort's scan stage is the control for the scan.** It is Arrow's decode, which this increment did
+not touch, and it fell from **38.2 ms** to **35.7 ms** — **6.5%** — on this same host. The join's scan
+stage fell **6.2%**, from **73.1 ms** to **68.6 ms**, and what the change removed from it — the copy
+of the rows the join discards — is measured on its own in
+[§3l](#3l-the-scan-taken-apart-and-the-scan-that-feeds-the-join): **6.49 ms** of work for **96.4%**
+waste. The sort's own stage moved from **5.2 ms** to **6.0 ms**, which is inside its own spread
+(**5.0–6.9 ms** against **5.3–6.1 ms**): this increment did not touch the sort, and the sort-topk
+query's fall of **10.4%** is the control band's own edge — the host.
+
+**The sort's end-to-end number is the host's, and the honest reading says so.** The cold
+`sort-topk` fell by **10.4%** while the control band is **0% to −10.4%**, so the *query* number is
+not the place to read the sort: the query is dominated by the scan, which is Arrow's decode. The
+place to read the sort is the plan output, in the same campaigns and on the same files, where the
+stage is unchanged within its spread — and the probe, which says the sort's own cost went from
+**13.3 ms** to **3.7 ms** against a **3.6 ms** plain-read floor.
 
 ## 3. What the engine's own stages say
 
@@ -1734,8 +1776,6 @@ read path had a per-row-group cost that the Parquet readers the incumbents use d
 spec 016 measured the mechanism and removed it. See
 [ADR-0023](docs/adr/0023-the-per-row-group-cost.md).
 
----
-
 ### 3k. The dictionary, counted
 
 §3j left one cost unattributed. The real Q6's **three**-predicate shape rises by about **0.14 ms a
@@ -1863,6 +1903,95 @@ derives the tables above from them. See
 
 ---
 
+### 3l. The scan, taken apart, and the scan that feeds the join
+
+§3j left the **row-group count** attributed, and §3k left the **dictionary** attributed. Neither
+looked at the scan itself. The plan output says the join's scan is the largest single stage of the
+largest single query, and no increment had ever asked what it is made of.
+
+The join query is `SELECT sum(l.l_extendedprice) FROM lineitem l JOIN orders o ON l.l_orderkey =
+o.o_orderkey WHERE o.o_orderdate >= '1994-01-01' AND o.o_orderdate < '1995-01-01'`. Its scan reads
+**two** columns of `lineitem` — `l_orderkey`, the join's key, and `l_extendedprice`, the column the
+revenue is computed from — and materialises both: **96 MB** of values, copied out of the reader's
+array and into the engine's own column chunks.
+
+The instrument (`crates/columnar-engine/examples/scan_cost_probe.rs`) measures that scan in the
+shapes it is made of, on the same file, in the same session, at the **batch size the engine would
+use for the file** — asked of the engine, not copied from a rule:
+
+| the shape | ms |
+|---|---|
+| the crate's read of `l_orderkey` | 33.25 ms |
+| the crate's read of `l_extendedprice` | 33.04 ms |
+| **the crate's read of both** | **66.54 ms** |
+| the engine's own scan of `l_orderkey` | 36.19 ms |
+| the engine's own scan of `l_extendedprice` | 36.03 ms |
+| **the engine's own scan of both** | **73.03 ms** |
+| the crate's read of the build side's two columns | 9.99 ms |
+| **the engine's copy** — its own scan over the crate's read | **6.49 ms** |
+
+**The crate's decode is 66.54 ms and the engine's own work over it is 6.49 ms.** That 6.49 ms is
+the copy: 96 MB of values, out of the reader's array and into the engine's own columns. It is
+**8.9% of the scan**, and it is the whole of the engine's share of it.
+
+**And 96.4% of what it copies is thrown away.** The build side holds **216,345** keys, and the
+probe side's **6,001,215** rows produce **216,783** output rows: **3.6%** of the probe side matches
+something. The engine copies every row the reader hands it, and the join decides a moment later
+that most of them are worth nothing.
+
+So the copy is 6.49 ms of work for 96.4% waste. The engine was copying 96 MB to keep 3.5 MB.
+
+**The change: the scan feeds the join.** The join's probe now runs **inside** the scan, over the
+reader's batches, **before anything is copied**. The probe reads the key where it lies — in the
+reader's own Arrow array, not in a copy of it — and only the rows the join keeps are written into
+the dataset. The rows the join discards are never copied.
+
+The probe is **one implementation**, reading its keys through one interface, so the streamed scan
+and the materialising scan cannot answer differently: the engine's own column and the reader's
+Arrow array are two implementations of the same three questions — does the column hold a NULL, does
+it hold integers plainly, what is the value at this row. The NULL rule and the NaN rule live in the
+shared lookup, so a NULL key never matches in either path, and a NaN key never matches in either
+path.
+
+**The before-and-after, measured back to back on this host.** The old code — commit `3d5b220` —
+and the new one, the same file, the same host, the same harness, three campaigns each:
+
+| | the old code | the new code | |
+|---|---|---|---|
+| `join-orders` cold, lazy | 104.9 ms | **91.8 ms** | **13.1 ms faster** |
+| the scan stage | 73.1 ms | **68.6 ms** | the copy is gone |
+| the join stage | 23.5 ms | 22.8 ms | the build table, and the probe |
+
+**The query is 13.1 ms faster, and the scan's own stage is 4.5 ms of that.** The seven queries this
+increment did not touch moved by 0% to −10.4% on the same host, so the machine's share of the
+movement is inside that band; the join's is not — it moved by 12.5%.
+
+**And the plan output says what happened.** The scan's rows out is now the rows the scan **kept**:
+
+```
+scan       6000000   216783   68.6 ms
+project     216783   216783    0.5 ms
+join        216783   216783   22.8 ms
+aggregate   216783        1    0.3 ms
+join: equi-join on l_orderkey = o_orderkey, build side orders.parquet (216345 rows), 216783 rows out
+the probe ran inside the scan: the rows it did not match were never copied
+```
+
+**What this did not do.** The **build side** is not streamed: it is 1.5 million rows against the
+probe side's 6 million, it is read once, and the hash table of its keys is what makes the probe
+O(1). The **probe side's rows are still materialised** — the dataset holds one row per matching
+probe row, not a stream of them; what is saved is the copy of the rows the join discards. And a
+plan whose **probe side has a predicate of its own** takes the materialising scan: the predicate
+would have to be evaluated over every row of the file rather than over the rows that survived the
+scan, and that trade is not measured. Both fallbacks are named in
+[spec 023](../specs/023-the-scan-that-feeds-the-join/spec.md)'s scope, not hidden in a footnote.
+
+All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **7.8–8.1**
+while the campaigns ran — the reports carry it. The raw reports are `bench-results/scan-cost-run{1,2,3}.json` and
+`bench-results/compare-run{1,2,3}.json`, and `python3 scripts/medians.py` derives the tables above
+from them. See [ADR-0030](docs/adr/0030-the-scan-that-feeds-the-join.md).
+
+---
 
 ## 4. The defects the increments found
 
@@ -2180,10 +2309,10 @@ stage went from **219.9 ms** to **117.7 ms** and the whole lazy query from **318
 **And the defect spec 021 found is the shape of the code, not a missing optimisation.** The join's
 table was a `HashMap` over a 32-byte enum where an integer key wanted an array; the key reader
 consulted a validity bitmap that carried no information; the sort built an enum per row where a
-number would do. The engine's cold `join-orders` is **100.4 ms** — a hash join, with `orders` as the
-build side, read inside the clock — against DuckDB's **93.0 ms** on the same two files; the engine's
-cold `sort-topk` is **49.6 ms** against DuckDB's **38.0 ms**. The engine is behind DuckDB on both,
-by **1.13×** and **1.1×**, and ahead of Polars on both — by **2.2×** on the join and by **29×** on
+number would do. The engine's cold `join-orders` is **91.8 ms** — a hash join, with `orders` as the
+build side, read inside the clock — against DuckDB's **90.0 ms** on the same two files; the engine's
+cold `sort-topk` is **45.6 ms** against DuckDB's **38.0 ms**. The engine is behind DuckDB on both,
+by **1.02×** and **1.2×**, and ahead of Polars on both — by **2.4×** on the join and by **28×** on
 the sort. The instrument that found it is committed, every candidate it measures is checked against
 the engine's own output row for row before it is timed, and the code's share of the numbers is
 measured against the old code on the same host. See
@@ -2194,5 +2323,6 @@ And the eager read — the file → queryable load, which was the largest number
 is now **527.8 ms** against DuckDB's **1370.0 ms** on the same file at the same thread count. It is the one measurement in this file that is about the *file* rather
 than the *query*, and it is swept like the other two. See [§2g](#2g-the-load-sweep--where-the-engines-biggest-number-was).
 **Every absolute figure in this paragraph is this set's**, and this set was measured on a host
-that was busy but no longer thrashing — see [The conditions](#the-conditions). The ratios are
+that was busy at the start and quieter at the end — see
+[The conditions](#the-conditions). The ratios are
 what the file claims, and they hold.

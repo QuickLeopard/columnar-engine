@@ -203,7 +203,9 @@ pub fn execute(
         pushdown_metrics: PushdownMetrics::default(),
     };
 
-    run_pipeline(&resolved, dataset, options, scan, report, estimate, 1, build.as_ref())
+    // The eager path reads the whole file before the plan runs, so the join's
+    // probe cannot happen inside the scan: there is no scan to feed.
+    run_pipeline(&resolved, dataset, options, scan, report, estimate, 1, build.as_ref(), None)
 }
 
 /// Opens the join's build side, if the plan has a join.
@@ -307,8 +309,64 @@ pub fn execute_on(
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
     }
 
+    // Does the scan feed the join?
+    //
+    // The scan feeds the join when the join's probe can happen **before** the
+    // copy: the plan has a join, every predicate was pushed into the reader
+    // -- so the filter stage has no work to do -- and the join's key is a
+    // type the probe reads. See ADR-0030.
+    let streamed = streamed_join(&resolved, &decision, source);
+
+    // The join's table is built **before** the scan when the scan feeds the
+    // join: the probe has to happen before the copy, and the probe needs the
+    // table.
+    let mut build_elapsed = std::time::Duration::ZERO;
+    let mut table = None;
+    if let (Some(key), Some(spec), Some(build_source)) =
+        (streamed, resolved.join.as_ref(), build.as_ref())
+    {
+        // The join's two keys must have the same type, and the check happens
+        // before the table is built: a plan error is refused having read
+        // nothing at all.
+        require_same_key_type(
+            source
+                .columns()
+                .get(spec.probe_key)
+                .map_or(columnar_core::DataType::Int64, |column| column.data_type),
+            build_key_type(build_source, &spec.spec.build_key),
+        )?;
+        let started = std::time::Instant::now();
+        let built = operators::join::build_table(
+            build_source,
+            &spec.spec,
+            flavor,
+            build_source.worker_count(options.threads.unwrap_or(1)),
+        )?;
+        build_elapsed = started.elapsed();
+        table = Some((built, key));
+    }
+
+    // The clock starts **after** the build table is built: the table is the
+    // join's work, and the join's stage reports it.
     let scan_started = std::time::Instant::now();
-    let dataset = source.read(&decision.read, &decision.pushdown, flavor, workers)?;
+    let (dataset, joined, filter_elapsed) = match &table {
+        Some((table, key)) => {
+            let filter = operators::join::JoinFilter::new(table, *key);
+            let output = source.read_filtered(
+                &decision.read,
+                &decision.pushdown,
+                &filter,
+                flavor,
+                workers,
+            )?;
+            (output.dataset, Some(output.rows), output.filter_elapsed)
+        }
+        None => (
+            source.read(&decision.read, &decision.pushdown, flavor, workers)?,
+            None,
+            std::time::Duration::ZERO,
+        ),
+    };
     let scan_elapsed = scan_started.elapsed();
 
     // Every index the plan holds is a column of the *file*; the dataset holds
@@ -320,7 +378,9 @@ pub fn execute_on(
         stage: "scan".to_owned(),
         rows_in: rows(source.rows()),
         rows_out: rows(dataset.len()),
-        elapsed: scan_elapsed,
+        // The filter ran inside the scan, but it is the **join's** work, and
+        // the join's stage reports it.
+        elapsed: scan_elapsed.saturating_sub(filter_elapsed),
     };
 
     let report = ScanReport {
@@ -329,7 +389,62 @@ pub fn execute_on(
         pushdown_metrics: decision.pushdown.metrics(),
     };
 
-    run_pipeline(&effective, &dataset, options, scan, report, estimate, workers, build.as_ref())
+    let streamed = joined.map(|rows| StreamedJoin {
+        rows,
+        elapsed: build_elapsed + filter_elapsed,
+        build_rows: table.map_or(0, |(table, _)| table.rows()),
+    });
+
+    run_pipeline(
+        &effective,
+        &dataset,
+        options,
+        scan,
+        report,
+        estimate,
+        workers,
+        build.as_ref(),
+        streamed,
+    )
+}
+
+/// A join the scan fed.
+///
+/// The scan probed the join's key before it copied anything, so the join's
+/// output rows are already the dataset's own row numbers.
+struct StreamedJoin {
+    /// The join's output rows: the dataset's own row numbers, one per output
+    /// row.
+    rows: Vec<u32>,
+    /// The build table's construction, and the probe's cost.
+    elapsed: std::time::Duration,
+    /// How many build rows the table holds.
+    build_rows: usize,
+}
+
+/// The join's key column in the reader's projection, when the scan can feed
+/// the join.
+///
+/// The scan feeds the join when the join's probe can happen **before** the
+/// copy: the plan has a join, every predicate was pushed into the reader --
+/// so the filter stage has no work to do -- and the join's key is a type the
+/// probe reads. See
+/// [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md).
+fn streamed_join(
+    resolved: &plan::ResolvedPlan,
+    decision: &ScanDecision,
+    source: &ParquetSource,
+) -> Option<usize> {
+    let join = resolved.join.as_ref()?;
+    if !decision.fully_pushed {
+        return None;
+    }
+    let column = source.columns().get(join.probe_key)?;
+    if !pushdown_supports(&column.arrow_type) {
+        return None;
+    }
+    let projection = source::scan_projection(&decision.read, &decision.pushdown);
+    projection.iter().position(|&index| index == join.probe_key)
 }
 
 /// The columns whose bytes were fetched from the file.
@@ -355,6 +470,13 @@ struct ScanDecision {
     read: Vec<usize>,
     /// The predicates to push into the reader.
     pushdown: PushdownPlan,
+    /// Whether **every** predicate was pushed into the reader.
+    ///
+    /// A plan whose predicates were all pushed has no filter work left, so
+    /// the scan decides the rows on its own. That is what feeding the join
+    /// needs: the join's probe has to happen before the copy, and the copy
+    /// has to happen before the filter.
+    fully_pushed: bool,
 }
 
 impl ScanDecision {
@@ -384,15 +506,19 @@ fn decide_scan(resolved: &plan::ResolvedPlan, source: &ParquetSource) -> ScanDec
     let mut read = resolved.materialised.clone();
     let mut pushdown = PushdownPlan::new();
     let mut pushed_columns: Vec<usize> = Vec::new();
+    let mut fully_pushed = true;
 
     for filter in &resolved.filter {
         let Some(column) = source.columns().get(filter.column) else {
+            fully_pushed = false;
             continue;
         };
         if read.contains(&filter.column) {
+            fully_pushed = false;
             continue;
         }
         if !pushdown_supports(&column.arrow_type) {
+            fully_pushed = false;
             continue;
         }
         // Two predicates on the same column are one conjunction over that
@@ -426,7 +552,7 @@ fn decide_scan(resolved: &plan::ResolvedPlan, source: &ParquetSource) -> ScanDec
     read.sort_unstable();
     read.dedup();
 
-    ScanDecision { read, pushdown }
+    ScanDecision { read, pushdown, fully_pushed }
 }
 
 /// Whether the pushdown evaluates this Arrow type exactly.
@@ -476,6 +602,7 @@ fn run_pipeline(
     estimate: usize,
     workers: usize,
     build: Option<&ParquetSource>,
+    streamed: Option<StreamedJoin>,
 ) -> Result<AggregateResult, EngineError> {
     let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
     // How many workers the operators may use. The filter's blocks are
@@ -520,7 +647,7 @@ fn run_pipeline(
     // run before the aggregate's input is materialised. A plan with neither
     // of them takes the plain path, where the aggregate reads the filter's
     // survivors.
-    let ordered = ordered_stage(resolved, dataset, &selection, build, options, flavor)?;
+    let ordered = ordered_stage(resolved, dataset, &selection, build, options, flavor, streamed)?;
 
     // The materialisation set is built **after** the filter, because it needs
     // the filter's selection: the columns it gathers are the survivors'
@@ -668,6 +795,7 @@ fn ordered_stage(
     build: Option<&ParquetSource>,
     options: &ExecOptions,
     flavor: Flavor,
+    streamed: Option<StreamedJoin>,
 ) -> Result<Option<Ordered>, EngineError> {
     if resolved.join.is_none() && resolved.sort.is_none() {
         return Ok(None);
@@ -683,32 +811,62 @@ fn ordered_stage(
     let mut join_stage = None;
     let mut join = None;
     if let Some(spec) = &resolved.join {
-        let started = std::time::Instant::now();
-        let source = build.ok_or_else(|| {
-            EngineError::Parquet("the plan has a join but its build side was not opened".to_owned())
-        })?;
-        require_same_key_type(dataset, spec.probe_key, source, &spec.spec.build_key)?;
-        let table = operators::join::build_table(
-            source,
-            &spec.spec,
-            flavor,
-            source.worker_count(options.threads.unwrap_or(1)),
-        )?;
-        let keys = key_column(dataset, spec.probe_key)?;
-        row_numbers = operators::join::probe(&table, &keys, &dataset_row_numbers);
-        join_stage = Some(StageStats {
-            stage: "join".to_owned(),
-            rows_in: rows(dataset_row_numbers.len()),
-            rows_out: rows(row_numbers.len()),
-            elapsed: started.elapsed(),
-        });
-        join = Some(explain::JoinReport {
-            probe_key: spec.spec.probe_key.clone(),
-            build_key: spec.spec.build_key.clone(),
-            build_file: file_name(&spec.spec.build_path),
-            build_rows: table.rows(),
-            output_rows: row_numbers.len(),
-        });
+        if let Some(streamed) = streamed {
+            // The scan fed the join: the probe already happened, inside the
+            // scan and before the copy, and the rows it produced are the
+            // dataset's own row numbers.
+            row_numbers = streamed.rows;
+            join_stage = Some(StageStats {
+                stage: "join".to_owned(),
+                rows_in: rows(dataset_row_numbers.len()),
+                rows_out: rows(row_numbers.len()),
+                elapsed: streamed.elapsed,
+            });
+            join = Some(explain::JoinReport {
+                probe_key: spec.spec.probe_key.clone(),
+                build_key: spec.spec.build_key.clone(),
+                build_file: file_name(&spec.spec.build_path),
+                build_rows: streamed.build_rows,
+                output_rows: row_numbers.len(),
+                probe_in_scan: true,
+            });
+        } else {
+            let started = std::time::Instant::now();
+            let source = build.ok_or_else(|| {
+                EngineError::Parquet(
+                    "the plan has a join but its build side was not opened".to_owned(),
+                )
+            })?;
+            require_same_key_type(
+                dataset
+                    .chunks
+                    .get(spec.probe_key)
+                    .map_or(columnar_core::DataType::Int64, columnar_core::ColumnChunk::data_type),
+                build_key_type(source, &spec.spec.build_key),
+            )?;
+            let table = operators::join::build_table(
+                source,
+                &spec.spec,
+                flavor,
+                source.worker_count(options.threads.unwrap_or(1)),
+            )?;
+            let keys = key_column(dataset, spec.probe_key)?;
+            row_numbers = operators::join::probe(&table, &keys, &dataset_row_numbers);
+            join_stage = Some(StageStats {
+                stage: "join".to_owned(),
+                rows_in: rows(dataset_row_numbers.len()),
+                rows_out: rows(row_numbers.len()),
+                elapsed: started.elapsed(),
+            });
+            join = Some(explain::JoinReport {
+                probe_key: spec.spec.probe_key.clone(),
+                build_key: spec.spec.build_key.clone(),
+                build_file: file_name(&spec.spec.build_path),
+                build_rows: table.rows(),
+                output_rows: row_numbers.len(),
+                probe_in_scan: false,
+            });
+        }
     } else {
         // With no join, the rows behind the filter are the survivors
         // themselves, and the sort is handed them as they are.
@@ -766,20 +924,9 @@ fn key_column(
 /// The engine never casts silently: joining an `int64` key to a `utf8` one
 /// is a plan error rather than something to paper over.
 fn require_same_key_type(
-    dataset: &Dataset,
-    probe_key: usize,
-    source: &ParquetSource,
-    build_key: &str,
+    probe_type: columnar_core::DataType,
+    build_type: columnar_core::DataType,
 ) -> Result<(), EngineError> {
-    let probe_type = dataset
-        .chunks
-        .get(probe_key)
-        .map_or(columnar_core::DataType::Int64, columnar_core::ColumnChunk::data_type);
-    let build_type = source
-        .columns()
-        .iter()
-        .find(|column| column.name == build_key)
-        .map_or(columnar_core::DataType::Int64, |column| column.data_type);
     if probe_type != build_type {
         return Err(EngineError::TypeMismatch(format!(
             "the join's probe key is {} but the build key is {}",
@@ -788,6 +935,15 @@ fn require_same_key_type(
         )));
     }
     Ok(())
+}
+
+/// The type of a column of the build side, by name.
+fn build_key_type(source: &ParquetSource, build_key: &str) -> columnar_core::DataType {
+    source
+        .columns()
+        .iter()
+        .find(|column| column.name == build_key)
+        .map_or(columnar_core::DataType::Int64, |column| column.data_type)
 }
 
 /// The name of a file, without its directory.

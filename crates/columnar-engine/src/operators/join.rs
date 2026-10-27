@@ -54,12 +54,14 @@ use std::hash::{BuildHasherDefault, Hash, Hasher};
 use columnar_core::{Predicate, ScalarValue};
 use columnar_kernels::Flavor;
 
+use crate::dataset::DatasetError;
 use crate::memory::direct_table_fits;
 use crate::operators::filter::filter_all;
-use crate::operators::key::{KeyColumn, KeyValue};
+use crate::operators::key::{ArrowKeys, KeyColumn, KeySource, KeyValue};
 use crate::plan::{JoinSpec, ResolvedFilter};
+use crate::pushdown::RowMask;
 use crate::pushdown::{Pushdown, PushdownPlan};
-use crate::source::ParquetSource;
+use crate::source::{BatchFilter, ParquetSource};
 use crate::{operators, EngineError};
 
 /// The hash the join's table uses.
@@ -178,6 +180,59 @@ impl JoinKey {
         match self {
             Self::Int(value) => Some(*value),
             Self::Float(_) | Self::Text(_) => None,
+        }
+    }
+}
+
+/// The join, as a filter over the reader's batches.
+///
+/// The scan hands every batch to this **before** it copies anything, so the
+/// rows the join does not match are never copied into the dataset. The probe
+/// reads the key where it lies -- in the reader's own Arrow array -- and the
+/// lookup is the same one the materialising path uses.
+///
+/// See [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md).
+#[derive(Debug)]
+pub struct JoinFilter<'a> {
+    /// The build side's table.
+    table: &'a BuildTable,
+    /// The position of the probe's key column in the reader's **projection**.
+    key: usize,
+}
+
+impl<'a> JoinFilter<'a> {
+    /// The filter for a join, over the reader's batches.
+    ///
+    /// `key` is the position of the probe's key column in the columns the
+    /// reader hands over -- the projection -- and not the file's own index.
+    pub fn new(table: &'a BuildTable, key: usize) -> Self {
+        Self { table, key }
+    }
+}
+
+impl BatchFilter for JoinFilter<'_> {
+    fn keep(
+        &self,
+        batch: &arrow::record_batch::RecordBatch,
+        survivors: Option<&RowMask>,
+    ) -> Result<Vec<u32>, DatasetError> {
+        let Some(array) = batch.columns().get(self.key) else {
+            return Err(DatasetError::Parquet(
+                "the record batch holds fewer columns than were projected".to_owned(),
+            ));
+        };
+        let Some(keys) = ArrowKeys::new(array.as_ref()) else {
+            return Err(DatasetError::Parquet(
+                "the join's key column has a type the probe cannot read".to_owned(),
+            ));
+        };
+        match survivors {
+            Some(mask) => Ok(probe_rows(self.table, &keys, mask.positions())),
+            None => Ok(probe_rows(
+                self.table,
+                &keys,
+                0..u32::try_from(batch.num_rows()).unwrap_or(u32::MAX),
+            )),
         }
     }
 }
@@ -437,7 +492,24 @@ pub fn build_table(
 /// A probe row whose key is NULL, or whose key is not in the table,
 /// produces no output row at all.
 #[must_use]
-pub fn probe(table: &BuildTable, keys: &KeyColumn<'_>, rows: &[u32]) -> Vec<u32> {
+pub fn probe<S>(table: &BuildTable, keys: &S, rows: &[u32]) -> Vec<u32>
+where
+    S: KeySource + ?Sized,
+{
+    probe_rows(table, keys, rows.iter().copied())
+}
+
+/// Probes the table over rows taken one at a time.
+///
+/// The rows are an **iterator**, not a list: the scan that feeds the join
+/// probes a whole batch, and a list of a batch's row numbers is a quarter of
+/// a megabyte of memory the allocator has to hand out and take back, batch
+/// after batch, for rows the probe reads once.
+pub fn probe_rows<S, I>(table: &BuildTable, keys: &S, rows: I) -> Vec<u32>
+where
+    S: KeySource + ?Sized,
+    I: Iterator<Item = u32>,
+{
     match &table.inner {
         TableInner::Direct(direct) => probe_direct(direct, keys, rows),
         TableInner::Hashed(hashed) => probe_hashed(hashed, keys, rows),
@@ -449,11 +521,15 @@ pub fn probe(table: &BuildTable, keys: &KeyColumn<'_>, rows: &[u32]) -> Vec<u32>
 /// The fast path reads the key column's own integers: no enum, no validity
 /// bitmap, and no hash. A column that holds NULLs, or that is
 /// dictionary-encoded, takes the general path instead.
-fn probe_direct(direct: &DirectTable, keys: &KeyColumn<'_>, rows: &[u32]) -> Vec<u32> {
+fn probe_direct<S, I>(direct: &DirectTable, keys: &S, rows: I) -> Vec<u32>
+where
+    S: KeySource + ?Sized,
+    I: Iterator<Item = u32>,
+{
     let mut out: Vec<u32> = Vec::new();
     if let Some(values) = keys.integer_values() {
         if !keys.has_nulls() {
-            for &row in rows {
+            for row in rows {
                 let index = usize::try_from(row).unwrap_or(usize::MAX);
                 let Some(&key) = values.get(index) else {
                     continue;
@@ -466,7 +542,7 @@ fn probe_direct(direct: &DirectTable, keys: &KeyColumn<'_>, rows: &[u32]) -> Vec
             return out;
         }
     }
-    for &row in rows {
+    for row in rows {
         let index = usize::try_from(row).unwrap_or(usize::MAX);
         let Some(value) = keys.value_at(index) else {
             continue;
@@ -483,9 +559,13 @@ fn probe_direct(direct: &DirectTable, keys: &KeyColumn<'_>, rows: &[u32]) -> Vec
 }
 
 /// The rows that matched, when the table is hashed.
-fn probe_hashed(hashed: &HashedTable, keys: &KeyColumn<'_>, rows: &[u32]) -> Vec<u32> {
+fn probe_hashed<S, I>(hashed: &HashedTable, keys: &S, rows: I) -> Vec<u32>
+where
+    S: KeySource + ?Sized,
+    I: Iterator<Item = u32>,
+{
     let mut out: Vec<u32> = Vec::new();
-    for &row in rows {
+    for row in rows {
         let index = usize::try_from(row).unwrap_or(usize::MAX);
         let Some(value) = keys.value_at(index) else {
             continue;

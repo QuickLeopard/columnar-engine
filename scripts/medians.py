@@ -1133,6 +1133,48 @@ def print_dictionary_cost(
                 print(f"{shape:<52}{rate:>20.3f}")
 
 
+def print_scan_cost(files: list[tuple[str, list[dict]]]) -> None:
+    """Print the scan probe's medians.
+
+    This is spec 023: the join's scan, taken apart -- the crate's read of the
+    two columns the join reads, the engine's own scan of the same two, and
+    the difference between them, which is the engine's copy.
+    """
+    if not files:
+        return
+    measurements, groups = _probe_medians(files, "measurements_ms")
+    campaigns = min(len(runs) for _, runs in files)
+    names = [name for name, _ in files]
+    print(f"\n=== THE SCAN, TAKEN APART ({campaigns} campaigns each) ===")
+    print(f"{'the shape':<52}" + "".join(
+        f"{names[index] + ', ' + str(groups[names[index]]) + ' groups':>20}"
+        for index in range(len(names))
+    ))
+    for key, shape in (
+        ("crate_orderkey", "the crate's read of l_orderkey"),
+        ("crate_price", "the crate's read of l_extendedprice"),
+        ("crate_both", "the crate's read of both"),
+        ("engine_orderkey", "the engine's own scan of l_orderkey"),
+        ("engine_price", "the engine's own scan of l_extendedprice"),
+        ("engine_both", "the engine's own scan of both"),
+        ("crate_orders_both", "the crate's read of the build side"),
+    ):
+        line = f"{shape:<52}"
+        for name in names:
+            values = measurements.get(name, {}).get(key, [])
+            line += f"{statistics.median(values):>20.2f}" if values else f"{'-':>20}"
+        print(line)
+    line = f"{'the engine\'s copy':<52}"
+    for name in names:
+        both = measurements.get(name, {}).get("engine_both", [])
+        crate = measurements.get(name, {}).get("crate_both", [])
+        if both and crate:
+            line += f"{statistics.median(both) - statistics.median(crate):>20.2f}"
+        else:
+            line += f"{'-':>20}"
+    print(line)
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -1317,6 +1359,11 @@ def main() -> int:
     dictionary_before = [(name, runs) for name, runs in dictionary_before if runs]
     if loaded_dictionary:
         print_dictionary_cost(loaded_dictionary, dictionary_before)
+
+    # Spec 023's scan probe: the join's scan, taken apart.
+    scan_paths = sorted(Path("bench-results").glob("scan-cost-run*.json"))
+    if scan_paths:
+        print_scan_cost([("A", [load(p) for p in scan_paths])])
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))

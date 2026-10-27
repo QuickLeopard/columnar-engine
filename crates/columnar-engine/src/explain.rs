@@ -42,6 +42,12 @@ pub struct JoinReport {
     pub build_rows: usize,
     /// How many rows the join produced.
     pub output_rows: usize,
+    /// Whether the probe ran **inside** the scan.
+    ///
+    /// When the scan feeds the join, the probe happens before the copy, and
+    /// the plan output says so: the scan's elapsed carries the probe's cost,
+    /// and the join's stage reports the build table's construction.
+    pub probe_in_scan: bool,
 }
 
 /// What the sort did, for the plan output.
@@ -244,6 +250,12 @@ impl PlanOutput {
                 "join: equi-join on {} = {}, build side {} ({} rows), {} rows out",
                 join.probe_key, join.build_key, join.build_file, join.build_rows, join.output_rows
             )?;
+            if join.probe_in_scan {
+                writeln!(
+                    f,
+                    "the probe ran inside the scan: the rows it did not match were never copied"
+                )?;
+            }
         }
         if let Some(sort) = &self.sort {
             let direction = if sort.descending { "DESC" } else { "ASC" };

@@ -17,12 +17,14 @@ python3 scripts/medians.py
 | `compare-run1.json` | the first of the three runs the published table is the median of |
 | `compare-run2.json` | the second |
 | `compare-run3.json` | the third |
-| `compare-before-run1.json` … `compare-before-run3.json` | the **old code, re-measured on this host** — back to back with the campaigns above, so the code's share of every moved figure is separated from the machine's. The control is the six queries this increment did not touch. |
+| `compare-before-run1.json` … `compare-before-run3.json` | the **old code, re-measured on this host** — back to back with the campaigns above, so the code's share of every moved figure is separated from the machine's. The control is the seven queries this increment did not touch. |
 | `compare-spec020-run1.json` … `compare-spec020-run3.json` | the set **before** the one published now: the code spec 021 replaced, on a busier host. Committed so the published old-and-new figures are derived rather than typed. |
+| `compare-spec021-run1.json` … `compare-spec021-run3.json` | the set **this one replaces**: the code spec 022 and 023 replaced, on the host it was measured on. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
 | `operator-probe-before.json` | the **operator probe** against the code spec 021 replaced — the join's probe and the sort, taken apart |
 | `operator-probe-after.json` | the operator probe against the code spec 021 wrote, measured back to back with the file above on the same host |
 | `dictionary-cost-{6,12,24}-run{1,2,3}.json` | the **dictionary probe** against the code spec 022 wrote — the same read in two shapes, the reader expanding the dictionary-encoded columns and the reader keeping them, on the six-, twelve- and twenty-four-row-group files |
 | `dictionary-cost-before-{6,12,24}-run{1,2,3}.json` | the same probe against the code spec 022 replaced, measured back to back on the same host |
+| `scan-cost-run{1,2,3}.json` | the **scan probe** against the code spec 023 wrote — the join's scan, taken apart: the crate's read of the two columns the join reads, the engine's own scan of the same two, and the difference between them |
 | `scaling-run1.json` | the first of the three **thread-count sweeps** of `q6` the §2e table is the median of |
 | `scaling-run2.json` | the second |
 | `scaling-run3.json` | the third |
@@ -114,10 +116,11 @@ questions.
 | §1 | *how fast is the comparison kernel, against two baselines* | `kernel-run*.json` |
 | §1b | *how fast is it on x86-64 hardware, and on which processor* | `avx2-run*.json` |
 | §2a, §2b | *which is faster when every system is given one thread* | `compare-run*.json` |
-| §2a, §2b (the set before) | *the same table, one increment ago* | `compare-spec020-run*.json` |
+| §2a, §2b (the set this one replaces) | *the same table, one increment ago* | `compare-spec021-run*.json` |
+| §2a, §2b (the set before that one) | *the same table, two increments ago* | `compare-spec020-run*.json` |
 | §2h | *what the join's probe and the sort cost, apart* | `operator-probe-*.json` |
 | §2h (the code's share) | *what the change did, as opposed to the machine* | `compare-before-run*.json` |
-| §2h (the stages) | *what each stage of the engine's own work cost* | the three comparison sets — every campaign records the plan output |
+| §2h (the stages) | *what each stage of the engine's own work cost* | the comparison sets — every campaign records the plan output |
 | §2e, `q6` | *how does each system's number move with the thread count* | `scaling-run*.json` |
 | §2e, `q6-revenue` | the same, on the real Q6 | `scaling-revenue-run*.json` |
 | §2f, `q6` | the same, with the data already in memory | `scaling-resident-run*.json` |
@@ -130,6 +133,7 @@ questions.
 | §3i | *what does the query cost per million rows* | `curve-run*.json` |
 | §3j | *what does the row-group count cap, and what does it cost* | `scaling-rg12-run*.json`, `scaling-rg24-run*.json`, `row-groups-*-run*.json`, `row-group-cost-*-run*.json` |
 | §3k | *what is the dictionary worth, and whose cost is the residual* | `dictionary-cost-*-run*.json`, `dictionary-cost-before-*-run*.json` |
+| §3l | *what is the join's scan made of* | `scan-cost-run*.json` |
 
 The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and
 the **attribution** — the crate's read of each column against the engine's own scan. The ladder is
@@ -173,12 +177,13 @@ python3 scripts/medians.py bench-results/compare-run1.json \
 The sweep's table is derived the same way, and `scripts/medians.py` picks the
 `scaling-run*.json` files up automatically when they are in this directory.
 
-The **other three comparison sets** are derived the same way, and the guard
-checks every figure this repository publishes against all four of them:
+The **other four comparison sets** are derived the same way, and the guard
+checks every figure this repository publishes against all five of them:
 
 ```bash
 python3 scripts/medians.py bench-results/compare-before-run*.json    # the old code, this host
-python3 scripts/medians.py bench-results/compare-spec020-run*.json  # the set before this one
+python3 scripts/medians.py bench-results/compare-spec021-run*.json  # the set this one replaces
+python3 scripts/medians.py bench-results/compare-spec020-run*.json  # the set before that one
 python3 scripts/check-published-figures.py
 ```
 
@@ -189,12 +194,15 @@ committed reports too, and the guard checks the stage figures against them as
 well: the join stage's **21.9 ms**, the sort stage's **5.3 ms** and the old
 code's **107.4 ms** and **14.5 ms** are derived, not typed.
 
-The **dictionary probe** is written the same way, one report per campaign, and its set is
-measured against the code the increment replaced, back to back on the same host:
+The **dictionary probe** and the **scan probe** are written the same way, one report per
+campaign, and the dictionary probe's set is measured against the code the increment replaced,
+back to back on the same host:
 
 ```bash
 just probe-dictionary data="data/lineitem-rg24.parquet" \
     out="bench-results/dictionary-cost-24-run1.json"
+just probe-scan data="data/lineitem.parquet" \
+    out="bench-results/scan-cost-run1.json"
 ```
 
 The **operator probe** writes its own two reports, one per code version:

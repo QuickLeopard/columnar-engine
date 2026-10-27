@@ -262,6 +262,11 @@ probe-operators data="data/lineitem.parquet" build="data/orders.parquet" out="be
 probe-dictionary data="data/lineitem.parquet" out="bench-results/dictionary-cost-6-run1.json":
     cargo run --release -p columnar-engine --example dictionary_cost_probe -- {{data}} --out {{out}}
 
+# Take the **scan apart**: the crate's read of the two columns the join reads,
+# the engine's own scan of the same two, and the difference between them.
+probe-scan data="data/lineitem.parquet" out="bench-results/scan-cost-run1.json":
+    cargo run --release -p columnar-engine --example scan_cost_probe -- {{data}} --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

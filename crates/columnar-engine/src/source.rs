@@ -47,16 +47,42 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use arrow::datatypes::{DataType as ArrowType, SchemaRef};
+use arrow::record_batch::RecordBatch;
 use columnar_core::{DataType, ScalarValue};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 use parquet::file::metadata::ParquetMetaData;
 use parquet::file::statistics::Statistics;
 
-use crate::dataset::{decode_batches_filtered, Dataset, DatasetError};
+use crate::dataset::{decode_batches_filtered, merge_scans, Dataset, DatasetError, ScanOutput};
 use crate::plan::ColumnSchema;
-use crate::pushdown::PushdownPlan;
+use crate::pushdown::{PushdownPlan, RowMask};
 use columnar_kernels::Flavor;
+
+/// What a scan hands each batch to, before it copies anything.
+///
+/// The scan copies a row **once**, into the engine's own column. A filter
+/// that runs before the copy decides which rows are copied at all, and the
+/// rows it drops are never copied.
+///
+/// The join is such a filter. The rows it does not match are worth nothing to
+/// the query, and the scan that copies them copies 96 MB to keep 3.5 MB. See
+/// [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md).
+pub trait BatchFilter: Sync {
+    /// The rows of `batch` to keep, as the batch's own row positions.
+    ///
+    /// The positions are in **ascending order**, and a position may repeat:
+    /// the join's output has one row per match, and a probe row that matches
+    /// twice is two rows of the result.
+    ///
+    /// `survivors` are the rows the pushed-down predicates kept, if they kept
+    /// any. The filter must keep only rows the mask keeps.
+    fn keep(
+        &self,
+        batch: &RecordBatch,
+        survivors: Option<&RowMask>,
+    ) -> Result<Vec<u32>, DatasetError>;
+}
 
 /// A column of a [`ParquetSource`].
 #[derive(Debug, Clone, PartialEq)]
@@ -405,11 +431,55 @@ impl ParquetSource {
         threads: usize,
         plan: BatchPlan,
     ) -> Result<Dataset, DatasetError> {
+        let output = self.read_scanned(columns, pushdown, None, flavor, threads, plan)?;
+        Ok(output.dataset)
+    }
+
+    /// Reads the file, handing every batch to `filter` before it copies.
+    ///
+    /// The filter decides which rows are copied into the dataset, and the rows
+    /// it drops are never copied at all. The returned rows are the dataset's
+    /// own row numbers, one per output row: the join's output, in the probe
+    /// side's order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatasetError::Io`] if the file cannot be read, and
+    /// [`DatasetError::Parquet`] if it is not one the reader understands, or
+    /// if the filter breaks its contract.
+    pub fn read_filtered(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        filter: &(dyn BatchFilter + Sync),
+        flavor: Flavor,
+        threads: usize,
+    ) -> Result<ScanOutput, DatasetError> {
+        self.read_scanned(
+            columns,
+            pushdown,
+            Some(filter),
+            flavor,
+            threads,
+            BatchPlan::Derived(MAX_READER_BATCH_ROWS),
+        )
+    }
+
+    /// Reads the file, with or without a filter.
+    fn read_scanned(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        filter: Option<&(dyn BatchFilter + Sync)>,
+        flavor: Flavor,
+        threads: usize,
+        plan: BatchPlan,
+    ) -> Result<ScanOutput, DatasetError> {
         let workers = self.worker_count(threads);
         if workers == 1 {
-            return self.read_row_groups(columns, pushdown, flavor, None, plan);
+            return self.read_row_groups(columns, pushdown, filter, flavor, None, plan);
         }
-        self.read_parallel(columns, pushdown, flavor, workers, self.row_groups, plan)
+        self.read_parallel(columns, pushdown, filter, flavor, workers, self.row_groups, plan)
     }
 
     /// Reads the file with several threads.
@@ -417,15 +487,17 @@ impl ParquetSource {
     /// The row groups are split into contiguous blocks, one per thread, and
     /// the parts are merged **in block order**. Contiguous blocks are what
     /// makes the merge order the file's order without any sorting.
+    #[allow(clippy::too_many_arguments)]
     fn read_parallel(
         &self,
         columns: &[usize],
         pushdown: &PushdownPlan,
+        filter: Option<&(dyn BatchFilter + Sync)>,
         flavor: Flavor,
         workers: usize,
         row_groups: usize,
         plan: BatchPlan,
-    ) -> Result<Dataset, DatasetError> {
+    ) -> Result<ScanOutput, DatasetError> {
         let per_worker = row_groups.div_ceil(workers);
         let blocks: Vec<Vec<usize>> = (0..workers)
             .map(|worker| {
@@ -440,13 +512,20 @@ impl ParquetSource {
         // block order**. Joining in order is what makes the merged dataset
         // hold the file's rows in the file's order, without any sorting and
         // without any shared mutable state.
-        let parts = std::thread::scope(|scope| -> Result<Vec<Dataset>, DatasetError> {
+        let parts = std::thread::scope(|scope| -> Result<Vec<ScanOutput>, DatasetError> {
             let handles: Vec<_> = blocks
                 .iter()
                 .map(|block| {
                     let source = self;
                     scope.spawn(move || {
-                        source.read_row_groups(columns, pushdown, flavor, Some(block.clone()), plan)
+                        source.read_row_groups(
+                            columns,
+                            pushdown,
+                            filter,
+                            flavor,
+                            Some(block.clone()),
+                            plan,
+                        )
                     })
                 })
                 .collect();
@@ -460,7 +539,7 @@ impl ParquetSource {
             }
             Ok(parts)
         })?;
-        crate::dataset::merge(parts)
+        merge_scans(parts)
     }
 
     /// The reader's batch size for a set of row groups.
@@ -514,10 +593,11 @@ impl ParquetSource {
         &self,
         columns: &[usize],
         pushdown: &PushdownPlan,
+        filter: Option<&(dyn BatchFilter + Sync)>,
         flavor: Flavor,
         row_groups: Option<Vec<usize>>,
         plan: BatchPlan,
-    ) -> Result<Dataset, DatasetError> {
+    ) -> Result<ScanOutput, DatasetError> {
         let file = File::open(&self.path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .map_err(|error| DatasetError::Parquet(error.to_string()))?;
@@ -544,7 +624,15 @@ impl ParquetSource {
         }
 
         let reader = builder.build().map_err(|error| DatasetError::Parquet(error.to_string()))?;
-        decode_batches_filtered(reader, &self.schema, columns, &projection, pushdown, flavor)
+        decode_batches_filtered(
+            reader,
+            &self.schema,
+            columns,
+            &projection,
+            pushdown,
+            flavor,
+            filter,
+        )
     }
 }
 
@@ -690,7 +778,7 @@ pub(crate) fn largest_divisor_at_most(rows: usize, limit: usize) -> usize {
 ///
 /// The list is in ascending root-index order, which is the order the reader
 /// hands the columns over in.
-fn scan_projection(columns: &[usize], pushdown: &PushdownPlan) -> Vec<usize> {
+pub(crate) fn scan_projection(columns: &[usize], pushdown: &PushdownPlan) -> Vec<usize> {
     let mut projection = columns.to_vec();
     projection.extend(pushdown.columns());
     projection.sort_unstable();

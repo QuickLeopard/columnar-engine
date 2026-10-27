@@ -11,7 +11,179 @@
 //! a copy of the column -- and a dictionary-encoded column is read through
 //! its dictionary, exactly as the gather would have copied it out of it.
 
+use arrow::array::{
+    Array, DictionaryArray, Float64Array, Int32Array, Int64Array, LargeStringArray, StringArray,
+};
+use arrow::datatypes::Int32Type;
 use columnar_core::{BatchColumn, BatchData, ColumnChunk, Encoding, NullBitmap};
+
+/// Where a probe's keys come from.
+///
+/// The probe reads a key a row at a time, and it reads it from one of two
+/// places: the engine's own column, when the join runs over a materialised
+/// dataset, and the reader's Arrow array, when the join runs **inside** the
+/// scan. The lookup is written once, against this interface, so that the two
+/// paths cannot answer differently.
+///
+/// See [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md).
+pub trait KeySource {
+    /// Whether the column holds a NULL at all.
+    ///
+    /// A column with no NULLs is read without touching its validity bitmap.
+    fn has_nulls(&self) -> bool;
+
+    /// The column's plain integers, if it holds integers plainly.
+    ///
+    /// It is what opens the join's fast path: an integer key read straight
+    /// out of the column, with no enum and no validity bitmap.
+    fn integer_values(&self) -> Option<&[i64]>;
+
+    /// The value at `row`, if it holds one.
+    ///
+    /// A row that holds no value has no key: a NULL never matches anything,
+    /// and it has no place in an order either.
+    fn value_at(&self, row: usize) -> Option<KeyValue<'_>>;
+}
+
+impl KeySource for KeyColumn<'_> {
+    fn has_nulls(&self) -> bool {
+        self.nulls
+    }
+
+    fn integer_values(&self) -> Option<&[i64]> {
+        KeyColumn::integer_values(self)
+    }
+
+    fn value_at(&self, row: usize) -> Option<KeyValue<'_>> {
+        KeyColumn::value_at(self, row)
+    }
+}
+
+/// A key column read out of the reader's own Arrow array.
+///
+/// The values are read **where they lie**: a dictionary-encoded column is read
+/// through its dictionary, exactly as the engine's own key column is. The
+/// reader's array is never copied into the engine's own encoding to be probed
+/// -- the copy is the thing this increment is about.
+#[derive(Debug, Clone, Copy)]
+pub enum ArrowKeys<'a> {
+    /// Plain integers.
+    Int64(&'a Int64Array),
+    /// Plain doubles.
+    Float64(&'a Float64Array),
+    /// Plain strings.
+    Utf8(&'a StringArray),
+    /// Plain strings, in the wide encoding.
+    LargeUtf8(&'a LargeStringArray),
+    /// Dictionary-encoded strings.
+    Dictionary {
+        /// One index into the dictionary per row.
+        keys: &'a Int32Array,
+        /// The distinct values.
+        values: &'a StringArray,
+    },
+    /// Dictionary-encoded strings, in the wide encoding.
+    LargeDictionary {
+        /// One index into the dictionary per row.
+        keys: &'a Int32Array,
+        /// The distinct values.
+        values: &'a LargeStringArray,
+    },
+}
+
+impl<'a> ArrowKeys<'a> {
+    /// The key column in `array`, if the probe can read it.
+    ///
+    /// The types are the ones the pushdown reads exactly: integers, doubles
+    /// and strings, plain or dictionary-encoded. A column of any other type
+    /// is declined, and the caller takes the other path.
+    #[must_use]
+    pub fn new(array: &'a dyn Array) -> Option<Self> {
+        if let Some(values) = array.as_any().downcast_ref::<Int64Array>() {
+            return Some(Self::Int64(values));
+        }
+        if let Some(values) = array.as_any().downcast_ref::<Float64Array>() {
+            return Some(Self::Float64(values));
+        }
+        if let Some(values) = array.as_any().downcast_ref::<StringArray>() {
+            return Some(Self::Utf8(values));
+        }
+        if let Some(values) = array.as_any().downcast_ref::<LargeStringArray>() {
+            return Some(Self::LargeUtf8(values));
+        }
+        let dictionary = array.as_any().downcast_ref::<DictionaryArray<Int32Type>>()?;
+        let values = dictionary.values();
+        if let Some(values) = values.as_any().downcast_ref::<StringArray>() {
+            return Some(Self::Dictionary { keys: dictionary.keys(), values });
+        }
+        let values = values.as_any().downcast_ref::<LargeStringArray>()?;
+        Some(Self::LargeDictionary { keys: dictionary.keys(), values })
+    }
+}
+
+impl KeySource for ArrowKeys<'_> {
+    fn has_nulls(&self) -> bool {
+        match self {
+            Self::Int64(values) => values.null_count() != 0,
+            Self::Float64(values) => values.null_count() != 0,
+            Self::Utf8(values) => values.null_count() != 0,
+            Self::LargeUtf8(values) => values.null_count() != 0,
+            Self::Dictionary { keys, .. } | Self::LargeDictionary { keys, .. } => {
+                keys.null_count() != 0
+            }
+        }
+    }
+
+    fn integer_values(&self) -> Option<&[i64]> {
+        match self {
+            Self::Int64(values) => Some(values.values()),
+            _ => None,
+        }
+    }
+
+    fn value_at(&self, row: usize) -> Option<KeyValue<'_>> {
+        match self {
+            Self::Int64(values) => {
+                if values.is_null(row) {
+                    return None;
+                }
+                Some(KeyValue::Int(values.value(row)))
+            }
+            Self::Float64(values) => {
+                if values.is_null(row) {
+                    return None;
+                }
+                Some(KeyValue::Float(values.value(row)))
+            }
+            Self::Utf8(values) => {
+                if values.is_null(row) {
+                    return None;
+                }
+                Some(KeyValue::Text(values.value(row)))
+            }
+            Self::LargeUtf8(values) => {
+                if values.is_null(row) {
+                    return None;
+                }
+                Some(KeyValue::Text(values.value(row)))
+            }
+            Self::Dictionary { keys, values } => {
+                if keys.is_null(row) {
+                    return None;
+                }
+                let index = usize::try_from(keys.value(row)).ok()?;
+                Some(KeyValue::Text(values.value(index)))
+            }
+            Self::LargeDictionary { keys, values } => {
+                if keys.is_null(row) {
+                    return None;
+                }
+                let index = usize::try_from(keys.value(row)).ok()?;
+                Some(KeyValue::Text(values.value(index)))
+            }
+        }
+    }
+}
 
 /// A value a join or a sort can key on.
 ///

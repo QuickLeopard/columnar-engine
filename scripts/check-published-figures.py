@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
 BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("compare-before-run*.json"))
 SPEC020_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec020-run*.json"))
+SPEC021_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec021-run*.json"))
 PROBE_REPORTS = sorted((ROOT / "bench-results").glob("operator-probe-*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
@@ -124,6 +125,29 @@ SPEC020_CHECKS = [
     ("PERF.md", "the last set's duckdb sort-topk resident", "duckdb", "-", "resident", "sort-topk", 1),
 ]
 
+# (document, label, system, mode, metric, query, places)
+#
+# The set **this one replaces** -- spec 021's set, the one that was published
+# before it. Its figures are published beside the new ones, old against new,
+# so they are derived from the reports they came from rather than typed into
+# the prose. The reports are kept under their own name so that every figure
+# this file quotes stays derivable from a committed report.
+SPEC021_CHECKS = [
+    ("PERF.md", "the replaced set's lazy join-orders cold", "engine", "lazy", "cold", "join-orders", 1),
+    ("PERF.md", "the replaced set's lazy sort-topk cold", "engine", "lazy", "cold", "sort-topk", 1),
+    ("PERF.md", "the replaced set's lazy q6-revenue cold", "engine", "lazy", "cold", "q6-revenue", 1),
+    ("PERF.md", "the replaced set's join-orders resident", "engine", "eager", "resident", "join-orders", 1),
+    ("PERF.md", "the replaced set's sort-topk resident", "engine", "eager", "resident", "sort-topk", 1),
+    ("PERF.md", "the replaced set's eager q6 cold", "engine", "eager", "cold", "q6", 1),
+    ("PERF.md", "the replaced set's duckdb q6 cold", "duckdb", "-", "cold", "q6", 1),
+    ("PERF.md", "the replaced set's duckdb join-orders cold", "duckdb", "-", "cold", "join-orders", 1),
+    ("PERF.md", "the replaced set's duckdb sort-topk cold", "duckdb", "-", "cold", "sort-topk", 1),
+    ("PERF.md", "the replaced set's duckdb sort-topk resident", "duckdb", "-", "resident", "sort-topk", 1),
+    ("PERF.md", "the replaced set's polars q6 cold", "polars", "-", "cold", "q6", 1),
+    ("PERF.md", "the replaced set's polars join-orders cold", "polars", "-", "cold", "join-orders", 1),
+    ("PERF.md", "the replaced set's datafusion join-orders cold", "datafusion-peer", "-", "cold", "join-orders", 1),
+    ("PERF.md", "the replaced set's datafusion sort-topk cold", "datafusion-peer", "-", "cold", "sort-topk", 1),
+]
 
 # (document, label, report, measurement, places)
 #
@@ -319,6 +343,10 @@ STAGE_CHECKS = [
     ("PERF.md", "the last set's join stage", "last", "join-orders", "join", 1),
     ("PERF.md", "the last set's sort stage", "last", "sort-topk", "sort", 1),
     ("PERF.md", "the last set's join scan", "last", "join-orders", "scan", 1),
+    ("PERF.md", "the replaced set's join stage", "replaced", "join-orders", "join", 1),
+    ("PERF.md", "the replaced set's sort stage", "replaced", "sort-topk", "sort", 1),
+    ("PERF.md", "the replaced set's join scan", "replaced", "join-orders", "scan", 1),
+    ("PERF.md", "the replaced set's sort scan", "replaced", "sort-topk", "scan", 1),
 ]
 
 
@@ -694,6 +722,24 @@ DICTIONARY_COST_SLOPE_CHECKS = [
     ("PERF.md", "the engine's comparison's cost a row group", "comparison", 2),
 ]
 
+# Spec 023's scan probe: the join's scan, taken apart. The engine's copy is
+# the difference between the engine's shape and the crate's shape over the
+# same two columns.
+SCAN_COST_CHECKS = [
+    ("PERF.md", "the crate's read of l_orderkey", "crate_orderkey", 2),
+    ("PERF.md", "the crate's read of l_extendedprice", "crate_price", 2),
+    ("PERF.md", "the crate's read of both", "crate_both", 2),
+    ("PERF.md", "the engine's own scan of l_orderkey", "engine_orderkey", 2),
+    ("PERF.md", "the engine's own scan of l_extendedprice", "engine_price", 2),
+    ("PERF.md", "the engine's own scan of both", "engine_both", 2),
+    ("PERF.md", "the crate's read of the build side", "crate_orders_both", 2),
+]
+
+SCAN_COST_DERIVED_CHECKS = [
+    ("PERF.md", "the engine's copy", 2),
+]
+
+
 def dictionary_cost_figure(
     files: dict[str, list[dict]], kind: str, key: str, which: str
 ) -> float | None:
@@ -731,6 +777,23 @@ def dictionary_cost_slope(
     return (high - low) / span
 
 
+def scan_cost_figure(runs: list[dict], key: str) -> float | None:
+    """The median of one figure in the scan cost reports."""
+    values = [
+        float(run["measurements_ms"][key])
+        for run in runs
+        if key in run.get("measurements_ms", {})
+    ]
+    return statistics.median(values) if values else None
+
+
+def scan_cost_copy(runs: list[dict]) -> float | None:
+    """The engine's copy: its own scan over the crate's read."""
+    engine = scan_cost_figure(runs, "engine_both")
+    crate = scan_cost_figure(runs, "crate_both")
+    if engine is None or crate is None:
+        return None
+    return engine - crate
 
 
 def main() -> int:
@@ -801,6 +864,26 @@ def main() -> int:
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
 
+    if SPEC021_REPORTS:
+        spec021_runs = [json.loads(path.read_text()) for path in SPEC021_REPORTS]
+        replaced = collect(spec021_runs)
+        for doc, label, system, mode, metric, query, places in SPEC021_CHECKS:
+            values = replaced.get((system, mode, metric, query))
+            if not values:
+                failures.append(
+                    f"{doc}: no figure for {label} in the replaced set's reports"
+                )
+                continue
+            figure = statistics.median(values)
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -808,6 +891,8 @@ def main() -> int:
         stage_sets["before"] = collect_stages(before_runs)
     if SPEC020_REPORTS:
         stage_sets["last"] = collect_stages(spec020_runs)
+    if SPEC021_REPORTS:
+        stage_sets["replaced"] = collect_stages(spec021_runs)
 
     for doc, label, which, query, stage, places in STAGE_CHECKS:
         values = stage_sets.get(which, {}).get((query, "lazy", stage))
@@ -1405,7 +1490,7 @@ def main() -> int:
         f"\nall published figures agree with the committed reports: "
         f"{len(REPORTS)} campaigns, {len(BEFORE_REPORTS)} before, "
         f"{len(SPEC020_REPORTS)} of the last set, "
-        f"{len(PROBE_REPORTS)} probe, "
+        f"{len(SPEC021_REPORTS)} of the replaced set, {len(PROBE_REPORTS)} probe, "
         f"{len(STAGE_CHECKS)} of the plan output"
     )
     return 0

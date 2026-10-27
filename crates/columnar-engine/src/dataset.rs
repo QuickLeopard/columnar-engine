@@ -356,6 +356,139 @@ pub(crate) fn decode_batches(
     Ok(Dataset::with_rows(chunks, rows))
 }
 
+/// What a scan produced: the rows it kept, and the rows they came from.
+#[derive(Debug)]
+pub struct ScanOutput {
+    /// The rows the scan kept.
+    pub dataset: Dataset,
+    /// The dataset's own row numbers, one per output row.
+    ///
+    /// A position may repeat: the join's output has one row per match, and a
+    /// probe row that matches twice is two rows of the result. Empty when the
+    /// scan kept every row -- then the output is the dataset's rows, in order.
+    pub rows: Vec<u32>,
+    /// What the filter cost.
+    ///
+    /// The filter runs inside the scan, but it is the **join's** work, and the
+    /// plan output reports it in the join's stage.
+    pub filter_elapsed: std::time::Duration,
+}
+
+/// Copies a batch into the dataset's columns, keeping the rows the mask keeps.
+///
+/// The survivors are written straight out of the reader's array, into the
+/// engine's own column. The batch is **not** filtered first: a filter would
+/// copy every column in it, including the columns the predicates read and the
+/// query does not materialise, and the survivors would then be copied a second
+/// time out of the filtered batch.
+///
+/// The number of rows the batch contributed is returned.
+fn push_whole_batch(
+    builders: &mut [ColumnBuilder],
+    positions: &[usize],
+    batch: &arrow::record_batch::RecordBatch,
+    mask: Option<&RowMask>,
+    rows: usize,
+) -> Result<usize, DatasetError> {
+    let Some(mask) = mask else {
+        // No predicate: every row survives.
+        for (builder, position) in builders.iter_mut().zip(positions.iter()) {
+            let Some(column) = batch.columns().get(*position) else {
+                return Err(DatasetError::Parquet(
+                    "the record batch holds fewer columns than were projected".to_owned(),
+                ));
+            };
+            builder.push(column.as_ref(), rows)?;
+        }
+        return Ok(batch.num_rows());
+    };
+    if builders.is_empty() {
+        // The query asked for no columns, so the engine needs the number of
+        // surviving rows and not the rows themselves. Filtering the batch would
+        // be work nobody asked for.
+        return Ok(mask.count());
+    }
+    for (builder, position) in builders.iter_mut().zip(positions.iter()) {
+        let Some(column) = batch.columns().get(*position) else {
+            return Err(DatasetError::Parquet(
+                "the record batch holds fewer columns than were projected".to_owned(),
+            ));
+        };
+        builder.push_masked(column.as_ref(), mask, rows)?;
+    }
+    Ok(mask.count())
+}
+
+/// Copies the rows a filter kept into the dataset's columns.
+///
+/// The filter's rows are the batch's own positions, in ascending order, and a
+/// position may repeat: the join's output has one row per match. The dataset
+/// holds each of them **once**, and the returned row numbers are the output's
+/// -- one per kept row, with the multiplicity.
+///
+/// The number of rows the batch contributed to the dataset is returned, and the
+/// dataset's own row numbers for the output.
+fn keep_matching_rows(
+    builders: &mut [ColumnBuilder],
+    positions: &[usize],
+    batch: &arrow::record_batch::RecordBatch,
+    mask: Option<&RowMask>,
+    kept: &[u32],
+    rows: usize,
+) -> Result<(usize, Vec<u32>), DatasetError> {
+    let mut kept_mask = RowMask::new(batch.num_rows());
+    let mut previous: Option<u32> = None;
+    for &row in kept {
+        if let Some(previous) = previous {
+            if row < previous {
+                return Err(DatasetError::Parquet(
+                    "the scan's filter returned its rows out of order".to_owned(),
+                ));
+            }
+        }
+        previous = Some(row);
+        kept_mask.set(usize::try_from(row).unwrap_or(usize::MAX), true);
+    }
+    // The filter was given the pushed-down predicates' survivors, and it kept
+    // only those. The mask is ANDed with theirs anyway: the cost is one word
+    // at a time, and a filter that kept a row they dropped would put a row in
+    // the dataset that the query never asked for.
+    let combined = match mask {
+        Some(mask) => kept_mask.and(mask),
+        None => kept_mask,
+    };
+    // The rows the dataset holds, in order.
+    let mut distinct: Vec<u32> = Vec::with_capacity(combined.count());
+    combined.for_each(|row| distinct.push(u32::try_from(row).unwrap_or(u32::MAX)));
+
+    if !builders.is_empty() {
+        for (builder, position) in builders.iter_mut().zip(positions.iter()) {
+            let Some(column) = batch.columns().get(*position) else {
+                return Err(DatasetError::Parquet(
+                    "the record batch holds fewer columns than were projected".to_owned(),
+                ));
+            };
+            builder.push_masked(column.as_ref(), &combined, rows)?;
+        }
+    }
+    // The dataset's own row numbers, one per output row. The filter's rows are
+    // ascending, and so are the dataset's, so the two are walked together.
+    let mut output: Vec<u32> = Vec::with_capacity(kept.len());
+    let mut index = 0usize;
+    for &row in kept {
+        while index < distinct.len() && distinct[index] < row {
+            index += 1;
+        }
+        if index >= distinct.len() || distinct[index] != row {
+            return Err(DatasetError::Parquet(
+                "the scan's filter returned a row the pushed-down predicates dropped".to_owned(),
+            ));
+        }
+        output.push(u32::try_from(rows + index).unwrap_or(u32::MAX));
+    }
+    Ok((distinct.len(), output))
+}
+
 /// Decodes record batches into column chunks, applying the pushed-down
 /// predicates **in the engine's own domain**.
 ///
@@ -371,6 +504,10 @@ pub(crate) fn decode_batches(
 /// predicate over scattered data that list is longer than the number of rows
 /// it selects. See ADR-0015.
 ///
+/// A `filter` is handed every batch **before** anything is copied, and the
+/// rows it does not keep are never copied. See
+/// [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md).
+///
 /// The row count is taken from the batches rather than from the file's
 /// metadata: a scan with pushed-down predicates returns fewer rows than the
 /// file holds, and it is the surviving rows that were decoded.
@@ -381,10 +518,13 @@ pub(crate) fn decode_batches_filtered(
     projection: &[usize],
     pushdown: &PushdownPlan,
     flavor: Flavor,
-) -> Result<Dataset, DatasetError> {
+    filter: Option<&(dyn crate::source::BatchFilter + Sync)>,
+) -> Result<ScanOutput, DatasetError> {
     let mut builders = builders_for(schema, materialised)?;
     let positions = positions_in(materialised, projection)?;
     let mut rows = 0usize;
+    let mut output: Vec<u32> = Vec::new();
+    let mut filter_elapsed = std::time::Duration::ZERO;
     for batch in reader {
         let batch = batch.map_err(|error| DatasetError::Parquet(error.to_string()))?;
         let mask = match pushdown.evaluate_batch(&batch, flavor) {
@@ -392,51 +532,27 @@ pub(crate) fn decode_batches_filtered(
             Ok(Some(mask)) => Some(mask),
             Err(error) => return Err(DatasetError::Parquet(error.to_string())),
         };
-        match mask {
-            None => {
-                // No predicate: every row survives.
-                for (builder, position) in builders.iter_mut().zip(positions.iter()) {
-                    let Some(column) = batch.columns().get(*position) else {
-                        return Err(DatasetError::Parquet(
-                            "the record batch holds fewer columns than were projected".to_owned(),
-                        ));
-                    };
-                    builder.push(column.as_ref(), rows)?;
-                }
-                rows += batch.num_rows();
-            }
-            Some(mask) => {
-                if materialised.is_empty() {
-                    // The query asked for no columns, so the engine needs the
-                    // number of surviving rows and not the rows themselves.
-                    // Filtering the batch would be work nobody asked for.
-                    rows += mask.count();
-                    continue;
-                }
-                // The survivors are written straight out of the reader's
-                // array, into the engine's own column. The batch is **not**
-                // filtered first: a filter would copy every column in it,
-                // including the columns the predicates read and the query
-                // does not materialise, and the survivors would then be
-                // copied a second time out of the filtered batch.
-                for (builder, position) in builders.iter_mut().zip(positions.iter()) {
-                    let Some(column) = batch.columns().get(*position) else {
-                        return Err(DatasetError::Parquet(
-                            "the record batch holds fewer columns than were projected".to_owned(),
-                        ));
-                    };
-                    builder.push_masked(column.as_ref(), &mask, rows)?;
-                }
-                rows += mask.count();
-            }
-        }
+        let Some(filter) = filter else {
+            rows += push_whole_batch(&mut builders, &positions, &batch, mask.as_ref(), rows)?;
+            continue;
+        };
+
+        // The filter's rows: the rows the join keeps, in the batch's own
+        // positions, with the multiplicity the join gives them.
+        let started = std::time::Instant::now();
+        let kept = filter.keep(&batch, mask.as_ref())?;
+        filter_elapsed += started.elapsed();
+        let (kept_rows, batch_output) =
+            keep_matching_rows(&mut builders, &positions, &batch, mask.as_ref(), &kept, rows)?;
+        output.extend(batch_output);
+        rows += kept_rows;
     }
 
     let mut chunks = Vec::with_capacity(builders.len());
     for builder in builders {
         chunks.push(builder.finish(rows)?);
     }
-    Ok(Dataset::with_rows(chunks, rows))
+    Ok(ScanOutput { dataset: Dataset::with_rows(chunks, rows), rows: output, filter_elapsed })
 }
 
 /// The position of each materialised column in the projected batch.
@@ -992,6 +1108,27 @@ pub fn disable_decode_counting() {
 #[must_use]
 pub fn decode_counts() -> HashMap<String, usize> {
     DECODE_COUNTS.with(|counts| counts.borrow().clone().unwrap_or_default())
+}
+
+/// Merges the parts of a parallel scan.
+///
+/// The parts are joined in block order, so the merged dataset holds the file's
+/// rows in the file's order. The output rows are the parts' own row numbers,
+/// moved by the number of rows that came before them.
+pub(crate) fn merge_scans(parts: Vec<ScanOutput>) -> Result<ScanOutput, DatasetError> {
+    let mut rows: Vec<u32> = Vec::new();
+    let mut datasets = Vec::with_capacity(parts.len());
+    let mut offset: u32 = 0;
+    let mut filter_elapsed = std::time::Duration::ZERO;
+    for part in parts {
+        for row in part.rows {
+            rows.push(row.saturating_add(offset));
+        }
+        offset = offset.saturating_add(u32::try_from(part.dataset.len()).unwrap_or(u32::MAX));
+        filter_elapsed += part.filter_elapsed;
+        datasets.push(part.dataset);
+    }
+    Ok(ScanOutput { dataset: merge(datasets)?, rows, filter_elapsed })
 }
 
 /// Merges several datasets, in order, into one.

@@ -341,7 +341,7 @@ pub struct RowMask {
 
 impl RowMask {
     /// An empty mask over `len` rows.
-    fn new(len: usize) -> Self {
+    pub(crate) fn new(len: usize) -> Self {
         Self { words: vec![0u64; len.div_ceil(64)], len }
     }
 
@@ -355,7 +355,7 @@ impl RowMask {
 
     /// Sets the bit for `row`.
     #[inline]
-    fn set(&mut self, row: usize, matched: bool) {
+    pub(crate) fn set(&mut self, row: usize, matched: bool) {
         if matched {
             self.words[row / 64] |= 1u64 << (row % 64);
         }
@@ -409,6 +409,16 @@ impl RowMask {
         }
     }
 
+    /// The rows the mask keeps, in ascending order.
+    ///
+    /// The iterator walks the mask's words, so it costs nothing per row it
+    /// does not keep: a mask over six million rows is 93,000 words, and the
+    /// rows a filter keeps are found by walking them.
+    #[must_use]
+    pub fn positions(&self) -> MaskPositions<'_> {
+        MaskPositions { mask: self, word_index: 0, bits: 0 }
+    }
+
     /// The mask as an Arrow boolean array, with no nulls.
     #[must_use]
     pub fn into_array(self) -> BooleanArray {
@@ -422,9 +432,40 @@ impl RowMask {
     }
 
     /// The rows this mask keeps and `other` keeps.
-    fn and(mut self, other: &Self) -> Self {
+    pub(crate) fn and(mut self, other: &Self) -> Self {
         and_words(&mut self.words, &other.words);
         self
+    }
+}
+
+/// The rows a mask keeps, in ascending order.
+///
+/// The rows are found a word at a time, and the words past the mask's length
+/// are masked off, so a row never depends on the padding.
+#[derive(Debug, Clone)]
+pub struct MaskPositions<'a> {
+    /// The mask being walked.
+    mask: &'a RowMask,
+    /// The word the walk is in.
+    word_index: usize,
+    /// The bits of that word that are still to come.
+    bits: u64,
+}
+
+impl Iterator for MaskPositions<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<u32> {
+        while self.bits == 0 {
+            let word = *self.mask.words.get(self.word_index)?;
+            let base = self.word_index * 64;
+            let rows = self.mask.len.saturating_sub(base).min(64);
+            self.word_index += 1;
+            self.bits = if rows < 64 { word & ((1u64 << rows) - 1) } else { word };
+        }
+        let bit = self.bits.trailing_zeros() as usize;
+        self.bits &= self.bits - 1;
+        Some(u32::try_from((self.word_index - 1) * 64 + bit).unwrap_or(u32::MAX))
     }
 }
 

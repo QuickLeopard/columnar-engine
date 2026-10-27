@@ -26,7 +26,7 @@ use arrow::record_batch::RecordBatch;
 use columnar_core::{ComparisonOp, Encoding, Expr, NullBitmap, Predicate, ScalarValue};
 use columnar_engine::{
     execute, execute_on, Aggregate, AggregateSpec, AggregateValue, Dataset, ExecOptions, JoinSpec,
-    MemoryBudget, ParquetSource, QueryPlan,
+    MemoryBudget, ParquetSource, PlanOutput, QueryPlan,
 };
 use columnar_kernels::Flavor;
 use parquet::arrow::ArrowWriter;
@@ -197,6 +197,72 @@ fn engine_answer_on(plan: &QueryPlan, path: &Path) -> (i64, Option<f64>) {
         other => panic!("unexpected sum {other:?}"),
     };
     (count, sum)
+}
+
+/// The engine's answer and its plan output, over a Parquet file.
+fn engine_answer_and_output(plan: &QueryPlan, path: &Path) -> ((i64, Option<f64>), PlanOutput) {
+    let source = ParquetSource::open(path).expect("the source opens");
+    let result = execute_on(plan, &source, &scalar()).expect("the plan runs");
+    let group = result.groups.first().expect("a global aggregate has one group");
+    let count = match group.values.first() {
+        Some(AggregateValue::Int(count)) => *count,
+        other => panic!("unexpected count {other:?}"),
+    };
+    let sum = match group.values.get(1) {
+        Some(AggregateValue::Float(sum)) => Some(*sum),
+        Some(AggregateValue::Null) => None,
+        other => panic!("unexpected sum {other:?}"),
+    };
+    ((count, sum), result.plan_output)
+}
+
+/// The scan that feeds the join answers the same as the one that does not.
+///
+/// The lazy path probes the join **inside** the scan, before it copies
+/// anything, so the rows the join does not match are never copied into the
+/// dataset. The answer must not change: the two paths are held to the same
+/// rows and the same sum, and the plan output says which path ran.
+#[test]
+fn the_scan_that_feeds_the_join_answers_the_same() {
+    // The probe side's keys are 1..=5 and the build side holds 2, 3, 3, 5
+    // and 9: one key twice, one key that no probe row has, and one probe
+    // row (key 4) that has no partner.
+    let probe_keys = vec![Some(1), Some(2), Some(3), Some(4), Some(5)];
+    let probe_values = vec![Some(10.0), Some(20.0), Some(30.0), Some(40.0), Some(50.0)];
+    let build_keys = vec![Some(2), Some(3), Some(3), Some(5), Some(9)];
+    let build_dates = vec![
+        Some("1994-01-01"),
+        Some("1994-02-01"),
+        Some("1994-03-01"),
+        Some("1994-04-01"),
+        Some("1994-05-01"),
+    ];
+
+    let build_path = temp_path("streamed-build");
+    write_build(&build_path, &build_keys, &build_dates);
+    let probe_path = temp_path("streamed-probe");
+    write_probe(&probe_path, &probe_keys, &probe_values);
+    let plan = join_plan(&build_path, Vec::new());
+
+    // The eager path materialises the probe side and probes it afterwards.
+    let dataset = probe_dataset(&probe_keys, &probe_values);
+    let eager = engine_answer(&plan, &dataset);
+
+    // The lazy path probes it inside the scan.
+    let (lazy, output) = engine_answer_and_output(&plan, &probe_path);
+
+    assert_eq!(lazy, eager, "the streamed scan answered differently from the materialising one");
+
+    let rows = nested_loop(&probe_keys, &build_keys);
+    let expected = reference_sum(&probe_values, &rows);
+    assert_eq!(lazy.0, i64::try_from(rows.len()).expect("a row count fits in an i64"));
+    assert_eq!(lazy.1, expected, "the join's rows differ from the nested loop's");
+
+    let join = output.join.as_ref().expect("the plan had a join");
+    assert!(join.probe_in_scan, "the scan did not feed the join");
+
+    let _ = std::fs::remove_file(build_path);
+    let _ = std::fs::remove_file(probe_path);
 }
 
 /// The join agrees with the nested loop, row for row and in order.
@@ -581,5 +647,18 @@ fn a_join_whose_keys_have_different_types_is_a_plan_error() {
         "the error was {error:?}"
     );
 
+    // The lazy path rejects it too, and it rejects it **before** it reads
+    // anything: the scan that feeds the join checks the two keys' types
+    // before it builds the table.
+    let probe_path = temp_path("key-types-probe");
+    write_probe(&probe_path, &[Some(1)], &[Some(10.0)]);
+    let source = ParquetSource::open(&probe_path).expect("the source opens");
+    let error = execute_on(&plan, &source, &scalar()).expect_err("the join is rejected");
+    assert!(
+        matches!(error, columnar_engine::EngineError::TypeMismatch(_)),
+        "the error was {error:?}"
+    );
+
     let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(probe_path);
 }
