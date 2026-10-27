@@ -74,8 +74,9 @@ The table is below.
 **<https://oib98vz3b8zwj.space.minimax.io>** — open it and the kernel runs: the page rebuilds the
 column, runs both implementations over it, compares their masks bit for bit, and only then
 prints a number. There is nothing to click; the button under the title is there to run it a
-second time. It is the same build `just web-build` produces, and it names the commit it was
-built from. To build and serve it yourself:
+second time, and it always answers — press it while a run is in flight and the run happens again
+when the first one ends. It is the same build `just web-build` produces, and it names the commit
+it was built from. To build and serve it yourself:
 
 ```bash
 just web        # builds the wasm32 module and serves the page

@@ -9,8 +9,9 @@
 #   4. the x86-64 half of the kernel still compiles,
 #   5. the browser's half of the kernel still compiles,
 #   6. the dependency policy holds,
-#   7. no dataset is committed, and
-#   8. the published figures still agree with the committed reports.
+#   7. no dataset is committed,
+#   8. the published figures still agree with the committed reports, and
+#   9. the browser page still keeps the promises it makes.
 #
 # The benchmark is NOT run here. A shared runner is a noisy machine, and a
 # performance number measured on one is not a number this repository is
@@ -208,3 +209,21 @@ jobs:
         run: python3 scripts/medians.py
       - name: Check the published figures against the reports
         run: python3 scripts/check-published-figures.py
+
+  browser-page:
+    name: the browser page keeps its promises
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The page is the one part of this repository a reader can *run*, so
+      # three of its claims are guarded here: the button always answers (it
+      # is never disabled -- a browser drops a click on a disabled button,
+      # so a reader pressing it during the run would get nothing), the
+      # report is only claimed when it was really written, and the commit
+      # is checked rather than trusted from a host that answers an unknown
+      # path with a document.
+      #
+      # No build is needed: the build copies the page's source, so the
+      # source is what the checks read.
+      - name: Check the page's promises
+        run: python3 scripts/check-page.py

@@ -67,7 +67,6 @@
         color: var(--paper);
         cursor: pointer;
       }
-      button[disabled] { opacity: 0.5; cursor: progress; }
       .row { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
       dl.conditions { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem; font-family: var(--mono); font-size: 0.82rem; margin: 0; }
       dl.conditions dt { color: var(--muted); }
@@ -87,7 +86,7 @@
       </p>
 
       <div class="row">
-        <button id="run" type="button">Run the kernel</button>
+        <button id="run" type="button">Running…</button>
         <span id="status" class="muted">running…</span>
       </div>
 

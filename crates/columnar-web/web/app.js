@@ -35,6 +35,20 @@ function say(text) {
   el("out").textContent = text;
 }
 
+// Whether a run is in flight, and whether a press arrived while it was.
+//
+// The button is **never disabled**: a browser drops a click on a disabled
+// button entirely, so a reader who pressed it while the page was measuring
+// would get nothing at all -- no run, no status change, no feedback. A
+// visible control has to answer. A press that arrives during a run is kept
+// and run again when the run in flight ends.
+let running = false;
+let queued = false;
+
+function label(text) {
+  el("run").textContent = text;
+}
+
 function setField(id, value, className) {
   const node = el(id);
   node.textContent = value;
@@ -133,8 +147,8 @@ function fmtRate(nsPerRow) {
 }
 
 async function run() {
-  const button = el("run");
-  button.disabled = true;
+  running = true;
+  label(queued ? "Running… — it will run again" : "Running…");
   el("status").textContent = "loading the module…";
 
   let exports;
@@ -145,7 +159,7 @@ async function run() {
     say(
       `The module did not load.\n\n${error.message}\n\nIf the browser does not support WebAssembly's \`simd128\`, the module cannot be instantiated at all -- that is the browser saying no, not this page failing.`
     );
-    button.disabled = false;
+    finish();
     return;
   }
 
@@ -216,7 +230,7 @@ async function run() {
         "No throughput is printed: an implementation that computes a different predicate would\n" +
         "otherwise publish a faster, wrong number."
     );
-    button.disabled = false;
+    finish();
     return;
   }
 
@@ -297,13 +311,37 @@ async function run() {
     el("status").textContent = `done · the report was not written: ${error.message}`;
   }
 
-  button.disabled = false;
-  // The page runs on load, so by the time the reader can press anything,
-  // the kernel has already run once. The button says so.
-  button.textContent = "Run the kernel again";
+  finish();
 }
 
+// Ends a run.
+//
+// The button is never disabled, so the only thing this has to do is say
+// what is true now: the run is over, and the reader can ask for another
+// one. A press that arrived while the run was in flight is not lost -- it
+// runs now.
+function finish() {
+  running = false;
+  if (queued) {
+    queued = false;
+    run();
+    return;
+  }
+  // The page runs on load, so by the time the reader can press anything,
+  // the kernel has already run once. The button says so.
+  label("Run the kernel again");
+}
+
+// The button answers a press, always.
+//
+// While a run is in flight the press is kept rather than dropped, and the
+// button says that it was heard.
 el("run").addEventListener("click", () => {
+  if (running) {
+    queued = true;
+    label("Running… — it will run again");
+    return;
+  }
   run();
 });
 

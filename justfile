@@ -15,13 +15,14 @@ default:
 build:
     cargo build --workspace --release
 
-# Build and run everything: format check, lint, tests, and the check that
-# the published figures still agree with the committed reports.
+# Build and run everything: format check, lint, tests, the check that the
+# published figures still agree with the committed reports, and the check that
+# the browser page still keeps the promises it makes.
 #
-# The last one is also a CI job, but the local gate must not be weaker than
+# The last two are also CI jobs, but the local gate must not be weaker than
 # CI -- a private repository's Actions minutes are billed, and this account's
 # billing is currently blocked, so the local gate is the one that runs.
-check: fmt lint test check-published
+check: fmt lint test check-published check-page
 
 # Compile the x86-64 half of the kernel from this ARM64 machine.
 #
@@ -380,6 +381,15 @@ medians:
 # evidence fails here.
 check-published:
     python3 scripts/check-published-figures.py
+
+# Check that the browser page still keeps the promises it makes.
+#
+# The page is the one part of this repository a reader can *run*, so three of
+# its claims are guarded: the button always answers (it is never disabled),
+# the report is only claimed when it was really written, and the commit is
+# checked rather than trusted. See ADR-0025 and ADR-0026.
+check-page:
+    python3 scripts/check-page.py
 
 # Run everything that produces a published number.
 perf: bench compare
