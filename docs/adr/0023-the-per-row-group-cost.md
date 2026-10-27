@@ -206,10 +206,12 @@ are both given, and the reason is named, as
   encoding, its dictionary, its page count or its size is not settled by this measurement, and it is
   written down as the next question rather than guessed at.
 - **The residual per-row-group cost on the three-predicate shape was not separated.** The real Q6's
-  **three**-predicate shape still rises by about **0.5 ms a row group**, and the two shapes differ
-  by exactly one thing: the third predicate's column, `l_quantity`, which is dictionary-encoded with
-  4,901 values a row group. Whether that is the crate building that dictionary per row group, or the
-  engine comparing its distinct values per row group, is not separated by this measurement.
+  **three**-predicate shape still rises by about **0.14 ms a row group** — the predicates alone go from
+  21.31 ms on the six-row-group file to 23.75 ms on the twenty-four-row-group one, over the eighteen
+  row groups between them — and the two shapes differ by exactly one thing: the third predicate's
+  column, `l_quantity`, which is dictionary-encoded with 4,901 values a row group. Whether that is the
+  crate building that dictionary per row group, or the engine comparing its distinct values per row
+  group, is not separated by this measurement.
 - **The generator's writer does not change.** The dead dictionary pages are a fact about the file,
   not about the engine — the same call ADR-0021 and ADR-0022 made.
 - **The plan does not change.** No new predicate, no new stage, no new plan shape.

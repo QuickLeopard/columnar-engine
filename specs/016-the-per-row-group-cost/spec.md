@@ -140,10 +140,12 @@ See [ADR-0023](../../docs/adr/0023-the-per-row-group-cost.md) and
 - **Why the crate charges for a partial batch is not established.** It is in a dependency. The
   *cost* is measured and published; the *reason* is not, and it is not guessed at.
 - **The residual per-row-group cost on the three-predicate shape is not separated.** The real Q6's
-  three predicates still rise by about 0.5 ms a row group, and the third predicate's column,
-  `l_quantity`, is the one the two shapes differ by. Whether the crate's per-row-group dictionary
-  build or the engine's per-row-group comparison of the distinct values is the cost is not settled
-  by this measurement, and it is written down as the next question.
+  three predicates still rise by about 0.14 ms a row group — the predicates alone go from 21.31 ms on
+  the six-row-group file to 23.75 ms on the twenty-four-row-group one, over the eighteen row groups
+  between them — and the third predicate's column, `l_quantity`, is the one the two shapes differ by.
+  Whether the crate's per-row-group dictionary build or the engine's per-row-group comparison of the
+  distinct values is the cost is not settled by this measurement, and it is written down as the next
+  question.
 - **Which of `l_shipdate`'s properties makes it the one column that pays is not separated.** The
   read of the other two columns is flat and the string column's read is not; the encoding, the
   dictionary, the page count and the size are not told apart by this measurement.

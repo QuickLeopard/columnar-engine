@@ -1131,6 +1131,54 @@ def main() -> int:
             count = survivors.pop()
             print(f"ok  {'PERF.md':<10} {'the surviving rows':<28} {count:,}")
 
+    # The README's **Next** row is prose: a hand-written summary of the next
+    # question, and the one place where a figure goes stale without a table
+    # noticing it. The figures it quotes are checked *inside the row*, and they
+    # are built from the reports rather than typed here.
+    next_row = next(
+        (line for line in texts["README.md"].splitlines() if line.startswith("| Next |")),
+        "",
+    )
+    if next_row and REPORTS:
+        figures = collect(runs)
+        engine_fr = figures.get(("engine", "lazy", "cold", "filter-range"), [])
+        polars_fr = figures.get(("polars", "-", "cold", "filter-range"), [])
+        wanted: list[tuple[str, str]] = []
+        if engine_fr and polars_fr:
+            wanted.append(
+                (
+                    "the Next row's filter-range pair",
+                    f"{statistics.median(engine_fr):.1f} ms against Polars' "
+                    f"{statistics.median(polars_fr):.1f} ms",
+                )
+            )
+            wanted.append(
+                (
+                    "the Next row's filter-range spreads",
+                    f"({min(engine_fr):.1f}–{max(engine_fr):.1f} ms against "
+                    f"{min(polars_fr):.1f}–{max(polars_fr):.1f} ms)",
+                )
+            )
+        probe_first = load_reports(dict(ROW_GROUP_PROBES)["A"])
+        probe_last = load_reports(dict(ROW_GROUP_PROBES)["C"])
+        if probe_first and probe_last:
+            first = materialised_figure(probe_first, "query.predicates_only")
+            last = materialised_figure(probe_last, "query.predicates_only")
+            if first is not None and last is not None:
+                wanted.append(
+                    (
+                        "the Next row's three-predicate residual",
+                        f"{(last - first) / 18.0:.2f} ms a row group",
+                    )
+                )
+        for label, phrase in wanted:
+            if phrase not in next_row:
+                failures.append(
+                    f"README.md: the Next row does not carry {label}: the reports say {phrase}"
+                )
+            else:
+                print(f"ok  README.md  {label:<40} {phrase}")
+
     if failures:
         print()
         for failure in failures:
