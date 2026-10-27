@@ -1,7 +1,8 @@
 # Spec 022 — The dictionary, counted
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-27
+**Finished**: 2026-10-27
 **ADR**: [ADR-0029](../../docs/adr/0029-the-dictionary-counted.md)
 **Predecessor**: [021-the-hot-paths-taken-apart](../021-the-hot-paths-taken-apart/spec.md)
 

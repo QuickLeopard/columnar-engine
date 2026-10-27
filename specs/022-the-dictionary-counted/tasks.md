@@ -1,6 +1,6 @@
 # Spec 022 — The dictionary, counted — tasks
 
-**Status**: in progress
+**Status**: done
 **Spec**: [spec.md](spec.md)
 
 ## The instrument
