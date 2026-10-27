@@ -36,6 +36,11 @@ RESIDENT_SCALING_REPORTS = sorted(
 LOAD_SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-load-run*.json"))
 DOCS = [ROOT / "PERF.md", ROOT / "README.md"]
 
+# The number of campaigns a machine has to run before its median is published.
+# This is the repository's rule: a single run is an estimate of a number that
+# moves, so a median needs at least three.
+MIN_CAMPAIGNS = 3
+
 # (document, label, figure as it appears in the prose)
 # The cold `q6` row is the headline of both documents; the load figures and
 # the eager/lazy medians are the ones a reader is most likely to quote.
@@ -417,6 +422,88 @@ def row_group_cost_slope(
 
 
 
+# The x86-64 kernel A/B. Only the **ratios** are published: the absolute
+# figures describe a shared runner and the repository does not publish a
+# number it cannot reproduce.
+#
+# The ratios are published **per processor**, and checked against the line
+# that names that processor: GitHub's hosted runners are a fleet, and the
+# ratio is a property of the CPU as much as of the kernel, so a pooled
+# median across six different machines would be a number about no machine.
+AVX2_CHECKS = [
+    ("cpp-simd", "ratio_vs_scalar"),
+    ("cpp-simd", "ratio_vs_auto"),
+    ("rust-simd", "ratio_vs_scalar"),
+    ("rust-simd", "ratio_vs_auto"),
+]
+
+# §1's table: the ARM64 kernel A/B, as the median of its campaigns. The
+# divisor takes rows/sec down to the G the document publishes.
+KERNEL_CHECKS = [
+    ("scalar", "rows_per_sec", 2, 1e9),
+    ("cpp-auto", "rows_per_sec", 2, 1e9),
+    ("cpp-simd", "rows_per_sec", 2, 1e9),
+    ("rust-simd", "rows_per_sec", 2, 1e9),
+    ("scalar", "ns_per_row", 3, 1.0),
+    ("cpp-auto", "ns_per_row", 3, 1.0),
+    ("cpp-simd", "ns_per_row", 3, 1.0),
+    ("rust-simd", "ns_per_row", 3, 1.0),
+    ("cpp-auto", "ratio_vs_scalar", 2, 1.0),
+    ("cpp-simd", "ratio_vs_scalar", 2, 1.0),
+    ("rust-simd", "ratio_vs_scalar", 2, 1.0),
+    ("cpp-simd", "ratio_vs_auto", 2, 1.0),
+    ("rust-simd", "ratio_vs_auto", 2, 1.0),
+]
+
+
+def kernel_figure(runs: list[dict], flavour: str, key: str) -> float | None:
+    """The median of one figure in the ARM64 kernel reports."""
+    values: list[float] = []
+    for run in runs:
+        for entry in run.get("kernel_ab", {}).get("flavors", []):
+            if entry.get("flavor") == flavour and key in entry:
+                values.append(float(entry[key]))
+    return statistics.median(values) if values else None
+
+
+def avx2_row_mentions(text: str, cpu: str, rendered: str) -> bool:
+    """Whether the row that names a processor also carries a figure.
+
+    The x86-64 table has one row per processor, and the ratio is a property
+    of the processor. A figure that appears *somewhere* in the document is
+    not the same claim as that figure appearing on the processor's own row,
+    so the check is made against the row and not against the whole text.
+    """
+    for line in text.splitlines():
+        if cpu not in line:
+            continue
+        for sign in ("x", "×"):
+            if f"{rendered}{sign}" in line:
+                return True
+            if f"{rendered} G" in line or f"{rendered} ms" in line:
+                return True
+    return False
+
+
+def avx2_groups(runs: list[dict]) -> dict[str, list[dict]]:
+    """Group the x86-64 reports by the processor that produced them."""
+    groups: dict[str, list[dict]] = {}
+    for run in runs:
+        cpu = run.get("machine", {}).get("cpu", "?")
+        groups.setdefault(cpu, []).append(run)
+    return groups
+
+
+def avx2_figure(runs: list[dict], flavour: str, key: str) -> float | None:
+    """The median of one ratio in the x86-64 reports."""
+    values: list[float] = []
+    for run in runs:
+        for entry in run.get("kernel_ab", {}).get("flavors", []):
+            if entry.get("flavor") == flavour and key in entry:
+                values.append(float(entry[key]))
+    return statistics.median(values) if values else None
+
+
 def main() -> int:
     if not REPORTS:
         print("no comparison reports in bench-results/", file=sys.stderr)
@@ -732,6 +819,48 @@ def main() -> int:
         "B": load_reports("row-group-cost-12-run*.json"),
         "C": load_reports("row-group-cost-24-run*.json"),
     }
+    avx2_runs = load_reports("avx2-run*.json")
+    if avx2_runs:
+        for cpu, group in sorted(avx2_groups(avx2_runs).items()):
+            campaigns = len(group)
+            if campaigns < MIN_CAMPAIGNS:
+                print(f"skip {cpu:<44} {campaigns} campaign(s): fewer than "
+                      f"{MIN_CAMPAIGNS}, so no median is published")
+                continue
+            for flavour, key in AVX2_CHECKS:
+                figure = avx2_figure(group, flavour, key)
+                if figure is None:
+                    failures.append(
+                        f"PERF.md: no figure for {flavour} {key} in the "
+                        f"x86-64 reports from {cpu}")
+                    continue
+                rendered = f"{figure:.2f}"
+                label = f"{flavour} {key} on {cpu}"
+                if not avx2_row_mentions(texts["PERF.md"], cpu, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that "
+                        f"figure does not appear on the row that names {cpu}"
+                    )
+                else:
+                    print(f"ok  PERF.md   {label:<56} {rendered}")
+
+    kernel_runs = load_reports("kernel-run*.json")
+    if kernel_runs:
+        for flavour, key, places, divisor in KERNEL_CHECKS:
+            figure = kernel_figure(kernel_runs, flavour, key)
+            if figure is None:
+                failures.append(
+                    f"PERF.md: no figure for {flavour} {key} in the kernel reports")
+                continue
+            rendered = f"{figure / divisor:.{places}f}"
+            if rendered not in texts["PERF.md"]:
+                failures.append(
+                    f"PERF.md: {flavour} {key} is {rendered} in the reports but "
+                    f"that figure does not appear in the document"
+                )
+            else:
+                print(f"ok  PERF.md   {flavour + ' ' + key:<56} {rendered}")
+
     if any(cost_files.values()):
         for doc, label, kind, key, which, places in ROW_GROUP_COST_CHECKS:
             figure = row_group_cost_figure(cost_files, kind, key, which)

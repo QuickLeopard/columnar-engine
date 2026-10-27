@@ -1,0 +1,62 @@
+{
+  "machine": {
+    "cpu": "Intel(R) Xeon(R) 6973P-C",
+    "arch": "x86_64",
+    "cores": 4,
+    "os": "Linux 6.17.0-1022-azure",
+    "simd": "avx2",
+    "forced_simd": "auto",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "threads": 1
+  },
+  "dataset": {
+    "path": "data/lineitem.parquet",
+    "rows": 6000000,
+    "bytes": 242857841,
+    "scale_factor": 1,
+    "seed": 24001,
+    "null_rate": 0.0,
+    "row_groups": 6
+  },
+  "kernel_ab": {
+    "rows": 20000000,
+    "iterations": 8,
+    "column": "l_discount",
+    "operator": ">=",
+    "threshold": 0.04,
+    "flavors": [
+      {
+        "flavor": "scalar",
+        "rows_per_sec": 327374042.6938474,
+        "ns_per_row": 3.054609925,
+        "matches": 12726115,
+        "ratio_vs_scalar": 1.0,
+        "ratio_vs_auto": 1.010207410116367
+      },
+      {
+        "flavor": "cpp-auto",
+        "rows_per_sec": 324066166.42827517,
+        "ns_per_row": 3.08578958125,
+        "matches": 12726115,
+        "ratio_vs_scalar": 0.9898957283285111,
+        "ratio_vs_auto": 1.0
+      },
+      {
+        "flavor": "cpp-simd",
+        "rows_per_sec": 2628168768.7116375,
+        "ns_per_row": 0.38049306875,
+        "matches": 12726115,
+        "ratio_vs_scalar": 8.028030405481598,
+        "ratio_vs_auto": 8.109975804257012
+      },
+      {
+        "flavor": "rust-simd",
+        "rows_per_sec": 2619170840.901987,
+        "ns_per_row": 0.38180021875,
+        "matches": 12726115,
+        "ratio_vs_scalar": 8.000545245889805,
+        "ratio_vs_auto": 8.082210092369152
+      }
+    ]
+  }
+}

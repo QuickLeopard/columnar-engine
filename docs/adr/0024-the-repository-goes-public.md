@@ -30,7 +30,7 @@ The two facts have one answer.
    workflows afterwards.
 2. **The three files leave the repository — from the tree *and* from the history.** Removing them
    from the tree would leave them in every clone's history, and a public repository hands its
-   history to anyone who asks for it. The history is rewritten and force-pushed. **26 commits, one
+   history to anyone who asks for it. The history is rewritten and force-pushed. **27 commits, one
    branch, no tags, no other remotes, no other clone** — so the rewrite costs nothing that is not
    already paid.
 3. **A copy is kept outside the repository**, at `/Volumes/My Data/Work/MiniMax Code/Portfolio
@@ -44,9 +44,9 @@ The two facts have one answer.
    that commit out cannot reproduce the number — which is the failure Principle V exists to
    prevent. The re-measurement is the ordinary campaign cycle this repository already runs; the
    only unusual part is that it happens after a rewrite rather than after a change.
-6. **The x86-64 ratios are published as their own set**, derived by a checked-in script from three
-   committed reports, with the runner's machine and conditions attached, and **never** compared
-   with an ARM64 figure.
+6. **The x86-64 ratios are published as their own set**, derived by a checked-in script from the
+   committed reports, **grouped by the processor that produced them** and published per processor,
+   with the runner's machine and conditions attached, and **never** compared with an ARM64 figure.
 
 ## Why the x86-64 numbers are ratios and nothing else
 
@@ -60,6 +60,25 @@ So the published x86-64 set is two ratios and a machine's description, and the r
 the same breath that the absolute figures are not published. The `avx2-self-hosted` job is already
 wired for the day a pinned x86-64 runner exists, and it is the only job whose absolute figures
 would be worth publishing.
+
+## Why the x86-64 ratios are published **per processor**
+
+The measurement settled a question the plan had not asked. GitHub's hosted runners are a
+**fleet**, and twenty-one runs of the same workflow, on the same commit, with the same harness,
+landed on **six different processors**. The ratio was not one number: it ranged from **1.58×** on
+an EPYC 9V45 to **2.56×** on an EPYC 9V74, and one single campaign on a starved Xeon produced
+**8.03×**.
+
+The cause is visible in the absolute figures the repository does *not* publish: the 9V45 ran its
+scalar reference at 2.79 G rows/s and the 7763 at 1.41 G, and the ratio moved the other way. The
+denominator moved, not the kernel. A ratio published without the processor it was measured on is a
+number about no machine at all.
+
+So the publication rule became the repository's ordinary one, applied to a fleet instead of a
+host: **group the reports by the machine that produced them, take the median within a group, and
+publish a machine only if it ran at least three campaigns.** Three of the six processors ran once
+each; their figures are not published, and `PERF.md` §1b says why. The published set is three
+processors, each with its ratio, its spread and its name.
 
 ## What this costs
 

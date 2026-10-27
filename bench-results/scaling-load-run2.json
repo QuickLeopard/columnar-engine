@@ -26,62 +26,62 @@
     {
       "threads": 1,
       "workers": 1,
-      "engine_ms": 842.25125,
+      "engine_ms": 576.802583,
       "engine_scan_ms": 0.0,
       "engine_operators_ms": 0.0,
-      "duckdb_ms": 1631.0,
-      "polars_ms": 1552.402,
-      "datafusion_ms": 494.295
+      "duckdb_ms": 1275.0,
+      "polars_ms": 1069.793,
+      "datafusion_ms": 362.298
     },
     {
       "threads": 2,
       "workers": 2,
-      "engine_ms": 768.27575,
+      "engine_ms": 423.925,
       "engine_scan_ms": 0.0,
       "engine_operators_ms": 0.0,
-      "duckdb_ms": 1135.0,
-      "polars_ms": 1068.357,
-      "datafusion_ms": 393.711
+      "duckdb_ms": 635.0,
+      "polars_ms": 536.124,
+      "datafusion_ms": 242.024
     },
     {
       "threads": 4,
       "workers": 4,
-      "engine_ms": 553.496834,
+      "engine_ms": 301.82295799999997,
       "engine_scan_ms": 0.0,
       "engine_operators_ms": 0.0,
-      "duckdb_ms": 834.0,
-      "polars_ms": 712.454,
-      "datafusion_ms": 238.726
+      "duckdb_ms": 423.0,
+      "polars_ms": 372.525,
+      "datafusion_ms": 128.451
     },
     {
       "threads": 6,
       "workers": 6,
-      "engine_ms": 433.489584,
+      "engine_ms": 250.994958,
       "engine_scan_ms": 0.0,
       "engine_operators_ms": 0.0,
-      "duckdb_ms": 504.0,
-      "polars_ms": 449.845,
-      "datafusion_ms": 236.272
+      "duckdb_ms": 239.0,
+      "polars_ms": 193.528,
+      "datafusion_ms": 127.708
     },
     {
       "threads": 8,
       "workers": 6,
-      "engine_ms": 426.37404200000003,
+      "engine_ms": 246.03824999999998,
       "engine_scan_ms": 0.0,
       "engine_operators_ms": 0.0,
-      "duckdb_ms": 493.0,
-      "polars_ms": 447.286,
-      "datafusion_ms": 149.324
+      "duckdb_ms": 245.0,
+      "polars_ms": 202.849,
+      "datafusion_ms": 78.879
     },
     {
       "threads": 14,
       "workers": 6,
-      "engine_ms": 425.391833,
+      "engine_ms": 260.00712500000003,
       "engine_scan_ms": 0.0,
       "engine_operators_ms": 0.0,
-      "duckdb_ms": 559.0,
-      "polars_ms": 454.161,
-      "datafusion_ms": 179.275
+      "duckdb_ms": 235.0,
+      "polars_ms": 205.752,
+      "datafusion_ms": 83.484
     }
   ]
 }

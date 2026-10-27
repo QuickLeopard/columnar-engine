@@ -1,0 +1,62 @@
+{
+  "machine": {
+    "cpu": "Apple M4 Max",
+    "arch": "aarch64",
+    "cores": 14,
+    "os": "macOS 27.0.1",
+    "simd": "neon",
+    "forced_simd": "auto",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "threads": 1
+  },
+  "dataset": {
+    "path": "data/lineitem.parquet",
+    "rows": 6000000,
+    "bytes": 242857841,
+    "scale_factor": 1,
+    "seed": 24001,
+    "null_rate": 0.0,
+    "row_groups": 0
+  },
+  "kernel_ab": {
+    "rows": 20000000,
+    "iterations": 8,
+    "column": "l_discount",
+    "operator": ">=",
+    "threshold": 0.04,
+    "flavors": [
+      {
+        "flavor": "scalar",
+        "rows_per_sec": 1794777471.2621913,
+        "ns_per_row": 0.5571721375,
+        "matches": 12726115,
+        "ratio_vs_scalar": 1.0,
+        "ratio_vs_auto": 0.3361842550857992
+      },
+      {
+        "flavor": "cpp-auto",
+        "rows_per_sec": 5338672005.338673,
+        "ns_per_row": 0.1873125,
+        "matches": 12726115,
+        "ratio_vs_scalar": 2.9745592926259596,
+        "ratio_vs_auto": 1.0
+      },
+      {
+        "flavor": "cpp-simd",
+        "rows_per_sec": 7996951162.369347,
+        "ns_per_row": 0.12504765625,
+        "matches": 12726115,
+        "ratio_vs_scalar": 4.455678372620439,
+        "ratio_vs_auto": 1.4979289146013082
+      },
+      {
+        "flavor": "rust-simd",
+        "rows_per_sec": 7785935437.563488,
+        "ns_per_row": 0.12843671875,
+        "matches": 12726115,
+        "ratio_vs_scalar": 4.338106290184247,
+        "ratio_vs_auto": 1.4584030316486107
+      }
+    ]
+  }
+}

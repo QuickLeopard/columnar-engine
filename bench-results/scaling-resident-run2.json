@@ -26,62 +26,62 @@
     {
       "threads": 1,
       "workers": 1,
-      "engine_ms": 9.687625,
+      "engine_ms": 8.015459000000002,
       "engine_scan_ms": 0.0,
-      "engine_operators_ms": 9.685208,
-      "duckdb_ms": 74.0,
-      "polars_ms": 117.286,
-      "datafusion_ms": 35.798
+      "engine_operators_ms": 8.008167,
+      "duckdb_ms": 46.0,
+      "polars_ms": 69.02,
+      "datafusion_ms": 24.068
     },
     {
       "threads": 2,
       "workers": 2,
-      "engine_ms": 6.061208000000001,
+      "engine_ms": 4.280375,
       "engine_scan_ms": 0.0,
-      "engine_operators_ms": 6.056791,
-      "duckdb_ms": 47.0,
-      "polars_ms": 77.781,
-      "datafusion_ms": 25.555
+      "engine_operators_ms": 4.273958,
+      "duckdb_ms": 27.0,
+      "polars_ms": 41.026,
+      "datafusion_ms": 17.175
     },
     {
       "threads": 4,
       "workers": 4,
-      "engine_ms": 4.22175,
+      "engine_ms": 2.617667,
       "engine_scan_ms": 0.0,
-      "engine_operators_ms": 4.216041,
-      "duckdb_ms": 26.0,
-      "polars_ms": 38.546,
-      "datafusion_ms": 19.239
+      "engine_operators_ms": 2.611376,
+      "duckdb_ms": 15.0,
+      "polars_ms": 20.817,
+      "datafusion_ms": 10.59
     },
     {
       "threads": 6,
       "workers": 6,
-      "engine_ms": 4.469792,
+      "engine_ms": 2.423708,
       "engine_scan_ms": 0.0,
-      "engine_operators_ms": 4.462667000000001,
-      "duckdb_ms": 21.0,
-      "polars_ms": 39.089,
-      "datafusion_ms": 20.353
+      "engine_operators_ms": 2.417083,
+      "duckdb_ms": 12.0,
+      "polars_ms": 13.158,
+      "datafusion_ms": 7.704
     },
     {
       "threads": 8,
       "workers": 8,
-      "engine_ms": 4.842333,
+      "engine_ms": 2.0460830000000003,
       "engine_scan_ms": 0.0,
-      "engine_operators_ms": 4.836709,
-      "duckdb_ms": 18.0,
-      "polars_ms": 36.932,
-      "datafusion_ms": 18.787
+      "engine_operators_ms": 2.0401249999999997,
+      "duckdb_ms": 9.0,
+      "polars_ms": 10.861,
+      "datafusion_ms": 6.76
     },
     {
       "threads": 14,
       "workers": 14,
-      "engine_ms": 7.762583,
+      "engine_ms": 2.1324579999999997,
       "engine_scan_ms": 0.0,
-      "engine_operators_ms": 7.751834000000001,
-      "duckdb_ms": 22.0,
-      "polars_ms": 35.743,
-      "datafusion_ms": 23.648
+      "engine_operators_ms": 2.126834,
+      "duckdb_ms": 8.0,
+      "polars_ms": 9.74,
+      "datafusion_ms": 6.357
     }
   ]
 }

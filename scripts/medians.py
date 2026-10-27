@@ -32,6 +32,11 @@ COMPARATORS = ["duckdb", "polars", "datafusion-peer"]
 DISPLAY = {"duckdb": "duckdb", "polars": "polars", "datafusion-peer": "datafusion"}
 ENGINE_MODES = ["eager", "lazy"]
 
+# The number of campaigns a machine has to run before its median is published.
+# This is the repository's rule, not a script's: a single run is an estimate
+# of a number that moves, so a median needs at least three.
+MIN_CAMPAIGNS = 3
+
 
 def load(path: Path) -> dict:
     with path.open() as handle:
@@ -860,6 +865,150 @@ def print_row_group_cost(files: list[tuple[str, list[dict]]]) -> None:
         print(line)
 
 
+def print_kernel(runs: list[dict]) -> None:
+    """Print the ARM64 kernel A/B: the medians, and the spread across campaigns.
+
+    This is §1's table. Each campaign is the median of eight iterations of
+    the four flavors, and the published figure is the median of the
+    campaigns -- the same rule the rest of the file follows.
+    """
+    if not runs:
+        return
+
+    flavours: dict[str, dict[str, list[float]]] = {}
+    matches: set[int] = set()
+    for run in runs:
+        for flavour in run.get("kernel_ab", {}).get("flavors", []):
+            name = flavour["flavor"]
+            bucket = flavours.setdefault(
+                name,
+                {"rows_per_sec": [], "ns_per_row": [],
+                 "ratio_vs_scalar": [], "ratio_vs_auto": []},
+            )
+            bucket["rows_per_sec"].append(float(flavour["rows_per_sec"]))
+            bucket["ns_per_row"].append(float(flavour["ns_per_row"]))
+            bucket["ratio_vs_scalar"].append(float(flavour["ratio_vs_scalar"]))
+            bucket["ratio_vs_auto"].append(float(flavour["ratio_vs_auto"]))
+            matches.add(int(flavour["matches"]))
+
+    machine = runs[0].get("machine", {})
+    rows = runs[0].get("kernel_ab", {})
+    print(f"\n=== THE KERNEL A/B, {len(runs)} campaigns ===")
+    print(f"machine: {machine.get('cpu', '?')}, {machine.get('arch', '?')}, "
+          f"{machine.get('cores', '?')} core(s), {machine.get('os', '?')}, "
+          f"{machine.get('rustc', '?')}, simd {machine.get('simd', '?')}")
+    print(f"rows: {rows.get('rows', '?')}, {rows.get('iterations', '?')} iterations "
+          f"a campaign, column {rows.get('column', '?')} {rows.get('operator', '?')} "
+          f"{rows.get('threshold', '?')}")
+    print(f"{'flavor':<12}{'rows/sec':>26}{'ns/row':>26}"
+          f"{'vs scalar':>26}{'vs cpp-auto':>26}")
+    for name in ("scalar", "cpp-auto", "cpp-simd", "rust-simd"):
+        bucket = flavours.get(name)
+        if not bucket:
+            continue
+        speed = bucket["rows_per_sec"]
+        ns = bucket["ns_per_row"]
+        vs = bucket["ratio_vs_scalar"]
+        va = bucket["ratio_vs_auto"]
+        print(f"{name:<12}"
+              f"{statistics.median(speed) / 1e9:>16.3f}G"
+              f" ({min(speed) / 1e9:.2f}-{max(speed) / 1e9:.2f})"
+              f"{statistics.median(ns):>16.3f}"
+              f" ({min(ns):.3f}-{max(ns):.3f})"
+              f"{statistics.median(vs):>16.2f}x"
+              f" ({min(vs):.2f}-{max(vs):.2f})"
+              f"{statistics.median(va):>16.2f}x"
+              f" ({min(va):.2f}-{max(va):.2f})")
+    if len(matches) == 1:
+        print(f"every flavour agrees on the match count: {next(iter(matches)):,}")
+    else:
+        print(f"the flavours DISAGREE on the match count: {sorted(matches)}")
+
+
+def avx2_machine(run: dict) -> str:
+    """The machine a report was measured on, as the runner named it.
+
+    GitHub's hosted runners are a **fleet**: two runs of the same workflow can
+    land on two different CPU generations, and the kernel's ratio is a
+    property of the CPU as much as of the kernel. So the reports are grouped
+    by machine and the median is taken *within* a machine, never across one.
+    """
+    machine = run.get("machine", {})
+    return f"{machine.get('cpu', '?')} · {machine.get('cores', '?')} cores"
+
+
+def avx2_groups(runs: list[dict]) -> dict[str, list[dict]]:
+    """Group the x86-64 reports by the machine that produced them."""
+    groups: dict[str, list[dict]] = {}
+    for run in runs:
+        groups.setdefault(avx2_machine(run), []).append(run)
+    return groups
+
+
+def print_avx2(runs: list[dict]) -> None:
+    """Print the x86-64 kernel A/B: the ratios, and nothing else.
+
+    These figures come from a GitHub-hosted x86-64 runner. The **absolute**
+    rows/sec and ns/row describe a shared machine, so they are not published;
+    the ratios are taken from the same process, on the same machine, in the
+    same run, so they are.
+
+    The ratios are published **per machine**, and only for a machine that ran
+    the campaign at least `MIN_CAMPAIGNS` times. A pooled median across
+    different CPUs would be a number about no machine at all.
+    """
+    if not runs:
+        return
+
+    groups = avx2_groups(runs)
+    print(f"\n=== THE KERNEL A/B ON x86-64, {len(runs)} campaigns "
+          f"on {len(groups)} machine(s) ===")
+
+    for machine, group in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        spec = group[0].get("machine", {})
+        campaigns = len(group)
+        flavours: dict[str, dict[str, list[float]]] = {}
+        matches: set[int] = set()
+        for run in group:
+            for flavour in run.get("kernel_ab", {}).get("flavors", []):
+                name = flavour["flavor"]
+                bucket = flavours.setdefault(
+                    name, {"ratio_vs_scalar": [], "ratio_vs_auto": [], "matches": []})
+                bucket["ratio_vs_scalar"].append(float(flavour["ratio_vs_scalar"]))
+                bucket["ratio_vs_auto"].append(float(flavour["ratio_vs_auto"]))
+                bucket["matches"].append(float(flavour["matches"]))
+                matches.add(int(flavour["matches"]))
+
+        print(f"\n-- {machine} -- {campaigns} campaign(s)")
+        print(f"   {spec.get('arch', '?')}, {spec.get('os', '?')}, "
+              f"{spec.get('rustc', '?')}, simd {spec.get('simd', '?')}, "
+              f"{spec.get('threads', '?')} thread(s)")
+        rows = group[0].get("kernel_ab", {})
+        print(f"   rows: {rows.get('rows', '?')}, {rows.get('iterations', '?')} "
+              f"iterations, operator {rows.get('operator', '?')}")
+
+        if campaigns < MIN_CAMPAIGNS:
+            print(f"   NOT PUBLISHED: {campaigns} campaign(s), fewer than the "
+                  f"{MIN_CAMPAIGNS} this repository requires for a median.")
+            continue
+
+        print(f"   {'flavor':<12}{'vs scalar':>22}{'vs cpp-auto':>22}{'matches':>14}")
+        for name in ("scalar", "cpp-auto", "cpp-simd", "rust-simd"):
+            bucket = flavours.get(name)
+            if not bucket:
+                continue
+            vs = bucket["ratio_vs_scalar"]
+            va = bucket["ratio_vs_auto"]
+            print(f"   {name:<12}"
+                  f"{statistics.median(vs):>7.2f}x ({min(vs):.2f}-{max(vs):.2f})".rjust(22)
+                  + f"{statistics.median(va):>7.2f}x ({min(va):.2f}-{max(va):.2f})".rjust(22)
+                  + f"{int(statistics.median(bucket['matches'])):>14,}")
+        if len(matches) == 1:
+            print(f"   every flavour agrees on the match count: {next(iter(matches)):,}")
+        else:
+            print(f"   the flavours DISAGREE on the match count: {sorted(matches)}")
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -1020,6 +1169,16 @@ def main() -> int:
     loaded_costs = [(name, runs) for name, runs in loaded_costs if runs]
     if loaded_costs:
         print_row_group_cost(loaded_costs)
+
+    # The x86-64 kernel A/B, from the GitHub-hosted runner.
+    avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))
+    if avx2_paths:
+        print_avx2([load(p) for p in avx2_paths])
+
+    # §1's table: the ARM64 kernel A/B, as the median of its campaigns.
+    kernel_paths = sorted(Path("bench-results").glob("kernel-run*.json"))
+    if kernel_paths:
+        print_kernel([load(p) for p in kernel_paths])
 
     return 0
 

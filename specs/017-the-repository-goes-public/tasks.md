@@ -28,7 +28,11 @@ name a commit that still resolves.
   - [x] `batch-size-run{1,2,3}.json` — the reader's batch limit over both shapes
   - [x] `row-group-cost-{6,12,24}-run{1,2,3}.json` — the per-row-group cost, nine campaigns
   - [x] `row-groups-{6,12,24}-run{1,2,3}.json` — the row-group probe, nine campaigns
+  - [x] `kernel-run{1..6}.json` — the kernel A/B, six campaigns of eight iterations
   - [x] `browser-run{1,2,3}.json` — the browser's kernel, three campaigns, in the in-app browser
+- [x] Re-measure **the whole published set** as one campaign — the comparison, every sweep, every
+      probe — so that the file's figures are one set with one set of conditions rather than
+      several, taken on different days from a differently-loaded host.
 - [x] Re-derive the tables with `python3 scripts/medians.py`, and republish the figures that
       moved, old and new, with the reason.
 - [x] `python3 scripts/check-published-figures.py` guards them again.
@@ -44,11 +48,18 @@ name a commit that still resolves.
 
 ## R5 — The x86-64 measurement is published as its own set
 
-- [x] Dispatch `bench-avx2.yml` three times, once per campaign.
-- [x] Fetch each run's `avx2.json` and commit the three reports.
+- [x] Dispatch `bench-avx2.yml` — twenty-one runs, so that the fleet's processors each have at
+      least three campaigns of their own.
+- [x] Fetch every run's report and commit it, named by its workflow run id, so a figure can be
+      traced to the run that produced it.
 - [x] Derive the ratios with a checked-in script, and guard them.
-- [x] Publish the ratios — and only the ratios — with the runner's machine, its SIMD path, its
-      thread count and its warm-up attached, and never compared with an ARM64 figure.
+- [x] **Group the reports by the processor that produced them, and publish a processor only if it
+      ran at least three campaigns.** The ratio turned out to be a property of the CPU as much as
+      of the kernel — 1.69× on an EPYC 9V45, 2.23× on an EPYC 7763, 2.56× on an EPYC 9V74 — so a
+      pooled median across the fleet would have been a number about no machine at all.
+- [x] Publish the ratios — and only the ratios — with the processor's name, its SIMD path, its
+      thread count and its spread attached, and never compared with an ARM64 figure.
+- [x] Name the three processors that ran once and are therefore **not** published, and say why.
 - [x] Update `PERF.md` §5 and the README's "what is measured" rows: the x86-64 measurement is no
       longer "not measured".
 

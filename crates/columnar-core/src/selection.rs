@@ -367,7 +367,7 @@ mod tests {
         let selection = SelectionVector::from_filter(&[0b1010], 2, 8);
         let mut rows = Vec::new();
         selection.for_each_in_range(3, 3, |row| rows.push(row));
-        assert!(rows.is_empty());
+        assert_eq!(rows.len(), 0);
         assert_eq!(selection.count_in_range(3, 3), 0);
     }
 
@@ -421,6 +421,6 @@ mod tests {
     fn empty_selection_has_zero_density_even_for_an_empty_batch() {
         let selection = SelectionVector::empty(0);
         assert!(selection.density().abs() < f64::EPSILON);
-        assert!(selection.is_empty());
+        assert_eq!(selection.len(), 0);
     }
 }

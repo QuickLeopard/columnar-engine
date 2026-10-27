@@ -11,7 +11,8 @@ python3 scripts/medians.py
 
 | file | what it is |
 |---|---|
-| `kernel.json` | the comparison kernel's A/B: four flavours of one predicate over 20 million rows |
+| `kernel.json` | a copy of `kernel-run4.json`, the kernel campaign nearest the medians |
+| `kernel-run1.json` … `kernel-run6.json` | the six **kernel A/B campaigns** the §1 table is the median of — four flavours of one predicate over 20 million rows, eight iterations each |
 | `compare.json` | the **representative** comparison run — the run whose figures sit nearest the medians |
 | `compare-run1.json` | the first of the three runs the published table is the median of |
 | `compare-run2.json` | the second |
@@ -31,9 +32,10 @@ python3 scripts/medians.py
 | `scaling-load-run1.json` | the first of the three **load sweeps** the §2g table is the median of |
 | `scaling-load-run2.json` | the second |
 | `scaling-load-run3.json` | the third |
-| `compare.json` | a copy of `compare-run2.json`, the run whose figures sit nearest the medians |
-| `scaling.json` | a copy of `scaling-run1.json`, the sweep run nearest the medians |
-| `scaling-revenue.json` | a copy of `scaling-revenue-run1.json`, the sweep run nearest the medians |
+| `compare.json` | a copy of `compare-run1.json`, the run whose figures sit nearest the medians |
+| `scaling.json` | a copy of `scaling-run2.json`, the sweep run nearest the medians |
+| `scaling-revenue.json` | a copy of `scaling-revenue-run2.json`, the sweep run nearest the medians |
+| `avx2-run-<run id>.json` | the **x86-64 kernel A/B**, one file per workflow run — twenty-one of them, from `bench-avx2.yml`, each dispatched from commit `8271054`. The file name is the run id, so a figure can be traced back to the run that produced it. |
 | `browser-run1.json` | the first of the three **browser campaigns** the §1a table is the median of |
 | `browser-run2.json` | the second |
 | `browser-run3.json` | the third |
@@ -65,7 +67,7 @@ python3 scripts/medians.py
 | `scaling-rg12.json` | a copy of `scaling-rg12-run2.json`, the run nearest the medians |
 | `scaling-rg24.json` | a copy of `scaling-rg24-run2.json`, the run nearest the medians |
 | `row-groups-6.json` | a copy of `row-groups-6-run1.json`, the campaign nearest the medians |
-| `row-groups-12.json` | a copy of `row-groups-12-run3.json`, the campaign nearest the medians |
+| `row-groups-12.json` | a copy of `row-groups-12-run2.json`, the campaign nearest the medians |
 | `row-groups-24.json` | a copy of `row-groups-24-run2.json`, the campaign nearest the medians |
 | `row-group-cost-6-run1.json` | the first of the three **per-row-group cost campaigns on the six-row-group file** — the crate's read, the engine's scan and the ladder of reader batch sizes the §3j mechanism table is the median of |
 | `row-group-cost-6-run2.json` | the second |
@@ -103,6 +105,8 @@ questions.
 
 | table | question | reports |
 |---|---|---|
+| §1 | *how fast is the comparison kernel, against two baselines* | `kernel-run*.json` |
+| §1b | *how fast is it on x86-64 hardware, and on which processor* | `avx2-run*.json` |
 | §2a, §2b | *which is faster when every system is given one thread* | `compare-run*.json` |
 | §2e, `q6` | *how does each system's number move with the thread count* | `scaling-run*.json` |
 | §2e, `q6-revenue` | the same, on the real Q6 | `scaling-revenue-run*.json` |
@@ -165,6 +169,30 @@ matters.
 `compare.json` is a copy of the run nearest the medians — it is the report a
 reader would see if they opened one — but it is **not** the source of the
 published table. The three `compare-run*.json` files are.
+
+## Three campaigns, and six processors
+
+Two of the tables are not the median of three, because they could not be.
+
+**§1, the kernel A/B, is the median of six campaigns.** Each campaign is the
+median of eight iterations of the four flavours. Six, rather than three,
+because one of the first three campaigns ran with its scalar baseline starved
+— the reference came in at 1.79 G rows/s while the vectorised flavours ran at
+their usual speed — and a wider sample is what makes that visible instead of
+hiding it inside a median.
+
+**§1b, the x86-64 kernel A/B, is published per processor.** GitHub's hosted
+runners are a **fleet**: the twenty-one runs landed on six different
+processors, and the ratio turned out to be a property of the processor as much
+as of the kernel. A pooled median across six machines would be a number about
+no machine at all, so `scripts/medians.py` groups the reports by the CPU that
+produced them and takes the median **within** a group — and publishes a
+processor only when it ran at least three campaigns. Three of the six
+processors ran once each; their figures are not published, and §1b says why.
+
+The file name of an x86-64 report is the workflow run id, so a figure can be
+traced to the run that produced it and to the commit that run was dispatched
+from.
 
 ## Reproducing
 

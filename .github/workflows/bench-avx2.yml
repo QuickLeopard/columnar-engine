@@ -47,6 +47,10 @@ on:
         description: 'Rows in the kernel A/B'
         required: true
         default: '20000000'
+      self_hosted:
+        description: 'Also run the self-hosted job (needs a runner with the labels self-hosted, linux, x64)'
+        required: false
+        default: 'false'
 
 jobs:
   avx2-correctness:
@@ -54,7 +58,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install the pinned toolchain
+      # Not pinned, and deliberately so: this is a *measurement* workflow, not
+      # a gate. The toolchain it ran under travels inside the report
+      # (`machine.rustc`), which is what makes a ratio from a shared runner
+      # attributable to a toolchain. The published set in PERF.md section 1b
+      # was measured with rustc 1.99.1 and names it. The gate workflow,
+      # `ci.yml`, is the pinned one.
+      - name: Install the toolchain
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
@@ -91,7 +101,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install the pinned toolchain
+      # Not pinned, and deliberately so: this is a *measurement* workflow, not
+      # a gate. The toolchain it ran under travels inside the report
+      # (`machine.rustc`), which is what makes a ratio from a shared runner
+      # attributable to a toolchain. The published set in PERF.md section 1b
+      # was measured with rustc 1.99.1 and names it. The gate workflow,
+      # `ci.yml`, is the pinned one.
+      - name: Install the toolchain
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
@@ -156,10 +172,24 @@ jobs:
     # ARM64 MacBook. The job is wired so that it starts working the moment a
     # runner exists, and it is the only job whose absolute figures would be
     # worth publishing.
+    #
+    # It is gated behind the `self_hosted` input, and the gate is the point:
+    # a job that waits for a runner that does not exist leaves the **run**
+    # queued for ever, so every dispatch of this workflow would sit in the
+    # queue with its other two jobs already green. Asking for it explicitly
+    # keeps the default dispatch honest -- it finishes -- and the day a
+    # runner is registered, `self_hosted: true` starts it.
+    if: ${{ inputs.self_hosted == 'true' }}
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
-      - name: Install the pinned toolchain
+      # Not pinned, and deliberately so: this is a *measurement* workflow, not
+      # a gate. The toolchain it ran under travels inside the report
+      # (`machine.rustc`), which is what makes a ratio from a shared runner
+      # attributable to a toolchain. The published set in PERF.md section 1b
+      # was measured with rustc 1.99.1 and names it. The gate workflow,
+      # `ci.yml`, is the pinned one.
+      - name: Install the toolchain
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable

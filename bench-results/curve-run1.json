@@ -18,34 +18,34 @@
       "scale_factor": 1,
       "rows": 6000000,
       "bytes": 242857841,
-      "engine_ms": 75.129834,
-      "engine_scan_ms": 72.744792,
-      "engine_operators_ms": 1.806249,
-      "duckdb_ms": 90.0,
-      "polars_ms": 413.38,
-      "datafusion_ms": 243.758
+      "engine_ms": 57.661792000000005,
+      "engine_scan_ms": 56.806334,
+      "engine_operators_ms": 1.547333,
+      "duckdb_ms": 69.0,
+      "polars_ms": 196.68,
+      "datafusion_ms": 112.759
     },
     {
       "scale_factor": 2,
       "rows": 12000000,
       "bytes": 487964754,
-      "engine_ms": 170.933209,
-      "engine_scan_ms": 146.501,
-      "engine_operators_ms": 4.009874,
-      "duckdb_ms": 167.0,
-      "polars_ms": 721.656,
-      "datafusion_ms": 322.059
+      "engine_ms": 113.64625000000001,
+      "engine_scan_ms": 110.15875,
+      "engine_operators_ms": 2.909376,
+      "duckdb_ms": 139.0,
+      "polars_ms": 390.13,
+      "datafusion_ms": 223.386
     },
     {
       "scale_factor": 4,
       "rows": 24000000,
       "bytes": 981717037,
-      "engine_ms": 351.02883299999996,
-      "engine_scan_ms": 355.87437500000004,
-      "engine_operators_ms": 9.087667,
-      "duckdb_ms": 436.0,
-      "polars_ms": 1400.657,
-      "datafusion_ms": 707.554
+      "engine_ms": 227.664542,
+      "engine_scan_ms": 219.78187499999999,
+      "engine_operators_ms": 5.625082000000001,
+      "duckdb_ms": 267.0,
+      "polars_ms": 773.671,
+      "datafusion_ms": 451.051
     }
   ]
 }

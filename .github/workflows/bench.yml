@@ -31,7 +31,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install the pinned toolchain
+      # Not pinned, and deliberately so: this is a *measurement* workflow, not
+      # a gate. The toolchain it ran under travels inside the report
+      # (`machine.rustc`), which is what makes a figure from a shared runner
+      # attributable to a toolchain even when the runner's absolute numbers
+      # are not published. The gate workflow, `ci.yml`, is the pinned one.
+      - name: Install the toolchain
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable

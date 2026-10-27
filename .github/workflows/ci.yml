@@ -40,6 +40,16 @@ env:
   # The rustfmt and clippy versions must match the ones the project was
   # formatted and linted with. Pinned so that a toolchain bump shows up as a
   # diff to review rather than as a surprise failure.
+  #
+  # The pin is **1.97.1**, the toolchain the published figures were measured
+  # with and the one `just check` runs locally: the CI gate and the local gate
+  # are the same gate. A newer toolchain adds lints rather than fixing
+  # behaviour, and one of them -- `clippy::assert_is_empty`, new in the
+  # 1.99 line -- turned two passing asserts in `columnar-core` into a failing
+  # CI run with no change in what the code does. The tree is kept clean under
+  # the newer toolchain as well, so that raising this pin is a diff to review
+  # rather than a fire drill.
+  RUST_TOOLCHAIN: 1.97.1
   RUSTFLAGS: -D warnings
 
 jobs:
@@ -50,8 +60,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          rustup default "$RUST_TOOLCHAIN"
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
@@ -70,8 +80,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          rustup default "$RUST_TOOLCHAIN"
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -86,8 +96,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
       - name: cargo test
         run: cargo test --workspace --all-targets
 
@@ -98,8 +108,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
       # Named separately from the general test job because it is the gate
       # that protects the project's headline claim: every implementation of
       # the comparison predicate must agree with the oracle, bit for bit.
@@ -113,8 +123,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
           rustup target add x86_64-apple-darwin
       # This job exists because of a specific failure. The kernel has an
       # x86-64 half -- the AVX2 path, in C++ and in Rust intrinsics -- and
@@ -136,8 +146,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
           rustup target add wasm32-unknown-unknown
       # The browser's kernel is a third SIMD path -- WebAssembly's `simd128`
       # -- and it exists only in a `wasm32` build. The same rot that the
@@ -161,8 +171,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          rustup default "$RUST_TOOLCHAIN"
       - name: cargo-deny
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
