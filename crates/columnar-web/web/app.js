@@ -298,6 +298,9 @@ async function run() {
   }
 
   button.disabled = false;
+  // The page runs on load, so by the time the reader can press anything,
+  // the kernel has already run once. The button says so.
+  button.textContent = "Run the kernel again";
 }
 
 el("run").addEventListener("click", () => {
