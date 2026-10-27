@@ -175,7 +175,8 @@ masks identical to the oracle's, on an ARM64 Mac.**
 emulated, so a timing taken there measures the translator, not hardware. The benchmark harness
 therefore *refuses to measure* while the override is in force — `just bench` exits with an
 explanation rather than producing a number that means something other than what it appears to mean.
-AVX2 timings require an x86-64 machine with AVX2, and are published only from one. See
+AVX2 timings require an x86-64 machine with AVX2, and are published only from one — the ratios are
+in [§1b](#1b-the-kernel-on-x86-64-measured-natively), and what is still not published is in
 [Not measured](#not-measured).
 
 ### 1a. The kernel in a browser
