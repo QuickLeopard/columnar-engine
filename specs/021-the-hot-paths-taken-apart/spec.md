@@ -1,7 +1,8 @@
 # Spec 021 — The hot paths, taken apart
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-27
+**Finished**: 2026-10-27
 **ADR**: [ADR-0028](../../docs/adr/0028-the-hot-paths-taken-apart.md)
 **Predecessor**: [020-the-engine-joins-and-sorts](../020-the-engine-joins-and-sorts/spec.md)
 
@@ -28,21 +29,21 @@ join's probe and the sort apart, and the parts are these:
 
 | | ms | |
 |---|---|---|
-| reading the key column | 9.0 | the floor the old code paid |
-| **reading the key column's own integers** | **1.6** | **the real floor** |
-| **the engine's probe, before** | **91.1** | |
-| an open-addressed table over the key's bits | 59.9 | 1.53× |
-| **a table addressed by the key itself** | **14.4** | **6.33×** |
+| reading the key column | 9.3 | the floor the old code paid |
+| **reading the key column's own integers** | **1.7** | **the real floor** |
+| **the engine's probe, before** | **102.7** | |
+| an open-addressed table over the key's bits | 66.2 | 1.55× |
+| **a table addressed by the key itself, one byte a count** | **16.4** | **6.26×** |
 
 **The sort, over 6,000,000 rows, with a limit of ten:**
 
 | | ms | |
 |---|---|---|
-| reading the key column | 9.0 | the floor the old code paid |
-| **reading the key column without the validity bitmap** | **3.1** | **2.9×** |
-| **the engine's bounded sort, before** | **11.8** | |
+| reading the key column | 9.9 | the floor the old code paid |
+| **reading the key column without the validity bitmap** | **3.5** | **2.83×** |
+| **the engine's bounded sort, before** | **13.3** | |
 
-So the engine's own work — the part that is not Arrow's decode and not the file — was **89 ms of
+So the engine's own work — the part that is not Arrow's decode and not the file — was **93 ms of
 the join's 103 ms probe** and **9.8 ms of the sort's 13.3 ms**. The join's probe is where the
 engine's time is. The sort is not slow because its comparison is slow; the sort is slow because
 it reads the key column through a validity bitmap that carries no information.
@@ -159,20 +160,24 @@ own memory estimates are wrong in both directions, and its plan output misreport
 
 ## The measurement
 
-- [x] Three campaigns on a host quiet enough to measure on (load 3.60–5.86), the reports
+- [x] Three campaigns on a host quiet enough to measure on (load 5.53–7.17), the reports
       committed, and the published tables re-derived by `scripts/medians.py`.
 - [x] **The old code was re-measured on the same host**, back to back, in its own three
       campaigns, so the code's share of every moved figure is separated from the machine's. The
-      six queries this increment did not touch are the control: they moved by **−0.7% to +8.1%**
-      between the two host-matched sets, while the join moved by **−45.6%** and the sort by
-      **−15.9%**.
+      six queries this increment did not touch are the control: in the cold lazy path they moved
+      by **0% to +14.0%** between the two host-matched sets, while the join moved by **−45.0%**
+      cold and **−73.4%** resident, and the sort by **−5.9%** cold and **−44.2%** resident.
+- [x] **The plan output is the attribution, read a stage at a time.** The stage breakdown is in
+      the committed reports too: on this host the join stage went from **107.4 ms** to
+      **21.9 ms** and the sort stage from **14.5 ms** to **5.3 ms**, while the two scan stages —
+      Arrow's decode, which this change did not touch — moved *up* with the busier host.
 - [x] The set before that is committed too, so **every** published figure — old and new — is
       derived from a committed report by a script, and the guard checks all four sets.
 - [x] The moved figures published old-and-new, with the reason.
 
 ## The gate
 
-- [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite (330 tests), `cargo deny`,
+- [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite (336 tests), `cargo deny`,
       the wasm32 check, the published-figures guard and the page checks all green.
 - [x] CI is green on the pushed commits.
 

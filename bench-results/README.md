@@ -115,6 +115,7 @@ questions.
 | §2a, §2b (the set before) | *the same table, one increment ago* | `compare-spec020-run*.json` |
 | §2h | *what the join's probe and the sort cost, apart* | `operator-probe-*.json` |
 | §2h (the code's share) | *what the change did, as opposed to the machine* | `compare-before-run*.json` |
+| §2h (the stages) | *what each stage of the engine's own work cost* | the three comparison sets — every campaign records the plan output |
 | §2e, `q6` | *how does each system's number move with the thread count* | `scaling-run*.json` |
 | §2e, `q6-revenue` | the same, on the real Q6 | `scaling-revenue-run*.json` |
 | §2f, `q6` | the same, with the data already in memory | `scaling-resident-run*.json` |
@@ -177,6 +178,13 @@ python3 scripts/medians.py bench-results/compare-before-run*.json    # the old c
 python3 scripts/medians.py bench-results/compare-spec020-run*.json  # the set before this one
 python3 scripts/check-published-figures.py
 ```
+
+Every campaign also records the **plan output** of every query it ran — the
+stage breakdown, the rows each stage was handed and produced, and the memory
+the engine estimated. So the engine's own account of the work is in the
+committed reports too, and the guard checks the stage figures against them as
+well: the join stage's **21.9 ms**, the sort stage's **5.3 ms** and the old
+code's **107.4 ms** and **14.5 ms** are derived, not typed.
 
 The **operator probe** writes its own two reports, one per code version:
 

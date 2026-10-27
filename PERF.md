@@ -37,9 +37,9 @@ without re-running a benchmark. See [`bench-results/README.md`](bench-results/RE
 **This set replaced the one before it, and the machine is the reason most of the figures moved.** The
 set published before this one ran while the machine's load average was **9.8–13.2**; this one ran at
 **5.53–7.17**. The machine was quieter, so the engine's figures fell and so did the incumbents'.
-The drift is **in both systems and in both directions across the file**, and it is not hidden: the
-six single-table queries that this increment did not touch are the **control**, and they moved by
-**0% to 8%** between the two sets while `DuckDB`'s cold `q6` moved from **34.0 ms** to **32.0 ms**
+The drift is **in both systems**, and it is not hidden: the six single-table queries that this
+increment did not touch are the **control**, and in the cold lazy path they moved by **−5.8% to 0%**
+between the two sets while `DuckDB`'s cold `q6` moved from **34.0 ms** to **32.0 ms**
 and `Polars`' from **196.3 ms** to **191.4 ms**.
 
 **Two figures moved for a different reason, and they are the two this increment is about.** The join's
@@ -47,8 +47,9 @@ probe and the sort's bounded heap were taken apart, measured, and rewritten. So 
 share is separated from the host's, the **old code was re-measured on this same host**, back to back,
 in its own three campaigns — committed as `bench-results/compare-before-run{1,2,3}.json`. The three
 measurements are in [§2h](#2h-the-hot-paths-taken-apart), and the control sits beside them:
-the six queries this increment did not touch moved by **−0.7% to +8.1%** between the two
-host-matched sets, while the join moved by **−45.6%** and the sort by **−15.9%**.
+in the cold lazy path the six queries this increment did not touch moved by **0% to +14.0%** between
+the two host-matched sets, while the join moved by **−45.0%** cold and **−73.4%** resident, and the
+sort by **−5.9%** cold and **−44.2%** resident.
 
 What the change does **not** do is move the comparisons: every table here measures the engine and
 every incumbent at the same moment, on the same file, at the same thread count, so the *ratios* are
@@ -985,17 +986,37 @@ old code was re-measured here, in its own three campaigns — committed as
 | *`q6-revenue` cold, lazy — the control* | *60.6 ms* | *53.2 ms* | *59.8 ms* | *+12.4%* |
 
 **The control is the point.** The six queries this increment did not touch moved by **0% to +14.0%**
-between the two host-matched sets — the new set ran on a *busier* host than the old-code set did, so
-every one of those moves works **against** the change rather than for it. The join's **−45.0%** is
-far outside that band.
+in the cold lazy path between the two host-matched sets — the new set ran on a *busier* host than
+the old-code set did, so every one of those moves works **against** the change rather than for it.
+The join's **−45.0%** is far outside that band.
+
+**The plan output reads it a stage at a time, and the stages are in the committed reports too.** The
+engine's own account of the same work, from the same three campaigns:
+
+| stage | published set (load 9.8–13.2) | old code, this host (load 2.95–4.22) | new code, this host (load 5.53–7.17) | the code's share |
+|---|---|---|---|---|
+| `join-orders` scan | 79.6 ms | 67.2 ms | 71.4 ms | the host's, **+6.3%** |
+| `join-orders` project | 2.6 ms | 1.3 ms | 0.9 ms | −30.8% |
+| `join-orders` **join** | **128.1 ms** | **107.4 ms** | **21.9 ms** | **−79.6%** |
+| `sort-topk` scan | 38.7 ms | 33.8 ms | 39.3 ms | the host's, **+16.3%** |
+| `sort-topk` **sort** | **16.3 ms** | **14.5 ms** | **5.3 ms** | **−63.4%** |
+
+**The two scan stages moved *against* the change** — the new set ran on a busier host, and the scan
+is Arrow's decode, which the code did not touch. The two stages the code *did* touch fell by **80%**
+and **63%** on the same host, in the same campaigns. That is the attribution, read from the engine's
+own plan output rather than from a clock around the whole query.
+
+**And the project stage changed shape, not only its time.** It reports the **216,783 rows it
+gathered** now, where it used to report the 6,000,000 it was handed — the defect R6 removed. The
+stage table above is read from the reports, so the rows are in there too.
 
 **The sort's end-to-end number is inside the band, and the honest reading says so.** The cold
 `sort-topk` fell by **5.9%** while the control rose by up to 14%, so the *query* number is not the
 place to read the sort's improvement: the query is dominated by the scan, which is Arrow's decode.
 The place to read it is the plan output, in the same campaigns and on the same files: the sort stage
-went from **16.3 ms** to **5.3 ms**, and the probe says the sort's own cost went from **13.3 ms** to
-**3.7 ms**. The query's number moved less because there was less of the engine's own work left in
-it to move.
+went from **14.5 ms** to **5.3 ms** on this host — **16.3 ms** in the published set — and the probe
+says the sort's own cost went from **13.3 ms** to **3.7 ms**. The query's number moved less because
+there was less of the engine's own work left in it to move.
 
 ## 3. What the engine's own stages say
 
@@ -1986,6 +2007,11 @@ cargo run --release -p columnar-engine --example operator_probe -- \
     --data data/lineitem.parquet --build data/orders.parquet \
     --out bench-results/operator-probe-after.json
 ```
+
+**The plan output is in the campaigns too.** Every campaign records the plan output of every query it
+ran — the stage breakdown, the rows each stage was handed and produced, and the memory the engine
+estimated — so the stage figures in [§2h](#2h-the-hot-paths-taken-apart) are derived from the
+committed reports rather than typed into the prose, and the guard checks them like the rest.
 
 ---
 

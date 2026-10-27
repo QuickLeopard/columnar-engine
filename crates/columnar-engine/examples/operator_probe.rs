@@ -20,7 +20,7 @@
 //! | `sort-topk` resident | 23.6 ms | **4.0 ms** | 1452.7 ms | 4.5 ms |
 //!
 //! The plan output already says where the join's time goes: the join stage is
-//! 122.9 ms of a 216 ms query, and the scan is 74.9 ms. The scan is Arrow's
+//! 128.1 ms of a 216 ms query, and the scan is 79.6 ms. The scan is Arrow's
 //! own decode, and the existing `materialised_column_probe` measured that a
 //! different encoding would be *slower*, so the scan is at the floor of what
 //! this file format allows.

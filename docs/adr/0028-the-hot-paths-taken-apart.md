@@ -23,12 +23,12 @@ time went**. Both operators were written to be correct first and measured
 second, and the measurement came after the code.
 
 Spec 021 asks the question the plan output can answer. The join's stage
-breakdown:
+breakdown, from the published campaign set:
 
 ```
-scan       6000000  6000000   74.9 ms
-project    6000000  6000000    2.1 ms
-join       6000000   216783  122.9 ms
+scan       6000000  6000000   79.6 ms
+project    6000000  6000000    2.6 ms
+join       6000000   216783  128.1 ms
 aggregate   216783        1    0.3 ms
 ```
 
@@ -200,10 +200,13 @@ The rule this gives the repository is simple and worth more than either fix:
   old code was re-measured on the same host, back to back, in its own three
   campaigns: the join's cold figure is **216.1 ms** in the published set,
   **182.5 ms** for the old code on this host and **100.4 ms** for the new code,
-  while the six queries the increment did not touch moved by **−0.7% to
-  +8.1%**. Every published figure — old and new — is derived from a committed
-  report by `scripts/medians.py` and checked by
-  `scripts/check-published-figures.py`.
+  while the six queries the increment did not touch moved by **0% to +14.0%**
+  in the cold lazy path. The plan output reads the same way: the join stage
+  went from **107.4 ms** to **21.9 ms** and the sort stage from **14.5 ms** to
+  **5.3 ms** on this host, while the two scan stages — Arrow's decode, which
+  this change did not touch — moved **up** with the busier host. Every
+  published figure — old and new — is derived from a committed report by
+  `scripts/medians.py` and checked by `scripts/check-published-figures.py`.
 
 ## What this does not do
 
@@ -211,7 +214,9 @@ The rule this gives the repository is simple and worth more than either fix:
   different encoding would be slower. Owning the decode is a different
   project. It is also where the join's remaining **7 ms** gap to DuckDB now
   is: the scan is 71.4 ms of the query's 100.4 ms, and the join stage is
-  21.9 ms of it.
+  21.9 ms of it. The scan is also the one stage that did **not** benefit: it
+  is 67.2 ms for the old code on the same host and 71.4 ms for the new code,
+  which is the host's drift and not the code's.
 - **The parallel read's second copy of every column.** It is real — 96 MB and
   a 2× peak — and it is off the measured path, because the published
   comparison pins `read threads: 1`.

@@ -100,7 +100,7 @@
 
 ## The measurement
 
-- [x] Three campaigns on a host quiet enough to measure on (load 3.60–5.86), the reports
+- [x] Three campaigns on a host quiet enough to measure on (load 5.53–7.17), the reports
       committed, and the published tables re-derived by `scripts/medians.py`.
 - [x] **The old code was re-measured on the same host**, back to back, in its own three
       campaigns, so the code's share of every moved figure is separated from the machine's:
@@ -108,12 +108,17 @@
 - [x] The set before that is committed too — `bench-results/compare-spec020-run{1,2,3}.json` — so
       every published figure, old and new, is derived from a committed report by a script, and
       the guard checks all four sets.
-- [x] The moved figures published old-and-new, with the reason. The control: the six queries
-      this increment did not touch moved by **−0.7% to +8.1%** between the two host-matched
-      sets; the join moved by **−45.6%** and the sort by **−15.9%**.
+- [x] **The plan output is the attribution, read a stage at a time.** The stage breakdown is in
+      the committed reports too: on this host the join stage went from **107.4 ms** to
+      **21.9 ms** and the sort stage from **14.5 ms** to **5.3 ms**, while the two scan stages —
+      Arrow's decode, which this change did not touch — moved *up* with the busier host.
+- [x] The moved figures published old-and-new, with the reason. The control: in the cold lazy
+      path the six queries this increment did not touch moved by **0% to +14.0%** between the two
+      host-matched sets; the join moved by **−45.0%** cold and **−73.4%** resident, and the sort
+      by **−5.9%** cold and **−44.2%** resident.
 
 ## The gate
 
-- [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite (330 tests), `cargo deny`,
+- [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite (336 tests), `cargo deny`,
       the wasm32 check, the published-figures guard and the page checks all green.
 - [x] CI is green on the pushed commits.

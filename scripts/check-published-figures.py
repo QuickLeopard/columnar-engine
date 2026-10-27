@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -260,6 +261,30 @@ def curve_figure(runs: list[dict], system: str, rows: int) -> float | None:
     return statistics.median(values) if values else None
 
 
+# A line of the plan output: the stage's name, the rows it was handed, the rows
+# it produced, and how long it took.
+STAGE_LINE = re.compile(r"^([a-z]+)\s+(\d+)\s+(\d+)\s+([0-9.]+) ms$")
+
+
+def collect_stages(runs: list[dict]) -> dict[tuple[str, str, str], list[float]]:
+    """The plan output's stage timings, taken from the reports themselves.
+
+    Every campaign records the plan output of every query it ran, so the
+    engine's own account of the work is in the committed reports and not only
+    in the prose. The key is `(query, mode, stage)`.
+    """
+    out: dict[tuple[str, str, str], list[float]] = {}
+    for run in runs:
+        for entry in run.get("engine_queries", []):
+            for line in (entry.get("plan_output") or "").splitlines():
+                match = STAGE_LINE.match(line.strip())
+                if match is None:
+                    continue
+                key = (entry["query"], entry["mode"], match.group(1))
+                out.setdefault(key, []).append(float(match.group(4)))
+    return out
+
+
 def collect(runs: list[dict]) -> dict[tuple[str, str, str, str], list[float]]:
     out: dict[tuple[str, str, str, str], list[float]] = {}
     for run in runs:
@@ -272,6 +297,28 @@ def collect(runs: list[dict]) -> dict[tuple[str, str, str, str], list[float]]:
             key = (entry["comparator"], "-", entry["mode"], entry["query"])
             out.setdefault(key, []).append(entry["query_ms"])
     return out
+
+
+# (document, label, set, query, stage, places)
+#
+# The **plan output** is the engine's own account of the work, and it is in the
+# committed reports: every campaign records it. Spec 021 publishes the stage
+# breakdown beside the query figures, for the three sets, so that the code's
+# share can be read a stage at a time rather than from a clock around the whole
+# query. These are the figures that table rests on.
+STAGE_CHECKS = [
+    ("PERF.md", "the new set's join stage", "new", "join-orders", "join", 1),
+    ("PERF.md", "the new set's sort stage", "new", "sort-topk", "sort", 1),
+    ("PERF.md", "the new set's join scan", "new", "join-orders", "scan", 1),
+    ("PERF.md", "the new set's sort scan", "new", "sort-topk", "scan", 1),
+    ("PERF.md", "the old set's join stage", "before", "join-orders", "join", 1),
+    ("PERF.md", "the old set's sort stage", "before", "sort-topk", "sort", 1),
+    ("PERF.md", "the old set's join scan", "before", "join-orders", "scan", 1),
+    ("PERF.md", "the old set's sort scan", "before", "sort-topk", "scan", 1),
+    ("PERF.md", "the last set's join stage", "last", "join-orders", "join", 1),
+    ("PERF.md", "the last set's sort stage", "last", "sort-topk", "sort", 1),
+    ("PERF.md", "the last set's join scan", "last", "join-orders", "scan", 1),
+]
 
 
 def collect_scaling(runs: list[dict]) -> dict[int, dict[str, list[float]]]:
@@ -643,6 +690,29 @@ def main() -> int:
                 )
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+    stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
+    if REPORTS:
+        stage_sets["new"] = collect_stages(runs)
+    if BEFORE_REPORTS:
+        stage_sets["before"] = collect_stages(before_runs)
+    if SPEC020_REPORTS:
+        stage_sets["last"] = collect_stages(spec020_runs)
+
+    for doc, label, which, query, stage, places in STAGE_CHECKS:
+        values = stage_sets.get(which, {}).get((query, "lazy", stage))
+        if not values:
+            failures.append(f"{doc}: no figure for {label} in the {which} reports")
+            continue
+        figure = statistics.median(values)
+        rendered = f"{figure:.{places}f}"
+        if rendered not in texts[doc]:
+            failures.append(
+                f"{doc}: {label} is {rendered} in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {doc:<10} {label:<28} {rendered}")
 
     if PROBE_REPORTS:
         probes = {
@@ -1075,7 +1145,8 @@ def main() -> int:
     print(
         f"\nall published figures agree with the committed reports: "
         f"{len(REPORTS)} campaigns, {len(BEFORE_REPORTS)} before, "
-        f"{len(SPEC020_REPORTS)} of the last set, {len(PROBE_REPORTS)} probe"
+        f"{len(SPEC020_REPORTS)} of the last set, {len(PROBE_REPORTS)} probe, "
+        f"{len(STAGE_CHECKS)} of the plan output"
     )
     return 0
 

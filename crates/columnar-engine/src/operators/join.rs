@@ -45,8 +45,8 @@
 //! when the range fits [`crate::memory::DIRECT_TABLE_LIMIT`]. The
 //! measurement that chose this shape is in `crates/columnar-engine/examples/
 //! operator_probe.rs`: over six million probe rows against a table of
-//! 216,345 keys, the direct table ran at 14.0 ms and the hash table at
-//! 58.6 ms, against 91.1 ms for the enum-keyed `HashMap` this replaced.
+//! 216,345 keys, the direct table ran at 16.4 ms and the hash table at
+//! 66.2 ms, against 102.7 ms for the enum-keyed `HashMap` this replaced.
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
