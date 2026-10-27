@@ -208,6 +208,14 @@ before this one said **3.429** and **0.273** ns/row and **12.51×**; the figures
 | warm-up | one untimed pass per implementation before each timed run |
 | rounds | 5 per campaign, 3 campaigns, median published with the spread |
 | commit | `e866e75` |
+| **the page** | **<https://oib98vz3b8zwj.space.minimax.io>** — a reader with a link opens it and watches the check run. It is the same build `just web-build` produces, and it names the commit it was built from. |
+
+**The hosted page has no server behind it, and it says so.** It answers the report POST with a
+405 and prints *"there is no report server at this address — the numbers above are this
+browser's"*, because a page that claims a report was written when it was not is worse than a page
+that says nothing. The published figures above are measured on the development machine, where the
+host's load average is a condition of the measurement; the hosted page is the **proof**, not a
+new source of published numbers.
 
 **The spread is published.** The host's load average was between 8.1 and 8.8 while these were
 taken — the machine is shared and it was busy — and the oracle's range across the campaigns is

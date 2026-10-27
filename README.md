@@ -71,6 +71,10 @@ The table is below.
 
 **And there is a browser version**, for a reader who has a link rather than a terminal:
 
+**<https://oib98vz3b8zwj.space.minimax.io>** — open it, press **Run the kernel**, and watch the
+check run. It is the same build `just web-build` produces, and it names the commit it was built
+from. To build and serve it yourself:
+
 ```bash
 just web        # builds the wasm32 module and serves the page
 ```
@@ -81,6 +85,11 @@ It checks itself before it prints anything: the `simd128` mask is compared with 
 for bit, and **no throughput is printed if they differ**. The match count is the native
 benchmark's — **12,726,115** — because the browser rebuilds the benchmark's column from a
 histogram of the file's eleven distinct discount values.
+
+The hosted page has no server behind it, so it says so rather than pretending otherwise: *"there
+is no report server at this address — the numbers above are this browser's"*. The published
+evidence is measured on the development machine, where the host's load average is a condition of
+the measurement; the hosted page is the **proof**, not a new source of published numbers.
 
 The browser's number is a browser's number: a different runtime, a different clock, a different
 compiler. It is published in [`PERF.md`](PERF.md) §1a with the browser, the engine, the machine

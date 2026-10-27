@@ -1,9 +1,11 @@
 # Spec 018 — The page on a static host
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-27
 **ADR**: [ADR-0025](../../docs/adr/0025-the-page-on-a-static-host.md)
 **Predecessor**: [017-the-repository-goes-public](../017-the-repository-goes-public/spec.md)
+
+**Published**: <https://oib98vz3b8zwj.space.minimax.io>
 
 ## The problem
 
