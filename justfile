@@ -155,6 +155,22 @@ web-build:
     mkdir -p target/web
     cp target/wasm32-unknown-unknown/release/columnar_web.wasm target/web/columnar_web.wasm
     cp crates/columnar-web/web/index.html crates/columnar-web/web/app.js target/web/
+    # The commit, as a file.
+    #
+    # The local server answers `GET /commit` from git at the moment the page
+    # asks, so it cannot be stale. A static host has no server to ask, so the
+    # build leaves the answer in the built directory -- under the same name,
+    # so the page asks the same question on both hosts.
+    #
+    # The commit is written on every build, and the module is rebuilt by cargo
+    # whenever the kernel's source changes, so the pair cannot disagree: if
+    # the kernel changed, the module was built from this tree; if it did not,
+    # the module is the same bytes either way.
+    commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+    if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+        commit="$commit-dirty"
+    fi
+    printf '%s\n' "$commit" > target/web/commit
     echo "== target/web =="
     ls -l target/web
 

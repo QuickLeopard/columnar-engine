@@ -228,8 +228,13 @@ async function run() {
 
   // The report is posted back so that the number is written by a machine and
   // not by hand. If the server is not there -- the page was opened from the
-  // file system, or the server was started without it -- the page still
-  // works; it just does not leave a record.
+  // file system, the server was started without it, or the page is on a
+  // static host -- the page still works; it just does not leave a record.
+  //
+  // A static host answers a POST it has nowhere to put with 404 or 405, and
+  // `fetch` does **not** throw on that, so the status is what says so. The
+  // page checks it, because a page that claims a report was written when it
+  // was not is worse than a page that says nothing.
   const report = {
     browser: navigator.userAgent,
     engine: "wasm32-unknown-unknown",
@@ -252,12 +257,22 @@ async function run() {
     edges_agree: edgesOk,
   };
   try {
-    await fetch("report", {
+    // A host that ignores POST entirely would leave the fetch pending for
+    // ever, and the status line is the last thing a reader reads. The
+    // numbers are already printed by this point; this only says what
+    // happened to the report.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch("report", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(report, null, 2),
+      signal: controller.signal,
     });
-    el("status").textContent = "done · the report was written to target/web/browser-report.json";
+    clearTimeout(timeout);
+    el("status").textContent = response.ok
+      ? "done · the report was written to target/web/browser-report.json"
+      : `done · there is no report server at this address (${response.status}) — the numbers above are this browser's`;
   } catch (error) {
     el("status").textContent = `done · the report was not written: ${error.message}`;
   }
