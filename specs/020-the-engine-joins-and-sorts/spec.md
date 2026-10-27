@@ -1,7 +1,8 @@
 # Spec 020 — The full engine increment: hash join and sort
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-27
+**Finished**: 2026-10-27
 **ADR**: [ADR-0027](../../docs/adr/0027-the-engine-joins-and-sorts.md)
 **Predecessor**: [019-the-button-always-answers](../019-the-button-always-answers/spec.md)
 

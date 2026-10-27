@@ -63,7 +63,8 @@
 - [x] fmt, clippy (arm64 and x86-64), the wasm32 cross-compile, the full test suite (310 tests),
       `cargo deny`.
 - [x] `scripts/check-published-figures.py` and `scripts/check-page.py` are green.
-- [ ] CI is green on the pushed commits.
+- [x] CI is green on the pushed commits. Thirteen jobs, all green on `5b27324` — including
+      **the DataFusion peer**, which is a job of its own for the first time.
 
 ## Two defects the increment found
 
