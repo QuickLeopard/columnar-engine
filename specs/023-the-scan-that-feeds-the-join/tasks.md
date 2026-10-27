@@ -1,6 +1,6 @@
 # Spec 023 — The scan, taken apart, and the scan that feeds the join — tasks
 
-**Status**: in progress
+**Status**: done
 **Spec**: [spec.md](spec.md)
 
 ## The instrument

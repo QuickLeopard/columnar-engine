@@ -1,7 +1,8 @@
 # Spec 023 — The scan, taken apart, and the scan that feeds the join
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-27
+**Finished**: 2026-10-27
 **ADR**: [ADR-0030](../../docs/adr/0030-the-scan-that-feeds-the-join.md)
 **Predecessor**: [022-the-dictionary-counted](../022-the-dictionary-counted/spec.md)
 
