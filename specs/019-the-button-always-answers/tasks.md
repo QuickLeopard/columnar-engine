@@ -45,7 +45,9 @@
       no report server here, and the button behaves identically.
 - [x] Chromium, through the in-app browser: **12.56×** before the press, **12.59×** after it,
       12,726,115 matches both times, masks identical bit for bit, and no console warning or error.
-- [ ] The **deployed** page: the same probe, after the site is updated.
+- [x] The **deployed** page: the same probe, after the site was updated. The button was never
+      disabled, a press re-ran the kernel, a press during a run was queued and ran, the masks
+      stayed identical bit for bit, and the match count stayed 12,726,115.
 
 ## The gate
 
@@ -54,12 +56,15 @@
       are green.
 - [x] `python3 scripts/check-published-figures.py` is green: 118 checks, 0 failures.
 - [x] `python3 scripts/check-page.py` is green: 9 checks, 0 failures.
-- [ ] The deployed page is updated **in place** at the same URL, after the user confirms.
+- [x] The deployed page is updated **in place** at the same URL, after the user confirmed.
 
 ## The deployment itself
 
-- [ ] The user confirms: the site is **public**, and `source_path` is uploaded to **private** cloud
+- [x] The user confirmed: the site is **public**, and `source_path` is uploaded to **private** cloud
       storage. The source uploaded is the same 3.0 MB snapshot of the tracked tree.
-- [ ] The site is updated in place, at <https://oib98vz3b8zwj.space.minimax.io>.
-- [ ] The deployed page is opened and read: the button is never inert, and a press re-runs the
-      kernel.
+- [x] The site is updated in place, at <https://oib98vz3b8zwj.space.minimax.io>, with the build
+      output only: `index.html`, `app.js`, `columnar_web.wasm`, naming commit `1c661d9`.
+- [x] The deployed page is opened and read: the button is never inert, and a press re-runs the
+      kernel. In WebKit: three runs, a press after a run and a press during a run, the masks
+      identical bit for bit and 12,726,115 matches every time. In Chromium: **12.56×** before the
+      press, **12.49×** after it, and no console warning or error.

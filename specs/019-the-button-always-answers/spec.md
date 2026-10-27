@@ -1,7 +1,8 @@
 # Spec 019 — The button always answers
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-27
+**Finished**: 2026-10-27
 **ADR**: [ADR-0026](../../docs/adr/0026-the-button-is-never-disabled.md)
 **Predecessor**: [018-the-page-on-a-static-host](../018-the-page-on-a-static-host/spec.md)
 
