@@ -61,21 +61,41 @@ async function loadModule() {
   return instance.exports;
 }
 
+// The commit the page was built from.
+//
+// It is baked into the **built** copy of this file. A page served from a
+// static host has no server to ask, and a static host answers an unknown
+// path with its index page -- so "ask the server for the commit" is a
+// question whose answer has to be checked, not trusted.
+//
+// The local server answers `GET /commit` from git at the moment the page
+// asks, so the live commit wins there; this is the fallback for the hosts
+// with no server at all.
+const BUILD_COMMIT = "__BUILD_COMMIT__";
+
 // The commit the module was built from.
 //
 // It comes from the **server**, not from the module: cargo caches a build
 // script, so a commit baked into the module can be a commit the module was
 // not built from. The server reads git when the page asks, so it cannot be
-// stale. A page served from somewhere with no server says so.
+// stale. A page served from somewhere with no server says which commit it
+// was built from instead.
 async function fetchCommit() {
   try {
     const response = await fetch("commit");
     if (!response.ok) {
-      return "unavailable";
+      return BUILD_COMMIT;
     }
-    return (await response.text()).trim();
+    const text = (await response.text()).trim();
+    // A commit is a short token. A document is not, and a host that answers
+    // an unknown path with its index page would otherwise pass a whole
+    // document off as a commit.
+    if (!text || text.length > 40 || text.includes("<")) {
+      return BUILD_COMMIT;
+    }
+    return text;
   } catch (error) {
-    return "unavailable";
+    return BUILD_COMMIT;
   }
 }
 

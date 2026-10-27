@@ -36,13 +36,16 @@ get.**
 1. **The report POST's status is checked, not only its lack of an exception.** The page reports
    what actually happened: on the local server, the report was written; on a static host, there is
    no report server here and the numbers above are this browser's.
-2. **The commit travels as a file the build writes.** `just web-build` writes `target/web/commit`,
-   holding the tree's commit and `-dirty` when the tree has tracked modifications. The file is
-   named `commit` because that is the name the local server answers dynamically: the page asks
-   the same question on both hosts, and gets an answer on both.
+2. **The commit travels baked into the built page, and the server's answer is checked.** The build
+   writes the tree's commit into the built copy of the script. The page still asks the server
+   first — the live commit is better than a build-time one — but it **checks** the answer, because
+   the first deployment taught us what a static host does with an unknown path: it returns its
+   index page, with a `200`. A commit is a short token; a document is not. The page falls back to
+   the commit it was built from when the answer is not a commit, so no host can pass a page off as
+   one.
 3. **The local server's behaviour is unchanged.** It intercepts `/commit` before the file handler,
-   so the live commit still wins locally, with `-dirty` when the tree is not clean. The static
-   file is a fallback for hosts with no server, not a replacement for the server.
+   so the live commit still wins locally, with `-dirty` when the tree is not clean. The built page
+   is a fallback for hosts with no server, not a replacement for the server.
 4. **The deployed site is `target/web` as the build leaves it.** No hand-edited copy, no second
    build, no separate "public" copy of the page that can drift from the one the repository builds.
 
@@ -73,6 +76,14 @@ for bit in every one.
 For the change itself, the evidence is that the page states the truth on both hosts: on the
 static host it says there is no report server, and on the local server it says the report was
 written, and the report is in `target/web/browser-report.json`.
+
+**The first deployment is the receipt for the second half of decision 2.** The page was published,
+and the deployed page's **engine** row read `commit <!doctype html> <html lang="en"> …` — the
+host's own index page, returned with a `200` for the path `/commit`, because the host answers
+*every* unknown path with its index page. The page had trusted a `200`. It now checks the answer,
+and the commit it shows is the one it was built from. A host that answers an unknown path with a
+document is not a host that answers an unknown path with a `404`, and the page has to survive
+both.
 
 ## Confidence
 

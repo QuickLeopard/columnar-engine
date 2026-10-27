@@ -154,13 +154,14 @@ web-build:
         cargo build --release -p columnar-web --target wasm32-unknown-unknown
     mkdir -p target/web
     cp target/wasm32-unknown-unknown/release/columnar_web.wasm target/web/columnar_web.wasm
-    cp crates/columnar-web/web/index.html crates/columnar-web/web/app.js target/web/
-    # The commit, as a file.
+    cp crates/columnar-web/web/index.html target/web/
+    # The commit, baked into the built page.
     #
-    # The local server answers `GET /commit` from git at the moment the page
-    # asks, so it cannot be stale. A static host has no server to ask, so the
-    # build leaves the answer in the built directory -- under the same name,
-    # so the page asks the same question on both hosts.
+    # A page served from a static host has no server to ask for the commit,
+    # and a static host answers an unknown path with its index page -- so
+    # "ask the server" is a question whose answer has to be checked. The
+    # commit goes into the built copy of the script instead, and the page
+    # falls back to it when the server's answer is not a commit.
     #
     # The commit is written on every build, and the module is rebuilt by cargo
     # whenever the kernel's source changes, so the pair cannot disagree: if
@@ -170,7 +171,11 @@ web-build:
     if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
         commit="$commit-dirty"
     fi
-    printf '%s\n' "$commit" > target/web/commit
+    sed "s|__BUILD_COMMIT__|$commit|" crates/columnar-web/web/app.js > target/web/app.js
+    # An older build wrote the commit to a file beside the page. It is not
+    # used any more, and the built directory is what gets published, so it
+    # does not get to linger.
+    rm -f target/web/commit
     echo "== target/web =="
     ls -l target/web
 

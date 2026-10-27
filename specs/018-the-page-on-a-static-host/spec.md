@@ -40,15 +40,17 @@ worse than a page that says nothing, and this one is the project's proof.
 
 ### R2 — The page names the commit it was built from
 
-- [ ] The build writes the commit into the built directory, as a file named `commit` — the same
-      name the local server answers dynamically, so the page asks the same question either way.
-- [ ] The page shows that commit. A page served from a static host names its commit; a page
-      served by `scripts/web-server.py` keeps showing the **live** commit, with `-dirty` when the
-      tree is not clean. The server's behaviour is unchanged.
-- [ ] The commit the file names is the commit the tree was at when the page was **built**. If the
-      kernel's source changed, cargo rebuilt the module from that tree; if it did not, the module
-      is the same bytes either way. The file cannot be stale in the way a build-script-baked
-      commit can be, because it is written on every build.
+- [ ] The build writes the commit into the **built page**, and the page shows it.
+- [ ] A page served from a static host names its commit; a page served by `scripts/web-server.py`
+      keeps showing the **live** commit, with `-dirty` when the tree is not clean. The server's
+      behaviour is unchanged.
+- [ ] The page **checks** the server's answer rather than trusting it: a host that answers an
+      unknown path with its index page must not be able to pass a document off as a commit. The
+      published host does exactly that — every unknown path returns the page itself, with a 200.
+- [ ] The commit is the tree's commit at build time. If the kernel's source changed, cargo rebuilt
+      the module from that tree; if it did not, the module is the same bytes either way. The
+      commit cannot be stale in the way a build-script-baked commit can be, because it is written
+      on every build.
 
 ### R3 — The page never claims a report was written when it was not
 
