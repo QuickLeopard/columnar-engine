@@ -33,7 +33,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use crate::operators::key::KeyValue;
+use crate::operators::key::{KeyColumn, KeyValue};
 
 /// Sorts `rows` by their key.
 ///
@@ -47,12 +47,49 @@ use crate::operators::key::KeyValue;
 /// The order is deterministic: equal keys are broken by the row's own
 /// position, so the same input always produces the same output.
 #[must_use]
-pub fn sort_rows<'a>(
+pub fn sort_rows(
     rows: Vec<u32>,
-    mut key_at: impl FnMut(u32) -> Option<KeyValue<'a>>,
+    keys: &KeyColumn<'_>,
     descending: bool,
     limit: Option<usize>,
 ) -> Vec<u32> {
+    // The **fast path**: a plain number column with no NULLs. The key is
+    // read as the column's own value -- a number, compared as a number --
+    // with no enum built for it and no `Option` wrapped around it. The
+    // general path below reads a `KeyValue`, which is 24 bytes wide because
+    // one of its variants is a string, and building one of those a row was
+    // the sort's largest cost after the key read itself.
+    if !keys.has_nulls() {
+        if let Some(values) = keys.slice().doubles() {
+            return sort_values(
+                rows,
+                |row| {
+                    TotalOrd(
+                        values
+                            .get(usize::try_from(row).unwrap_or(usize::MAX))
+                            .copied()
+                            .unwrap_or_default(),
+                    )
+                },
+                descending,
+                limit,
+            );
+        }
+        if let Some(values) = keys.slice().integers() {
+            return sort_values(
+                rows,
+                |row| {
+                    values
+                        .get(usize::try_from(row).unwrap_or(usize::MAX))
+                        .copied()
+                        .unwrap_or_default()
+                },
+                descending,
+                limit,
+            );
+        }
+    }
+    let mut key_at = |row: u32| keys.value_at(usize::try_from(row).unwrap_or(usize::MAX));
     match limit {
         None => full_sort(rows, &mut key_at, descending),
         Some(0) => Vec::new(),
@@ -60,18 +97,148 @@ pub fn sort_rows<'a>(
     }
 }
 
+/// A double, ordered by its bits.
+///
+/// `f64` is not `Ord`, and its `PartialOrd` is not a total order -- `NaN`
+/// compares unequal to everything, including itself. The sort needs a total
+/// order, so a double is ordered by its bits: `total_cmp` puts the NaNs
+/// together, at the end, and orders the numbers the way they compare.
+#[derive(Debug, Clone, Copy)]
+struct TotalOrd(f64);
+
+impl PartialEq for TotalOrd {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for TotalOrd {}
+
+impl PartialOrd for TotalOrd {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TotalOrd {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// Sorts the rows by their keys, keeping the best `limit` of them.
+///
+/// The key is read once a row and compared as the number it is. The
+/// direction and the tie-break are the sort's own, so the order is the same
+/// the general path produces.
+fn sort_values<K: Copy + Ord>(
+    rows: Vec<u32>,
+    key_at: impl Fn(u32) -> K,
+    descending: bool,
+    limit: Option<usize>,
+) -> Vec<u32> {
+    match limit {
+        None => {
+            let mut entries: Vec<ValueEntry<K>> = rows
+                .into_iter()
+                .map(|row| ValueEntry { key: key_at(row), row, descending })
+                .collect();
+            entries.sort_unstable_by(|left, right| {
+                order_keys(left.key.cmp(&right.key), descending, left.row, right.row)
+            });
+            entries.into_iter().map(|entry| entry.row).collect()
+        }
+        Some(0) => Vec::new(),
+        Some(limit) => {
+            let mut heap: BinaryHeap<ValueEntry<K>> = BinaryHeap::with_capacity(limit + 1);
+            for row in rows {
+                let key = key_at(row);
+                if heap.len() >= limit {
+                    let better = match heap.peek() {
+                        Some(worst) => {
+                            order_keys(key.cmp(&worst.key), descending, row, worst.row)
+                                == Ordering::Less
+                        }
+                        None => false,
+                    };
+                    if !better {
+                        continue;
+                    }
+                    heap.pop();
+                }
+                heap.push(ValueEntry { key, row, descending });
+            }
+            let mut entries = heap.into_vec();
+            entries.sort_unstable_by(|left, right| {
+                order_keys(left.key.cmp(&right.key), descending, left.row, right.row)
+            });
+            entries.into_iter().map(|entry| entry.row).collect()
+        }
+    }
+}
+
+/// One row in the sort's bounded heap, with its key.
+#[derive(Debug, Clone)]
+struct ValueEntry<K> {
+    /// The row's key.
+    key: K,
+    /// The row's own number.
+    row: u32,
+    /// The order the heap is keeping.
+    descending: bool,
+}
+
+impl<K: Ord> PartialEq for ValueEntry<K> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl<K: Ord> Eq for ValueEntry<K> {}
+
+impl<K: Ord> PartialOrd for ValueEntry<K> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<K: Ord> Ord for ValueEntry<K> {
+    /// The greatest entry is the one that sorts **last**: the row that would
+    /// be dropped first. That is what the heap needs, because the row it
+    /// drops is the one at its top.
+    fn cmp(&self, other: &Self) -> Ordering {
+        order_keys(self.key.cmp(&other.key), self.descending, self.row, other.row)
+    }
+}
+
+/// The order of two rows by their keys: the key's order, the direction, and
+/// the row's own number as the tie-break.
+fn order_keys(ordering: Ordering, descending: bool, left_row: u32, right_row: u32) -> Ordering {
+    let ordering = if descending { ordering.reverse() } else { ordering };
+    if ordering == Ordering::Equal {
+        left_row.cmp(&right_row)
+    } else {
+        ordering
+    }
+}
+
 /// Sorts every row.
+///
+/// Each row's key is read **once**, before the sort begins. The sort used
+/// to read both keys of every comparison, and a comparison is made
+/// `O(n log n)` times -- so a row's key was read `O(log n)` times over, and
+/// the key read was the sort's only super-linear term.
 fn full_sort<'a>(
-    mut rows: Vec<u32>,
+    rows: Vec<u32>,
     key_at: &mut impl FnMut(u32) -> Option<KeyValue<'a>>,
     descending: bool,
 ) -> Vec<u32> {
-    rows.sort_unstable_by(|left, right| {
-        let left_key = key_at(*left);
-        let right_key = key_at(*right);
-        compare(left_key.as_ref(), right_key.as_ref(), descending, *left, *right)
+    let mut entries: Vec<Entry<'a>> =
+        rows.into_iter().map(|row| Entry { key: key_at(row), row, descending }).collect();
+    entries.sort_unstable_by(|left, right| {
+        compare(left.key.as_ref(), right.key.as_ref(), descending, left.row, right.row)
     });
-    rows
+    entries.into_iter().map(|entry| entry.row).collect()
 }
 
 /// Sorts the rows, keeping the best `limit` of them.
@@ -85,7 +252,7 @@ fn bounded_sort<'a>(
     descending: bool,
     limit: usize,
 ) -> Vec<u32> {
-    let mut heap: BinaryHeap<Entry<'a>> = BinaryHeap::new();
+    let mut heap: BinaryHeap<Entry<'a>> = BinaryHeap::with_capacity(limit + 1);
     for row in rows {
         let key = key_at(row);
         if heap.len() >= limit {

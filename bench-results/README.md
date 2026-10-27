@@ -17,6 +17,10 @@ python3 scripts/medians.py
 | `compare-run1.json` | the first of the three runs the published table is the median of |
 | `compare-run2.json` | the second |
 | `compare-run3.json` | the third |
+| `compare-before-run1.json` … `compare-before-run3.json` | the **old code, re-measured on this host** — back to back with the campaigns above, so the code's share of every moved figure is separated from the machine's. The control is the six queries this increment did not touch. |
+| `compare-spec020-run1.json` … `compare-spec020-run3.json` | the set **before** the one published now: the code spec 021 replaced, on a busier host. Committed so the published old-and-new figures are derived rather than typed. |
+| `operator-probe-before.json` | the **operator probe** against the code spec 021 replaced — the join's probe and the sort, taken apart |
+| `operator-probe-after.json` | the operator probe against the code spec 021 wrote, measured back to back with the file above on the same host |
 | `scaling-run1.json` | the first of the three **thread-count sweeps** of `q6` the §2e table is the median of |
 | `scaling-run2.json` | the second |
 | `scaling-run3.json` | the third |
@@ -108,6 +112,9 @@ questions.
 | §1 | *how fast is the comparison kernel, against two baselines* | `kernel-run*.json` |
 | §1b | *how fast is it on x86-64 hardware, and on which processor* | `avx2-run*.json` |
 | §2a, §2b | *which is faster when every system is given one thread* | `compare-run*.json` |
+| §2a, §2b (the set before) | *the same table, one increment ago* | `compare-spec020-run*.json` |
+| §2h | *what the join's probe and the sort cost, apart* | `operator-probe-*.json` |
+| §2h (the code's share) | *what the change did, as opposed to the machine* | `compare-before-run*.json` |
 | §2e, `q6` | *how does each system's number move with the thread count* | `scaling-run*.json` |
 | §2e, `q6-revenue` | the same, on the real Q6 | `scaling-revenue-run*.json` |
 | §2f, `q6` | the same, with the data already in memory | `scaling-resident-run*.json` |
@@ -161,6 +168,23 @@ python3 scripts/medians.py bench-results/compare-run1.json \
 
 The sweep's table is derived the same way, and `scripts/medians.py` picks the
 `scaling-run*.json` files up automatically when they are in this directory.
+
+The **other three comparison sets** are derived the same way, and the guard
+checks every figure this repository publishes against all four of them:
+
+```bash
+python3 scripts/medians.py bench-results/compare-before-run*.json    # the old code, this host
+python3 scripts/medians.py bench-results/compare-spec020-run*.json  # the set before this one
+python3 scripts/check-published-figures.py
+```
+
+The **operator probe** writes its own two reports, one per code version:
+
+```bash
+cargo run --release -p columnar-engine --example operator_probe -- \
+    --data data/lineitem.parquet --build data/orders.parquet \
+    --out bench-results/operator-probe-after.json
+```
 
 The script prints each figure as `median (min-max)`. The spread is part of the
 evidence: `PERF.md` quotes the median and states the spread where the spread

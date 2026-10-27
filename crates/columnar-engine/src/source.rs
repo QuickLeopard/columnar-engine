@@ -41,13 +41,17 @@
 //! The pushdown's semantics are the engine's, not Arrow's, and that is the
 //! whole of [`crate::pushdown`].
 
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use arrow::datatypes::{DataType as ArrowType, SchemaRef};
-use columnar_core::DataType;
+use columnar_core::{DataType, ScalarValue};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
+use parquet::file::metadata::ParquetMetaData;
+use parquet::file::statistics::Statistics;
 
 use crate::dataset::{decode_batches_filtered, Dataset, DatasetError};
 use crate::plan::ColumnSchema;
@@ -158,6 +162,36 @@ pub struct ParquetSource {
     /// The reader's batch size is a divisor of a row group's row count, so
     /// the read needs to know them.
     row_group_rows: Vec<usize>,
+    /// The smallest and largest value each column holds, over the file's row
+    /// groups.
+    ///
+    /// A column with no statistics in any row group is not in the map.
+    ranges: ColumnRanges,
+    /// The range of each column over each row group, with the row group's
+    /// rows.
+    ///
+    /// A row group that has no statistics for a column has no range for it,
+    /// and its rows cannot be bounded by it.
+    row_group_ranges: RowGroupRanges,
+}
+
+/// A column's range over a whole file.
+type ColumnRange = (ScalarValue, ScalarValue);
+
+/// The range of every column over a file.
+type ColumnRanges = HashMap<String, ColumnRange>;
+
+/// The range of every column over every row group.
+type RowGroupRanges = HashMap<String, Vec<RowGroupRange>>;
+
+/// A column's range over one row group, and the row group's rows.
+#[derive(Debug, Clone)]
+pub struct RowGroupRange {
+    /// The column's range in this row group, if the row group has statistics
+    /// for it.
+    pub range: Option<(ScalarValue, ScalarValue)>,
+    /// The row group's rows.
+    pub rows: usize,
 }
 
 impl ParquetSource {
@@ -195,7 +229,18 @@ impl ParquetSource {
             })
             .collect::<Result<Vec<SourceColumn>, DatasetError>>()?;
 
-        Ok(Self { path: path.to_path_buf(), schema, columns, rows, row_groups, row_group_rows })
+        let (ranges, row_group_ranges) = column_ranges(metadata);
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            schema,
+            columns,
+            rows,
+            row_groups,
+            row_group_rows,
+            ranges,
+            row_group_ranges,
+        })
     }
 
     /// Where the file is.
@@ -226,6 +271,29 @@ impl ParquetSource {
     #[must_use]
     pub fn column_index(&self, name: &str) -> Option<usize> {
         self.columns.iter().position(|column| column.name == name)
+    }
+
+    /// The smallest and largest value a column holds, over the file's row groups.
+    ///
+    /// `None` when the column has no statistics, or when they are not of a
+    /// type the range can be expressed in.
+    #[must_use]
+    pub fn column_range(&self, name: &str) -> Option<ColumnRange> {
+        self.ranges.get(name).cloned()
+    }
+
+    /// The range of a column over each row group, with the row group's rows.
+    ///
+    /// A row group that has no statistics for the column has no range for it,
+    /// and its rows cannot be bounded by it. A column with no statistics in
+    /// any row group has no entry at all.
+    ///
+    /// This is what makes a **bound** rather than a guess: a row group whose
+    /// own range cannot satisfy a predicate holds no row that can satisfy it,
+    /// so its rows need not be counted.
+    #[must_use]
+    pub fn row_group_ranges(&self, name: &str) -> &[RowGroupRange] {
+        self.row_group_ranges.get(name).map_or(&[], Vec::as_slice)
     }
 
     /// The names of the columns at `indices`, in the order given.
@@ -477,6 +545,102 @@ impl ParquetSource {
 
         let reader = builder.build().map_err(|error| DatasetError::Parquet(error.to_string()))?;
         decode_batches_filtered(reader, &self.schema, columns, &projection, pushdown, flavor)
+    }
+}
+
+/// The smallest and largest value each column holds, over the file's row groups.
+///
+/// A column with no statistics in any row group is not in the map at all: the
+/// range is what the file's footer says, and a file that says nothing has no
+/// range to report.
+fn column_ranges(metadata: &ParquetMetaData) -> (ColumnRanges, RowGroupRanges) {
+    let group_count = metadata.num_row_groups();
+    let mut ranges: ColumnRanges = HashMap::new();
+    // One entry per row group per column: `None` where the row group has no
+    // statistics for the column, so that its rows cannot be bounded away.
+    let mut per_group: HashMap<String, Vec<Option<ColumnRange>>> = HashMap::new();
+
+    for (index, group) in metadata.row_groups().iter().enumerate() {
+        for chunk in group.columns() {
+            let name = chunk.column_path().string();
+            let range = chunk.statistics().and_then(statistics_range);
+            let column = per_group.entry(name.clone()).or_insert_with(|| vec![None; group_count]);
+            column[index].clone_from(&range);
+            let Some((min, max)) = range else {
+                continue;
+            };
+            ranges
+                .entry(name)
+                .and_modify(|range| {
+                    if scalar_cmp(&min, &range.0) == Ordering::Less {
+                        range.0 = min.clone();
+                    }
+                    if scalar_cmp(&max, &range.1) == Ordering::Greater {
+                        range.1 = max.clone();
+                    }
+                })
+                .or_insert((min, max));
+        }
+    }
+
+    let row_group_ranges = per_group
+        .into_iter()
+        .map(|(name, column)| {
+            let groups = column
+                .into_iter()
+                .enumerate()
+                .map(|(index, range)| RowGroupRange {
+                    range,
+                    rows: usize::try_from(metadata.row_groups()[index].num_rows()).unwrap_or(0),
+                })
+                .collect();
+            (name, groups)
+        })
+        .collect();
+
+    (ranges, row_group_ranges)
+}
+
+/// The smallest and largest value a column chunk's statistics hold.
+///
+/// `None` when the statistics are of a type the engine has no scalar for, or
+/// when the chunk records no minimum or no maximum.
+fn statistics_range(statistics: &Statistics) -> Option<(ScalarValue, ScalarValue)> {
+    match statistics {
+        Statistics::Boolean(_) | Statistics::Int96(_) | Statistics::FixedLenByteArray(_) => None,
+        Statistics::Int32(values) => Some((
+            ScalarValue::Int64(i64::from(*values.min_opt()?)),
+            ScalarValue::Int64(i64::from(*values.max_opt()?)),
+        )),
+        Statistics::Int64(values) => {
+            Some((ScalarValue::Int64(*values.min_opt()?), ScalarValue::Int64(*values.max_opt()?)))
+        }
+        Statistics::Float(values) => Some((
+            ScalarValue::Float64(f64::from(*values.min_opt()?)),
+            ScalarValue::Float64(f64::from(*values.max_opt()?)),
+        )),
+        Statistics::Double(values) => Some((
+            ScalarValue::Float64(*values.min_opt()?),
+            ScalarValue::Float64(*values.max_opt()?),
+        )),
+        Statistics::ByteArray(values) => {
+            let min = std::str::from_utf8(values.min_opt()?.data()).ok()?;
+            let max = std::str::from_utf8(values.max_opt()?.data()).ok()?;
+            Some((ScalarValue::Utf8(min.to_owned()), ScalarValue::Utf8(max.to_owned())))
+        }
+    }
+}
+
+/// The order of two values of the same type.
+///
+/// Two values of different types cannot be compared, and the engine never
+/// compares them: a column has one type, so its statistics have one type too.
+fn scalar_cmp(left: &ScalarValue, right: &ScalarValue) -> Ordering {
+    match (left, right) {
+        (ScalarValue::Int64(left), ScalarValue::Int64(right)) => left.cmp(right),
+        (ScalarValue::Float64(left), ScalarValue::Float64(right)) => left.total_cmp(right),
+        (ScalarValue::Utf8(left), ScalarValue::Utf8(right)) => left.cmp(right),
+        _ => Ordering::Equal,
     }
 }
 

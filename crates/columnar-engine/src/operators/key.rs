@@ -34,6 +34,72 @@ pub struct KeyColumn<'a> {
     values: KeyValues<'a>,
     /// Which rows hold a value.
     validity: &'a NullBitmap,
+    /// Whether the column holds a NULL at all.
+    ///
+    /// A column with no NULLs does not have to have its validity bitmap
+    /// read, once a row, in a hot loop -- and the bitmap of a column with no
+    /// NULLs says nothing. The filter operator already asks this question of
+    /// a column; the key reader did not, and it paid for the bitmap on every
+    /// row of every join and every sort.
+    nulls: bool,
+}
+
+/// A key column's values, resolved once.
+///
+/// The operators that read a key a row at a time resolve the column's
+/// encoding **once**, before the loop, and read the values out of the slice
+/// they are given. The encoding is a property of the column, not of the row,
+/// and a row at a time the column's own value is read -- with no enum built
+/// for it and no `Option` wrapped around it.
+#[derive(Debug, Clone)]
+pub enum KeySlice<'a> {
+    /// Plain integers.
+    Int64(&'a [i64]),
+    /// Plain doubles.
+    Float64(&'a [f64]),
+    /// Plain strings.
+    Utf8(&'a [String]),
+    /// Dictionary-encoded integers.
+    Int64Dict {
+        /// The distinct values.
+        dict: &'a [i64],
+        /// One index into the dictionary per row.
+        indices: &'a [i32],
+    },
+    /// Dictionary-encoded doubles.
+    Float64Dict {
+        /// The distinct values.
+        dict: &'a [f64],
+        /// One index into the dictionary per row.
+        indices: &'a [i32],
+    },
+    /// Dictionary-encoded strings.
+    Utf8Dict {
+        /// The distinct values.
+        dict: &'a [String],
+        /// One index into the dictionary per row.
+        indices: &'a [i32],
+    },
+}
+
+impl<'a> KeySlice<'a> {
+    /// The plain integers, when the column holds them plainly.
+    #[must_use]
+    pub fn integers(&self) -> Option<&'a [i64]> {
+        match self {
+            Self::Int64(values) => Some(values),
+            _ => None,
+        }
+    }
+
+    /// The plain doubles, when the column holds them plainly.
+    #[must_use]
+    pub fn doubles(&self) -> Option<&'a [f64]> {
+        match self {
+            Self::Float64(values) => Some(values),
+            _ => None,
+        }
+    }
 }
 
 /// Where a key column's values are.
@@ -86,7 +152,7 @@ impl<'a> KeyColumn<'a> {
             Encoding::Utf8Dict { dict, indices } => KeyValues::Utf8Dict { dict, indices },
             Encoding::BoolRle { .. } => KeyValues::Decoded(chunk.decode().data),
         };
-        Self { values, validity: &chunk.validity }
+        Self::new(values, &chunk.validity)
     }
 
     /// The column in an already-decoded column.
@@ -96,7 +162,53 @@ impl<'a> KeyColumn<'a> {
             BatchData::Float64(values) => KeyValues::Float64(values),
             BatchData::Utf8(values) => KeyValues::Utf8(values),
         };
-        Self { values, validity: &column.validity }
+        Self::new(values, &column.validity)
+    }
+
+    /// A column over `values`, with `validity` saying which rows hold one.
+    fn new(values: KeyValues<'a>, validity: &'a NullBitmap) -> Self {
+        let nulls = validity.null_count() != 0;
+        Self { values, validity, nulls }
+    }
+
+    /// Whether the column holds a NULL at all.
+    ///
+    /// A column that does not is read without touching its validity bitmap.
+    #[must_use]
+    pub fn has_nulls(&self) -> bool {
+        self.nulls
+    }
+
+    /// The column's values, resolved once.
+    #[must_use]
+    pub fn slice(&self) -> KeySlice<'_> {
+        match &self.values {
+            KeyValues::Int64(values) => KeySlice::Int64(values),
+            KeyValues::Float64(values) => KeySlice::Float64(values),
+            KeyValues::Utf8(values) => KeySlice::Utf8(values),
+            KeyValues::Int64Dict { dict, indices } => KeySlice::Int64Dict { dict, indices },
+            KeyValues::Float64Dict { dict, indices } => KeySlice::Float64Dict { dict, indices },
+            KeyValues::Utf8Dict { dict, indices } => KeySlice::Utf8Dict { dict, indices },
+            KeyValues::Decoded(data) => match data {
+                BatchData::Int64(values) => KeySlice::Int64(values),
+                BatchData::Float64(values) => KeySlice::Float64(values),
+                BatchData::Utf8(values) => KeySlice::Utf8(values),
+            },
+        }
+    }
+
+    /// The column's integer values, if it holds integers.
+    ///
+    /// The values are the column's own: a dictionary-encoded column is read
+    /// through its dictionary, and this is the plain column only. It is what
+    /// opens the join's fast path -- an integer key read straight out of the
+    /// column, with no enum and no validity bitmap.
+    #[must_use]
+    pub fn integer_values(&self) -> Option<&'a [i64]> {
+        match &self.values {
+            KeyValues::Int64(values) => Some(values),
+            _ => None,
+        }
     }
 
     /// The value of `row`, if it holds one.
@@ -110,7 +222,10 @@ impl<'a> KeyColumn<'a> {
     /// selection built over this very column, so they are in range by
     /// construction.
     pub fn value_at(&self, row: usize) -> Option<KeyValue<'_>> {
-        if row >= self.validity.len() || !self.validity.is_valid(row) {
+        if row >= self.validity.len() {
+            return None;
+        }
+        if self.nulls && !self.validity.is_valid(row) {
             return None;
         }
         Some(match &self.values {

@@ -140,6 +140,100 @@ fn engine_answer(plan: &QueryPlan, dataset: &Dataset) -> (i64, Option<f64>) {
     (count, sum)
 }
 
+/// A dataset of an **integer** sort key and an integer value.
+fn integer_dataset(keys: &[i64], values: &[i64]) -> Dataset {
+    Dataset::from_chunks(vec![
+        chunk("k", Encoding::Int64 { values: keys.to_vec() }, &[]),
+        chunk("v", Encoding::Int64 { values: values.to_vec() }, &[]),
+    ])
+}
+
+/// The rows a sort keeps, by the reference rule, over integer keys.
+///
+/// The same rule as [`reference_sort`], with the keys compared as integers.
+fn reference_sort_int(keys: &[i64], descending: bool, limit: Option<usize>) -> Vec<usize> {
+    let mut rows: Vec<usize> = (0..keys.len()).collect();
+    rows.sort_by(|left, right| {
+        let ordering = keys[*left].cmp(&keys[*right]);
+        let ordering = if descending { ordering.reverse() } else { ordering };
+        match ordering {
+            Ordering::Equal => left.cmp(right),
+            other => other,
+        }
+    });
+    if let Some(limit) = limit {
+        rows.truncate(limit);
+    }
+    rows
+}
+
+/// The sum of the kept integer rows.
+///
+/// `None` when no rows are kept: a sum over nothing is a NULL, and the
+/// engine says so.
+fn reference_sum_int(values: &[i64], rows: &[usize]) -> Option<i64> {
+    let mut sum = 0_i64;
+    for &row in rows {
+        sum += values[row];
+    }
+    (!rows.is_empty()).then_some(sum)
+}
+
+/// The engine's answer over an integer column: how many rows the sort kept,
+/// and their sum.
+fn engine_answer_int(plan: &QueryPlan, dataset: &Dataset) -> (i64, Option<i64>) {
+    let result = execute(plan, dataset, &scalar()).expect("the plan runs");
+    let group = result.groups.first().expect("a global aggregate has one group");
+    let count = match group.values.first() {
+        Some(AggregateValue::Int(count)) => *count,
+        other => panic!("unexpected count {other:?}"),
+    };
+    let sum = match group.values.get(1) {
+        Some(AggregateValue::Int(sum)) => Some(*sum),
+        Some(AggregateValue::Null) => None,
+        other => panic!("unexpected sum {other:?}"),
+    };
+    (count, sum)
+}
+
+/// The sort agrees with the reference over an **integer** column.
+///
+/// The published query sorts a float, and every other test here sorts a
+/// float, so the engine's integer path -- the one that reads the column's
+/// own integers and compares them as integers, with no enum and no
+/// `Option` -- would otherwise never be run.
+#[test]
+fn the_sort_agrees_with_the_reference_over_integers() {
+    let keys = vec![3_i64, 1, 4, 2, 1];
+    let values = vec![10_i64, 20, 30, 40, 50];
+    let dataset = integer_dataset(&keys, &values);
+
+    for descending in [false, true] {
+        for limit in [None, Some(0), Some(3), Some(9)] {
+            let plan = sort_plan("k", descending, limit);
+            let (count, sum) = engine_answer_int(&plan, &dataset);
+            let rows = reference_sort_int(&keys, descending, limit);
+            let expected = reference_sum_int(&values, &rows);
+
+            assert_eq!(
+                count,
+                i64::try_from(rows.len()).expect("a row count fits in an i64"),
+                "the sort kept the wrong number of rows (descending: {descending}, limit: {limit:?})"
+            );
+            assert_eq!(
+                sum, expected,
+                "the sort's rows differ from the reference's (descending: {descending}, limit: {limit:?})"
+            );
+        }
+    }
+
+    // The sums the reference produced, written out, so the test above cannot
+    // pass by accident: the tie between the two `1`s is broken by the row's
+    // own number, and the sum depends on it.
+    assert_eq!(reference_sum_int(&values, &reference_sort_int(&keys, false, None)), Some(150));
+    assert_eq!(reference_sum_int(&values, &reference_sort_int(&keys, true, None)), Some(150));
+}
+
 /// The sort agrees with the reference, ascending and descending.
 ///
 /// The values are order-sensitive, and deliberately so: their sum is 1.0

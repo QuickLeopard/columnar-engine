@@ -239,6 +239,19 @@ probe-cost data="data/lineitem.parquet" out="bench-results/row-group-cost.json":
 probe-batch-size data="data/lineitem.parquet" out="bench-results/batch-size.json":
     cargo run --release -p columnar-engine --example lazy_batch_size -- {{data}} --out {{out}}
 
+# Take the **hot paths apart**: the join's probe and the sort.
+#
+# The probe measures the engine's own operators against the candidates their
+# shapes could take -- an open-addressed table, a table addressed by the key
+# itself, a bitmap in front of either -- and **checks every candidate against
+# the engine's own output, row for row, before it is timed**. A candidate that
+# is wrong is not a candidate.
+#
+# The two code versions are measured back to back, on the same host, and the
+# reports are committed beside each other.
+probe-operators data="data/lineitem.parquet" build="data/orders.parquet" out="bench-results/operator-probe-after.json":
+    cargo run --release -p columnar-engine --example operator_probe -- --data {{data}} --build {{build}} --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

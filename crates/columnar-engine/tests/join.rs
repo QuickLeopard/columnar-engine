@@ -231,6 +231,67 @@ fn the_hash_join_agrees_with_the_nested_loop() {
     let _ = std::fs::remove_file(path);
 }
 
+/// A probe key **below** the build table's base matches nothing.
+///
+/// The table is addressed by the key itself, and its base is the smallest key
+/// the file's statistics report. A key below the base has no slot in the
+/// table, and a table that wrapped its index round would answer with the
+/// base key's count instead of with nothing.
+#[test]
+fn a_probe_key_below_the_table_s_base_matches_nothing() {
+    // The build side's keys are 100 and 200, so the table's base is 100.
+    let probe_keys = vec![Some(50), Some(100), Some(150), Some(200)];
+    let probe_values = vec![Some(10.0), Some(20.0), Some(30.0), Some(40.0)];
+    let build_keys = vec![Some(100), Some(200)];
+    let build_dates = vec![Some("1994-01-01"), Some("1994-02-01")];
+
+    let path = temp_path("below-base");
+    write_build(&path, &build_keys, &build_dates);
+    let dataset = probe_dataset(&probe_keys, &probe_values);
+    let plan = join_plan(&path, Vec::new());
+
+    let (count, sum) = engine_answer(&plan, &dataset);
+    let rows = nested_loop(&probe_keys, &build_keys);
+    let expected = reference_sum(&probe_values, &rows);
+
+    assert_eq!(count, i64::try_from(rows.len()).expect("a row count fits in an i64"));
+    assert_eq!(sum, expected, "the join's rows differ from the nested loop's");
+    assert_eq!(count, 2, "only the two keys the build side holds match");
+
+    let _ = std::fs::remove_file(path);
+}
+
+/// A build key more than 255 build rows carry still counts every one of them.
+///
+/// The table holds one byte a key, so a key more than 255 build rows carry
+/// does not fit in its byte. The count does not fit, so the table used to be
+/// abandoned -- and the answer was still right, but the probe paid for a
+/// hash table. Now the count goes to an overflow map and the table keeps its
+/// shape.
+#[test]
+fn a_build_key_more_than_255_rows_carry_still_counts_every_one() {
+    let duplicates = 300_i32;
+    let build_keys: Vec<Option<i64>> = (0..duplicates).map(|_| Some(7)).collect();
+    let build_dates: Vec<Option<&str>> = (0..duplicates).map(|_| Some("1994-01-01")).collect();
+    let probe_keys = vec![Some(7), Some(8)];
+    let probe_values = vec![Some(10.0), Some(20.0)];
+
+    let path = temp_path("overflow");
+    write_build(&path, &build_keys, &build_dates);
+    let dataset = probe_dataset(&probe_keys, &probe_values);
+    let plan = join_plan(&path, Vec::new());
+
+    let (count, sum) = engine_answer(&plan, &dataset);
+    let rows = nested_loop(&probe_keys, &build_keys);
+    let expected = reference_sum(&probe_values, &rows);
+
+    assert_eq!(count, i64::try_from(rows.len()).expect("a row count fits in an i64"));
+    assert_eq!(sum, expected, "the join's rows differ from the nested loop's");
+    assert_eq!(count, i64::from(duplicates));
+
+    let _ = std::fs::remove_file(path);
+}
+
 /// The build side's own filter is applied **before** the table is hashed.
 #[test]
 fn the_build_filter_removes_rows_before_the_table_is_built() {

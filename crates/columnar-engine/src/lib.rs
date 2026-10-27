@@ -180,7 +180,9 @@ pub fn execute(
     let resolved = plan.resolve(dataset)?;
     let build = open_build_side(resolved.join.as_ref())?;
 
-    let estimate = memory::estimate_resolved(&resolved, dataset)
+    let grouped =
+        resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
+    let estimate = memory::estimate_resolved(&resolved, dataset, grouped)
         .saturating_add(estimate_join(resolved.join.as_ref(), build.as_ref()))
         .saturating_add(estimate_sort(&resolved, dataset.len()));
     if estimate > options.memory_budget.bytes {
@@ -224,7 +226,7 @@ fn estimate_join(join: Option<&plan::ResolvedJoin>, source: Option<&ParquetSourc
     let (Some(join), Some(source)) = (join, source) else {
         return 0;
     };
-    memory::estimate_build_side(source, &join.spec.build_key)
+    memory::estimate_build_side(source, &join.spec.build_key, &join.spec.build_filter)
 }
 
 /// The estimate for the sort.
@@ -543,11 +545,19 @@ fn run_pipeline(
         project_stage(resolved, dataset, &mut materialised, ordered.as_ref());
     // The projection does not change the row count: the join and the sort
     // do, and they report their own counts.
+    //
+    // The count is the rows the projection was **handed**, which is not
+    // always the filter's survivors: behind a join or a sort the projection
+    // gathers only the rows those stages decided on. The plan output used to
+    // report the survivors' count here, which made a projection that
+    // gathered 216,783 rows over six million look like it had gathered six
+    // million.
     let survivors = materialised.selection().len();
+    let handed = if ordered.is_some() { aggregate_rows } else { survivors };
     let project_stage = StageStats {
         stage: "project".to_owned(),
-        rows_in: rows(survivors),
-        rows_out: rows(survivors),
+        rows_in: rows(handed),
+        rows_out: rows(handed),
         elapsed: project_started.elapsed(),
     };
 
@@ -662,11 +672,12 @@ fn ordered_stage(
         return Ok(None);
     }
 
-    // The survivors' own row numbers: the i-th survivor is the i-th row of
-    // this list, and every stage behind the filter works in those positions.
-    let dataset_rows = selection.rows();
-    let mut positions: Vec<u32> =
-        (0..dataset_rows.len()).map(|index| u32::try_from(index).unwrap_or(u32::MAX)).collect();
+    // The survivors' own row numbers in the dataset. Every stage behind the
+    // filter works in those numbers, so a stage's output is a stage's input
+    // with nothing to translate: there is no second numbering, and no
+    // vector of positions that has to be walked to get from one to the other.
+    let dataset_row_numbers = selection.rows();
+    let mut row_numbers: Vec<u32>;
 
     let mut join_stage = None;
     let mut join = None;
@@ -683,11 +694,11 @@ fn ordered_stage(
             source.worker_count(options.threads.unwrap_or(1)),
         )?;
         let keys = key_column(dataset, spec.probe_key)?;
-        positions = operators::join::probe(&table, &keys, &dataset_rows);
+        row_numbers = operators::join::probe(&table, &keys, &dataset_row_numbers);
         join_stage = Some(StageStats {
             stage: "join".to_owned(),
-            rows_in: rows(dataset_rows.len()),
-            rows_out: rows(positions.len()),
+            rows_in: rows(dataset_row_numbers.len()),
+            rows_out: rows(row_numbers.len()),
             elapsed: started.elapsed(),
         });
         join = Some(explain::JoinReport {
@@ -695,8 +706,12 @@ fn ordered_stage(
             build_key: spec.spec.build_key.clone(),
             build_file: file_name(&spec.spec.build_path),
             build_rows: table.rows(),
-            output_rows: positions.len(),
+            output_rows: row_numbers.len(),
         });
+    } else {
+        // With no join, the rows behind the filter are the survivors
+        // themselves, and the sort is handed them as they are.
+        row_numbers = dataset_row_numbers;
     }
 
     let mut sort_stage = None;
@@ -705,15 +720,12 @@ fn ordered_stage(
         let started = std::time::Instant::now();
         let keys = key_column(dataset, spec.column)?;
         // The sort is handed the rows the join produced, when there is a
-        // join, and the filter's survivors when there is not.
-        let handed = positions.len();
+        // join, and the filter's survivors when there is not. Both are the
+        // dataset's own row numbers, so the sort's key is one lookup.
+        let handed = row_numbers.len();
         let sorted = operators::sort::sort_rows(
-            positions,
-            |position| {
-                let index = usize::try_from(position).unwrap_or(usize::MAX);
-                let row = dataset_rows.get(index).copied().unwrap_or(0);
-                keys.value_at(usize::try_from(row).unwrap_or(usize::MAX))
-            },
+            std::mem::take(&mut row_numbers),
+            &keys,
             spec.spec.descending,
             spec.spec.limit,
         );
@@ -729,20 +741,12 @@ fn ordered_stage(
             limit: spec.spec.limit,
             rows: sorted.len(),
         });
-        positions = sorted;
+        row_numbers = sorted;
     }
 
-    // The positions become the dataset's own row numbers, which is what the
+    // The rows are already the dataset's own row numbers, which is what the
     // aggregate's input is gathered from.
-    let rows: Vec<u32> = positions
-        .iter()
-        .map(|&position| {
-            let index = usize::try_from(position).unwrap_or(usize::MAX);
-            dataset_rows.get(index).copied().unwrap_or(0)
-        })
-        .collect();
-
-    Ok(Some(Ordered { rows, join_stage, sort_stage, join, sort }))
+    Ok(Some(Ordered { rows: row_numbers, join_stage, sort_stage, join, sort }))
 }
 
 /// The column at `index`, read one row at a time.

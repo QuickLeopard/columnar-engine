@@ -25,6 +25,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
+BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("compare-before-run*.json"))
+SPEC020_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec020-run*.json"))
+PROBE_REPORTS = sorted((ROOT / "bench-results").glob("operator-probe-*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
 RLE_EXPANSION_REPORTS = sorted((ROOT / "bench-results").glob("rle-expansion-run*.json"))
@@ -83,6 +86,61 @@ CHECKS = [
     ("PERF.md", "sort-topk resident", "engine", "eager", "resident", "sort-topk", 1),
     ("PERF.md", "duckdb sort-topk resident", "duckdb", "-", "resident", "sort-topk", 1),
     ("PERF.md", "polars sort-topk resident", "polars", "-", "resident", "sort-topk", 1),
+]
+
+# (document, label, system, mode, metric, query, places)
+#
+# Spec 021 publishes the **old code's** figures beside the new ones, so a
+# reader can see what the change did rather than what the machine did. Those
+# old figures are measured on the **same host**, back to back, in their own
+# campaigns -- so they are derived from committed reports here too, and not
+# typed into the prose.
+BEFORE_CHECKS = [
+    ("PERF.md", "the old code's lazy join-orders cold", "engine", "lazy", "cold", "join-orders", 1),
+    ("PERF.md", "the old code's lazy sort-topk cold", "engine", "lazy", "cold", "sort-topk", 1),
+    ("PERF.md", "the old code's sort-topk resident", "engine", "eager", "resident", "sort-topk", 1),
+    ("PERF.md", "the old code's lazy q6 cold", "engine", "lazy", "cold", "q6", 1),
+    ("PERF.md", "the old code's duckdb q6 cold", "duckdb", "-", "cold", "q6", 1),
+]
+
+# (document, label, system, mode, metric, query, places)
+#
+# The set **before** the one this file publishes now -- spec 020's set, taken
+# on a busier host. Its figures are published beside the new ones, so they
+# are derived from the reports they came from rather than typed into the
+# prose.
+SPEC020_CHECKS = [
+    ("PERF.md", "the last set's lazy join-orders cold", "engine", "lazy", "cold", "join-orders", 1),
+    ("PERF.md", "the last set's lazy sort-topk cold", "engine", "lazy", "cold", "sort-topk", 1),
+    ("PERF.md", "the last set's sort-topk resident", "engine", "eager", "resident", "sort-topk", 1),
+    ("PERF.md", "the last set's join-orders resident", "engine", "eager", "resident", "join-orders", 1),
+    ("PERF.md", "the last set's lazy q6 cold", "engine", "lazy", "cold", "q6", 1),
+    ("PERF.md", "the last set's eager q6 cold", "engine", "eager", "cold", "q6", 1),
+    ("PERF.md", "the last set's duckdb q6 cold", "duckdb", "-", "cold", "q6", 1),
+    ("PERF.md", "the last set's polars q6 cold", "polars", "-", "cold", "q6", 1),
+    ("PERF.md", "the last set's duckdb join-orders cold", "duckdb", "-", "cold", "join-orders", 1),
+    ("PERF.md", "the last set's duckdb sort-topk cold", "duckdb", "-", "cold", "sort-topk", 1),
+    ("PERF.md", "the last set's duckdb sort-topk resident", "duckdb", "-", "resident", "sort-topk", 1),
+]
+
+# (document, label, report, measurement, places)
+#
+# Spec 021's instrument is the **operator probe**, and its figures are the
+# claim the increment rests on: the join's probe and the sort, taken apart.
+# The probe writes one report per code version -- `operator-probe-before`
+# against the code the increment replaced, `operator-probe-after` against the
+# code it wrote -- so both halves of every published number are derived.
+PROBE_CHECKS = [
+    ("PERF.md", "the probe's engine, before", "before", "engine", 1),
+    ("PERF.md", "the probe's engine, after", "after", "engine", 1),
+    ("PERF.md", "the probe's floor, before", "before", "read", 1),
+    ("PERF.md", "the probe's plain floor, after", "after", "read_plain", 1),
+    ("PERF.md", "the probe's direct table, before", "before", "direct_bytes", 1),
+    ("PERF.md", "the probe's bitmap, before", "before", "prefilter", 1),
+    ("PERF.md", "the probe's bitmap, after", "after", "prefilter", 1),
+    ("PERF.md", "the probe's table, after", "after", "int_table", 1),
+    ("PERF.md", "the probe's sort, before", "before", "bounded", 1),
+    ("PERF.md", "the probe's sort, after", "after", "bounded", 1),
 ]
 
 # (document, label, thread count, system, places)
@@ -550,6 +608,70 @@ def main() -> int:
         else:
             print(f"ok  {doc:<10} {label:<28} {rendered}")
 
+    if BEFORE_REPORTS:
+        before_runs = [json.loads(path.read_text()) for path in BEFORE_REPORTS]
+        before = collect(before_runs)
+        for doc, label, system, mode, metric, query, places in BEFORE_CHECKS:
+            values = before.get((system, mode, metric, query))
+            if not values:
+                failures.append(f"{doc}: no figure for {label} in the before reports")
+                continue
+            figure = statistics.median(values)
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+    if SPEC020_REPORTS:
+        spec020_runs = [json.loads(path.read_text()) for path in SPEC020_REPORTS]
+        last = collect(spec020_runs)
+        for doc, label, system, mode, metric, query, places in SPEC020_CHECKS:
+            values = last.get((system, mode, metric, query))
+            if not values:
+                failures.append(f"{doc}: no figure for {label} in the last set's reports")
+                continue
+            figure = statistics.median(values)
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+    if PROBE_REPORTS:
+        probes = {
+            path.stem.removeprefix("operator-probe-"): json.loads(path.read_text())
+            for path in PROBE_REPORTS
+        }
+        for doc, label, report, measurement, places in PROBE_CHECKS:
+            run = probes.get(report)
+            values = []
+            if run is not None:
+                section = run.get("join_probe_ms", {})
+                if measurement in section:
+                    values.append(section[measurement])
+                section = run.get("sort_ms", {})
+                if measurement in section:
+                    values.append(section[measurement])
+            if not values:
+                failures.append(f"{doc}: no figure for {label} in the probe reports")
+                continue
+            figure = values[0]
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
     if SCALING_REPORTS:
         scaling_runs = []
         for path in SCALING_REPORTS:
@@ -950,7 +1072,11 @@ def main() -> int:
         )
         return 1
 
-    print(f"\nall published figures agree with {len(REPORTS)} committed reports")
+    print(
+        f"\nall published figures agree with the committed reports: "
+        f"{len(REPORTS)} campaigns, {len(BEFORE_REPORTS)} before, "
+        f"{len(SPEC020_REPORTS)} of the last set, {len(PROBE_REPORTS)} probe"
+    )
     return 0
 
 

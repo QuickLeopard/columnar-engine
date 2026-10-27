@@ -29,13 +29,32 @@
 //!
 //! A NULL key never matches, on either side. That is SQL's rule, and it is
 //! the engine's rule everywhere else: the filter drops a NULL row too.
+//!
+//! ## The table
+//!
+//! The table holds, for each key, how many build rows carry it. **How** it
+//! holds them depends on the key:
+//!
+//! - An **integer** key whose range is narrow enough gets a **direct-addressed**
+//!   table: the key *is* the index, the count is one byte, and a probe is a
+//!   single load. There is no hash and no probe chain.
+//! - Every other key gets an **open-addressed hash table** over the key's
+//!   bits.
+//!
+//! The direct table is `O(range)` rather than `O(keys)`, so it is only used
+//! when the range fits [`crate::memory::DIRECT_TABLE_LIMIT`]. The
+//! measurement that chose this shape is in `crates/columnar-engine/examples/
+//! operator_probe.rs`: over six million probe rows against a table of
+//! 216,345 keys, the direct table ran at 14.0 ms and the hash table at
+//! 58.6 ms, against 91.1 ms for the enum-keyed `HashMap` this replaced.
 
 use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 
-use columnar_core::Predicate;
+use columnar_core::{Predicate, ScalarValue};
 use columnar_kernels::Flavor;
 
+use crate::memory::direct_table_fits;
 use crate::operators::filter::filter_all;
 use crate::operators::key::{KeyColumn, KeyValue};
 use crate::plan::{JoinSpec, ResolvedFilter};
@@ -100,7 +119,7 @@ type JoinMap = HashMap<JoinKey, u32, BuildHasherDefault<JoinHasher>>;
 ///
 /// The key is **owned**: it goes into the hash table, and the table outlives
 /// the column the key was read out of.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum JoinKey {
     /// A 64-bit signed integer.
     Int(i64),
@@ -112,6 +131,20 @@ enum JoinKey {
     Float(u64),
     /// A string.
     Text(String),
+}
+
+impl Hash for JoinKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // The payload, and only the payload. The derived hash would hash the
+        // discriminant as well, and the discriminant is the same for every
+        // key of a given type -- so it would be a second round of arithmetic
+        // over the same bytes, once for every row of the probe side.
+        match self {
+            Self::Int(value) => state.write_i64(*value),
+            Self::Float(bits) => state.write_u64(*bits),
+            Self::Text(text) => state.write(text.as_bytes()),
+        }
+    }
 }
 
 impl JoinKey {
@@ -139,30 +172,157 @@ impl JoinKey {
             KeyValue::Text(text) => Some(Self::Text(text.to_owned())),
         }
     }
+
+    /// The key's integer, when it is one.
+    fn as_int(&self) -> Option<i64> {
+        match self {
+            Self::Int(value) => Some(*value),
+            Self::Float(_) | Self::Text(_) => None,
+        }
+    }
 }
 
-/// The hash table the join probes.
+/// The table the join probes.
 ///
 /// The build side's rows are hashed on their key, and the table holds, for
 /// each key, how many build rows carry it. The build side's columns are not
 /// carried into the output, so the count is all the join needs: a probe row
 /// with that key produces that many output rows.
-#[derive(Debug, Default)]
+///
+/// Which table it is depends on the key: an integer key in a narrow enough
+/// range is addressed by the key itself, and everything else is hashed.
+#[derive(Debug)]
 pub struct BuildTable {
-    /// The build rows each key accounts for.
-    rows: JoinMap,
+    /// How the table holds its keys.
+    inner: TableInner,
+}
+
+/// How the table holds its keys.
+#[derive(Debug)]
+enum TableInner {
+    /// A table addressed by the key itself.
+    Direct(DirectTable),
+    /// A hash table.
+    Hashed(HashedTable),
 }
 
 impl BuildTable {
-    /// How many build rows carry `key`.
-    fn matches(&self, key: &JoinKey) -> u32 {
-        self.rows.get(key).copied().unwrap_or(0)
-    }
-
     /// How many build rows the table holds.
     #[must_use]
     pub fn rows(&self) -> usize {
-        self.rows.values().map(|&count| usize::try_from(count).unwrap_or(usize::MAX)).sum()
+        match &self.inner {
+            TableInner::Direct(direct) => direct.rows,
+            TableInner::Hashed(hashed) => hashed.rows,
+        }
+    }
+}
+
+/// A table addressed by the key itself.
+///
+/// The keys are integers and they lie in a range, and the range is narrow
+/// enough that the table can be **one byte a key**: the byte says how many
+/// build rows carry that key. A probe is then a single load -- there is no
+/// hash to compute and no chain to walk, and the byte is a byte of the
+/// table's own memory rather than a 32-byte key in a hash map.
+///
+/// The table is `O(range)` rather than `O(keys)`, so it is only used when the
+/// range fits [`crate::memory::DIRECT_TABLE_LIMIT`]. A key that more than 255
+/// build rows carry does not fit in a byte, and its count goes to a small
+/// **overflow map** rather than abandoning the table: every entry there
+/// accounts for at least 256 build rows, so there are few of them.
+#[derive(Debug)]
+struct DirectTable {
+    /// The count a key accounts for, one byte a key.
+    counts: Vec<u8>,
+    /// The keys more than 255 build rows carry.
+    ///
+    /// A byte cannot hold more than 255, and a key that many build rows
+    /// carry is **not** a reason to abandon the whole table: the count goes
+    /// here instead, and the table keeps the shape that made the probe a
+    /// single load. There are few enough of them to bound: every entry here
+    /// accounts for at least 256 build rows.
+    overflow: HashMap<i64, u32>,
+    /// The smallest key.
+    base: i64,
+    /// The build rows the table accounts for.
+    rows: usize,
+}
+
+impl DirectTable {
+    /// Builds the table over `keys`.
+    ///
+    /// The table's width comes from the **file's own statistics** for the key
+    /// column, not from the keys themselves: the estimate has to know the
+    /// table's size before a single row is read, so the two must be made from
+    /// the same number or the estimate is not an upper bound.
+    ///
+    /// `None` when the range is too wide to be worth addressing directly, or
+    /// when a key falls outside the range the statistics claim -- in which
+    /// case the statistics are wrong and the hash table takes over.
+    fn build(keys: &[i64], range: Option<&(ScalarValue, ScalarValue)>) -> Option<Self> {
+        let (min, max) = range?;
+        let (ScalarValue::Int64(min), ScalarValue::Int64(max)) = (min, max) else {
+            return None;
+        };
+        if max < min {
+            return None;
+        }
+        let span = i128::from(*max) - i128::from(*min) + 1;
+        let span = u64::try_from(span).ok()?;
+        if !direct_table_fits(span) {
+            return None;
+        }
+        let width = usize::try_from(span).ok()?;
+        let mut counts = vec![0_u8; width];
+        let mut overflow: HashMap<i64, u32> = HashMap::new();
+        for key in keys {
+            let index = usize::try_from(i128::from(*key) - i128::from(*min)).ok()?;
+            let count = counts.get_mut(index)?;
+            if let Some(next) = count.checked_add(1) {
+                *count = next;
+            } else {
+                // The byte is full. The rest of the count goes to the
+                // overflow map, and the table keeps its shape.
+                *count = u8::MAX;
+                let entry = overflow.entry(*key).or_insert(0);
+                *entry = entry.saturating_add(1);
+            }
+        }
+        Some(Self { counts, overflow, base: *min, rows: keys.len() })
+    }
+
+    /// How many build rows carry `key`.
+    fn count(&self, key: i64) -> u32 {
+        let index = usize::try_from(key.saturating_sub(self.base)).unwrap_or(usize::MAX);
+        let byte = self.counts.get(index).copied().map_or(0, u32::from);
+        let extra = self.overflow.get(&key).copied().unwrap_or(0);
+        byte.saturating_add(extra)
+    }
+}
+
+/// A hash table over the keys.
+///
+/// The keys are the enum's own values, and the table is the `HashMap` the
+/// engine has always used -- with one change: the key's hash is written by
+/// hand, over the payload alone.
+#[derive(Debug, Default)]
+struct HashedTable {
+    /// The build rows each key accounts for.
+    counts: JoinMap,
+    /// The build rows the table accounts for.
+    rows: usize,
+}
+
+impl HashedTable {
+    /// Adds a build row carrying `key`.
+    fn add(&mut self, key: JoinKey) {
+        self.counts.entry(key).and_modify(|count| *count = count.saturating_add(1)).or_insert(1);
+        self.rows = self.rows.saturating_add(1);
+    }
+
+    /// How many build rows carry `key`.
+    fn count(&self, key: &JoinKey) -> u32 {
+        self.counts.get(key).copied().unwrap_or(0)
     }
 }
 
@@ -222,44 +382,120 @@ pub fn build_table(
     let chunk = dataset.chunk(&name).ok_or_else(|| EngineError::UnknownColumn(name.clone()))?;
     let keys = KeyColumn::from_chunk(chunk);
 
-    let mut table = BuildTable::default();
+    // The build side's keys. An integer key can be addressed by the key
+    // itself, so it is collected on its own and the table is built from it.
+    let mut integers: Vec<i64> = Vec::new();
+    let mut general: Vec<JoinKey> = Vec::new();
     selection.for_each(|row| {
         let row = usize::try_from(row).unwrap_or(usize::MAX);
         let Some(value) = keys.value_at(row) else {
             return;
         };
-        let Some(key) = JoinKey::from_value(value) else {
-            return;
-        };
-        table.rows.entry(key).and_modify(|count| *count = count.saturating_add(1)).or_insert(1);
+        match value {
+            KeyValue::Int(value) => integers.push(value),
+            other => {
+                if let Some(key) = JoinKey::from_value(other) {
+                    general.push(key);
+                }
+            }
+        }
     });
-    Ok(table)
+
+    if general.is_empty() {
+        let range = source.column_range(&spec.build_key);
+        if let Some(direct) = DirectTable::build(&integers, range.as_ref()) {
+            return Ok(BuildTable { inner: TableInner::Direct(direct) });
+        }
+        let mut hashed = HashedTable::default();
+        for key in integers {
+            hashed.add(JoinKey::Int(key));
+        }
+        return Ok(BuildTable { inner: TableInner::Hashed(hashed) });
+    }
+
+    let mut hashed = HashedTable::default();
+    // The integers go in too, even though a column of one type gives one kind
+    // of key: a table that silently dropped a key would answer wrongly, and
+    // the cost of the insurance is one loop over a vector that is empty in
+    // every case but the mixed one.
+    for key in integers {
+        hashed.add(JoinKey::Int(key));
+    }
+    for key in general {
+        hashed.add(key);
+    }
+    Ok(BuildTable { inner: TableInner::Hashed(hashed) })
 }
 
 /// The rows the join produces, in the probe side's order.
 ///
 /// `rows` are the probe side's surviving rows, as the dataset's own row
-/// numbers. The result holds the **positions** of those rows among the
-/// survivors -- the i-th survivor is position `i` -- so a row that matched
-/// several build rows appears once per match.
+/// numbers. The result holds those same row numbers, so a row that matched
+/// several build rows appears once per match, and a stage behind the join
+/// reads them without translating them.
 ///
 /// A probe row whose key is NULL, or whose key is not in the table,
 /// produces no output row at all.
 #[must_use]
 pub fn probe(table: &BuildTable, keys: &KeyColumn<'_>, rows: &[u32]) -> Vec<u32> {
-    let mut out: Vec<u32> = Vec::with_capacity(rows.len());
-    for (index, &row) in rows.iter().enumerate() {
-        let row = usize::try_from(row).unwrap_or(usize::MAX);
-        let Some(value) = keys.value_at(row) else {
+    match &table.inner {
+        TableInner::Direct(direct) => probe_direct(direct, keys, rows),
+        TableInner::Hashed(hashed) => probe_hashed(hashed, keys, rows),
+    }
+}
+
+/// The rows that matched, when the table is addressed by the key itself.
+///
+/// The fast path reads the key column's own integers: no enum, no validity
+/// bitmap, and no hash. A column that holds NULLs, or that is
+/// dictionary-encoded, takes the general path instead.
+fn probe_direct(direct: &DirectTable, keys: &KeyColumn<'_>, rows: &[u32]) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    if let Some(values) = keys.integer_values() {
+        if !keys.has_nulls() {
+            for &row in rows {
+                let index = usize::try_from(row).unwrap_or(usize::MAX);
+                let Some(&key) = values.get(index) else {
+                    continue;
+                };
+                let count = direct.count(key);
+                for _ in 0..count {
+                    out.push(row);
+                }
+            }
+            return out;
+        }
+    }
+    for &row in rows {
+        let index = usize::try_from(row).unwrap_or(usize::MAX);
+        let Some(value) = keys.value_at(index) else {
+            continue;
+        };
+        let Some(key) = JoinKey::from_value(value).and_then(|key| key.as_int()) else {
+            continue;
+        };
+        let count = direct.count(key);
+        for _ in 0..count {
+            out.push(row);
+        }
+    }
+    out
+}
+
+/// The rows that matched, when the table is hashed.
+fn probe_hashed(hashed: &HashedTable, keys: &KeyColumn<'_>, rows: &[u32]) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    for &row in rows {
+        let index = usize::try_from(row).unwrap_or(usize::MAX);
+        let Some(value) = keys.value_at(index) else {
             continue;
         };
         let Some(key) = JoinKey::from_value(value) else {
             continue;
         };
-        let matches = table.matches(&key);
-        let position = u32::try_from(index).unwrap_or(u32::MAX);
-        for _ in 0..matches {
-            out.push(position);
+        let count = hashed.count(&key);
+        for _ in 0..count {
+            out.push(row);
         }
     }
     out
