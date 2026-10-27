@@ -26,6 +26,37 @@ pub struct StageStats {
     pub elapsed: std::time::Duration,
 }
 
+/// What the join did, for the plan output.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JoinReport {
+    /// The probe side's key column -- the left table's.
+    pub probe_key: String,
+    /// The build side's key column -- the right table's.
+    pub build_key: String,
+    /// The build side's file name.
+    ///
+    /// The name, not the path: the plan output says which file the build
+    /// side was, and a reader who wants the path has the plan.
+    pub build_file: String,
+    /// How many rows the build side held after its own filter.
+    pub build_rows: usize,
+    /// How many rows the join produced.
+    pub output_rows: usize,
+}
+
+/// What the sort did, for the plan output.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SortReport {
+    /// The column the rows were sorted by.
+    pub column: String,
+    /// Whether the order was descending.
+    pub descending: bool,
+    /// How many rows the sort was asked to keep. `None` means all of them.
+    pub limit: Option<usize>,
+    /// How many rows the sort kept.
+    pub rows: usize,
+}
+
 /// The rendered plan.
 ///
 /// Render it with [`fmt::Display`], or with
@@ -91,6 +122,16 @@ pub struct PlanOutput {
     /// into the scan stage. This separates the two halves of the scan: the
     /// reader's decode, and the comparison. They have different fixes.
     pub pushdown_metrics: PushdownMetrics,
+    /// The join, if the plan had one.
+    ///
+    /// The report names the two key columns and the build side's file, and
+    /// counts the rows the build side held and the rows the join produced.
+    pub join: Option<JoinReport>,
+    /// The sort, if the plan had one.
+    ///
+    /// The report names the column the rows were sorted by, the direction,
+    /// and the limit the sort was given.
+    pub sort: Option<SortReport>,
 }
 
 impl fmt::Display for PlanOutput {
@@ -185,7 +226,37 @@ impl fmt::Display for PlanOutput {
             format_bytes(self.estimated_bytes),
             format_bytes(self.budget_bytes)
         )?;
+        self.write_join_and_sort(f)?;
         write!(f, "kernel flavor: {}", self.kernel_flavor)
+    }
+}
+
+impl PlanOutput {
+    /// Writes the join's and the sort's reports.
+    ///
+    /// The join names its two key columns and the build side's file; the sort
+    /// names its column, its direction and its limit. A plan with neither
+    /// stage prints neither line.
+    fn write_join_and_sort(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(join) = &self.join {
+            writeln!(
+                f,
+                "join: equi-join on {} = {}, build side {} ({} rows), {} rows out",
+                join.probe_key, join.build_key, join.build_file, join.build_rows, join.output_rows
+            )?;
+        }
+        if let Some(sort) = &self.sort {
+            let direction = if sort.descending { "DESC" } else { "ASC" };
+            match sort.limit {
+                Some(limit) => writeln!(
+                    f,
+                    "sort: {} {direction} LIMIT {limit} ({} rows kept)",
+                    sort.column, sort.rows
+                )?,
+                None => writeln!(f, "sort: {} {direction} ({} rows)", sort.column, sort.rows)?,
+            }
+        }
+        Ok(())
     }
 }
 

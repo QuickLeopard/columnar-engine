@@ -51,6 +51,14 @@ const DEFAULT_BUDGET_BYTES: usize = 256 * 1024 * 1024;
 /// The estimated bytes per aggregate hash-table entry.
 const GROUP_ENTRY_BYTES: usize = 16;
 
+/// The estimated bytes per build-side hash-table entry.
+///
+/// The entry holds the key and the number of build rows that carry it.
+const BUILD_ENTRY_BYTES: usize = 16;
+
+/// The estimated bytes per row the sort holds.
+const SORT_ENTRY_BYTES: usize = 16;
+
 /// The width of a `String` header, the value width of a `utf8` column.
 const STRING_HEADER_BYTES: usize = 24;
 
@@ -220,4 +228,37 @@ fn type_width(data_type: DataType) -> usize {
         DataType::Int64 | DataType::Float64 => 8,
         DataType::Utf8 => STRING_HEADER_BYTES,
     }
+}
+
+/// Estimates the working set of a join's **build side**, in bytes.
+///
+/// The build side is hashed: the hash table holds one entry per distinct
+/// key, and the build side's row count bounds it. The estimate is made over
+/// the file, before a single row of it is read.
+#[must_use]
+pub fn estimate_build_side(source: &ParquetSource, build_key: &str) -> usize {
+    let rows = source.rows();
+    if rows == 0 {
+        return 0;
+    }
+    let width = source
+        .columns()
+        .iter()
+        .find(|column| column.name == build_key)
+        .map_or(8, |column| type_width(column.data_type));
+    rows.saturating_mul(width.saturating_add(BUILD_ENTRY_BYTES))
+}
+
+/// Estimates the working set of a **sort**, in bytes.
+///
+/// With a limit the sort keeps a bounded heap of `limit` rows, so the heap
+/// is its working set however many rows it is handed. Without one it sorts
+/// every row, and the rows it sorts are its working set.
+#[must_use]
+pub fn estimate_sort(rows: usize, limit: Option<usize>) -> usize {
+    let rows = match limit {
+        Some(limit) => limit.min(rows),
+        None => rows,
+    };
+    rows.saturating_mul(SORT_ENTRY_BYTES)
 }

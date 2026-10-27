@@ -724,7 +724,8 @@ fn engine_q6(path: &Path) -> (Duration, f64, f64, f64) {
         .iter()
         .find(|definition| definition.query == columnar_engine::BuiltinQuery::Q6Revenue)
         .expect("the revenue query is a builtin query");
-    let plan = (definition.plan)();
+    // The query reads one table, so the build table's file is not used.
+    let plan = (definition.plan)(path);
 
     let started = Instant::now();
     let result = execute_on(&plan, &source, &options).expect("the query runs");

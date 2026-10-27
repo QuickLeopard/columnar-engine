@@ -43,6 +43,7 @@ measured numbers are reproducible.
 
 ```
 datafusion-peer --sql <SQL> --path <FILE> [--threads <N>] [--resident]
+datafusion-peer --sql <SQL> --path <FILE> --build-path <FILE> [--build-table <NAME>]
 datafusion-peer --version
 ```
 
@@ -52,10 +53,18 @@ datafusion-peer --version
 | `--path <FILE>` | The Parquet file to query. |
 | `--threads <N>` | Thread count to pin the engine to. Default `1`. |
 | `--resident` | Load the file into memory first and time the load separately. Without it the Parquet scan happens inside the query. |
+| `--build-path <FILE>` | A second Parquet file to register, for a query that joins two relations. It is read and registered exactly like the first one. |
+| `--build-table <NAME>` | The name the second file is registered under. Default `orders`. It only has an effect together with `--build-path`. |
 | `--version` | Print the version banner and exit. |
 | `--help` | Print the usage and exit. |
 
 Both `--flag value` and `--flag=value` spellings are accepted.
+
+The second table exists because a join query needs two relations, and the
+comparison is only a comparison when every system reads the same two files.
+The SQL refers to the two relations by name -- `lineitem` and the build table
+-- so the harness substitutes the table names the same way for every
+incumbent.
 
 The thread count is pinned twice, on purpose: the tokio runtime gets exactly
 `--threads` worker threads, and DataFusion's `target_partitions` is set to the
@@ -75,8 +84,8 @@ VALUE=123456.789
 
 | Marker | Meaning |
 | --- | --- |
-| `LOAD_MS` | Time to get the file into memory, in milliseconds. In resident mode this is the eager load; in cold mode there is no separate load phase, so it is `0.000`. |
-| `QUERY_MS` | Time the SQL took, in milliseconds. In cold mode this includes the Parquet scan; in resident mode the data is already in memory. |
+| `LOAD_MS` | Time to get the file into memory, in milliseconds. In resident mode this is the eager load; in cold mode there is no separate load phase, so it is `0.000`. With `--build-path` the eager load covers **both** files. |
+| `QUERY_MS` | Time the SQL took, in milliseconds. In cold mode this includes the Parquet scan; in resident mode the data is already in memory. With `--build-path` the cold mode includes the scan of **both** files. |
 | `VALUE` | The single numeric scalar the query produced. Empty when the result is not a single numeric scalar. |
 
 The result table is printed after the markers for human inspection. The harness

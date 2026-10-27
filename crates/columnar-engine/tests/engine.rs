@@ -183,10 +183,10 @@ fn the_aggregate_computes_sum_count_count_star_min_and_max() {
         ),
     ]);
 
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: vec![],
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        vec![],
+        Some(AggregateSpec {
             group_by: vec!["g".to_owned()],
             aggregates: vec![
                 Aggregate::Sum { expr: columnar_core::Expr::column("v") },
@@ -196,7 +196,7 @@ fn the_aggregate_computes_sum_count_count_star_min_and_max() {
                 Aggregate::Max { column: "v".to_owned() },
             ],
         }),
-    };
+    );
 
     let result = execute(&plan, &dataset, &scalar()).expect("the plan runs");
 
@@ -246,17 +246,17 @@ fn a_sum_over_an_all_null_group_is_null() {
         chunk("v", Encoding::Float64 { values: vec![0.0, 0.0, 3.0] }, &[0, 1]),
     ]);
 
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: vec![],
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        vec![],
+        Some(AggregateSpec {
             group_by: vec!["g".to_owned()],
             aggregates: vec![
                 Aggregate::Sum { expr: columnar_core::Expr::column("v") },
                 Aggregate::Count { column: "v".to_owned() },
             ],
         }),
-    };
+    );
 
     let result = execute(&plan, &dataset, &scalar()).expect("the plan runs");
 
@@ -279,14 +279,14 @@ fn a_sum_over_an_all_null_group_is_null() {
 fn the_group_order_is_the_same_across_runs() {
     let dataset = int_dataset(&[("g", vec![7, 3, 5, 1, 9, 3, 8, 2, 6, 4, 5, 9, 1, 7, 2, 3])]);
 
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: vec![],
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        vec![],
+        Some(AggregateSpec {
             group_by: vec!["g".to_owned()],
             aggregates: vec![Aggregate::CountStar],
         }),
-    };
+    );
 
     let first = execute(&plan, &dataset, &scalar()).expect("the plan runs");
     let second = execute(&plan, &dataset, &scalar()).expect("the plan runs");
@@ -336,16 +336,16 @@ fn a_plan_filters_and_aggregates_without_decoding_the_other_columns() {
         ),
     ]);
 
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("l_discount", ComparisonOp::Lt, 0.05f64)],
-        projection: vec![],
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        vec![Predicate::new("l_discount", ComparisonOp::Lt, 0.05f64)],
+        vec![],
+        Some(AggregateSpec {
             group_by: vec!["l_returnflag".to_owned()],
             aggregates: vec![Aggregate::Sum {
                 expr: columnar_core::Expr::column("l_extendedprice"),
             }],
         }),
-    };
+    );
 
     let (result, counts) = counting(|| execute(&plan, &dataset, &scalar()).expect("the plan runs"));
 
@@ -368,11 +368,11 @@ fn a_plan_filters_and_aggregates_without_decoding_the_other_columns() {
 #[test]
 fn a_plan_over_the_budget_is_rejected_before_it_does_any_work() {
     let dataset = int_dataset(&[("x", vec![1, 2, 3, 4])]);
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: vec![],
-        aggregate: Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
-    };
+    let plan = QueryPlan::new(
+        Vec::new(),
+        vec![],
+        Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
+    );
 
     let options = ExecOptions {
         memory_budget: MemoryBudget { bytes: 1 },
@@ -389,11 +389,11 @@ fn a_plan_over_the_budget_is_rejected_before_it_does_any_work() {
 #[test]
 fn count_star_does_not_materialise_any_column() {
     let dataset = int_dataset(&[("x", vec![1, 2, 3, 4])]);
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: vec![],
-        aggregate: Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
-    };
+    let plan = QueryPlan::new(
+        Vec::new(),
+        vec![],
+        Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
+    );
 
     let (result, counts) = counting(|| execute(&plan, &dataset, &scalar()).expect("the plan runs"));
 
@@ -405,11 +405,7 @@ fn count_star_does_not_materialise_any_column() {
 #[test]
 fn an_unknown_column_is_reported_before_anything_is_read() {
     let dataset = int_dataset(&[("x", vec![1, 2, 3, 4])]);
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("nope", ComparisonOp::Gt, 1i64)],
-        projection: vec![],
-        aggregate: None,
-    };
+    let plan = QueryPlan::new(vec![Predicate::new("nope", ComparisonOp::Gt, 1i64)], vec![], None);
 
     let (result, counts) = counting(|| execute(&plan, &dataset, &scalar()));
 
@@ -420,11 +416,7 @@ fn an_unknown_column_is_reported_before_anything_is_read() {
 #[test]
 fn a_filter_over_the_wrong_type_is_a_plan_error() {
     let dataset = int_dataset(&[("x", vec![1, 2, 3, 4])]);
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("x", ComparisonOp::Gt, 1.5f64)],
-        projection: vec![],
-        aggregate: None,
-    };
+    let plan = QueryPlan::new(vec![Predicate::new("x", ComparisonOp::Gt, 1.5f64)], vec![], None);
 
     let result = execute(&plan, &dataset, &scalar());
     assert!(matches!(result, Err(EngineError::TypeMismatch(_))));
@@ -441,16 +433,16 @@ fn the_plan_output_reports_the_stages_and_the_late_materialisation() {
         ),
     ]);
 
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("l_discount", ComparisonOp::Lt, 0.05f64)],
-        projection: vec![],
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        vec![Predicate::new("l_discount", ComparisonOp::Lt, 0.05f64)],
+        vec![],
+        Some(AggregateSpec {
             group_by: vec![],
             aggregates: vec![Aggregate::Sum {
                 expr: columnar_core::Expr::column("l_extendedprice"),
             }],
         }),
-    };
+    );
 
     let result = execute(&plan, &dataset, &scalar()).expect("the plan runs");
     let output = result.plan_output.to_string();
@@ -518,14 +510,14 @@ fn dictionary_dataset() -> Dataset {
 #[test]
 fn a_conjunction_keeps_only_the_rows_that_satisfy_every_predicate() {
     let dataset = dictionary_dataset();
-    let plan = QueryPlan {
-        filter: vec![
+    let plan = QueryPlan::new(
+        vec![
             Predicate::new("l_discount", ComparisonOp::GtEq, 0.04f64),
             Predicate::new("l_discount", ComparisonOp::LtEq, 0.06f64),
         ],
-        projection: vec![],
-        aggregate: Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
-    };
+        vec![],
+        Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
+    );
 
     let result = execute(&plan, &dataset, &scalar()).expect("the plan runs");
 
@@ -537,8 +529,8 @@ fn a_conjunction_keeps_only_the_rows_that_satisfy_every_predicate() {
 #[test]
 fn a_conjunction_over_different_columns_keeps_the_intersection() {
     let dataset = dictionary_dataset();
-    let plan = QueryPlan {
-        filter: vec![
+    let plan = QueryPlan::new(
+        vec![
             Predicate::new("l_discount", ComparisonOp::GtEq, 0.04f64),
             Predicate::new(
                 "l_shipdate",
@@ -546,9 +538,9 @@ fn a_conjunction_over_different_columns_keeps_the_intersection() {
                 ScalarValue::Utf8("1994-01-01".to_owned()),
             ),
         ],
-        projection: vec![],
-        aggregate: Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
-    };
+        vec![],
+        Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
+    );
 
     let result = execute(&plan, &dataset, &scalar()).expect("the plan runs");
 
@@ -559,15 +551,15 @@ fn a_conjunction_over_different_columns_keeps_the_intersection() {
 #[test]
 fn a_string_predicate_filters_a_dictionary_encoded_column() {
     let dataset = dictionary_dataset();
-    let plan = QueryPlan {
-        filter: vec![Predicate::new(
+    let plan = QueryPlan::new(
+        vec![Predicate::new(
             "l_shipdate",
             ComparisonOp::Lt,
             ScalarValue::Utf8("1994-01-01".to_owned()),
         )],
-        projection: vec![],
-        aggregate: Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
-    };
+        vec![],
+        Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
+    );
 
     let result = execute(&plan, &dataset, &scalar()).expect("the plan runs");
 
@@ -590,18 +582,11 @@ fn the_dictionary_fast_path_agrees_with_a_row_by_row_comparison() {
                 Encoding::Utf8Dict { dict: dictionary.clone(), indices: indices.clone() },
                 &[],
             )]);
-            let plan = QueryPlan {
-                filter: vec![Predicate::new(
-                    "l_shipdate",
-                    op,
-                    ScalarValue::Utf8(threshold.to_owned()),
-                )],
-                projection: vec![],
-                aggregate: Some(AggregateSpec {
-                    group_by: vec![],
-                    aggregates: vec![Aggregate::CountStar],
-                }),
-            };
+            let plan = QueryPlan::new(
+                vec![Predicate::new("l_shipdate", op, ScalarValue::Utf8(threshold.to_owned()))],
+                vec![],
+                Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
+            );
             let result = execute(&plan, &dataset, &scalar()).expect("the plan runs");
             let fast = match result.groups[0].values[0].clone() {
                 AggregateValue::Int(count) => count as usize,
@@ -639,12 +624,12 @@ fn the_dictionary_fast_path_agrees_with_a_row_by_row_comparison() {
 #[test]
 fn a_global_aggregate_over_no_rows_still_produces_one_row() {
     let dataset = int_dataset(&[("x", vec![10, 20, 30])]);
-    let plan = QueryPlan {
+    let plan = QueryPlan::new(
         // No row satisfies this.
-        filter: vec![Predicate::new("x", ComparisonOp::Gt, 100i64)],
-        projection: vec![],
-        aggregate: Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
-    };
+        vec![Predicate::new("x", ComparisonOp::Gt, 100i64)],
+        vec![],
+        Some(AggregateSpec { group_by: vec![], aggregates: vec![Aggregate::CountStar] }),
+    );
 
     let result = execute(&plan, &dataset, &scalar()).expect("the plan runs");
 
@@ -656,14 +641,14 @@ fn a_global_aggregate_over_no_rows_still_produces_one_row() {
 #[test]
 fn a_sum_over_no_rows_is_null() {
     let dataset = int_dataset(&[("x", vec![10, 20, 30])]);
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("x", ComparisonOp::Gt, 100i64)],
-        projection: vec![],
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        vec![Predicate::new("x", ComparisonOp::Gt, 100i64)],
+        vec![],
+        Some(AggregateSpec {
             group_by: vec![],
             aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("x") }],
         }),
-    };
+    );
 
     let result = execute(&plan, &dataset, &scalar()).expect("the plan runs");
 
@@ -684,10 +669,10 @@ fn a_global_aggregate_agrees_with_the_single_group_aggregate() {
     let dataset = int_dataset(&[("x", vec![10, 20, 30, 40, 50])]);
 
     let global = execute(
-        &QueryPlan {
-            filter: vec![Predicate::new("x", ComparisonOp::Gt, 20i64)],
-            projection: vec![],
-            aggregate: Some(AggregateSpec {
+        &QueryPlan::new(
+            vec![Predicate::new("x", ComparisonOp::Gt, 20i64)],
+            vec![],
+            Some(AggregateSpec {
                 group_by: vec![],
                 aggregates: vec![
                     Aggregate::CountStar,
@@ -697,17 +682,17 @@ fn a_global_aggregate_agrees_with_the_single_group_aggregate() {
                     Aggregate::Max { column: "x".to_owned() },
                 ],
             }),
-        },
+        ),
         &dataset,
         &scalar(),
     )
     .expect("the global plan runs");
 
     let grouped = execute(
-        &QueryPlan {
-            filter: vec![Predicate::new("x", ComparisonOp::Gt, 20i64)],
-            projection: vec![],
-            aggregate: Some(AggregateSpec {
+        &QueryPlan::new(
+            vec![Predicate::new("x", ComparisonOp::Gt, 20i64)],
+            vec![],
+            Some(AggregateSpec {
                 // One group, forced by a constant key, so the hash path runs.
                 group_by: vec!["x".to_owned()],
                 aggregates: vec![
@@ -718,7 +703,7 @@ fn a_global_aggregate_agrees_with_the_single_group_aggregate() {
                     Aggregate::Max { column: "x".to_owned() },
                 ],
             }),
-        },
+        ),
         &dataset,
         &scalar(),
     )

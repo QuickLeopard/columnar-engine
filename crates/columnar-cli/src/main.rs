@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use columnar_bench::{
-    external::{self, Comparator, ExternalQuery},
+    external::{self, Comparator, ExternalQuery, ExternalTable},
     kernel_ab::KernelAb,
     machine::MachineSpec,
     result::{BenchReport, DatasetReport, EngineQueryResult},
@@ -273,6 +273,10 @@ enum BuiltinQueryArg {
     Q6,
     /// TPC-H Q6 itself: the revenue query, with an arithmetic aggregate.
     Q6Revenue,
+    /// The hash join: `lineitem` joined to `orders` on the order key.
+    JoinOrders,
+    /// The top-k sort: the ten most expensive line items.
+    SortTopK,
 }
 
 impl From<BuiltinQueryArg> for BuiltinQuery {
@@ -284,8 +288,22 @@ impl From<BuiltinQueryArg> for BuiltinQuery {
             BuiltinQueryArg::FilterRange => BuiltinQuery::FilterRange,
             BuiltinQueryArg::Q6 => BuiltinQuery::Q6,
             BuiltinQueryArg::Q6Revenue => BuiltinQuery::Q6Revenue,
+            BuiltinQueryArg::JoinOrders => BuiltinQuery::JoinOrders,
+            BuiltinQueryArg::SortTopK => BuiltinQuery::SortTopK,
         }
     }
+}
+
+/// The path of the table a join reads, beside the primary file.
+///
+/// The dataset's second table lives next to the first one and its name
+/// follows the primary file's: `lineitem.parquet` has `orders.parquet` beside
+/// it, `lineitem-rg12.parquet` has `orders-rg12.parquet`. The two are
+/// generated together, from the same seed, so they are always in step.
+fn build_table_path(data: &Path) -> PathBuf {
+    // The rule belongs to the generator, which writes both files, so it is
+    // asked of the generator rather than repeated here.
+    columnar_testdata::orders_path_for(data)
 }
 
 fn main() -> ExitCode {
@@ -297,6 +315,43 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Measures the engine at one thread count, in whichever mode the sweep is in.
+///
+/// The load mode measures the load and nothing else, so it has no answer to
+/// cross-check; the resident mode answers against the dataset in memory; the
+/// cold mode answers against the file, and the read is inside the clock.
+fn measure_engine_for_sweep(
+    definition: &QueryDefinition,
+    data: &Path,
+    dataset: &Dataset,
+    iterations: usize,
+    threads: usize,
+    mode: SweepModeArg,
+) -> Result<(f64, f64, f64, Option<columnar_engine::AggregateResult>)> {
+    if mode == SweepModeArg::Load {
+        let load_ms = measure_engine_load(data, iterations, threads)?;
+        return Ok((load_ms, 0.0, 0.0, None));
+    }
+    if mode == SweepModeArg::Resident {
+        let (ms, scan, operators, _workers, result) = measure_engine_resident_at(
+            definition,
+            dataset,
+            &build_table_path(data),
+            iterations,
+            threads,
+        )?;
+        return Ok((ms, scan, operators, Some(result)));
+    }
+    let (_open_ms, engine_ms, engine_scan_ms, result) = measure_engine_lazy_at(
+        definition,
+        data,
+        iterations,
+        threads,
+        columnar_engine::MemoryBudget::default(),
+    )?;
+    Ok((engine_ms, engine_scan_ms, operator_stage_ms(&result), Some(result)))
 }
 
 /// Runs the requested subcommand.
@@ -380,8 +435,12 @@ fn run_dataset(
     {
         {
             let spec = columnar_testdata::DatasetSpec { scale_factor, seed, null_rate };
+            // The dataset is two files now: `lineitem` and the `orders` table
+            // the join reads, written beside it. They are one dataset -- the
+            // same seed, the same scale factor, the same null rate -- so they
+            // are generated together.
             let manifest =
-                columnar_testdata::generate_with_row_groups(&spec, output, row_group_rows)
+                columnar_testdata::generate_dataset_with_row_groups(&spec, output, row_group_rows)
                     .with_context(|| {
                         format!("could not generate the dataset at {}", output.display())
                     })?;
@@ -397,6 +456,21 @@ fn run_dataset(
                 manifest.row_groups, manifest.row_group_rows
             );
             println!("  provenance   {}", manifest.provenance);
+            // The second table, and the join's key space -- the manifest says
+            // what the join's match rate is, and the published join figure
+            // depends on it.
+            for table in &manifest.tables {
+                println!(
+                    "  table        {} · {} rows · {} bytes",
+                    table.name, table.rows, table.bytes
+                );
+            }
+            if let Some(key_space) = &manifest.key_space {
+                println!(
+                    "  join key     {} .. {} · expected match rate {:.4}",
+                    key_space.min, key_space.max, key_space.expected_match_rate
+                );
+            }
         }
     }
     Ok(())
@@ -412,6 +486,8 @@ fn run_query(
 ) -> Result<()> {
     {
         {
+            // The join's second table, beside the primary file.
+            let build = build_table_path(data);
             let builtin = BuiltinQuery::from(query);
             let definition =
                 QUERIES.iter().find(|q| q.query == builtin).context("unknown query")?;
@@ -434,7 +510,7 @@ fn run_query(
 
                     let started = std::time::Instant::now();
                     let result =
-                        columnar_engine::execute_on(&(definition.plan)(), &source, &options)
+                        columnar_engine::execute_on(&(definition.plan)(&build), &source, &options)
                             .context("the query failed")?;
                     timings.push(started.elapsed().as_secs_f64() * 1000.0);
                     last = Some(result);
@@ -468,8 +544,9 @@ fn run_query(
                     ExecOptions { threads: Some(threads.max(1)), ..ExecOptions::default() };
                 for _ in 0..iterations.max(1) {
                     let started = std::time::Instant::now();
-                    let result = columnar_engine::execute(&(definition.plan)(), &dataset, &options)
-                        .context("the query failed")?;
+                    let result =
+                        columnar_engine::execute(&(definition.plan)(&build), &dataset, &options)
+                            .context("the query failed")?;
                     timings.push(started.elapsed().as_secs_f64() * 1000.0);
                     last = Some(result);
                 }
@@ -553,6 +630,9 @@ fn run_bench(
 fn run_compare(data: &Path, iterations: usize, threads: usize, out: &Path) -> Result<()> {
     {
         {
+            // The join's second table, beside the first one. Every incumbent
+            // is given both files, so the comparison is a comparison.
+            let build = build_table_path(data);
             let dataset = Dataset::read_parquet(data)
                 .with_context(|| format!("could not read {}", data.display()))?;
 
@@ -560,6 +640,13 @@ fn run_compare(data: &Path, iterations: usize, threads: usize, out: &Path) -> Re
             let mut external_results = Vec::new();
 
             for definition in QUERIES {
+                // Whether the query reads a second table is the **plan's**
+                // business, not the harness's: the plan says so, and the
+                // incumbents are given the second file only when the query
+                // joins one. A query that reads one table must not have the
+                // other file loaded under it -- that would show up in the
+                // load time.
+                let joins = (definition.plan)(&build).join.is_some();
                 let measured = measure_both_paths(definition, data, iterations, threads)?;
                 // The engine's own answer is the reference for the cross-check
                 // against the incumbents below. Both paths computed it, and
@@ -574,10 +661,14 @@ fn run_compare(data: &Path, iterations: usize, threads: usize, out: &Path) -> Re
                     for comparator in
                         [Comparator::DuckDb, Comparator::Polars, Comparator::DataFusion]
                     {
-                        let query = ExternalQuery::new(
+                        let mut query = ExternalQuery::new(
                             definition.query.name(),
-                            queries::sql_for(definition, comparator, mode, data),
+                            queries::sql_for(definition, comparator, mode, data, &build),
                         );
+                        if joins {
+                            query = query
+                                .with_build(ExternalTable::new(&build, queries::BUILD_TABLE_NAME));
+                        }
                         match external::run(comparator, mode, &query, data, threads, iterations) {
                             Ok(outcome) => {
                                 // Cross-check the answer. Two systems that
@@ -712,30 +803,9 @@ fn run_sweep(
     for count in &counts {
         // The engine. The load mode measures the load and nothing else, so
         // it has no answer to cross-check.
-        let (engine_ms, engine_scan_ms, engine_operators_ms, engine_workers, engine_result) =
-            if load_only {
-                let load_ms = measure_engine_load(data, iterations, *count)?;
-                (load_ms, 0.0, 0.0, source.worker_count(*count), None)
-            } else if resident {
-                let (ms, scan, operators, workers, result) =
-                    measure_engine_resident_at(definition, &dataset, iterations, *count)?;
-                (ms, scan, operators, workers, Some(result))
-            } else {
-                let (_open_ms, engine_ms, engine_scan_ms, result) = measure_engine_lazy_at(
-                    definition,
-                    data,
-                    iterations,
-                    *count,
-                    columnar_engine::MemoryBudget::default(),
-                )?;
-                (
-                    engine_ms,
-                    engine_scan_ms,
-                    operator_stage_ms(&result),
-                    source.worker_count(*count),
-                    Some(result),
-                )
-            };
+        let (engine_ms, engine_scan_ms, engine_operators_ms, engine_result) =
+            measure_engine_for_sweep(definition, data, &dataset, iterations, *count, mode)?;
+        let engine_workers = source.worker_count(*count);
 
         // The engine's answer at this thread count has to be the same as at
         // every other one. The rows come back in the file's order whatever
@@ -869,7 +939,7 @@ fn measure_incumbents(
     for comparator in [Comparator::DuckDb, Comparator::Polars, Comparator::DataFusion] {
         let query_sql = ExternalQuery::new(
             definition.query.name(),
-            queries::sql_for(definition, comparator, mode, data),
+            queries::sql_for(definition, comparator, mode, data, &build_table_path(data)),
         );
         match external::run(comparator, mode, &query_sql, data, threads, iterations) {
             Ok(outcome) => {
@@ -918,6 +988,7 @@ fn measure_incumbents(
 fn measure_engine_resident_at(
     definition: &QueryDefinition,
     dataset: &Dataset,
+    build: &Path,
     iterations: usize,
     threads: usize,
 ) -> Result<(f64, f64, f64, usize, columnar_engine::AggregateResult)> {
@@ -926,7 +997,7 @@ fn measure_engine_resident_at(
 
     // Warm-up: the first run pays for the allocator.
     {
-        let _ = columnar_engine::execute(&(definition.plan)(), dataset, &options);
+        let _ = columnar_engine::execute(&(definition.plan)(build), dataset, &options);
     }
 
     let mut times = Vec::with_capacity(iterations);
@@ -937,7 +1008,7 @@ fn measure_engine_resident_at(
 
     for _ in 0..iterations {
         let started = std::time::Instant::now();
-        let value = columnar_engine::execute(&(definition.plan)(), dataset, &options)
+        let value = columnar_engine::execute(&(definition.plan)(build), dataset, &options)
             .context("the query failed")?;
         times.push(started.elapsed().as_secs_f64() * 1000.0);
         scans.push(scan_stage_ms(&value));
@@ -1077,6 +1148,8 @@ fn measure_engine(
     iterations: usize,
     threads: usize,
 ) -> Result<(f64, f64, f64, columnar_engine::AggregateResult)> {
+    // The join's second table, beside the primary file.
+    let build = build_table_path(data);
     let iterations = iterations.max(1);
     let options = ExecOptions { threads: Some(threads.max(1)), ..ExecOptions::default() };
 
@@ -1084,7 +1157,7 @@ fn measure_engine(
     {
         let dataset = Dataset::read_parquet_with_threads(data, threads)
             .with_context(|| format!("could not read {}", data.display()))?;
-        let _ = columnar_engine::execute(&(definition.plan)(), &dataset, &options);
+        let _ = columnar_engine::execute(&(definition.plan)(&build), &dataset, &options);
     }
 
     let mut loads = Vec::with_capacity(iterations);
@@ -1099,7 +1172,7 @@ fn measure_engine(
         let load_ms = read_started.elapsed().as_secs_f64() * 1000.0;
 
         let query_started = std::time::Instant::now();
-        let value = columnar_engine::execute(&(definition.plan)(), &dataset, &options)
+        let value = columnar_engine::execute(&(definition.plan)(&build), &dataset, &options)
             .context("the query failed")?;
         let query_ms = query_started.elapsed().as_secs_f64() * 1000.0;
 
@@ -1156,6 +1229,8 @@ pub(crate) fn measure_engine_lazy_at(
     threads: usize,
     budget: columnar_engine::MemoryBudget,
 ) -> Result<(f64, f64, f64, columnar_engine::AggregateResult)> {
+    // The join's second table, beside the primary file.
+    let build = build_table_path(data);
     let iterations = iterations.max(1);
     let options = ExecOptions {
         threads: Some(threads.max(1)),
@@ -1167,7 +1242,7 @@ pub(crate) fn measure_engine_lazy_at(
     {
         let source = columnar_engine::ParquetSource::open(data)
             .with_context(|| format!("could not open {}", data.display()))?;
-        let _ = columnar_engine::execute_on(&(definition.plan)(), &source, &options);
+        let _ = columnar_engine::execute_on(&(definition.plan)(&build), &source, &options);
     }
 
     let mut opens = Vec::with_capacity(iterations);
@@ -1182,7 +1257,7 @@ pub(crate) fn measure_engine_lazy_at(
         let open_ms = open_started.elapsed().as_secs_f64() * 1000.0;
 
         let query_started = std::time::Instant::now();
-        let value = columnar_engine::execute_on(&(definition.plan)(), &source, &options)
+        let value = columnar_engine::execute_on(&(definition.plan)(&build), &source, &options)
             .context("the query failed")?;
         let query_ms = query_started.elapsed().as_secs_f64() * 1000.0;
 

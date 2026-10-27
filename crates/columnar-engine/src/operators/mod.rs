@@ -1,12 +1,16 @@
 //! The engine's operators.
 //!
 //! The operator set is deliberately small: a filter, a projection (which is
-//! also where late materialisation lives) and a hash aggregate.
+//! also where late materialisation lives), a hash aggregate, a hash join and
+//! a sort.
 
 pub mod aggregate;
 pub mod expr;
 pub mod filter;
+pub mod join;
+pub mod key;
 pub mod project;
+pub mod sort;
 
 use columnar_kernels::Flavor;
 

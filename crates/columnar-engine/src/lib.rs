@@ -5,17 +5,36 @@
 //! executes a [`QueryPlan`] over them. The pipeline is fixed and pinned:
 //!
 //! ```text
-//! scan -> filter -> project -> aggregate
+//! scan -> filter -> project -> [join] -> [sort] -> aggregate
 //! ```
 //!
 //! and the optimisation order is pinned as well:
 //!
 //! ```text
-//! predicate pushdown -> projection pushdown -> late materialization -> aggregate
+//! predicate pushdown -> projection pushdown -> late materialization -> join -> sort -> aggregate
 //! ```
 //!
 //! Both orders are stated in [`plan::OPTIMIZATION_ORDER`] and printed in the
 //! plan output, so a reader never has to guess what the engine did.
+//!
+//! ## The join and the sort
+//!
+//! The two optional stages are a **hash join** and a **sort**.
+//!
+//! - The join is an inner equi-join on one key column. The **build side** is
+//!   the right table: it is read through the engine's own source, its own
+//!   predicates are applied before the table is hashed, and the surviving rows
+//!   are hashed on the key. The **probe side** is the left table, and it
+//!   stays lazy -- the plan's predicates are pushed into its scan, and it is
+//!   never materialised as a table of its own. A NULL key never matches, on
+//!   either side, and the output keeps the probe side's row order.
+//! - The sort is `ORDER BY <column> [DESC] [LIMIT n]`. With a limit it keeps
+//!   a bounded heap of `n` rows rather than sorting everything; without one
+//!   it sorts everything. Ties are broken by the row index, so the order is
+//!   deterministic.
+//!
+//! A plan with a sort and an aggregation aggregates over the **sorted** rows,
+//! not over all of them.
 //!
 //! ## There is no SQL parser
 //!
@@ -32,17 +51,17 @@
 //! - **Morsel-driven parallelism.** The **read** is parallel: the file's row
 //!   groups are split across the threads, decoded independently, and merged
 //!   back in the file's order. The **operators** are not: the filter, the
-//!   project and the aggregate run on one thread. The operators take a
-//!   `&Dataset` and return owned values, so the data path is already shaped
-//!   for a future morsel loop, but no morsel driver, no task pool and no
-//!   per-thread scheduling exist yet. See [spec
+//!   project, the join, the sort and the aggregate run on one thread. The
+//!   operators take a `&Dataset` and return owned values, so the data path is
+//!   already shaped for a future morsel loop, but no morsel driver, no task
+//!   pool and no per-thread scheduling exist yet. See [spec
 //!   005](../../../specs/005-parallel-decode/spec.md).
 //! - **A SQL parser.** See above.
 //! - **Spilling.** The memory budget is a pre-flight check, not a mechanism:
 //!   a plan whose estimated working set exceeds the budget is rejected before
 //!   any work is done, rather than being spilled to disk.
-//! - **Joins, sorting, and window functions.** The operator set is
-//!   filter, project and hash aggregate.
+//! - **Window functions.** The operator set is filter, project, hash
+//!   aggregate, hash join and sort.
 //!
 //! ## Determinism
 //!
@@ -78,7 +97,7 @@ pub use explain::{PlanOutput, StageStats};
 pub use memory::{MemoryBudget, MemoryError};
 pub use operators::aggregate::{AggregateResult, AggregateValue, Group};
 pub use operators::filter::FilterStats;
-pub use plan::{Aggregate, AggregateSpec, QueryPlan, ResolvedAggregateFn};
+pub use plan::{Aggregate, AggregateSpec, JoinSpec, QueryPlan, ResolvedAggregateFn, SortSpec};
 pub use pushdown::{PushdownMetrics, PushdownPlan};
 pub use queries::{BuiltinQuery, QueryDefinition, TableAddress, QUERIES};
 pub use source::{ParquetSource, SourceColumn, MAX_READER_BATCH_ROWS};
@@ -159,8 +178,11 @@ pub fn execute(
     options: &ExecOptions,
 ) -> Result<AggregateResult, EngineError> {
     let resolved = plan.resolve(dataset)?;
+    let build = open_build_side(resolved.join.as_ref())?;
 
-    let estimate = memory::estimate_resolved(&resolved, dataset);
+    let estimate = memory::estimate_resolved(&resolved, dataset)
+        .saturating_add(estimate_join(resolved.join.as_ref(), build.as_ref()))
+        .saturating_add(estimate_sort(&resolved, dataset.len()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
     }
@@ -178,7 +200,42 @@ pub fn execute(
         pushdown_metrics: PushdownMetrics::default(),
     };
 
-    run_pipeline(&resolved, dataset, options, scan, report, estimate, 1)
+    run_pipeline(&resolved, dataset, options, scan, report, estimate, 1, build.as_ref())
+}
+
+/// Opens the join's build side, if the plan has a join.
+///
+/// The build side is a file of its own, and it is read through the engine's
+/// own source -- the same reader settings as any other file.
+fn open_build_side(
+    join: Option<&plan::ResolvedJoin>,
+) -> Result<Option<ParquetSource>, EngineError> {
+    match join {
+        Some(join) => Ok(Some(ParquetSource::open(&join.spec.build_path)?)),
+        None => Ok(None),
+    }
+}
+
+/// The estimate for the join's build side.
+///
+/// The build side is hashed, and the hash table holds one entry per distinct
+/// key, so the build side's row count bounds it.
+fn estimate_join(join: Option<&plan::ResolvedJoin>, source: Option<&ParquetSource>) -> usize {
+    let (Some(join), Some(source)) = (join, source) else {
+        return 0;
+    };
+    memory::estimate_build_side(source, &join.spec.build_key)
+}
+
+/// The estimate for the sort.
+///
+/// With a limit the sort keeps a bounded heap of `limit` rows; without one it
+/// sorts every row, and the rows it sorts are its working set.
+fn estimate_sort(resolved: &plan::ResolvedPlan, rows: usize) -> usize {
+    match &resolved.sort {
+        Some(sort) => memory::estimate_sort(rows, sort.spec.limit),
+        None => 0,
+    }
 }
 
 /// Executes `plan` over a Parquet file, reading only what the plan needs.
@@ -219,6 +276,7 @@ pub fn execute_on(
 ) -> Result<AggregateResult, EngineError> {
     let resolved = plan.resolve_against(source)?;
     let decision = decide_scan(&resolved, source);
+    let build = open_build_side(resolved.join.as_ref())?;
 
     // The same flavor the filter would use, so the pushdown and the filter
     // run the same kernel over the same values.
@@ -235,9 +293,13 @@ pub fn execute_on(
     // the file's schema and its row count, so a plan that does not fit is
     // refused having read nothing at all -- and it accounts for the parallel
     // read's peak, which holds two copies of the read set rather than one.
+    // The join's build side and the sort's working set are in the estimate
+    // too: a plan that does not fit is refused before any of it is built.
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
-    let estimate = memory::estimate_lazy_read(source, &decision.read, workers, grouped);
+    let estimate = memory::estimate_lazy_read(source, &decision.read, workers, grouped)
+        .saturating_add(estimate_join(resolved.join.as_ref(), build.as_ref()))
+        .saturating_add(estimate_sort(&resolved, source.rows()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
     }
@@ -264,7 +326,7 @@ pub fn execute_on(
         pushdown_metrics: decision.pushdown.metrics(),
     };
 
-    run_pipeline(&effective, &dataset, options, scan, report, estimate, workers)
+    run_pipeline(&effective, &dataset, options, scan, report, estimate, workers, build.as_ref())
 }
 
 /// The columns whose bytes were fetched from the file.
@@ -370,7 +432,7 @@ fn decide_scan(resolved: &plan::ResolvedPlan, source: &ParquetSource) -> ScanDec
 /// column is included because the pushdown compares it once per distinct
 /// value and then maps through the indices, exactly as the engine's own
 /// dictionary path does.
-fn pushdown_supports(arrow_type: &arrow::datatypes::DataType) -> bool {
+pub(crate) fn pushdown_supports(arrow_type: &arrow::datatypes::DataType) -> bool {
     use arrow::datatypes::DataType as ArrowType;
     match arrow_type {
         ArrowType::Int64 | ArrowType::Float64 | ArrowType::Utf8 | ArrowType::LargeUtf8 => true,
@@ -410,44 +472,52 @@ fn run_pipeline(
     report: ScanReport,
     estimate: usize,
     workers: usize,
+    build: Option<&ParquetSource>,
 ) -> Result<AggregateResult, EngineError> {
     let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
-    let total_rows = dataset.len();
-    let mut stages: Vec<StageStats> = vec![scan];
     // How many workers the operators may use. The filter's blocks are
     // 64-row aligned and the projection's are larger, so the two can end up
     // with different worker counts -- and the plan reports the count that
     // actually ran for each of them, not the count that was asked for.
     let operator_workers = options.threads.unwrap_or(1).max(1);
-    let mut filter_workers = 1;
 
     // --- filter -----------------------------------------------------------
     // A predicate that was pushed into the reader has already been applied,
     // and its column is not in the dataset. The filters left here are the
     // ones the reader did not take, and the conjunction is separable, so
     // applying them now gives the same answer.
-    let selection = if resolved.filter.is_empty() {
-        operators::all_rows(total_rows)
+    //
+    // A plan with no filter at all does not run the filter: every row
+    // survives, and the selection is built here rather than by the filter
+    // operator -- the core's own "every row" selection leaves the padding
+    // bits of its last word set, and walking it would visit rows past the
+    // end of the batch.
+    let filter_started = std::time::Instant::now();
+    let (selection, filter_stats) = if resolved.filter.is_empty() {
+        (operators::all_rows(dataset.len()), None)
     } else {
-        let start = std::time::Instant::now();
-        // Every predicate is evaluated against the chunk and their masks are
-        // ANDed. For a dictionary-encoded column the predicate is evaluated
-        // once per distinct value rather than once per row.
         let (selection, stats) = operators::filter::filter_all_with_workers(
             dataset,
             &resolved.filter,
             flavor,
             operator_workers,
         )?;
-        filter_workers = stats.workers;
-        stages.push(StageStats {
-            stage: "filter".to_owned(),
-            rows_in: stats.rows_in,
-            rows_out: stats.rows_out,
-            elapsed: start.elapsed(),
-        });
-        selection
+        (selection, Some(stats))
     };
+    let filter_workers = filter_stats.as_ref().map_or(1, |stats| stats.workers);
+    let filter_stage = filter_stats.map(|stats| StageStats {
+        stage: "filter".to_owned(),
+        rows_in: stats.rows_in,
+        rows_out: stats.rows_out,
+        elapsed: filter_started.elapsed(),
+    });
+
+    // --- join and sort ----------------------------------------------------
+    // The two optional stages decide which rows the aggregate reads, so they
+    // run before the aggregate's input is materialised. A plan with neither
+    // of them takes the plain path, where the aggregate reads the filter's
+    // survivors.
+    let ordered = ordered_stage(resolved, dataset, &selection, build, options, flavor)?;
 
     // The materialisation set is built **after** the filter, because it needs
     // the filter's selection: the columns it gathers are the survivors'
@@ -468,22 +538,18 @@ fn run_pipeline(
     // lies, over the filter's selection, and the copy this stage would have
     // made is never made. See
     // [ADR-0016](../../../docs/adr/0016-the-aggregate-reads-in-place.md).
-    let fusable = fusable_columns(resolved, dataset);
-    let start = std::time::Instant::now();
-    for &column in &resolved.materialised {
-        if fusable.contains(&column) {
-            materialised.note_read_in_place(column);
-        } else {
-            materialised.gather(column);
-        }
-    }
-    let selected_rows = materialised.selection().len();
-    stages.push(StageStats {
+    let project_started = std::time::Instant::now();
+    let (aggregate_rows, fusable) =
+        project_stage(resolved, dataset, &mut materialised, ordered.as_ref());
+    // The projection does not change the row count: the join and the sort
+    // do, and they report their own counts.
+    let survivors = materialised.selection().len();
+    let project_stage = StageStats {
         stage: "project".to_owned(),
-        rows_in: rows(selected_rows),
-        rows_out: rows(selected_rows),
-        elapsed: start.elapsed(),
-    });
+        rows_in: rows(survivors),
+        rows_out: rows(survivors),
+        elapsed: project_started.elapsed(),
+    };
 
     // --- evaluate ---------------------------------------------------------
     // An aggregate over an expression needs the expression's value, and the
@@ -497,29 +563,50 @@ fn run_pipeline(
     // saturation all keep working, and the differential tests that cover them
     // cover this path too.
     let evaluate_started = std::time::Instant::now();
-    let (computed, evaluated) = evaluate_aggregates(resolved, &materialised, selected_rows)?;
-    if evaluated {
-        stages.push(StageStats {
+    let (computed, evaluated) = evaluate_aggregates(resolved, &materialised, aggregate_rows)?;
+    let evaluate_stage = if evaluated {
+        Some(StageStats {
             stage: "evaluate".to_owned(),
-            rows_in: rows(selected_rows),
-            rows_out: rows(selected_rows),
+            rows_in: rows(aggregate_rows),
+            rows_out: rows(aggregate_rows),
             elapsed: evaluate_started.elapsed(),
-        });
-    }
+        })
+    } else {
+        None
+    };
 
     // --- aggregate --------------------------------------------------------
     let mut groups: Vec<Group> = Vec::new();
-    if let Some(aggregate) = &resolved.aggregate {
+    let aggregate_stage = if let Some(aggregate) = &resolved.aggregate {
         let start = std::time::Instant::now();
         groups =
-            run_aggregate(aggregate, dataset, &materialised, &computed, &fusable, selected_rows);
-        stages.push(StageStats {
+            run_aggregate(aggregate, dataset, &materialised, &computed, &fusable, aggregate_rows);
+        Some(StageStats {
             stage: "aggregate".to_owned(),
-            rows_in: rows(selected_rows),
+            rows_in: rows(aggregate_rows),
             rows_out: rows(groups.len()),
             elapsed: start.elapsed(),
-        });
-    }
+        })
+    } else {
+        None
+    };
+
+    // The stages are reported in the **plan's** order -- scan, filter,
+    // project, join, sort, aggregate -- and not in the order the work ran
+    // in: the materialisation of the aggregate's input runs after the join
+    // and the sort, because they decide which rows it holds.
+    let stages: Vec<StageStats> = [
+        Some(scan),
+        filter_stage,
+        Some(project_stage),
+        ordered.as_ref().and_then(|ordered| ordered.join_stage.clone()),
+        ordered.as_ref().and_then(|ordered| ordered.sort_stage.clone()),
+        evaluate_stage,
+        aggregate_stage,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
     let plan_output = PlanOutput {
         optimization_order: plan::OPTIMIZATION_ORDER,
@@ -534,9 +621,217 @@ fn run_pipeline(
         threads: workers,
         filter_workers,
         projection_workers: materialised.projection_workers(),
+        join: ordered.as_ref().and_then(|ordered| ordered.join.clone()),
+        sort: ordered.as_ref().and_then(|ordered| ordered.sort.clone()),
     };
 
     Ok(AggregateResult { groups, stages, plan_output })
+}
+
+/// The rows the stages behind the filter read, when a join or a sort decided
+/// them.
+struct Ordered {
+    /// The dataset's own row numbers, in the order the aggregate reads them.
+    ///
+    /// A row may be named more than once: a join produces one row per match.
+    rows: Vec<u32>,
+    /// The join's stage statistics, if the plan had a join.
+    join_stage: Option<StageStats>,
+    /// The sort's stage statistics, if the plan had a sort.
+    sort_stage: Option<StageStats>,
+    /// What the join did, for the plan output.
+    join: Option<explain::JoinReport>,
+    /// What the sort did, for the plan output.
+    sort: Option<explain::SortReport>,
+}
+
+/// Runs the join and the sort, if the plan has them.
+///
+/// The result is the list of the dataset's rows the aggregate reads, in the
+/// order it reads them. A plan with neither stage takes the plain path, and
+/// this returns `None`.
+fn ordered_stage(
+    resolved: &plan::ResolvedPlan,
+    dataset: &Dataset,
+    selection: &columnar_core::SelectionVector,
+    build: Option<&ParquetSource>,
+    options: &ExecOptions,
+    flavor: Flavor,
+) -> Result<Option<Ordered>, EngineError> {
+    if resolved.join.is_none() && resolved.sort.is_none() {
+        return Ok(None);
+    }
+
+    // The survivors' own row numbers: the i-th survivor is the i-th row of
+    // this list, and every stage behind the filter works in those positions.
+    let dataset_rows = selection.rows();
+    let mut positions: Vec<u32> =
+        (0..dataset_rows.len()).map(|index| u32::try_from(index).unwrap_or(u32::MAX)).collect();
+
+    let mut join_stage = None;
+    let mut join = None;
+    if let Some(spec) = &resolved.join {
+        let started = std::time::Instant::now();
+        let source = build.ok_or_else(|| {
+            EngineError::Parquet("the plan has a join but its build side was not opened".to_owned())
+        })?;
+        require_same_key_type(dataset, spec.probe_key, source, &spec.spec.build_key)?;
+        let table = operators::join::build_table(
+            source,
+            &spec.spec,
+            flavor,
+            source.worker_count(options.threads.unwrap_or(1)),
+        )?;
+        let keys = key_column(dataset, spec.probe_key)?;
+        positions = operators::join::probe(&table, &keys, &dataset_rows);
+        join_stage = Some(StageStats {
+            stage: "join".to_owned(),
+            rows_in: rows(dataset_rows.len()),
+            rows_out: rows(positions.len()),
+            elapsed: started.elapsed(),
+        });
+        join = Some(explain::JoinReport {
+            probe_key: spec.spec.probe_key.clone(),
+            build_key: spec.spec.build_key.clone(),
+            build_file: file_name(&spec.spec.build_path),
+            build_rows: table.rows(),
+            output_rows: positions.len(),
+        });
+    }
+
+    let mut sort_stage = None;
+    let mut sort = None;
+    if let Some(spec) = &resolved.sort {
+        let started = std::time::Instant::now();
+        let keys = key_column(dataset, spec.column)?;
+        // The sort is handed the rows the join produced, when there is a
+        // join, and the filter's survivors when there is not.
+        let handed = positions.len();
+        let sorted = operators::sort::sort_rows(
+            positions,
+            |position| {
+                let index = usize::try_from(position).unwrap_or(usize::MAX);
+                let row = dataset_rows.get(index).copied().unwrap_or(0);
+                keys.value_at(usize::try_from(row).unwrap_or(usize::MAX))
+            },
+            spec.spec.descending,
+            spec.spec.limit,
+        );
+        sort_stage = Some(StageStats {
+            stage: "sort".to_owned(),
+            rows_in: rows(handed),
+            rows_out: rows(sorted.len()),
+            elapsed: started.elapsed(),
+        });
+        sort = Some(explain::SortReport {
+            column: spec.spec.column.clone(),
+            descending: spec.spec.descending,
+            limit: spec.spec.limit,
+            rows: sorted.len(),
+        });
+        positions = sorted;
+    }
+
+    // The positions become the dataset's own row numbers, which is what the
+    // aggregate's input is gathered from.
+    let rows: Vec<u32> = positions
+        .iter()
+        .map(|&position| {
+            let index = usize::try_from(position).unwrap_or(usize::MAX);
+            dataset_rows.get(index).copied().unwrap_or(0)
+        })
+        .collect();
+
+    Ok(Some(Ordered { rows, join_stage, sort_stage, join, sort }))
+}
+
+/// The column at `index`, read one row at a time.
+fn key_column(
+    dataset: &Dataset,
+    index: usize,
+) -> Result<operators::key::KeyColumn<'_>, EngineError> {
+    let chunk = dataset.chunks.get(index).ok_or_else(|| {
+        EngineError::UnknownColumn("a column the plan reads is not in range".to_owned())
+    })?;
+    Ok(operators::key::KeyColumn::from_chunk(chunk))
+}
+
+/// Rejects a join whose two keys have different types.
+///
+/// The engine never casts silently: joining an `int64` key to a `utf8` one
+/// is a plan error rather than something to paper over.
+fn require_same_key_type(
+    dataset: &Dataset,
+    probe_key: usize,
+    source: &ParquetSource,
+    build_key: &str,
+) -> Result<(), EngineError> {
+    let probe_type = dataset
+        .chunks
+        .get(probe_key)
+        .map_or(columnar_core::DataType::Int64, columnar_core::ColumnChunk::data_type);
+    let build_type = source
+        .columns()
+        .iter()
+        .find(|column| column.name == build_key)
+        .map_or(columnar_core::DataType::Int64, |column| column.data_type);
+    if probe_type != build_type {
+        return Err(EngineError::TypeMismatch(format!(
+            "the join's probe key is {} but the build key is {}",
+            probe_type.name(),
+            build_type.name()
+        )));
+    }
+    Ok(())
+}
+
+/// The name of a file, without its directory.
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned())
+}
+
+/// Materialises the columns the stages behind the filter read.
+///
+/// The plain path gathers the columns over the filter's survivors. The
+/// **ordered** path -- the path a join or a sort takes -- gathers them over
+/// the rows the join and the sort decided, which is what keeps the
+/// aggregate's input down to the rows it actually reads.
+///
+/// Returns the number of rows the aggregate reads, and the columns it may
+/// read where they lie. The ordered path has none: the aggregate reads a
+/// list of rows, not a selection, so there is nothing to read in place.
+fn project_stage(
+    resolved: &plan::ResolvedPlan,
+    dataset: &Dataset,
+    materialised: &mut operators::project::Materialised<'_>,
+    ordered: Option<&Ordered>,
+) -> (usize, Vec<usize>) {
+    let fusable = match ordered {
+        Some(_) => Vec::new(),
+        None => fusable_columns(resolved, dataset),
+    };
+    let aggregate_columns =
+        resolved.aggregate.as_ref().map_or_else(Vec::new, plan::ResolvedAggregate::columns);
+    for &column in &resolved.materialised {
+        if fusable.contains(&column) {
+            materialised.note_read_in_place(column);
+        } else if ordered.is_some() && !aggregate_columns.contains(&column) {
+            // The join's key and the sort's column are read where they lie:
+            // the join probes them one row at a time and the sort compares
+            // them, and neither needs a copy of the column.
+            materialised.note_read_in_place(column);
+        } else if let Some(ordered) = ordered {
+            materialised.gather_rows(column, &ordered.rows);
+        } else {
+            materialised.gather(column);
+        }
+    }
+    let rows = match ordered {
+        Some(ordered) => ordered.rows.len(),
+        None => materialised.selection().len(),
+    };
+    (rows, fusable)
 }
 
 /// Runs the aggregation over the rows that survived the filter.

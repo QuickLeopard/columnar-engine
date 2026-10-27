@@ -25,19 +25,22 @@ use std::path::Path;
 use columnar_bench::{Comparator, Mode};
 
 pub use columnar_engine::queries::{
-    BuiltinQuery, QueryDefinition, TableAddress, QUERIES, TABLE_NAME,
+    BuiltinQuery, QueryDefinition, TableAddress, BUILD_TABLE_NAME, QUERIES, TABLE_NAME,
 };
 
 /// The SQL for an incumbent reading `path`.
 ///
 /// The address is the decision, and it is made once, here, so that every
-/// incumbent is driven the same way.
+/// incumbent is driven the same way. The join's second table is addressed the
+/// same way as the first: a path for cold `DuckDB`, a name for everything
+/// else.
 #[must_use]
 pub fn sql_for(
     definition: &QueryDefinition,
     comparator: Comparator,
     mode: Mode,
     path: &Path,
+    build: &Path,
 ) -> String {
     let address = match (comparator, mode) {
         // Cold `DuckDB` reads the Parquet file directly from the path.
@@ -45,5 +48,9 @@ pub fn sql_for(
         // Everything else has already registered the file under a name.
         _ => TableAddress::Named(TABLE_NAME),
     };
-    definition.sql_for(address)
+    let build_address = match (comparator, mode) {
+        (Comparator::DuckDb, Mode::Cold) => TableAddress::File(build),
+        _ => TableAddress::Named(BUILD_TABLE_NAME),
+    };
+    definition.sql_for(address, build_address)
 }

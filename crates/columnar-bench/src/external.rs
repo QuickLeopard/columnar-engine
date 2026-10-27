@@ -99,6 +99,29 @@ impl Comparator {
     }
 }
 
+/// A second table the query reads.
+///
+/// The join query reads two relations, and every incumbent has to be given
+/// both: `DuckDB` reads them by path in cold mode and loads them into temp
+/// tables in resident mode, and `Polars` and the `DataFusion` peer register
+/// them by name. A comparison where the engine joins and the incumbent does
+/// not is not a comparison.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalTable {
+    /// The Parquet file the table is read from.
+    pub path: PathBuf,
+    /// The name the SQL refers to the table by.
+    pub name: String,
+}
+
+impl ExternalTable {
+    /// Builds a table from its file and its name.
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>, name: impl Into<String>) -> Self {
+        Self { path: path.into(), name: name.into() }
+    }
+}
+
 /// A query to run against an incumbent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalQuery {
@@ -106,13 +129,34 @@ pub struct ExternalQuery {
     pub name: String,
     /// The SQL to run.
     pub sql: String,
+    /// The second table, for the query that joins one.
+    pub build: Option<ExternalTable>,
 }
 
 impl ExternalQuery {
     /// Builds a query.
     #[must_use]
     pub fn new(name: impl Into<String>, sql: impl Into<String>) -> Self {
-        Self { name: name.into(), sql: sql.into() }
+        Self { name: name.into(), sql: sql.into(), build: None }
+    }
+
+    /// Adds the second table, for a query that joins one.
+    #[must_use]
+    pub fn with_build(mut self, table: ExternalTable) -> Self {
+        self.build = Some(table);
+        self
+    }
+
+    /// How many statements load data before the query runs.
+    ///
+    /// `DuckDB` times every statement it runs, and the harness tells the load
+    /// from the query by their order, so it has to know how many loads there
+    /// are: one for a single-table query, two for a join.
+    fn load_statements(&self, mode: Mode) -> usize {
+        if mode == Mode::Cold {
+            return 0;
+        }
+        1 + usize::from(self.build.is_some())
     }
 }
 
@@ -306,7 +350,7 @@ pub fn run(
 
     for _ in 0..iterations {
         let (elapsed, output) = run_once(comparator, mode, query, data_path, threads)?;
-        let parsed = parse_output(comparator, &output);
+        let parsed = parse_output(comparator, &output, query.load_statements(mode));
         load_samples.push(parsed.load_ms);
         query_samples.push(parsed.query_ms);
         elapsed_samples.push(elapsed);
@@ -351,9 +395,12 @@ struct ParsedOutput {
 }
 
 /// Pulls the timings and the answer out of an incumbent's output.
-fn parse_output(comparator: Comparator, output: &str) -> ParsedOutput {
+///
+/// `loads` is how many statements loaded data before the query, which the
+/// `DuckDB` parser needs to tell the load from the query.
+fn parse_output(comparator: Comparator, output: &str, loads: usize) -> ParsedOutput {
     match comparator {
-        Comparator::DuckDb => parse_duckdb(output),
+        Comparator::DuckDb => parse_duckdb(output, loads),
         Comparator::Polars | Comparator::DataFusion => parse_markers(output),
     }
 }
@@ -362,8 +409,9 @@ fn parse_output(comparator: Comparator, output: &str) -> ParsedOutput {
 ///
 /// `DuckDB`'s `.timer` prints one `Run Time (s): real <seconds> ...` line per
 /// timed statement. In resident mode exactly two statements are timed: the
-/// `CREATE TEMP TABLE` and the query, in that order.
-fn parse_duckdb(output: &str) -> ParsedOutput {
+/// `CREATE TEMP TABLE` and the query, in that order -- and three when the
+/// query joins a second table, because the second table is loaded too.
+fn parse_duckdb(output: &str, loads: usize) -> ParsedOutput {
     let mut real_seconds = Vec::new();
     let mut answer_lines = Vec::new();
 
@@ -383,9 +431,11 @@ fn parse_duckdb(output: &str) -> ParsedOutput {
         answer_lines.push(line.clone());
     }
 
-    // The last timed statement is the query; the one before it is the load.
+    // The last timed statement is the query; the ones before it are the
+    // loads, and the load is their sum -- the time to get the data in, which
+    // is what the load column of the report means.
     let query_ms = real_seconds.last().copied().unwrap_or(0.0);
-    let load_ms = if real_seconds.len() >= 2 { real_seconds[real_seconds.len() - 2] } else { 0.0 };
+    let load_ms = real_seconds.iter().take(real_seconds.len().saturating_sub(1)).take(loads).sum();
 
     // In CSV mode `DuckDB` prints a header line and then the value. The
     // answer is the last line that parses as a number, which is robust to
@@ -472,6 +522,32 @@ fn strip_ansi(line: &str) -> String {
 /// The program to run, its arguments, and the environment it runs in.
 type Invocation = (PathBuf, Vec<String>, Vec<(String, String)>);
 
+/// The Python interpreter the Polars driver runs under.
+///
+/// `PYTHON_BIN` names it. Without the variable the harness used to ask
+/// `python3` -- and on a machine with several Pythons, which is most of
+/// them, that is often not the one that has Polars, so the comparison
+/// quietly lost a row and nobody was told. The driver now looks for one: the
+/// first candidate that can import Polars.
+fn python_bin() -> String {
+    if let Ok(bin) = std::env::var("PYTHON_BIN") {
+        return bin;
+    }
+    for candidate in ["/usr/bin/python3", "python3", "python"] {
+        let found = Command::new(candidate)
+            .arg("-c")
+            .arg("import polars")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if found {
+            return candidate.to_owned();
+        }
+    }
+    "python3".to_owned()
+}
+
 /// The command to run, and the environment it runs in.
 fn invocation(
     comparator: Comparator,
@@ -514,6 +590,17 @@ fn invocation(
                         "CREATE TEMP TABLE lineitem AS SELECT * FROM '{}';",
                         data_path.display()
                     ));
+                    // The second table, for the query that joins one. It is
+                    // loaded into a temp table under the name the SQL uses,
+                    // so the join finds it.
+                    if let Some(build) = &query.build {
+                        args.push("-c".to_owned());
+                        args.push(format!(
+                            "CREATE TEMP TABLE {} AS SELECT * FROM '{}';",
+                            build.name,
+                            build.path.display()
+                        ));
+                    }
                     args.push("-c".to_owned());
                     args.push(query.sql.clone());
                 }
@@ -533,6 +620,13 @@ fn invocation(
                 "--threads".to_owned(),
                 threads.to_string(),
             ];
+            // The second table, for the query that joins one.
+            if let Some(build) = &query.build {
+                args.push("--build-path".to_owned());
+                args.push(build.path.display().to_string());
+                args.push("--build-table".to_owned());
+                args.push(build.name.clone());
+            }
             if mode == Mode::Resident {
                 args.push("--resident".to_owned());
             }
@@ -543,12 +637,19 @@ fn invocation(
                 |_| PathBuf::from("tools/polars-run.py"),
                 |root| root.join("tools").join("polars-run.py"),
             );
-            let python = std::env::var("PYTHON_BIN").unwrap_or_else(|_| "python3".to_owned());
+            let python = python_bin();
             let mut args = vec![
                 script.display().to_string(),
                 query.sql.clone(),
                 data_path.display().to_string(),
             ];
+            // The second table, for the query that joins one.
+            if let Some(build) = &query.build {
+                args.push("--build".to_owned());
+                args.push(build.path.display().to_string());
+                args.push("--build-table".to_owned());
+                args.push(build.name.clone());
+            }
             if mode == Mode::Resident {
                 // Resident mode: load the file into a frame first, so the
                 // load and the query can be timed separately, the way the
@@ -634,7 +735,7 @@ fn version_of(comparator: Comparator, data_path: &Path) -> String {
                 |_| PathBuf::from("tools/polars-version.py"),
                 |root| root.join("tools").join("polars-version.py"),
             );
-            let python = std::env::var("PYTHON_BIN").unwrap_or_else(|_| "python3".to_owned());
+            let python = python_bin();
             Command::new(python)
                 .arg(script)
                 .arg(data_path)
@@ -669,11 +770,26 @@ mod tests {
             "Run Time (s): real 0.001 user 0.001310 sys 0.000046\n",
         );
 
-        let parsed = parse_duckdb(output);
+        let parsed = parse_duckdb(output, 1);
         // The load is the first timed statement, the query the second.
         assert!((parsed.load_ms - 1223.0).abs() < 0.001, "load was {}", parsed.load_ms);
         assert!((parsed.query_ms - 1.0).abs() < 0.001, "query was {}", parsed.query_ms);
         assert_eq!(parsed.result_value, Some(6_000_000.0));
+    }
+
+    /// The join query loads **two** tables, so there are two loads before the
+    /// query, and the load is their sum -- the time to get both files in.
+    #[test]
+    fn duckdb_sums_the_loads_of_a_join() {
+        let output = concat!(
+            "Run Time (s): real 1.223 user 1.134378 sys 0.090696\n",
+            "Run Time (s): real 0.400 user 0.380000 sys 0.020000\n",
+            "Run Time (s): real 0.002 user 0.001310 sys 0.000046\n",
+        );
+
+        let parsed = parse_duckdb(output, 2);
+        assert!((parsed.load_ms - 1623.0).abs() < 0.001, "load was {}", parsed.load_ms);
+        assert!((parsed.query_ms - 2.0).abs() < 0.001, "query was {}", parsed.query_ms);
     }
 
     /// In cold mode there is only one timed statement, so there is no load
@@ -681,7 +797,7 @@ mod tests {
     #[test]
     fn duckdb_cold_mode_reports_no_load_time() {
         let output = "Run Time (s): real 0.031 user 0.030215 sys 0.002807\ncount_star()\n315203\n";
-        let parsed = parse_duckdb(output);
+        let parsed = parse_duckdb(output, 0);
         assert!(parsed.load_ms.abs() < f64::EPSILON, "load was {}", parsed.load_ms);
         assert!((parsed.query_ms - 31.0).abs() < 0.001, "query was {}", parsed.query_ms);
         assert_eq!(parsed.result_value, Some(315_203.0));

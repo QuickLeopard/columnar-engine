@@ -1,5 +1,10 @@
 //! Writing the dataset to a Parquet file.
 //!
+//! The dataset holds two tables, `lineitem` and `orders`, and each is
+//! written to a file of its own with the writer properties below. The
+//! second table is written the same way as the first, except that its
+//! comment column is `o_comment` rather than `l_comment`.
+//!
 //! ## Layout choices
 //!
 //! | Choice | Value | Why |
@@ -7,7 +12,7 @@
 //! | Row group | 1,000,000 rows | A single row group for a 60M-row file would hold the whole dataset in memory at once. A million rows is large enough that the per-row-group overhead is negligible and small enough that the writer's working set stays bounded. |
 //! | Write batch | 65,536 rows | The dataset is generated and written in batches of this size, so the generator never materialises more than one batch of rows. The Arrow writer splits a batch across a row group boundary when it has to, so the row groups come out at exactly the row group size. |
 //! | Compression | SNAPPY | Fast enough that the generator is not the bottleneck, and the standard choice for a benchmark fixture. |
-//! | Dictionary | enabled by default, disabled for `l_comment` | The seven low-cardinality string columns are dictionary-encoded. `l_comment` is high-cardinality: a dictionary page for it would be large and useless, so it is written plain. |
+//! | Dictionary | enabled by default, disabled for the comment column | The low-cardinality string columns are dictionary-encoded. The comment column is high-cardinality: a dictionary page for it would be large and useless, so it is written plain. |
 //! | Statistics | chunk level | Chunk-level statistics are what a reader uses for predicate pushdown. Page-level statistics were left off: they are not needed here and they change the byte layout in ways that are easy to miss when comparing two files. |
 //! | Writer version | Parquet 1.0 | The most widely compatible format, and the one whose dictionary encoding is `RLE_DICTIONARY`. |
 //!
@@ -24,9 +29,16 @@
 //! 1.5 million rows peaks at roughly 190 MB and writing 6 million rows
 //! peaks at roughly 250 MB, because the difference is the half-full last
 //! row group and not the dataset.
+//!
+//! The `orders` generator holds one thing besides its batch: the bitset of
+//! the order keys it has already drawn, so that the keys stay distinct. At
+//! SF-1 that is 750 KB for six million keys.
 
-use crate::generator::DatasetGenerator;
-use crate::manifest::{DatasetManifest, PROVENANCE};
+use crate::generator::{DatasetGenerator, OrdersGenerator};
+use crate::manifest::{
+    DatasetManifest, KeySpace, TableRecord, LINEITEM_TABLE, ORDERS_PROVENANCE, ORDERS_TABLE,
+    PROVENANCE,
+};
 use crate::schema;
 use crate::{DatasetError, DatasetSpec};
 use parquet::arrow::ArrowWriter;
@@ -52,6 +64,23 @@ pub const ROW_GROUP_ROWS: usize = 1_000_000;
 /// number of row groups is the number of workers the read can use.
 #[must_use]
 pub fn writer_properties(row_group_rows: usize) -> WriterProperties {
+    properties_for(row_group_rows, schema::COMMENT_COLUMN)
+}
+
+/// The writer properties used for the `orders` file.
+///
+/// The same as the `lineitem` ones, except that `o_comment` is the
+/// high-cardinality column here.
+#[must_use]
+pub fn orders_writer_properties(row_group_rows: usize) -> WriterProperties {
+    properties_for(row_group_rows, schema::ORDERS_COMMENT_COLUMN)
+}
+
+/// The writer properties of a file whose comment column is `comment_column`.
+///
+/// The comment column is the one column written plain: it is high
+/// cardinality, so a dictionary page for it would be large and useless.
+fn properties_for(row_group_rows: usize, comment_column: &str) -> WriterProperties {
     WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_dictionary_enabled(true)
@@ -59,9 +88,7 @@ pub fn writer_properties(row_group_rows: usize) -> WriterProperties {
         .set_statistics_enabled(EnabledStatistics::Chunk)
         .set_writer_version(WriterVersion::PARQUET_1_0)
         .set_bloom_filter_enabled(false)
-        // `l_comment` is high cardinality: a dictionary page for it would be
-        // large and useless, so this one column is written plain.
-        .set_column_dictionary_enabled(ColumnPath::from(schema::COMMENT_COLUMN), false)
+        .set_column_dictionary_enabled(ColumnPath::from(comment_column), false)
         .build()
 }
 
@@ -82,15 +109,7 @@ pub fn write_dataset(
     row_group_rows: usize,
 ) -> Result<DatasetManifest, DatasetError> {
     let properties = writer_properties(row_group_rows);
-    // Create the parent directory if it does not exist, so that
-    // `columnar dataset --output data/lineitem.parquet` works on a fresh
-    // clone without a separate `mkdir` step. The "one command" promise
-    // includes this.
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
+    create_parent(output)?;
     let file = File::create(output)?;
     let mut writer =
         ArrowWriter::try_new(BufWriter::new(file), schema::arrow_schema(), Some(properties))
@@ -111,32 +130,145 @@ pub fn write_dataset(
     writer.close().map_err(|error| DatasetError::Parquet(format!("arrow close: {error}")))?;
 
     let bytes = std::fs::metadata(output)?.len();
-
-    // The number of row groups the file has, which is the number of workers
-    // the read can use. It is counted from the row count and the row-group
-    // size rather than read back from the file, because the writer's own
-    // count is the one the read will see.
-    let row_groups = if row_group_rows == 0 {
-        0
-    } else {
-        rows.div_ceil(u64::try_from(row_group_rows).unwrap_or(u64::MAX))
-    };
-
-    // The manifest records an absolute path, so that a manifest found
-    // somewhere else still says which file it describes.
-    let absolute = std::path::absolute(output).unwrap_or_else(|_| output.to_path_buf());
-
-    Ok(DatasetManifest {
-        path: absolute.to_string_lossy().into_owned(),
+    let record = TableRecord {
+        name: LINEITEM_TABLE.to_string(),
+        path: absolute_path(output),
         rows,
         bytes,
         columns: schema::column_names(),
+    };
+
+    // A file on its own is not a join: the key space is stated by the
+    // manifest that records both tables.
+    Ok(manifest_for(spec, &record, std::slice::from_ref(&record), None, PROVENANCE, row_group_rows))
+}
+
+/// Generates the `orders` table of `rows` rows and writes it to `output`.
+///
+/// The rows are written in batches of [`BATCH_ROWS`] and flushed into row
+/// groups of `row_group_rows` rows.
+///
+/// The join key, `o_orderkey`, is drawn from `[1, key_space]` -- the key
+/// space `lineitem`'s `l_orderkey` is drawn from -- and it is distinct.
+///
+/// # Errors
+///
+/// Returns [`DatasetError::InvalidSpec`] if the spec is not usable or the
+/// table needs more distinct keys than the key space holds,
+/// [`DatasetError::Io`] if the file cannot be created or written, and
+/// [`DatasetError::Parquet`] if the Parquet writer rejects the data.
+pub fn write_orders_dataset(
+    spec: &DatasetSpec,
+    rows: u64,
+    key_space: u64,
+    output: &Path,
+    row_group_rows: usize,
+) -> Result<DatasetManifest, DatasetError> {
+    let properties = orders_writer_properties(row_group_rows);
+    create_parent(output)?;
+    let file = File::create(output)?;
+    let mut writer =
+        ArrowWriter::try_new(BufWriter::new(file), schema::orders_arrow_schema(), Some(properties))
+            .map_err(|error| DatasetError::Parquet(format!("arrow writer: {error}")))?;
+
+    let mut generator = OrdersGenerator::new(spec, rows, key_space)?;
+    let batch_rows = u64::try_from(BATCH_ROWS).unwrap_or(u64::MAX);
+    let mut remaining = rows;
+    while remaining > 0 {
+        let batch_size = usize::try_from(remaining.min(batch_rows)).unwrap_or(BATCH_ROWS);
+        let batch = generator.next_batch(batch_size)?;
+        writer
+            .write(&batch)
+            .map_err(|error| DatasetError::Parquet(format!("arrow write: {error}")))?;
+        remaining -= u64::try_from(batch_size).expect("the batch size fits in a u64");
+    }
+
+    writer.close().map_err(|error| DatasetError::Parquet(format!("arrow close: {error}")))?;
+
+    let bytes = std::fs::metadata(output)?.len();
+    let record = TableRecord {
+        name: ORDERS_TABLE.to_string(),
+        path: absolute_path(output),
+        rows,
+        bytes,
+        columns: schema::orders_column_names(),
+    };
+
+    // This side knows both ends of the join: the key space it draws from
+    // and the number of distinct keys it holds.
+    Ok(manifest_for(
+        spec,
+        &record,
+        std::slice::from_ref(&record),
+        Some(KeySpace::join(key_space, rows)),
+        ORDERS_PROVENANCE,
+        row_group_rows,
+    ))
+}
+
+/// The manifest of a written table.
+///
+/// The flat fields describe the file the manifest sits beside; the table
+/// list and the key space describe the dataset the file belongs to.
+fn manifest_for(
+    spec: &DatasetSpec,
+    record: &TableRecord,
+    tables: &[TableRecord],
+    key_space: Option<KeySpace>,
+    provenance: &str,
+    row_group_rows: usize,
+) -> DatasetManifest {
+    DatasetManifest {
+        path: record.path.clone(),
+        rows: record.rows,
+        bytes: record.bytes,
+        columns: record.columns.clone(),
         scale_factor: spec.scale_factor,
         seed: spec.seed,
         null_rate: spec.null_rate,
         row_group_rows,
-        row_groups,
-        provenance: PROVENANCE.to_string(),
+        row_groups: row_group_count(record.rows, row_group_rows),
+        provenance: provenance.to_string(),
         generator_version: env!("CARGO_PKG_VERSION").to_string(),
-    })
+        table: record.name.clone(),
+        tables: tables.to_vec(),
+        key_space,
+    }
+}
+
+/// The number of row groups a file of `rows` rows has.
+///
+/// The number of row groups the file has is the number of workers the read
+/// can use. It is counted from the row count and the row-group size rather
+/// than read back from the file, because the writer's own count is the one
+/// the read will see.
+fn row_group_count(rows: u64, row_group_rows: usize) -> u64 {
+    if row_group_rows == 0 {
+        0
+    } else {
+        rows.div_ceil(u64::try_from(row_group_rows).unwrap_or(u64::MAX))
+    }
+}
+
+/// Creates the parent directory of a dataset file, if it has one.
+///
+/// This is so that `columnar dataset --output data/lineitem.parquet` works
+/// on a fresh clone without a separate `mkdir` step. The "one command"
+/// promise includes this.
+fn create_parent(output: &Path) -> Result<(), DatasetError> {
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    Ok(())
+}
+
+/// The absolute path of a dataset file.
+///
+/// The manifest records an absolute path, so that a manifest found
+/// somewhere else still says which file it describes.
+fn absolute_path(output: &Path) -> String {
+    let absolute = std::path::absolute(output).unwrap_or_else(|_| output.to_path_buf());
+    absolute.to_string_lossy().into_owned()
 }

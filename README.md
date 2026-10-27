@@ -7,7 +7,12 @@ This is **Project 02** of the portfolio: a columnar engine that stores columns i
 dictionary-aware format, filters them with a hand-written SIMD kernel, and compares itself against
 DuckDB and Polars under conditions it cannot choose for itself.
 
-The first increment is storage → filter → project → aggregate: the TPC-H Q6 path.
+The first increment is storage → filter → project → aggregate: the TPC-H Q6 path. **The engine now
+joins two tables and sorts.** The pipeline is `scan → filter → project → [join] → [sort] →
+aggregate`: the join is an inner equi-join executed as a **hash join**, with the smaller table as
+the build side and the larger one staying on the lazy path, and the sort keeps a **bounded heap**
+when the query has a limit. Both are measured against the same incumbents, on the same two files,
+with the same SQL handed to every system.
 
 ---
 
@@ -52,7 +57,7 @@ matching rows is not a timing and does not move. The conditions, the medians and
 **The engine's own plan.**
 
 ```
-optimization order: predicate pushdown -> projection pushdown -> late materialization -> aggregate
+optimization order: predicate pushdown -> projection pushdown -> late materialization -> join -> sort -> aggregate
 stage      rows in  rows out  elapsed
 scan       6000000  315203    15.2 ms
 project    315203   315203    0.0 ms
@@ -139,32 +144,64 @@ $ just compare
 cold · read the Parquet file and answer in one go
 query          engine   engine-lazy   duckdb   polars   datafusion
 ------------------------------------------------------------
-scan         575.5           0.1      2.0      1.0      1.3
-filter-numeric     590.4           5.0     22.0     45.0     15.6
-filter-string      566.3           9.6     22.0    166.8     25.0
-filter-range       575.1          16.5     32.0     16.4     22.6
-q6           564.3          15.0     32.0    196.5     36.7
-q6-revenue   578.2          62.0     69.0    200.7    117.0
+scan         574.1           0.1      2.0      1.0      1.3
+filter-numeric     603.2           5.2     23.0     45.5     17.0
+filter-string      580.1           9.7     22.0    167.3     26.8
+filter-range       571.4          17.3     32.0     16.4     21.5
+q6           586.2          15.8     34.0    196.3     38.6
+q6-revenue   584.5          60.6     71.0    205.4    116.8
+join-orders  710.4         216.1     97.0    231.6    177.3
+sort-topk    583.8          61.6     40.0   1460.6     41.3
 ```
 
-**The lazy path is 37.6× faster than the eager one on `q6`**, and it beats Polars on every cold
-query except `filter-range`. It beats DuckDB on `filter-numeric` — 5.0 ms against 22.0 ms, 4.4× — and
-on `filter-string`, and on `scan`, and on `q6-revenue`. On `q6` it is **2.1× ahead**, where it used
+**The lazy path is 37.1× faster than the eager one on `q6`**, and it beats Polars on every cold
+query except `filter-range`. It beats DuckDB on `filter-numeric` — 5.2 ms against 23.0 ms, 4.4× — and
+on `filter-string`, and on `scan`, and on `q6-revenue`. On `q6` it is **2.2× ahead**, where it used
 to be 2.6× behind. The gap was never pruning: DuckDB prunes nothing on this file either (its own
 plan says `Row Groups Scanned: 6 / 6`, and the file has no page index). It was the engine's own
 mask, on its way to the reader as a **list of 2.78 million row ranges**, applied one range at a
 time. Measured and attributed in [`PERF.md`](PERF.md), not glossed.
 
+**And the two new queries are the engine's first work on two tables, and the engine is behind on
+both.** The engine's cold `join-orders` — `lineitem` joined to `orders` on the order key, with a
+date range on the build side, aggregated over the whole join — is **216.1 ms** (a 213.4–216.4 ms
+range over the three campaigns), against DuckDB's **97.0 ms** and Polars' **231.6 ms**: the engine
+is **2.2× behind DuckDB**, **1.2× behind the `DataFusion` peer**, and **1.07× ahead of Polars**. The
+engine's cold `sort-topk` — the ten largest `l_extendedprice` values — is **61.6 ms** (59.4–62.7 ms)
+against DuckDB's **40.0 ms** (39.0–42.0 ms), the peer's **41.3 ms** and Polars' **1460.6 ms**: the
+engine is **1.5× behind DuckDB** and **24× ahead of Polars**. One thread, the same two files, the
+same SQL handed to every system, and the answers cross-checked. The engine's **resident** figure
+for the join is not published beside the incumbents', because in resident mode they hold both
+tables in memory before the clock starts and the engine's resident path reads the build side
+inside it — a figure that cannot be made fairly is named, not published. The reason, and the raw
+number, are in [`PERF.md` §2a](PERF.md#2a-resident--the-data-is-already-in-memory).
+
+**These figures moved when the campaign was re-run, and the reason is the machine.** The engine's
+cold `q6` was **15.0 ms** and is **15.8 ms**; the real Q6 was **62.0 ms** and is **60.6 ms**;
+`filter-numeric` was **5.0 ms** and is **5.2 ms**; `filter-string` was **9.6 ms** and is **9.7 ms**;
+`filter-range` was **16.5 ms** and is **17.3 ms**; the engine's resident `q6` was **10.5 ms** and is
+**11.8 ms**; the engine's resident `filter-range` was **7.3 ms** and is **7.0 ms**; DuckDB's cold
+`q6` was **32.0 ms** and is **34.0 ms**; DuckDB's cold `q6-revenue` was **69.0 ms** and is
+**71.0 ms**; DuckDB's resident `filter-range` was **20.0 ms** and is **21.0 ms**; Polars' resident
+`filter-range` was **12.4 ms** and is **13.2 ms**; and the `DataFusion` peer's cold `q6-revenue` was
+**117.0 ms** and is **116.8 ms**. The six queries that were already here did not change their code
+path in this increment: what changed is that the set now carries two more queries and a second file
+beside the dataset, and the campaign was re-run on the same shared machine. The eager load was
+**575.5 ms** and is **574.1 ms**, and DuckDB's load moved the other way, **1328.0 ms → 1485.0 ms** —
+the drift is in both directions and in both systems. Every system was measured in the same three
+campaigns, on the same file, at the same thread count, so the comparisons stay like-for-like even
+where the absolute numbers moved.
+
 **`q6-revenue` is TPC-H Q6 itself** — `sum(l_extendedprice * (1 - l_discount))` — and the engine
-runs it: 62.0 ms cold against DuckDB's 69.0 ms, and 17.3 ms resident against DuckDB's 49.0 ms.
-The arithmetic is **0.2 ms of the 62.0 ms**, because it is evaluated over the 110,915 rows that
+runs it: 60.6 ms cold against DuckDB's 71.0 ms, and 17.3 ms resident against DuckDB's 49.0 ms.
+The arithmetic is **0.2 ms of the 60.6 ms**, because it is evaluated over the 110,915 rows that
 survived the filter and not over the 6,000,000 rows of the file. The query's cost is reading
 `l_extendedprice`, not computing with it. See
 [ADR-0012](docs/adr/0012-arithmetic-expression.md).
 
 **And there is now a Rust peer to compare against.** `DataFusion` 49.0.2 reads the same Parquet
 through the same Arrow stack, answers the same SQL, and is pinned to the same thread count:
-**117.0 ms** against the engine's **62.0 ms** on the real Q6, cold. The engine is **1.9×** faster
+**116.8 ms** against the engine's **60.6 ms** on the real Q6, cold. The engine is **1.9×** faster
 than a Rust engine on its own stack, and the peer is **an instrument, not a dependency** — a
 separate cargo project under `tools/`, with its own committed lock file, so the engine's published
 dependency graph does not move. See
@@ -174,8 +211,8 @@ dependency graph does not move. See
 two-predicate range — was the one loss in the table: 14.6 ms resident against Polars' 11.5 ms in
 the set that found it, because the projection materialised a column that the aggregate only
 streamed over. The aggregate now folds the source **where it lies**, over the filter's selection,
-and the projection materialises nothing at all: **7.3 ms resident against Polars' 12.4 ms and
-DuckDB's 20.0 ms**, and the projection stage is 0.0 ms. See
+and the projection materialises nothing at all: **7.0 ms resident against Polars' 13.2 ms and
+DuckDB's 21.0 ms**, and the projection stage is 0.0 ms. See
 [ADR-0016](docs/adr/0016-the-aggregate-reads-in-place.md).
 
 **And the scan itself got faster, because it was copying rows nobody asked for.** The lazy scan
@@ -185,8 +222,8 @@ writes the survivors straight out of the reader's array into the engine's own co
 the values that are kept. The lazy path's batch size was swept for the lazy shape as well, and it
 was **inherited** rather than measured; spec 016 then found that the right answer was not a number
 at all but the file's own row-group divisor, and the batch size is derived from the file now. The
-whole lazy path moved: `q6` **15.0 ms**, `q6-revenue` **62.0 ms**, `filter-string` **9.6 ms**,
-`filter-range` **16.5 ms**. See
+whole lazy path moved: `q6` **15.8 ms**, `q6-revenue` **60.6 ms**, `filter-string` **9.7 ms**,
+`filter-range` **17.3 ms**. See
 [ADR-0017](docs/adr/0017-the-scan-filters-only-what-it-keeps.md) and
 [ADR-0023](docs/adr/0023-the-per-row-group-cost.md).
 
@@ -273,8 +310,9 @@ a measurement rather than a story. See
 
 **The second time was the eager decode, and it is now parallel.** The *load* — the time to get
 the file into memory — was **1277.8 ms**, the largest number in the repository and the one place
-the engine was behind both incumbents. It is now **576.8 ms** in this set, and at one thread the
-engine is **2.2× ahead** of DuckDB on the same file:
+the engine was behind both incumbents. It is **574.1 ms** in this set, where the set before it had
+**575.5 ms**; the load sweep below is a separate campaign and puts the same measurement at
+**576.8 ms**. At one thread the engine is **2.2× ahead** of DuckDB on the same file:
 
 ```
 $ just sweep mode=load
@@ -304,8 +342,8 @@ one — checked row by row, including the dictionary's order and the indices of 
 NULL. See [ADR-0014](docs/adr/0014-parallel-eager-decode.md).
 
 **And the lazy path got faster four times.** Its scan of Q6's two columns was **78.4 ms** and is
-now **15.0 ms**, against DuckDB's 32.0 ms on the same file at the same thread count: the engine is
-**2.1× ahead** on the headline query, where it was 2.6× behind. The first cause was not the decode
+now **15.8 ms**, against DuckDB's 34.0 ms on the same file at the same thread count: the engine is
+**2.2× ahead** on the headline query, where it was 2.6× behind. The first cause was not the decode
 and not the comparison — it was the pushdown's mask, handed to the reader as a **row filter**,
 which parquet-rs turns into a list of **2,775,138 row ranges** for 2,178,861 surviving rows and
 applies one range at a time. Reading a column through that list costs 50.0 ms; without it, 7.8 ms.
@@ -337,8 +375,9 @@ crates/
   columnar-core      types, validity masks, encodings, column chunks, selection vectors
   columnar-kernels   the comparison kernel: oracle, C++ scalar, C++ auto-vectorised,
                      C++ NEON/AVX2, Rust intrinsics -- all agreeing bit for bit
-  columnar-testdata  a seeded, reproducible TPC-H-shaped `lineitem` generator
-  columnar-engine    filter -> project -> aggregate, with late materialisation
+  columnar-testdata  a seeded, reproducible TPC-H-shaped `lineitem` and `orders` generator
+  columnar-engine    filter -> project -> [join] -> [sort] -> aggregate, with late
+                     materialisation
   columnar-bench     the kernel A/B, the machine spec, the external comparison driver,
                      the performance gate, the thread-count sweep
   columnar-cli       dataset / query / bench / compare / gate / sweep
@@ -361,6 +400,12 @@ specs/013-the-kernel-in-a-browser/  the third SIMD path, and the page that check
 specs/014-the-materialised-column-and-a-rust-peer/  the materialised column taken apart, and a Rust peer
 specs/015-the-row-group-count-is-a-knob/  the row-group count as a knob, and the parallelism cap
 specs/016-the-per-row-group-cost/  the per-row-group cost: the mechanism measured, and removed
+specs/017-the-repository-goes-public/  the licence, the contribution guide, and the public
+                     x86-64 runner
+specs/018-the-page-on-a-static-host/  the page, published on a static host
+specs/019-the-button-always-answers/  the button that never disables itself
+specs/020-the-engine-joins-and-sorts/  the hash join and the sort, measured against the same
+                     incumbents, and the defect the increment found
 ```
 
 **One predicate, six implementations, one answer.** The comparison kernel is the project. There
@@ -435,6 +480,7 @@ a benchmark.
 | The comparison kernel, on x86-64 / AVX2 | **measured** — the kernel A/B on GitHub-hosted x86-64 runners, **ratios only**, on a named CPU, with the machine published and never compared with the ARM64 numbers. Its **correctness** is verified twice over: under Rosetta 2 on this ARM64 Mac, and on **native x86-64 hardware**: [`PERF.md` §1b](PERF.md#1b-the-kernel-on-x86-64-measured-natively) |
 | The engine's filter, project and aggregate | **measured**, against DuckDB 2.0.0 and Polars 1.36.1 |
 | The engine's **arithmetic aggregate** | **measured** — the real TPC-H Q6, `sum(l_extendedprice * (1 - l_discount))`, against the same SQL on the same file |
+| The engine's **hash join** and **sort** | **measured** — an inner equi-join executed as a hash join, with `orders` as the build side and `lineitem` staying on the lazy path, and a sort that keeps a bounded heap when the query has a limit. Both are published against the same three incumbents, on the same two files, with the same SQL and the answers cross-checked: [`PERF.md` §2](PERF.md#2-the-engine-against-duckdb-polars-and-datafusion) |
 | The engine's Parquet reader | **measured**, in two modes: eager (all sixteen columns) and lazy (two of sixteen, with the predicates pushed in) |
 | The **read** under several thread counts | **measured** — the engine and both incumbents, at the same thread counts, on the same file: [`PERF.md` §2e](PERF.md#2e-the-thread-count-sweep) |
 | The **query** under several thread counts | **measured** — the same sweep with the data already in memory, which is where the operators are the measurement: [`PERF.md` §2f](PERF.md#2f-the-resident-sweep-where-the-operators-are-the-measurement) |
@@ -528,11 +574,11 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited · `specs/012-the-scan-does-not-expand-the-predicates-column/` — the scan's own decode and the expansion of its RLE indices, both measured and refused · `specs/013-the-kernel-in-a-browser/` — R1..R6, the third SIMD path, the page that checks it, and the number it reproduces · `specs/014-the-materialised-column-and-a-rust-peer/` — R1..R4, the materialised column taken apart, the curve over the size of the data, and a Rust peer beside the incumbents · `specs/015-the-row-group-count-is-a-knob/` — R1..R4, the row-group count as a knob, the parallelism cap measured on three files, and the per-row-group cost the incumbents do not pay · `specs/016-the-per-row-group-cost/` — R1..R4, that cost's mechanism measured, the reader's batch size derived from the file, and the defect removed · `specs/017-the-repository-goes-public/` — R1..R5, the licence, the contribution guide, three files out of the history, and the x86-64 measurement the public repository made possible |
-| Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited · `specs/012-the-scan-does-not-expand-the-predicates-column/` — the scan's own decode and the expansion of its RLE indices, both measured and refused · `specs/013-the-kernel-in-a-browser/` — R1..R6, the third SIMD path, the page that checks it, and the number it reproduces · `specs/014-the-materialised-column-and-a-rust-peer/` — R1..R4, the materialised column taken apart, the curve over the size of the data, and a Rust peer beside the incumbents · `specs/015-the-row-group-count-is-a-knob/` — R1..R4, the row-group count as a knob, the parallelism cap measured on three files, and the per-row-group cost the incumbents do not pay · `specs/016-the-per-row-group-cost/` — R1..R4, that cost's mechanism measured, the reader's batch size derived from the file, and the defect removed · `specs/017-the-repository-goes-public/` — R1..R5, the licence, the contribution guide, three files out of the history, and the x86-64 measurement the public repository made possible · `specs/018-the-page-on-a-static-host/` — the page, published on a static host · `specs/019-the-button-always-answers/` — the button that never disables itself · `specs/020-the-engine-joins-and-sorts/` — R1..R6, the hash join and the sort, the two queries they published, and the defect the increment found |
+| Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy — and now a **hash join** and a **sort**, with the pipeline `scan → filter → project → [join] → [sort] → aggregate` |
 | Licence | Apache-2.0. The C++ baseline in `crates/columnar-kernels/src/` is this repository's own work and carries the same licence, and there is no vendored third-party source in the tree. [`CONTRIBUTING.md`](CONTRIBUTING.md) is the method, written for a stranger. |
 | Tests | 269, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite, the browser's column suite, the RLE decoder's suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **The repository is public**, so the runners are free — but the account's own Actions spending limit still applies to every job, and when it is exhausted *every* job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |
-| Next | **The next question is the last of the per-row-group cost.** On the two-predicate shape it is gone — the engine's own scan costs **0.02 ms a row group** and is flat across the three files. On the **three**-predicate shape there is about **0.5 ms a row group** left, and the two shapes differ by exactly one thing: the third predicate's column, `l_quantity`, which is dictionary-encoded with 4,901 values a row group. Whether that is the crate building that dictionary per row group, or the engine comparing its distinct values per row group, is **not separated by the measurement**, and it is written down as the next question rather than guessed at. Before that: the cold path's one remaining gap is `filter-range`, and it is now **0.1 ms** — the lazy path is 16.5 ms against Polars' 16.4 ms, and the two spreads overlap. The scan that holds it is **Parquet decode**, and the decode was measured **three** times and **every time it was refused**: owning the decode buys nothing (the two shapes came out equal to a tenth of a millisecond), and neither does **not expanding the predicate's column**. The file's columns *are* dictionary-encoded, and the expansion of six million RLE indices into six million values was measured at **1.79 ms** — 46% of the decode of the predicate's column, and **4.1% of the query**. The mask the hypothesis would build instead costs **1.73 ms**, which is **0.42 ms** more than the vectorised predicate costs today once the two are netted off, and the parquet crate does not expose the indices at all, so capturing the expansion means owning the Parquet reading: **the net is 1.37 ms.** And the **materialised** column — the query's real cost, **61%** of it — was taken apart too: it is **bytes**, Arrow decodes it in 34.26 ms and the parquet crate in 36.76 ms, so there is nothing there to win either. After that: the morsel driver (still worth ~0 ms in the cold path, because the pushdown leaves the operators nothing to do), and the **x86-64 absolute figures**, which need a **pinned** x86-64 runner — the `avx2-self-hosted` job is already wired for one, and it is the only job whose absolute figures would be worth publishing |
+| Next | **The next question is the last of the per-row-group cost.** On the two-predicate shape it is gone — the engine's own scan costs **0.02 ms a row group** and is flat across the three files. On the **three**-predicate shape there is about **0.5 ms a row group** left, and the two shapes differ by exactly one thing: the third predicate's column, `l_quantity`, which is dictionary-encoded with 4,901 values a row group. Whether that is the crate building that dictionary per row group, or the engine comparing its distinct values per row group, is **not separated by the measurement**, and it is written down as the next question rather than guessed at. Before that: the cold path's one remaining gap is `filter-range`, and it is now **0.9 ms** — the lazy path is 17.3 ms against Polars' 16.4 ms, and this time the two spreads do not overlap (16.7–17.4 ms against 15.7–16.5 ms). The scan that holds it is **Parquet decode**, and the decode was measured **three** times and **every time it was refused**: owning the decode buys nothing (the two shapes came out equal to a tenth of a millisecond), and neither does **not expanding the predicate's column**. The file's columns *are* dictionary-encoded, and the expansion of six million RLE indices into six million values was measured at **1.79 ms** — 46% of the decode of the predicate's column, and **4.1% of the query**. The mask the hypothesis would build instead costs **1.73 ms**, which is **0.42 ms** more than the vectorised predicate costs today once the two are netted off, and the parquet crate does not expose the indices at all, so capturing the expansion means owning the Parquet reading: **the net is 1.37 ms.** And the **materialised** column — the query's real cost, **61%** of it — was taken apart too: it is **bytes**, Arrow decodes it in 34.26 ms and the parquet crate in 36.76 ms, so there is nothing there to win either. After that: the morsel driver (still worth ~0 ms in the cold path, because the pushdown leaves the operators nothing to do), and the **x86-64 absolute figures**, which need a **pinned** x86-64 runner — the `avx2-self-hosted` job is already wired for one, and it is the only job whose absolute figures would be worth publishing |

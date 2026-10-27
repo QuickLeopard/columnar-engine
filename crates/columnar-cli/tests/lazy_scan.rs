@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use columnar_cli::queries::{BuiltinQuery, QueryDefinition, QUERIES};
 use columnar_engine::{execute, execute_on, Dataset, ExecOptions, ParquetSource};
-use columnar_testdata::{generate, DatasetSpec};
+use columnar_testdata::{generate_dataset, DatasetSpec};
 
 /// The dataset, generated once for the whole test binary.
 ///
@@ -36,9 +36,17 @@ fn dataset() -> &'static Path {
     PATH.get_or_init(|| {
         let path = std::env::temp_dir().join("columnar-lazy-e2e-lineitem.parquet");
         let spec = DatasetSpec { scale_factor: 1, seed: 24001, null_rate: 0.0 };
-        generate(&spec, &path).expect("the dataset can be generated");
+        // The whole dataset: `lineitem` and the `orders` table the join
+        // reads, written beside it.
+        generate_dataset(&spec, &path).expect("the dataset can be generated");
         path
     })
+}
+
+/// The `orders` file beside the dataset, for the query that joins.
+fn build_table() -> &'static Path {
+    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| columnar_testdata::orders_path_for(dataset()))
 }
 
 /// The definition of a built-in query.
@@ -51,11 +59,11 @@ fn check(definition: &QueryDefinition) -> columnar_engine::AggregateResult {
     let path = dataset();
 
     let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
-    let eager = execute(&(definition.plan)(), &dataset, &ExecOptions::default())
+    let eager = execute(&(definition.plan)(build_table()), &dataset, &ExecOptions::default())
         .expect("the eager path answers the query");
 
     let source = ParquetSource::open(path).expect("the source can be opened");
-    let lazy = execute_on(&(definition.plan)(), &source, &ExecOptions::default())
+    let lazy = execute_on(&(definition.plan)(build_table()), &source, &ExecOptions::default())
         .expect("the lazy path answers the query");
 
     assert_eq!(
@@ -87,8 +95,8 @@ fn the_lazy_path_reads_two_of_the_sixteen_columns_for_q6() {
     let source = ParquetSource::open(path).expect("the source can be opened");
     assert_eq!(source.columns().len(), 16, "the file does not have sixteen columns");
 
-    let result =
-        execute_on(&(definition.plan)(), &source, &ExecOptions::default()).expect("the query runs");
+    let result = execute_on(&(definition.plan)(build_table()), &source, &ExecOptions::default())
+        .expect("the query runs");
 
     let mut read = result.plan_output.columns_read.clone();
     read.sort();
@@ -113,8 +121,8 @@ fn the_lazy_path_reads_two_of_the_sixteen_columns_for_q6() {
 
     // And the eager path, for contrast, materialises the whole file.
     let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
-    let eager =
-        execute(&(definition.plan)(), &dataset, &ExecOptions::default()).expect("the query runs");
+    let eager = execute(&(definition.plan)(build_table()), &dataset, &ExecOptions::default())
+        .expect("the query runs");
     assert!(
         eager.plan_output.columns_read.len() >= 16,
         "the eager path did not read every column: {:?}",
@@ -133,8 +141,8 @@ fn the_scan_stage_reports_the_rows_the_reader_discarded() {
     let definition = definition(BuiltinQuery::Q6);
 
     let source = ParquetSource::open(path).expect("the source can be opened");
-    let result =
-        execute_on(&(definition.plan)(), &source, &ExecOptions::default()).expect("the query runs");
+    let result = execute_on(&(definition.plan)(build_table()), &source, &ExecOptions::default())
+        .expect("the query runs");
 
     let scan = result
         .plan_output
@@ -170,11 +178,11 @@ fn the_real_q6_answers_what_duckdb_answers() {
     let definition = definition(BuiltinQuery::Q6Revenue);
 
     let source = ParquetSource::open(path).expect("the source can be opened");
-    let lazy = execute_on(&(definition.plan)(), &source, &ExecOptions::default())
+    let lazy = execute_on(&(definition.plan)(build_table()), &source, &ExecOptions::default())
         .expect("the lazy path answers the query");
 
     let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
-    let eager = execute(&(definition.plan)(), &dataset, &ExecOptions::default())
+    let eager = execute(&(definition.plan)(build_table()), &dataset, &ExecOptions::default())
         .expect("the eager path answers the query");
 
     assert_eq!(lazy.groups, eager.groups, "the two paths disagree on the real Q6");
@@ -240,12 +248,13 @@ fn every_builtin_query_agrees_at_every_thread_count() {
         // The eager path: the reference answer, computed from the whole file
         // in one go.
         let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
-        let eager = execute(&(definition.plan)(), &dataset, &ExecOptions::default())
+        let eager = execute(&(definition.plan)(build_table()), &dataset, &ExecOptions::default())
             .expect("the eager path answers the query");
 
         let source = ParquetSource::open(path).expect("the source can be opened");
-        let single = execute_on(&(definition.plan)(), &source, &ExecOptions::default())
-            .expect("the lazy path answers the query");
+        let single =
+            execute_on(&(definition.plan)(build_table()), &source, &ExecOptions::default())
+                .expect("the lazy path answers the query");
 
         assert_eq!(
             single.groups,
@@ -258,7 +267,7 @@ fn every_builtin_query_agrees_at_every_thread_count() {
         // as well as the split.
         for threads in [2, 3, 4, 6, 8, 14] {
             let options = ExecOptions { threads: Some(threads), ..ExecOptions::default() };
-            let parallel = execute_on(&(definition.plan)(), &source, &options)
+            let parallel = execute_on(&(definition.plan)(build_table()), &source, &options)
                 .expect("the parallel query runs");
 
             assert_eq!(
@@ -362,13 +371,13 @@ fn the_sum_is_bit_for_bit_the_same_at_every_thread_count() {
     let definition = definition(BuiltinQuery::FilterRange);
 
     let source = ParquetSource::open(path).expect("the source can be opened");
-    let single =
-        execute_on(&(definition.plan)(), &source, &ExecOptions::default()).expect("the query runs");
+    let single = execute_on(&(definition.plan)(build_table()), &source, &ExecOptions::default())
+        .expect("the query runs");
 
     for threads in [2, 4, 8, 14] {
         let options = ExecOptions { threads: Some(threads), ..ExecOptions::default() };
-        let parallel =
-            execute_on(&(definition.plan)(), &source, &options).expect("the parallel query runs");
+        let parallel = execute_on(&(definition.plan)(build_table()), &source, &options)
+            .expect("the parallel query runs");
         assert_eq!(parallel.groups, single.groups, "the sum differs at {threads} threads");
     }
 }
@@ -388,13 +397,13 @@ fn the_eager_path_operators_agree_at_every_thread_count() {
     let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
 
     for definition in QUERIES {
-        let single = execute(&(definition.plan)(), &dataset, &ExecOptions::default())
+        let single = execute(&(definition.plan)(build_table()), &dataset, &ExecOptions::default())
             .expect("the eager path answers the query");
 
         for threads in [2, 4, 6, 8, 14] {
             let options = ExecOptions { threads: Some(threads), ..ExecOptions::default() };
-            let parallel =
-                execute(&(definition.plan)(), &dataset, &options).expect("the parallel query runs");
+            let parallel = execute(&(definition.plan)(build_table()), &dataset, &options)
+                .expect("the parallel query runs");
             assert_eq!(
                 parallel.groups,
                 single.groups,
@@ -417,13 +426,14 @@ fn the_plan_output_reports_the_operator_workers_that_ran() {
     let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
     let definition = definition(BuiltinQuery::Q6Revenue);
 
-    let single =
-        execute(&(definition.plan)(), &dataset, &ExecOptions::default()).expect("the query runs");
+    let single = execute(&(definition.plan)(build_table()), &dataset, &ExecOptions::default())
+        .expect("the query runs");
     assert_eq!(single.plan_output.filter_workers, 1, "one thread is one worker");
     assert_eq!(single.plan_output.projection_workers, 1, "one thread is one worker");
 
     let options = ExecOptions { threads: Some(14), ..ExecOptions::default() };
-    let parallel = execute(&(definition.plan)(), &dataset, &options).expect("the query runs");
+    let parallel =
+        execute(&(definition.plan)(build_table()), &dataset, &options).expect("the query runs");
     assert!(
         parallel.plan_output.filter_workers > 1,
         "the filter ran on {} worker(s) at fourteen threads",

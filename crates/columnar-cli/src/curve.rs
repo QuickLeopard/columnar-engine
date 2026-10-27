@@ -180,7 +180,13 @@ fn measure_incumbents(
         // the other two read it under a name.
         let query = ExternalQuery::new(
             definition.query.name(),
-            sql_for(definition, comparator, Mode::Cold, path),
+            sql_for(
+                definition,
+                comparator,
+                Mode::Cold,
+                path,
+                &columnar_testdata::orders_path_for(path),
+            ),
         );
         match external::run(comparator, Mode::Cold, &query, path, threads, iterations) {
             Ok(outcome) => {

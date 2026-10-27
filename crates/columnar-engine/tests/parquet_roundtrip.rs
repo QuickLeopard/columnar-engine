@@ -218,16 +218,16 @@ fn the_round_trip_answers_a_query() {
     let (dataset, path) = round_trip();
 
     // `l_discount < 0.05` selects the rows whose `row % 11` is 0..=4.
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("l_discount", ComparisonOp::Lt, 0.05f64)],
-        projection: vec![],
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        vec![Predicate::new("l_discount", ComparisonOp::Lt, 0.05f64)],
+        vec![],
+        Some(AggregateSpec {
             group_by: vec!["l_returnflag".to_owned()],
             aggregates: vec![Aggregate::Sum {
                 expr: columnar_core::Expr::column("l_extendedprice"),
             }],
         }),
-    };
+    );
 
     let options = ExecOptions {
         memory_budget: MemoryBudget::default(),

@@ -67,6 +67,22 @@ CHECKS = [
     ("PERF.md", "polars filter-range resident", "polars", "-", "resident", "filter-range", 1),
     ("PERF.md", "polars filter-range cold", "polars", "-", "cold", "filter-range", 1),
     ("README.md", "filter-range resident", "engine", "eager", "resident", "filter-range", 1),
+    # The two queries spec 020 added. The join's **resident** figure is
+    # deliberately absent: the engine's resident path reads the build side
+    # inside the clock, and the incumbents load it before the clock starts, so
+    # the two numbers would not be the same measurement. It is named in the
+    # prose instead of published next to a number measured differently.
+    ("PERF.md", "lazy join-orders cold", "engine", "lazy", "cold", "join-orders", 1),
+    ("PERF.md", "duckdb join-orders cold", "duckdb", "-", "cold", "join-orders", 1),
+    ("PERF.md", "polars join-orders cold", "polars", "-", "cold", "join-orders", 1),
+    ("PERF.md", "datafusion join-orders cold", "datafusion-peer", "-", "cold", "join-orders", 1),
+    ("PERF.md", "lazy sort-topk cold", "engine", "lazy", "cold", "sort-topk", 1),
+    ("PERF.md", "duckdb sort-topk cold", "duckdb", "-", "cold", "sort-topk", 1),
+    ("PERF.md", "polars sort-topk cold", "polars", "-", "cold", "sort-topk", 1),
+    ("PERF.md", "datafusion sort-topk cold", "datafusion-peer", "-", "cold", "sort-topk", 1),
+    ("PERF.md", "sort-topk resident", "engine", "eager", "resident", "sort-topk", 1),
+    ("PERF.md", "duckdb sort-topk resident", "duckdb", "-", "resident", "sort-topk", 1),
+    ("PERF.md", "polars sort-topk resident", "polars", "-", "resident", "sort-topk", 1),
 ]
 
 # (document, label, thread count, system, places)

@@ -27,7 +27,16 @@ import statistics
 import sys
 from pathlib import Path
 
-QUERIES = ["scan", "filter-numeric", "filter-string", "filter-range", "q6", "q6-revenue"]
+QUERIES = [
+    "scan",
+    "filter-numeric",
+    "filter-string",
+    "filter-range",
+    "q6",
+    "q6-revenue",
+    "join-orders",
+    "sort-topk",
+]
 COMPARATORS = ["duckdb", "polars", "datafusion-peer"]
 DISPLAY = {"duckdb": "duckdb", "polars": "polars", "datafusion-peer": "datafusion"}
 ENGINE_MODES = ["eager", "lazy"]

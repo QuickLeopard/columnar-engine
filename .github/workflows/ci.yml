@@ -10,8 +10,10 @@
 #   5. the browser's half of the kernel still compiles,
 #   6. the dependency policy holds,
 #   7. no dataset is committed,
-#   8. the published figures still agree with the committed reports, and
-#   9. the browser page still keeps the promises it makes.
+#   8. the published figures still agree with the committed reports,
+#   9. the browser page still keeps the promises it makes, and
+#  10. the DataFusion peer -- the third system the comparison quotes -- is
+#      linted and tested on its own.
 #
 # The benchmark is NOT run here. A shared runner is a noisy machine, and a
 # performance number measured on one is not a number this repository is
@@ -195,6 +197,30 @@ jobs:
             exit 1
           fi
           echo "no committed datasets"
+
+  datafusion-peer:
+    name: the DataFusion peer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The peer is a separate cargo workspace on purpose -- it is an
+      # instrument, not a dependency -- so the root's lints and the root's
+      # test run never reach it. It is one of the three systems the published
+      # comparison quotes, so it is held to the same standard here: its own
+      # `[lints]` table, the same pinned toolchain, and its own tests.
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --component rustfmt
+          rustup default "$RUST_TOOLCHAIN"
+      - name: cargo fmt --check
+        working-directory: tools/datafusion-peer
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        working-directory: tools/datafusion-peer
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test
+        working-directory: tools/datafusion-peer
+        run: cargo test --all-targets
 
   published-figures:
     name: published figures match the evidence

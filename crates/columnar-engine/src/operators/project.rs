@@ -37,6 +37,24 @@ pub fn gather(chunk: &ColumnChunk, selection: &SelectionVector) -> BatchColumn {
     BatchColumn::with_validity(chunk.name.clone(), validity, data)
 }
 
+/// Gathers the rows named by `rows` out of `chunk`.
+///
+/// `rows` are the chunk's own row numbers, in the order they are wanted, and
+/// a row may be named more than once: a join produces one row per match, and
+/// the rows it produces are gathered from the source.
+///
+/// A selection vector cannot name a row twice, so this is not the selection
+/// gather with a different argument -- it is a different gather.
+///
+/// The validity mask is gathered with the values.
+#[must_use]
+pub fn gather_rows(chunk: &ColumnChunk, rows: &[u32]) -> BatchColumn {
+    note_decode(&chunk.name);
+    let validity = gather_validity_rows(&chunk.validity, rows);
+    let data = gather_encoding_rows(&chunk.encoding, rows);
+    BatchColumn::with_validity(chunk.name.clone(), validity, data)
+}
+
 /// Where a gather reads its values from.
 ///
 /// A column is either still in its chunk -- in which case the gather reads
@@ -315,6 +333,22 @@ impl<'a> Materialised<'a> {
         self.gathered.get(&index).expect("the column was gathered just above")
     }
 
+    /// Gathers the column at `index` over an explicit list of rows.
+    ///
+    /// `rows` are the dataset's own row numbers, in the order they are
+    /// wanted. This is the gather the stages behind a join or a sort use:
+    /// they know which rows survived, and they gather those rows rather than
+    /// the filter's survivors.
+    pub fn gather_rows(&mut self, index: usize, rows: &[u32]) -> &BatchColumn {
+        if !self.gathered.contains_key(&index) {
+            let chunk =
+                self.dataset.chunks.get(index).expect("a materialised column index is in range");
+            let column = gather_rows(chunk, rows);
+            self.gathered.insert(index, column);
+        }
+        self.gathered.get(&index).expect("the column was gathered just above")
+    }
+
     /// The gathered column at `index`.
     ///
     /// # Panics
@@ -522,6 +556,74 @@ fn gather_validity(source: &NullBitmap, selection: &SelectionVector) -> NullBitm
         out += 1;
     });
     NullBitmap::from_words(&words, selection.len())
+}
+
+/// Gathers the values of a column chunk, for the rows `rows` names.
+fn gather_encoding_rows(encoding: &Encoding, rows: &[u32]) -> BatchData {
+    match encoding {
+        Encoding::Int64 { values } => {
+            BatchData::Int64(rows.iter().map(|&row| *at(values, row)).collect())
+        }
+        Encoding::Float64 { values } => {
+            BatchData::Float64(rows.iter().map(|&row| *at(values, row)).collect())
+        }
+        Encoding::Utf8 { values } => {
+            BatchData::Utf8(rows.iter().map(|&row| at(values, row).clone()).collect())
+        }
+        Encoding::Int64Dict { dict, indices } => BatchData::Int64(
+            rows.iter()
+                .map(|&row| {
+                    let index = usize::try_from(*at(indices, row))
+                        .expect("a dictionary index is not negative");
+                    *dict.get(index).expect("a dictionary index is in range")
+                })
+                .collect(),
+        ),
+        Encoding::Float64Dict { dict, indices } => BatchData::Float64(
+            rows.iter()
+                .map(|&row| {
+                    let index = usize::try_from(*at(indices, row))
+                        .expect("a dictionary index is not negative");
+                    *dict.get(index).expect("a dictionary index is in range")
+                })
+                .collect(),
+        ),
+        Encoding::Utf8Dict { dict, indices } => BatchData::Utf8(
+            rows.iter()
+                .map(|&row| {
+                    let index = usize::try_from(*at(indices, row))
+                        .expect("a dictionary index is not negative");
+                    dict.get(index).expect("a dictionary index is in range").clone()
+                })
+                .collect(),
+        ),
+        Encoding::BoolRle { runs } => {
+            // A run-length-encoded column is decoded densely and then
+            // gathered, exactly as the core decoder does it: a run-boundary
+            // lookup per row is slower than the linear scan it replaces.
+            let mut dense = Vec::new();
+            for &(value, count) in runs {
+                let count = usize::try_from(count).expect("a run length fits in a usize");
+                dense.extend(std::iter::repeat_n(i64::from(value), count));
+            }
+            BatchData::Int64(rows.iter().map(|&row| *at(&dense, row)).collect())
+        }
+    }
+}
+
+/// Gathers the validity mask of a column along with its values, for the rows
+/// `rows` names.
+fn gather_validity_rows(source: &NullBitmap, rows: &[u32]) -> NullBitmap {
+    let mut words = vec![0u64; NullBitmap::words_for(rows.len())];
+    for (out, &row) in rows.iter().enumerate() {
+        let row = usize::try_from(row).unwrap_or(usize::MAX);
+        if row < source.len() && source.is_valid(row) {
+            if let Some(word) = words.get_mut(out / 64) {
+                *word |= 1u64 << (out % 64);
+            }
+        }
+    }
+    NullBitmap::from_words(&words, rows.len())
 }
 
 /// Collects the values a selection names.

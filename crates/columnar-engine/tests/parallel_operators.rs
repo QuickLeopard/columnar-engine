@@ -79,19 +79,16 @@ fn mixed_dataset() -> Dataset {
 
 /// The plan the tests filter with: one predicate per encoding.
 fn mixed_plan() -> QueryPlan {
-    QueryPlan {
-        filter: vec![
+    QueryPlan::new(
+        vec![
             Predicate::new("x", ComparisonOp::GtEq, ScalarValue::Int64(100)),
             Predicate::new("y", ComparisonOp::Lt, ScalarValue::Float64(500.0)),
             Predicate::new("d", ComparisonOp::Lt, ScalarValue::Int64(20)),
             Predicate::new("s", ComparisonOp::Ne, ScalarValue::Utf8("gamma".to_owned())),
         ],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
-            group_by: Vec::new(),
-            aggregates: vec![Aggregate::CountStar],
-        }),
-    }
+        Vec::new(),
+        Some(AggregateSpec { group_by: Vec::new(), aggregates: vec![Aggregate::CountStar] }),
+    )
 }
 
 #[test]
@@ -124,11 +121,11 @@ fn the_parallel_filter_selects_exactly_the_rows_the_serial_one_does() {
 #[test]
 fn the_parallel_filter_over_a_dictionary_column_selects_the_same_rows() {
     let dataset = mixed_dataset();
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("d", ComparisonOp::GtEq, ScalarValue::Int64(12))],
-        projection: Vec::new(),
-        aggregate: None,
-    };
+    let plan = QueryPlan::new(
+        vec![Predicate::new("d", ComparisonOp::GtEq, ScalarValue::Int64(12))],
+        Vec::new(),
+        None,
+    );
     let resolved = plan.resolve(&dataset).expect("the plan resolves");
 
     let (serial, _) =
@@ -147,11 +144,11 @@ fn the_parallel_filter_over_a_dictionary_column_selects_the_same_rows() {
 #[test]
 fn the_parallel_filter_over_a_string_column_selects_the_same_rows() {
     let dataset = mixed_dataset();
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("s", ComparisonOp::Lt, ScalarValue::Utf8("delta".to_owned()))],
-        projection: Vec::new(),
-        aggregate: None,
-    };
+    let plan = QueryPlan::new(
+        vec![Predicate::new("s", ComparisonOp::Lt, ScalarValue::Utf8("delta".to_owned()))],
+        Vec::new(),
+        None,
+    );
     let resolved = plan.resolve(&dataset).expect("the plan resolves");
 
     let (serial, _) =
@@ -228,14 +225,14 @@ fn the_answer_of_a_float_sum_does_not_depend_on_the_thread_count() {
     // parallelised, and this is the test that says so: the bits are identical.
     let values: Vec<f64> = (0..ROWS).map(|row| (row as f64) * 0.1 + 0.3).collect();
     let dataset = Dataset::from_chunks(vec![chunk("v", Encoding::Float64 { values }, &[])]);
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("v", ComparisonOp::GtEq, ScalarValue::Float64(0.0))],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        vec![Predicate::new("v", ComparisonOp::GtEq, ScalarValue::Float64(0.0))],
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("v") }],
         }),
-    };
+    );
 
     let serial = execute(&plan, &dataset, &options_at(1)).expect("the query runs");
     for workers in WORKERS {
@@ -262,10 +259,10 @@ fn the_plan_reports_the_workers_that_ran() {
     // where the column lies, and the projection never gathers it. An
     // expression's columns are gathered, because the expression is evaluated
     // over the survivors.
-    let summing = QueryPlan {
-        filter: mixed_plan().filter,
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let summing = QueryPlan::new(
+        mixed_plan().filter,
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: columnar_core::Expr::binary(
@@ -275,7 +272,7 @@ fn the_plan_reports_the_workers_that_ran() {
                 ),
             }],
         }),
-    };
+    );
 
     // More workers than the dataset can give blocks of work to. The plan
     // reports the workers that **ran**, not the ones that were asked for:
@@ -301,11 +298,11 @@ fn the_parallel_filter_over_a_short_dataset_is_the_serial_filter() {
         Encoding::Int64 { values: vec![1, 2, 3, 4, 5] },
         &[],
     )]);
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("x", ComparisonOp::Gt, ScalarValue::Int64(2))],
-        projection: Vec::new(),
-        aggregate: None,
-    };
+    let plan = QueryPlan::new(
+        vec![Predicate::new("x", ComparisonOp::Gt, ScalarValue::Int64(2))],
+        Vec::new(),
+        None,
+    );
     let resolved = plan.resolve(&dataset).expect("the plan resolves");
 
     let (serial, _) =

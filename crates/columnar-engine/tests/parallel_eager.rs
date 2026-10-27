@@ -347,16 +347,16 @@ fn the_answer_does_not_depend_on_the_thread_count() {
     let file = TempFile::new("answer");
     write_row_groups(&file.path, &four_row_group_batches());
 
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(columnar_engine::AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(columnar_engine::AggregateSpec {
             group_by: vec!["l_shipdate".to_owned()],
             aggregates: vec![columnar_engine::Aggregate::Sum {
                 expr: columnar_core::Expr::column("l_quantity"),
             }],
         }),
-    };
+    );
 
     let serial = Dataset::read_parquet(&file.path).expect("the serial read runs");
     let expected =

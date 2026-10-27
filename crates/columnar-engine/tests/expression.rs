@@ -84,10 +84,10 @@ fn dataset() -> Dataset {
 
 /// A plan that sums `l_extendedprice * (1 - l_discount)`.
 fn revenue_plan() -> QueryPlan {
-    QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: Expr::binary(
@@ -97,7 +97,7 @@ fn revenue_plan() -> QueryPlan {
                 ),
             }],
         }),
-    }
+    )
 }
 
 /// The sum the plan above computes, by hand.
@@ -152,10 +152,10 @@ fn a_null_row_is_skipped_by_the_sum() {
 #[test]
 fn an_unknown_column_in_an_expression_is_a_plan_error() {
     let dataset = dataset();
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: Expr::binary(
@@ -165,7 +165,7 @@ fn an_unknown_column_in_an_expression_is_a_plan_error() {
                 ),
             }],
         }),
-    };
+    );
 
     match execute(&plan, &dataset, &ExecOptions::default()) {
         Err(EngineError::UnknownColumn(name)) => assert_eq!(name, "l_no_such_column"),
@@ -183,14 +183,14 @@ fn a_utf8_column_in_an_expression_is_a_type_error() {
         len: 1,
     }]);
 
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum { expr: Expr::column("l_shipdate") }],
         }),
-    };
+    );
 
     match execute(&plan, &dataset, &ExecOptions::default()) {
         Err(EngineError::TypeMismatch(_)) => {}
@@ -202,16 +202,16 @@ fn a_utf8_column_in_an_expression_is_a_type_error() {
 #[test]
 fn integer_division_is_refused() {
     let dataset = dataset();
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: Expr::binary(ArithOp::Div, Expr::constant(5i64), Expr::constant(2i64)),
             }],
         }),
-    };
+    );
 
     match execute(&plan, &dataset, &ExecOptions::default()) {
         Err(EngineError::TypeMismatch(message)) => {
@@ -244,10 +244,10 @@ fn the_expressions_columns_are_materialised() {
 #[test]
 fn the_expression_is_evaluated_over_the_survivors() {
     let dataset = dataset();
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("l_quantity", ComparisonOp::Lt, 3.0f64)],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        vec![Predicate::new("l_quantity", ComparisonOp::Lt, 3.0f64)],
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: Expr::binary(
@@ -257,7 +257,7 @@ fn the_expression_is_evaluated_over_the_survivors() {
                 ),
             }],
         }),
-    };
+    );
 
     let result = execute(&plan, &dataset, &ExecOptions::default()).expect("the plan runs");
 
@@ -291,16 +291,16 @@ fn a_nan_propagates_through_arithmetic() {
         validity: NullBitmap::all_valid(2),
         len: 2,
     }]);
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: Expr::binary(ArithOp::Mul, Expr::column("x"), Expr::constant(2.0)),
             }],
         }),
-    };
+    );
 
     let result = execute(&plan, &dataset, &ExecOptions::default()).expect("the plan runs");
     match result.groups[0].values.first() {
@@ -330,16 +330,16 @@ fn the_expressions_type_is_int64_only_when_every_operand_is() {
     ]);
 
     // `i + i` is an integer sum, and it is exact.
-    let integer = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let integer = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: Expr::binary(ArithOp::Add, Expr::column("i"), Expr::column("i")),
             }],
         }),
-    };
+    );
     let result = execute(&integer, &dataset, &ExecOptions::default()).expect("the plan runs");
     match result.groups[0].values.first() {
         Some(columnar_engine::AggregateValue::Int(value)) => assert_eq!(*value, 6),
@@ -347,16 +347,16 @@ fn the_expressions_type_is_int64_only_when_every_operand_is() {
     }
 
     // `i + f` is a float sum.
-    let float = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let float = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: Expr::binary(ArithOp::Add, Expr::column("i"), Expr::column("f")),
             }],
         }),
-    };
+    );
     let result = execute(&float, &dataset, &ExecOptions::default()).expect("the plan runs");
     match result.groups[0].values.first() {
         Some(columnar_engine::AggregateValue::Float(value)) => assert!((value - 6.0).abs() < 1e-9),
@@ -376,16 +376,16 @@ fn integer_arithmetic_saturates() {
         validity: NullBitmap::all_valid(1),
         len: 1,
     }]);
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: Expr::binary(ArithOp::Add, Expr::column("x"), Expr::constant(1i64)),
             }],
         }),
-    };
+    );
 
     let result = execute(&plan, &dataset, &ExecOptions::default()).expect("the plan runs");
     match result.groups[0].values.first() {
@@ -501,14 +501,14 @@ fn the_computed_column_has_one_row_per_surviving_row() {
 #[test]
 fn a_sum_of_a_plain_column_is_unchanged() {
     let dataset = dataset();
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum { expr: Expr::column("l_quantity") }],
         }),
-    };
+    );
     let result = execute(&plan, &dataset, &ExecOptions::default()).expect("the plan runs");
 
     match result.groups[0].values.first() {

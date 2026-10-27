@@ -22,6 +22,11 @@
 //! `VALUE` is the single numeric scalar the query produced, or empty when the
 //! result is not a single numeric scalar.
 //!
+//! A query that joins two relations needs two files. `--build-path` names the
+//! second one and `--build-table` the name it is registered under; it is read
+//! the same way as the first one, so in resident mode `LOAD_MS` covers both
+//! files and in cold mode the query covers both scans.
+//!
 //! The result table follows the markers for human inspection; the harness
 //! ignores it.
 
@@ -31,7 +36,7 @@
 // read as code rather than as product names.
 #![allow(clippy::doc_markdown)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Instant;
@@ -45,6 +50,10 @@ use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
 
 /// The table name the benchmark SQL refers to.
 const TABLE_NAME: &str = "lineitem";
+
+/// The name the second table is registered under when the caller does not say
+/// which name to use.
+const DEFAULT_BUILD_TABLE: &str = "orders";
 
 /// Exit code for a malformed command line.
 const USAGE_EXIT_CODE: u8 = 2;
@@ -71,6 +80,17 @@ struct Options {
     threads: usize,
     /// Whether the file is loaded into memory before the query runs.
     resident: bool,
+    /// The second relation, when the query joins two of them.
+    build: Option<BuildTable>,
+}
+
+/// The second relation of a query that joins two of them.
+#[derive(Debug)]
+struct BuildTable {
+    /// The Parquet file holding the second relation.
+    path: PathBuf,
+    /// The name the second relation is registered under.
+    name: String,
 }
 
 /// Prints the version of the engine under comparison.
@@ -113,6 +133,7 @@ fn usage() -> String {
 
 Usage:
   datafusion-peer --sql <SQL> --path <FILE> [--threads <N>] [--resident]
+  datafusion-peer --sql <SQL> --path <FILE> --build-path <FILE> [--build-table <NAME>]
   datafusion-peer --version
 
 Options:
@@ -121,6 +142,14 @@ Options:
   --threads <N>   Thread count to pin the engine to (default: 1).
   --resident      Load the file into memory first and time the load separately;
                     without it the Parquet scan happens inside the query.
+  --build-path <FILE>
+                  A second Parquet file to register, for a query that joins two
+                    relations. It is loaded and registered the same way as the
+                    first one.
+  --build-table <NAME>
+                  The name the second file is registered under (default:
+                    `{DEFAULT_BUILD_TABLE}`); it only has an effect with
+                    `--build-path`.
   --version       Print the version and exit.
   --help          Print this text and exit.",
         version = version_line()
@@ -133,6 +162,8 @@ fn parse_args<I: Iterator<Item = String>>(args: I) -> Result<Invocation, String>
     let mut path: Option<PathBuf> = None;
     let mut threads: usize = 1;
     let mut resident = false;
+    let mut build_path: Option<PathBuf> = None;
+    let mut build_table = DEFAULT_BUILD_TABLE.to_owned();
     let mut args = args;
 
     while let Some(argument) = args.next() {
@@ -156,6 +187,10 @@ fn parse_args<I: Iterator<Item = String>>(args: I) -> Result<Invocation, String>
                 }
             }
             "--resident" => resident = true,
+            "--build-path" => {
+                build_path = Some(PathBuf::from(take_value(&mut args, inline, "--build-path")?));
+            }
+            "--build-table" => build_table = take_value(&mut args, inline, "--build-table")?,
             "--version" | "-V" => return Ok(Invocation::Version),
             "--help" | "-h" => return Ok(Invocation::Help),
             other => return Err(format!("unknown argument {other:?}")),
@@ -164,8 +199,11 @@ fn parse_args<I: Iterator<Item = String>>(args: I) -> Result<Invocation, String>
 
     let sql = sql.ok_or_else(|| "--sql is required".to_owned())?;
     let path = path.ok_or_else(|| "--path is required".to_owned())?;
+    // The name of the second table is only meaningful when there is a second
+    // table, so a `--build-table` without a `--build-path` is simply unused.
+    let build = build_path.map(|path| BuildTable { path, name: build_table });
 
-    Ok(Invocation::Run(Options { sql, path, threads, resident }))
+    Ok(Invocation::Run(Options { sql, path, threads, resident, build }))
 }
 
 /// Returns the value of a flag, either the inline `--flag=value` form or the
@@ -193,11 +231,15 @@ fn run(options: Options) -> Result<(), String> {
         .map_err(|err| format!("failed to start the tokio runtime: {err}"))?;
 
     runtime.block_on(async move {
-        let path = options.path.to_string_lossy().into_owned();
         let path_display = options.path.display().to_string();
-
         if !options.path.is_file() {
             return Err(format!("{path_display} is not a readable file"));
+        }
+        if let Some(build) = &options.build {
+            let build_display = build.path.display().to_string();
+            if !build.path.is_file() {
+                return Err(format!("{build_display} is not a readable file"));
+            }
         }
 
         // `target_partitions` is the engine's own notion of parallelism; it has
@@ -208,34 +250,11 @@ fn run(options: Options) -> Result<(), String> {
             .map_err(|err| format!("failed to build the DataFusion runtime environment: {err}"))?;
         let ctx = SessionContext::new_with_config_rt(config, runtime_env);
 
-        let load_ms = if options.resident {
-            let started = Instant::now();
-            let batches = ctx
-                .read_parquet(path.as_str(), ParquetReadOptions::default())
-                .await
-                .map_err(|err| format!("failed to load {path_display}: {err}"))?
-                .collect()
-                .await
-                .map_err(|err| format!("failed to load {path_display}: {err}"))?;
-            let elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0;
-
-            let schema = batches
-                .first()
-                .map(RecordBatch::schema)
-                .ok_or_else(|| format!("{path_display} produced no batches"))?;
-            let mem_table = MemTable::try_new(schema, vec![batches])
-                .map_err(|err| format!("failed to build the in-memory table: {err}"))?;
-            let _ = ctx.register_table(TABLE_NAME, Arc::new(mem_table));
-
-            elapsed_ms
-        } else {
-            // Cold mode: the table is a lazy scan, so the Parquet read happens
-            // inside the query and is therefore part of `QUERY_MS`.
-            ctx.register_parquet(TABLE_NAME, path.as_str(), ParquetReadOptions::default())
-                .await
-                .map_err(|err| format!("failed to register {path_display}: {err}"))?;
-            0.0
-        };
+        let mut load_ms = 0.0;
+        register_table(&ctx, TABLE_NAME, &options.path, options.resident, &mut load_ms).await?;
+        if let Some(build) = &options.build {
+            register_table(&ctx, &build.name, &build.path, options.resident, &mut load_ms).await?;
+        }
 
         let started = Instant::now();
         let batches = ctx
@@ -254,6 +273,54 @@ fn run(options: Options) -> Result<(), String> {
 
         Ok(())
     })
+}
+
+/// Registers one Parquet file under `name`.
+///
+/// In resident mode the file is read eagerly and the time it took is added to
+/// `load_ms`; in cold mode it is registered as a lazy Parquet scan, so the
+/// read happens inside the query and is therefore part of `QUERY_MS`.
+///
+/// The two modes are the ones the harness asks for, and the second table of a
+/// join is registered exactly like the first one, so that the two are read the
+/// same way.
+async fn register_table(
+    ctx: &SessionContext,
+    name: &str,
+    path: &Path,
+    resident: bool,
+    load_ms: &mut f64,
+) -> Result<(), String> {
+    let path_str = path.to_string_lossy().into_owned();
+    let path_display = path.display().to_string();
+
+    if resident {
+        let started = Instant::now();
+        let batches = ctx
+            .read_parquet(path_str.as_str(), ParquetReadOptions::default())
+            .await
+            .map_err(|err| format!("failed to load {path_display}: {err}"))?
+            .collect()
+            .await
+            .map_err(|err| format!("failed to load {path_display}: {err}"))?;
+        *load_ms += started.elapsed().as_secs_f64() * 1_000.0;
+
+        let schema = batches
+            .first()
+            .map(RecordBatch::schema)
+            .ok_or_else(|| format!("{path_display} produced no batches"))?;
+        let mem_table = MemTable::try_new(schema, vec![batches])
+            .map_err(|err| format!("failed to build the in-memory table: {err}"))?;
+        let _ = ctx.register_table(name, Arc::new(mem_table));
+    } else {
+        // Cold mode: the table is a lazy scan, so the Parquet read happens
+        // inside the query and is therefore part of `QUERY_MS`.
+        ctx.register_parquet(name, path_str.as_str(), ParquetReadOptions::default())
+            .await
+            .map_err(|err| format!("failed to register {path_display}: {err}"))?;
+    }
+
+    Ok(())
 }
 
 /// Returns the single numeric scalar the query produced, or an empty string
@@ -314,5 +381,71 @@ fn print_table(batches: &[RecordBatch]) {
     match arrow::util::pretty::pretty_format_batches(batches) {
         Ok(table) => println!("{table}"),
         Err(err) => eprintln!("datafusion-peer: failed to format the result table: {err}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_args, Invocation, Options};
+
+    /// Parses a command line and returns the options it names.
+    fn options(args: &[&str]) -> Options {
+        match parse_args(args.iter().map(|arg| (*arg).to_owned())) {
+            Ok(Invocation::Run(options)) => options,
+            other => panic!("expected a run invocation, got {other:?}"),
+        }
+    }
+
+    /// A command line with one file names one table and no second one.
+    #[test]
+    fn a_single_file_has_no_build_table() {
+        let options = options(&["--sql", "SELECT 1", "--path", "lineitem.parquet"]);
+        assert_eq!(options.path.to_string_lossy(), "lineitem.parquet");
+        assert!(options.build.is_none());
+        assert!(!options.resident);
+    }
+
+    /// The second file is registered under the default name.
+    #[test]
+    fn the_build_table_defaults_to_orders() {
+        let options = options(&[
+            "--sql",
+            "SELECT 1",
+            "--path",
+            "lineitem.parquet",
+            "--build-path",
+            "orders.parquet",
+        ]);
+        let build = options.build.expect("a build table");
+        assert_eq!(build.path.to_string_lossy(), "orders.parquet");
+        assert_eq!(build.name, "orders");
+    }
+
+    /// The second file can be registered under another name, and the inline
+    /// `--flag=value` spelling works for both flags.
+    #[test]
+    fn the_build_table_can_be_named() {
+        let options = options(&[
+            "--sql",
+            "SELECT 1",
+            "--path",
+            "lineitem.parquet",
+            "--build-path=orders.parquet",
+            "--build-table=build_side",
+        ]);
+        let build = options.build.expect("a build table");
+        assert_eq!(build.path.to_string_lossy(), "orders.parquet");
+        assert_eq!(build.name, "build_side");
+    }
+
+    /// A flag without a value is a malformed command line, not a guess.
+    #[test]
+    fn a_build_path_without_a_value_is_rejected() {
+        let result = parse_args(
+            ["--sql", "SELECT 1", "--path", "lineitem.parquet", "--build-path"]
+                .iter()
+                .map(|arg| (*arg).to_owned()),
+        );
+        assert!(result.is_err());
     }
 }

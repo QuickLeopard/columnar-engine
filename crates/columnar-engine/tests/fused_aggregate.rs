@@ -170,11 +170,11 @@ fn reversed_oracle_sum() -> f64 {
 
 /// The plan that sums `x`.
 fn summing(aggregate: Aggregate) -> QueryPlan {
-    QueryPlan {
-        filter: filter(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec { group_by: vec![], aggregates: vec![aggregate] }),
-    }
+    QueryPlan::new(
+        filter(),
+        Vec::new(),
+        Some(AggregateSpec { group_by: vec![], aggregates: vec![aggregate] }),
+    )
 }
 
 /// The sum of the survivors of `x`, as the engine computes it.
@@ -275,14 +275,14 @@ fn an_expressions_columns_are_still_gathered() {
 fn a_grouped_aggregate_still_gathers() {
     // The grouped path needs its keys aligned with its values, and the hash
     // table wants both, so every column is gathered there.
-    let plan = QueryPlan {
-        filter: filter(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        filter(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: vec!["d".to_owned()],
             aggregates: vec![Aggregate::Sum { expr: Expr::column("x") }],
         }),
-    };
+    );
 
     let (result, counts) =
         counting(|| execute(&plan, &dataset(), &ExecOptions::default()).expect("the plan runs"));
@@ -299,10 +299,10 @@ fn a_column_an_expression_reads_is_still_gathered() {
     // survivors, so its column has to be aligned with them -- which means
     // gathered. The plain sum reads the gathered copy too: one column, one
     // copy, and the fusion does not reach it.
-    let plan = QueryPlan {
-        filter: filter(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        filter(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: vec![],
             aggregates: vec![
                 Aggregate::Sum { expr: Expr::column("x") },
@@ -311,7 +311,7 @@ fn a_column_an_expression_reads_is_still_gathered() {
                 },
             ],
         }),
-    };
+    );
 
     let (result, counts) =
         counting(|| execute(&plan, &dataset(), &ExecOptions::default()).expect("the plan runs"));
@@ -336,14 +336,14 @@ fn an_integer_sum_saturates_in_place_too() {
     // `i64::MIN` here, which is a very different answer.
     let values = vec![i64::MAX, 1, i64::MAX];
     let dataset = Dataset::from_chunks(vec![chunk("v", Encoding::Int64 { values }, &[])]);
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: vec![],
             aggregates: vec![Aggregate::Sum { expr: Expr::column("v") }],
         }),
-    };
+    );
 
     let result = execute(&plan, &dataset, &ExecOptions::default()).expect("the plan runs");
     assert_eq!(result.groups[0].values, vec![AggregateValue::Int(i64::MAX)]);
@@ -423,14 +423,14 @@ fn the_filtered_column_can_be_the_aggregated_column() {
     // filter reads it to decide, and the aggregate folds it. The fusion
     // holds, and the two reads do not interfere.
     let dataset = dataset();
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("x", ComparisonOp::Gt, ScalarValue::Float64(0.15))],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        vec![Predicate::new("x", ComparisonOp::Gt, ScalarValue::Float64(0.15))],
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: vec![],
             aggregates: vec![Aggregate::Sum { expr: Expr::column("x") }],
         }),
-    };
+    );
 
     let result = execute(&plan, &dataset, &ExecOptions::default()).expect("the plan runs");
 

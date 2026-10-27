@@ -274,14 +274,11 @@ fn counted(result: &columnar_engine::AggregateResult) -> usize {
 
 /// A plan that counts the rows a single predicate keeps.
 fn count_plan(column: &str, op: ComparisonOp, value: ScalarValue) -> QueryPlan {
-    QueryPlan {
-        filter: vec![Predicate::new(column, op, value)],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
-            group_by: Vec::new(),
-            aggregates: vec![Aggregate::CountStar],
-        }),
-    }
+    QueryPlan::new(
+        vec![Predicate::new(column, op, value)],
+        Vec::new(),
+        Some(AggregateSpec { group_by: Vec::new(), aggregates: vec![Aggregate::CountStar] }),
+    )
 }
 
 /// Every operator, over a column with NULLs and NaNs, must give the same
@@ -323,8 +320,8 @@ fn the_two_paths_agree_for_a_conjunction() {
     let file = TempFile::new("conjunction");
     write(&file.path, &edge_case_batch());
 
-    let plan = QueryPlan {
-        filter: vec![
+    let plan = QueryPlan::new(
+        vec![
             Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.02)),
             Predicate::new(
                 "l_shipdate",
@@ -332,12 +329,9 @@ fn the_two_paths_agree_for_a_conjunction() {
                 ScalarValue::Utf8("1995-01-01".to_owned()),
             ),
         ],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
-            group_by: Vec::new(),
-            aggregates: vec![Aggregate::CountStar],
-        }),
-    };
+        Vec::new(),
+        Some(AggregateSpec { group_by: Vec::new(), aggregates: vec![Aggregate::CountStar] }),
+    );
     both_paths(&file.path, &plan);
 }
 
@@ -453,8 +447,8 @@ fn the_parallel_path_agrees_with_the_single_threaded_one() {
     let file = TempFile::new("parallel");
     write_row_groups(&file.path, &three_row_group_batches());
 
-    let plan = QueryPlan {
-        filter: vec![
+    let plan = QueryPlan::new(
+        vec![
             Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.02)),
             Predicate::new(
                 "l_shipdate",
@@ -462,12 +456,12 @@ fn the_parallel_path_agrees_with_the_single_threaded_one() {
                 ScalarValue::Utf8("1995-01-01".to_owned()),
             ),
         ],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("l_quantity") }],
         }),
-    };
+    );
 
     let source = ParquetSource::open(&file.path).expect("the source can be opened");
     assert_eq!(
@@ -549,14 +543,14 @@ fn the_parallel_path_reads_the_rows_in_the_files_order() {
     let file = TempFile::new("parallel-order");
     write_row_groups(&file.path, &three_row_group_batches());
 
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: vec!["l_shipdate".to_owned()],
             aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("l_quantity") }],
         }),
-    };
+    );
 
     let source = ParquetSource::open(&file.path).expect("the source can be opened");
     let single = execute_on(&plan, &source, &ExecOptions::default()).expect("the query runs");
@@ -664,14 +658,14 @@ fn an_aggregate_column_is_read_and_the_predicate_is_pushed_down() {
     let file = TempFile::new("aggregate");
     write(&file.path, &edge_case_batch());
 
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.02))],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        vec![Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.02))],
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("l_quantity") }],
         }),
-    };
+    );
 
     let source = ParquetSource::open(&file.path).expect("the source can be opened");
     let result = execute_on(&plan, &source, &ExecOptions::default()).expect("the query runs");
@@ -698,14 +692,14 @@ fn a_predicate_on_an_aggregated_column_is_not_pushed_down() {
     let file = TempFile::new("not-pushed");
     write(&file.path, &edge_case_batch());
 
-    let plan = QueryPlan {
-        filter: vec![Predicate::new("l_quantity", ComparisonOp::GtEq, ScalarValue::Int64(3))],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+    let plan = QueryPlan::new(
+        vec![Predicate::new("l_quantity", ComparisonOp::GtEq, ScalarValue::Int64(3))],
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum { expr: columnar_core::Expr::column("l_quantity") }],
         }),
-    };
+    );
 
     let source = ParquetSource::open(&file.path).expect("the source can be opened");
     let result = execute_on(&plan, &source, &ExecOptions::default()).expect("the query runs");
@@ -785,14 +779,11 @@ fn a_plan_without_a_predicate_counts_every_row() {
     let file = TempFile::new("no-predicate");
     write(&file.path, &edge_case_batch());
 
-    let plan = QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
-            group_by: Vec::new(),
-            aggregates: vec![Aggregate::CountStar],
-        }),
-    };
+    let plan = QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec { group_by: Vec::new(), aggregates: vec![Aggregate::CountStar] }),
+    );
     let (eager, lazy) = both_paths(&file.path, &plan);
 
     let counted = counted(&eager);
@@ -928,7 +919,7 @@ fn eager_survivors(
     column: &str,
 ) -> (columnar_core::BatchColumn, usize) {
     let dataset = Dataset::read_parquet(path).expect("the dataset can be read eagerly");
-    let plan = QueryPlan { filter: vec![predicate], projection: Vec::new(), aggregate: None };
+    let plan = QueryPlan::new(vec![predicate], Vec::new(), None);
     let resolved = plan.resolve(&dataset).expect("the plan resolves");
     let (selection, _) = columnar_engine::operators::filter::filter_all(
         &dataset,

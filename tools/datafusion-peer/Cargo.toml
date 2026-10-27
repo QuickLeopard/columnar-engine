@@ -36,3 +36,31 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 # Used directly for the Arrow result types and for the result table.
 arrow = "55"
+
+# The peer is its own workspace, so the root's `[workspace.lints]` do not
+# reach it -- and nothing linted it at all, which is a hole in the gate: the
+# peer is one of the three systems the published comparison quotes, so its
+# code has to be held to the same standard as the engine's.
+#
+# The table below is the root's, copied rather than inherited: a separate
+# workspace cannot inherit it.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+all = { level = "warn", priority = -1 }
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_precision_loss = "warn"
+float_cmp = "warn"
+indexing_slicing = "warn"
+too_many_arguments = "warn"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+similar_names = "allow"

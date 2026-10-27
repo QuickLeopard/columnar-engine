@@ -63,13 +63,19 @@ use std::path::Path;
 
 use columnar_core::{ArithOp, ComparisonOp, Expr, Predicate, ScalarValue};
 
-use crate::plan::{Aggregate, AggregateSpec, QueryPlan};
+use crate::plan::{Aggregate, AggregateSpec, JoinSpec, QueryPlan, SortSpec};
 
 /// The name the table is registered under.
 ///
 /// It must match the default in `tools/polars-run.py` and the name the
 /// `DataFusion` peer registers its table under.
 pub const TABLE_NAME: &str = "lineitem";
+
+/// The name the **build** table is registered under.
+///
+/// The join reads two files, and the second one needs a name as well: the
+/// incumbents register their tables under a name, and the SQL names them.
+pub const BUILD_TABLE_NAME: &str = "orders";
 
 /// The queries the engine knows how to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +93,10 @@ pub enum BuiltinQuery {
     Q6,
     /// TPC-H Q6 itself: the revenue query, with an arithmetic aggregate.
     Q6Revenue,
+    /// The hash join: `lineitem` joined to `orders` on the order key.
+    JoinOrders,
+    /// The top-k sort: the ten most expensive line items.
+    SortTopK,
 }
 
 impl BuiltinQuery {
@@ -100,6 +110,8 @@ impl BuiltinQuery {
             Self::FilterRange => "filter-range",
             Self::Q6 => "q6",
             Self::Q6Revenue => "q6-revenue",
+            Self::JoinOrders => "join-orders",
+            Self::SortTopK => "sort-topk",
         }
     }
 }
@@ -110,29 +122,44 @@ impl BuiltinQuery {
 pub struct QueryDefinition {
     /// Which query this is.
     pub query: BuiltinQuery,
-    /// The SQL, with `{table}` standing in for the table or file.
+    /// The SQL, with `{table}` standing in for the table or file and
+    /// `{build}` for the second one.
     pub sql: &'static str,
     /// Builds the engine's plan.
-    pub plan: fn() -> QueryPlan,
+    ///
+    /// The builder takes the **build table's file**. The join reads it, and
+    /// the queries that read one table ignore it -- so the signature is the
+    /// same for every query, and the driver does not have to know which
+    /// queries need a second file.
+    pub plan: fn(&Path) -> QueryPlan,
 }
 
 impl QueryDefinition {
-    /// The SQL as the engine runs it, with the table named rather than the
-    /// file.
+    /// The SQL as the engine runs it, with the tables named rather than the
+    /// files.
     #[must_use]
     pub fn sql_for_display(&self) -> String {
-        self.sql.replace("{table}", TABLE_NAME)
+        self.sql_for(TableAddress::Named(TABLE_NAME), TableAddress::Named(BUILD_TABLE_NAME))
     }
 
-    /// The SQL for a system that addresses the table in a particular way.
+    /// The SQL for a system that addresses the tables in a particular way.
+    ///
+    /// The two addresses are the primary table's and the build table's. A
+    /// query that reads one table names only the first, and the second is
+    /// ignored -- but the signature is the same for every query, so the
+    /// driver hands over the two files it has and moves on.
     #[must_use]
-    pub fn sql_for(&self, address: TableAddress<'_>) -> String {
-        match address {
-            TableAddress::File(path) => {
-                self.sql.replace("{table}", &format!("'{}'", path.display()))
-            }
-            TableAddress::Named(name) => self.sql.replace("{table}", name),
-        }
+    pub fn sql_for(&self, table: TableAddress<'_>, build: TableAddress<'_>) -> String {
+        let sql = self.sql.replace("{table}", &address_of(table));
+        sql.replace("{build}", &address_of(build))
+    }
+}
+
+/// How a system's SQL names a table.
+fn address_of(address: TableAddress<'_>) -> String {
+    match address {
+        TableAddress::File(path) => format!("'{}'", path.display()),
+        TableAddress::Named(name) => name.to_owned(),
     }
 }
 
@@ -181,67 +208,71 @@ pub const QUERIES: &[QueryDefinition] = &[
                AND l_discount >= 0.05 AND l_discount <= 0.07 AND l_quantity < 24",
         plan: q6_revenue_plan,
     },
+    QueryDefinition {
+        query: BuiltinQuery::JoinOrders,
+        sql: "SELECT sum(l.l_extendedprice) FROM {table} l JOIN {build} o \
+               ON l.l_orderkey = o.o_orderkey \
+               WHERE o.o_orderdate >= '1994-01-01' AND o.o_orderdate < '1995-01-01'",
+        plan: join_orders_plan,
+    },
+    QueryDefinition {
+        query: BuiltinQuery::SortTopK,
+        sql: "SELECT sum(l_extendedprice) FROM \
+               (SELECT l_extendedprice FROM {table} ORDER BY l_extendedprice DESC LIMIT 10) t",
+        plan: sort_topk_plan,
+    },
 ];
 
 /// `SELECT count(*)` over every row.
-fn scan_plan() -> QueryPlan {
-    QueryPlan {
-        filter: Vec::new(),
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
-            group_by: Vec::new(),
-            aggregates: vec![Aggregate::CountStar],
-        }),
-    }
+fn scan_plan(_build: &Path) -> QueryPlan {
+    QueryPlan::new(
+        Vec::new(),
+        Vec::new(),
+        Some(AggregateSpec { group_by: Vec::new(), aggregates: vec![Aggregate::CountStar] }),
+    )
 }
 
 /// A single numeric predicate.
-fn filter_numeric_plan() -> QueryPlan {
-    QueryPlan {
-        filter: vec![Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04))],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
-            group_by: Vec::new(),
-            aggregates: vec![Aggregate::CountStar],
-        }),
-    }
+fn filter_numeric_plan(_build: &Path) -> QueryPlan {
+    QueryPlan::new(
+        vec![Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04))],
+        Vec::new(),
+        Some(AggregateSpec { group_by: Vec::new(), aggregates: vec![Aggregate::CountStar] }),
+    )
 }
 
 /// A single predicate on a dictionary-encoded string column.
-fn filter_string_plan() -> QueryPlan {
-    QueryPlan {
-        filter: vec![Predicate::new(
+fn filter_string_plan(_build: &Path) -> QueryPlan {
+    QueryPlan::new(
+        vec![Predicate::new(
             "l_shipdate",
             ComparisonOp::GtEq,
             ScalarValue::Utf8("1994-01-01".to_owned()),
         )],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
-            group_by: Vec::new(),
-            aggregates: vec![Aggregate::CountStar],
-        }),
-    }
+        Vec::new(),
+        Some(AggregateSpec { group_by: Vec::new(), aggregates: vec![Aggregate::CountStar] }),
+    )
 }
 
 /// Two numeric predicates `AND`ed.
-fn filter_range_plan() -> QueryPlan {
-    QueryPlan {
-        filter: vec![
+fn filter_range_plan(_build: &Path) -> QueryPlan {
+    QueryPlan::new(
+        vec![
             Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04)),
             Predicate::new("l_discount", ComparisonOp::LtEq, ScalarValue::Float64(0.07)),
         ],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum { expr: Expr::column("l_quantity") }],
         }),
-    }
+    )
 }
 
 /// The TPC-H Q6 predicate set.
-fn q6_plan() -> QueryPlan {
-    QueryPlan {
-        filter: vec![
+fn q6_plan(_build: &Path) -> QueryPlan {
+    QueryPlan::new(
+        vec![
             Predicate::new("l_discount", ComparisonOp::GtEq, ScalarValue::Float64(0.04)),
             Predicate::new("l_discount", ComparisonOp::LtEq, ScalarValue::Float64(0.07)),
             Predicate::new(
@@ -255,12 +286,9 @@ fn q6_plan() -> QueryPlan {
                 ScalarValue::Utf8("1995-01-01".to_owned()),
             ),
         ],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
-            group_by: Vec::new(),
-            aggregates: vec![Aggregate::CountStar],
-        }),
-    }
+        Vec::new(),
+        Some(AggregateSpec { group_by: Vec::new(), aggregates: vec![Aggregate::CountStar] }),
+    )
 }
 
 /// TPC-H Q6 itself: the revenue query.
@@ -272,9 +300,9 @@ fn q6_plan() -> QueryPlan {
 /// The aggregate is an **expression**, not a column: the plan carries
 /// `l_extendedprice * (1 - l_discount)`, the engine evaluates it over the
 /// rows that survived the filter, and the sum is over the result.
-fn q6_revenue_plan() -> QueryPlan {
-    QueryPlan {
-        filter: vec![
+fn q6_revenue_plan(_build: &Path) -> QueryPlan {
+    QueryPlan::new(
+        vec![
             Predicate::new(
                 "l_shipdate",
                 ComparisonOp::GtEq,
@@ -289,8 +317,8 @@ fn q6_revenue_plan() -> QueryPlan {
             Predicate::new("l_discount", ComparisonOp::LtEq, ScalarValue::Float64(0.07)),
             Predicate::new("l_quantity", ComparisonOp::Lt, ScalarValue::Float64(24.0)),
         ],
-        projection: Vec::new(),
-        aggregate: Some(AggregateSpec {
+        Vec::new(),
+        Some(AggregateSpec {
             group_by: Vec::new(),
             aggregates: vec![Aggregate::Sum {
                 expr: Expr::binary(
@@ -299,6 +327,67 @@ fn q6_revenue_plan() -> QueryPlan {
                     Expr::binary(ArithOp::Sub, Expr::constant(1.0), Expr::column("l_discount")),
                 ),
             }],
+        }),
+    )
+}
+
+/// The hash join: `lineitem` joined to `orders` on the order key.
+///
+/// The **build side** is `orders`, and its own filter -- the 1994 order
+/// dates -- is applied before the hash table is built, so a row outside 1994
+/// is never in the table and never matches anything. The **probe side** is
+/// `lineitem`, and the aggregate is over the probe side's column, which is
+/// what the SQL says.
+///
+/// The alias sits after the relation, because in cold mode the relation is a
+/// quoted file path and `'<path>' l` is not a relation with an alias.
+fn join_orders_plan(build: &Path) -> QueryPlan {
+    QueryPlan {
+        filter: Vec::new(),
+        projection: Vec::new(),
+        aggregate: Some(AggregateSpec {
+            group_by: Vec::new(),
+            aggregates: vec![Aggregate::Sum { expr: Expr::column("l_extendedprice") }],
+        }),
+        join: Some(JoinSpec {
+            build_path: build.to_path_buf(),
+            probe_key: "l_orderkey".to_owned(),
+            build_key: "o_orderkey".to_owned(),
+            build_filter: vec![
+                Predicate::new(
+                    "o_orderdate",
+                    ComparisonOp::GtEq,
+                    ScalarValue::Utf8("1994-01-01".to_owned()),
+                ),
+                Predicate::new(
+                    "o_orderdate",
+                    ComparisonOp::Lt,
+                    ScalarValue::Utf8("1995-01-01".to_owned()),
+                ),
+            ],
+        }),
+        sort: None,
+    }
+}
+
+/// The top-k sort: the ten most expensive line items.
+///
+/// The sort runs over every row of the file and keeps ten of them, so the
+/// plan's sort holds a **bounded heap** of ten rows rather than sorting six
+/// million. The aggregate is over the sorted rows -- the ten the sort kept.
+fn sort_topk_plan(_build: &Path) -> QueryPlan {
+    QueryPlan {
+        filter: Vec::new(),
+        projection: vec!["l_extendedprice".to_owned()],
+        aggregate: Some(AggregateSpec {
+            group_by: Vec::new(),
+            aggregates: vec![Aggregate::Sum { expr: Expr::column("l_extendedprice") }],
+        }),
+        join: None,
+        sort: Some(SortSpec {
+            column: "l_extendedprice".to_owned(),
+            descending: true,
+            limit: Some(10),
         }),
     }
 }

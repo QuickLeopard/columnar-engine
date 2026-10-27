@@ -10,17 +10,25 @@ than being an ad-hoc line typed at a terminal.
 The query is the same SQL the DuckDB driver runs. Polars executes it through
 `pl.SQLContext`.
 
+A query that joins two relations needs two files, so the driver can register a
+second one beside the first: `--build` names that file and `--build-table` the
+name it is registered under. The SQL then refers to the two relations by those
+names, exactly as the harness substitutes them. Without `--build` the driver
+reads a single file, as it always did.
+
 Two modes, and the difference matters:
 
   --resident  The file is read eagerly into a DataFrame first, and the query
               runs against that in-memory frame. The two times are reported
               separately: how long the file took to become a frame, and how
-              long the query took once it was there.
+              long the query took once it was there. With `--build` both files
+              are read eagerly and the reported load time covers both reads.
 
   (default)   The file is read lazily through `pl.scan_parquet`, and the
               reported query time covers the scan as well. This is Polars'
               idiomatic way to query a Parquet file, and it is the cold
-              number: one query, one read.
+              number: one query, one read. With `--build` both files are
+              scanned lazily, so the query time covers both scans.
 
 The resident mode exists so that the comparison against the engine is like for
 like. The engine loads its dataset once and then answers queries against the
@@ -31,7 +39,8 @@ Output format: two `KEY=value` lines followed by the result, so the driver can
 read the timings without having to parse a table.
 
 Usage:
-    polars-run.py <sql> <parquet-path> [--resident]
+    polars-run.py <sql> <parquet-path> [table-name] [--resident]
+                  [--build <path>] [--build-table <name>]
 """
 
 import sys
@@ -40,12 +49,75 @@ import time
 import polars as pl
 
 
+# The name the second table is registered under when the caller does not say
+# which name to use.
+DEFAULT_BUILD_TABLE = "orders"
+
+
+def usage() -> str:
+    """The one line that says how the script is called."""
+    return (
+        "usage: polars-run.py <sql> <parquet-path> [table-name] [--resident] "
+        "[--build <path>] [--build-table <name>]"
+    )
+
+
+def parse_args(argv):
+    """Splits the command line into the positional arguments and the flags.
+
+    The positional arguments are the SQL, the Parquet file, and the name the
+    SQL refers to that file by. The flags are the mode, the second Parquet
+    file, and the name that file is registered under.
+
+    A flag's value is either the next argument or the rest of the flag itself
+    (`--build=path`), because the harness may use either spelling.
+    """
+    positional = []
+    resident = False
+    build_path = None
+    build_table = DEFAULT_BUILD_TABLE
+
+    index = 0
+    while index < len(argv):
+        argument = argv[index]
+        index += 1
+
+        if argument == "--resident":
+            resident = True
+            continue
+
+        flag, separator, inline = argument.partition("=")
+        if flag not in ("--build", "--build-table"):
+            # Everything that is not a flag is positional, as it always was.
+            positional.append(argument)
+            continue
+
+        if separator == "=":
+            value = inline
+        else:
+            if index >= len(argv):
+                raise ValueError(f"{flag} requires a value")
+            value = argv[index]
+            index += 1
+
+        if flag == "--build":
+            build_path = value
+        else:
+            build_table = value
+
+    return positional, resident, build_path, build_table
+
+
 def main() -> int:
-    args = [a for a in sys.argv[1:] if a != "--resident"]
-    resident = "--resident" in sys.argv[1:]
+    try:
+        args, resident, build_path, build_table = parse_args(sys.argv[1:])
+    except ValueError as error:
+        print(f"polars-run.py: {error}", file=sys.stderr)
+        print(usage(), file=sys.stderr)
+        return 2
 
     if len(args) < 2:
-        print("usage: polars-run.py <sql> <parquet-path> [--resident]", file=sys.stderr)
+        print(usage(), file=sys.stderr)
         return 2
 
     sql = args[0]
@@ -66,7 +138,20 @@ def main() -> int:
         # below covers the scan too.
         frame = pl.scan_parquet(path)
 
-    context = pl.SQLContext(frames={table: frame})
+    frames = {table: frame}
+
+    if build_path is not None:
+        # The second relation of a join. It is read the same way as the first
+        # one, so the reported times cover both files and not just one.
+        if resident:
+            started = time.perf_counter()
+            build_frame = pl.read_parquet(build_path)
+            load_ms += (time.perf_counter() - started) * 1000.0
+        else:
+            build_frame = pl.scan_parquet(build_path)
+        frames[build_table] = build_frame
+
+    context = pl.SQLContext(frames=frames)
 
     started = time.perf_counter()
     result = context.execute(sql, eager=True)

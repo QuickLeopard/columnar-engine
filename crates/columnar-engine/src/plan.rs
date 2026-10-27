@@ -15,11 +15,17 @@
 //! 3. **Late materialisation** -- of those columns, only the ones the plan
 //!    actually reads are decoded. A column that is neither filtered nor
 //!    aggregated is never touched, and the plan output says so by name.
-//! 4. **Aggregate** -- the aggregation runs last, over the surviving rows.
+//! 4. **Join** -- the hash join runs over the rows that survived the filter,
+//!    and the probe side stays lazy: it is never materialised as a table of
+//!    its own.
+//! 5. **Sort** -- the sort runs over the rows the join produced.
+//! 6. **Aggregate** -- the aggregation runs last, over the surviving rows.
 //!
 //! The order is a constant, [`OPTIMIZATION_ORDER`], and it is printed at the
 //! top of every plan output. A pinned order is worth more than a clever one:
 //! it is checkable.
+
+use std::path::PathBuf;
 
 use columnar_core::{ArithOp, ComparisonOp, DataType, Expr, Predicate, ScalarValue};
 
@@ -27,7 +33,7 @@ use crate::{Dataset, EngineError};
 
 /// The pinned optimisation order, printed at the top of every plan output.
 pub const OPTIMIZATION_ORDER: &str =
-    "predicate pushdown -> projection pushdown -> late materialization -> aggregate";
+    "predicate pushdown -> projection pushdown -> late materialization -> join -> sort -> aggregate";
 
 /// What a plan needs to know about the columns it may touch.
 ///
@@ -94,6 +100,30 @@ pub struct AggregateSpec {
     pub aggregates: Vec<Aggregate>,
 }
 
+/// The join's shape.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JoinSpec {
+    /// The Parquet file of the **build side** -- the table on the right.
+    pub build_path: PathBuf,
+    /// The probe side's key column: the left table's.
+    pub probe_key: String,
+    /// The build side's key column: the right table's.
+    pub build_key: String,
+    /// Predicates evaluated on the build side **before** the hash table is built.
+    pub build_filter: Vec<Predicate>,
+}
+
+/// The sort's shape.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SortSpec {
+    /// The column to sort by.
+    pub column: String,
+    /// Whether the order is descending.
+    pub descending: bool,
+    /// How many rows to keep. `None` sorts everything.
+    pub limit: Option<usize>,
+}
+
 /// A query plan. There is no SQL parser; the caller builds this in Rust.
 ///
 /// The projection lists the columns to materialise. An empty projection
@@ -101,6 +131,11 @@ pub struct AggregateSpec {
 /// aggregation ignores the projection: the aggregate result is the output, and
 /// late materialisation keeps the decoded set to the filter and aggregate
 /// columns.
+///
+/// The pipeline the plan describes is
+/// `scan -> filter -> project -> [join] -> [sort] -> aggregate`, and the two
+/// optional stages are the ones the plan gained last: a hash join over two
+/// files, and a sort with an optional limit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryPlan {
     /// The predicates the plan filters on, pushed down into the scan.
@@ -112,13 +147,33 @@ pub struct QueryPlan {
     pub projection: Vec<String>,
     /// Optional aggregation, applied last.
     pub aggregate: Option<AggregateSpec>,
+    /// Optional hash join, applied after the projection.
+    pub join: Option<JoinSpec>,
+    /// Optional sort, applied after the join.
+    pub sort: Option<SortSpec>,
 }
 
 impl QueryPlan {
+    /// A plan with a filter, a projection and an aggregation -- and no join
+    /// and no sort.
+    ///
+    /// The join and the sort are the two stages the pipeline gained last, and
+    /// a plan that has neither is the common case. Naming them at every call
+    /// site would make the plans twice as long as they need to be, so the
+    /// short form lives here and the long form is a struct literal.
+    #[must_use]
+    pub fn new(
+        filter: Vec<Predicate>,
+        projection: Vec<String>,
+        aggregate: Option<AggregateSpec>,
+    ) -> Self {
+        Self { filter, projection, aggregate, join: None, sort: None }
+    }
+
     /// A plan that scans every column and returns every row.
     #[must_use]
     pub fn scan_all() -> Self {
-        Self { filter: Vec::new(), projection: Vec::new(), aggregate: None }
+        Self::new(Vec::new(), Vec::new(), None)
     }
 
     /// Resolves the plan's column names to indices, once, up front.
@@ -151,9 +206,30 @@ impl QueryPlan {
         };
         let projection = resolve_projection(&self.projection, schema)?;
 
-        let materialised = materialised_columns(schema, aggregate.as_ref(), &projection);
+        let join = match &self.join {
+            Some(spec) => Some(ResolvedJoin {
+                spec: spec.clone(),
+                probe_key: column_index(schema, &spec.probe_key)?,
+            }),
+            None => None,
+        };
+        let sort = match &self.sort {
+            Some(spec) => Some(ResolvedSort {
+                spec: spec.clone(),
+                column: column_index(schema, &spec.column)?,
+            }),
+            None => None,
+        };
 
-        Ok(ResolvedPlan { filter, projection, aggregate, materialised })
+        let materialised = materialised_columns(
+            schema,
+            aggregate.as_ref(),
+            &projection,
+            join.as_ref(),
+            sort.as_ref(),
+        );
+
+        Ok(ResolvedPlan { filter, projection, aggregate, join, sort, materialised })
     }
 }
 
@@ -376,10 +452,16 @@ fn resolve_projection(
 /// This is the late-materialisation set: the filter column, the columns
 /// the aggregation reads, and -- for a plan without an aggregation -- the
 /// projection (or every column, when the projection is empty).
+///
+/// The join's key and the sort's column are in the set too: the stages
+/// behind the projection read them, and a column nobody reads is never
+/// decoded.
 fn materialised_columns(
     schema: &dyn ColumnSchema,
     aggregate: Option<&ResolvedAggregate>,
     projection: &[usize],
+    join: Option<&ResolvedJoin>,
+    sort: Option<&ResolvedSort>,
 ) -> Vec<usize> {
     let mut columns: Vec<usize> = Vec::new();
     let mut push = |column: usize| {
@@ -412,6 +494,13 @@ fn materialised_columns(
         }
     }
 
+    if let Some(join) = join {
+        push(join.probe_key);
+    }
+    if let Some(sort) = sort {
+        push(sort.column);
+    }
+
     columns.sort_unstable();
     columns
 }
@@ -425,8 +514,33 @@ pub struct ResolvedPlan {
     pub projection: Vec<usize>,
     /// The aggregation, with its columns resolved.
     pub aggregate: Option<ResolvedAggregate>,
+    /// The join, with its probe key resolved.
+    ///
+    /// The **build** side is resolved when the join reads it: it is a file
+    /// of its own, with a schema of its own, and the plan does not hold it.
+    pub join: Option<ResolvedJoin>,
+    /// The sort, with its column resolved.
+    pub sort: Option<ResolvedSort>,
     /// The columns the plan will decode, in schema order.
     pub materialised: Vec<usize>,
+}
+
+/// A join whose probe-side column has been resolved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedJoin {
+    /// The join as the caller wrote it.
+    pub spec: JoinSpec,
+    /// The probe side's key column, by index.
+    pub probe_key: usize,
+}
+
+/// A sort whose column has been resolved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedSort {
+    /// The sort as the caller wrote it.
+    pub spec: SortSpec,
+    /// The column the rows are sorted by, by index.
+    pub column: usize,
 }
 
 impl ResolvedPlan {
@@ -464,13 +578,23 @@ impl ResolvedPlan {
 
         let aggregate = self.aggregate.as_ref().map(|aggregate| aggregate.remap(mapping));
 
+        let join = self.join.as_ref().map(|join| ResolvedJoin {
+            spec: join.spec.clone(),
+            probe_key: remap_index(mapping, join.probe_key),
+        });
+
+        let sort = self.sort.as_ref().map(|sort| ResolvedSort {
+            spec: sort.spec.clone(),
+            column: remap_index(mapping, sort.column),
+        });
+
         let materialised = self
             .materialised
             .iter()
             .filter_map(|&index| mapping.get(index).copied().flatten())
             .collect();
 
-        ResolvedPlan { filter, projection, aggregate, materialised }
+        ResolvedPlan { filter, projection, aggregate, join, sort, materialised }
     }
 }
 
@@ -495,6 +619,31 @@ pub struct ResolvedAggregate {
 }
 
 impl ResolvedAggregate {
+    /// The columns the aggregation reads.
+    ///
+    /// The group-by columns, and the columns every aggregate function reads.
+    /// An expression's columns are among them: the expression is evaluated
+    /// over the rows the aggregation covers, so its columns have to be
+    /// materialised too.
+    #[must_use]
+    pub fn columns(&self) -> Vec<usize> {
+        let mut columns: Vec<usize> = Vec::new();
+        let mut push = |column: usize| {
+            if !columns.contains(&column) {
+                columns.push(column);
+            }
+        };
+        for &column in &self.group_by {
+            push(column);
+        }
+        for function in &self.aggregates {
+            for column in function.columns() {
+                push(column);
+            }
+        }
+        columns
+    }
+
     /// Maps this aggregation's column indices onto a subset of the columns.
     ///
     /// Every column an aggregation reads is materialised, so every one of
