@@ -1078,10 +1078,14 @@ query it ran, and the last line of that table is now the account:
 ```
 scan       6000000  216783    71.0 ms
 project    216783   216783     0.5 ms
-join       216783   216783    25.1 ms
+join       6000000  216783    25.1 ms
 aggregate  216783   1          0.2 ms
 accounted: 96.81 ms of the query's 96.82 ms (0.01 ms outside the stages)
 ```
+
+**The join's stage reports the rows the probe consumed**, where the report this block was taken from
+reported the rows that survived it. See
+[§3m](#3m-the-time-the-plan-output-does-not-name) for why the two are not about the same thing.
 
 ## 3. What the engine's own stages say
 
@@ -1994,11 +1998,18 @@ movement is inside that band; the join's is not — it moved by 12.5%.
 ```
 scan       6000000   216783   68.6 ms
 project     216783   216783    0.5 ms
-join        216783   216783   22.8 ms
+join        6000000   216783   22.8 ms
 aggregate   216783        1    0.3 ms
 join: equi-join on l_orderkey = o_orderkey, build side orders.parquet (216345 rows), 216783 rows out
 the probe ran inside the scan: the rows it did not match were never copied
 ```
+
+**And the join's stage now reports the rows the probe consumed.** It reads **6,000,000** — the rows
+the probe looked at — where the report this block was taken from reported the **216,783** that
+survived it. The two are not about the same thing: the probe read six million rows and kept the
+216,783 that matched, and a stage that reports only what it kept cannot be compared with the
+resident path's stage, which reports what it read. The **time** is the campaign's, and it did not
+move: the change is in what the stage says, not in what it does.
 
 **What this did not do.** The **build side** is not streamed: it is 1.5 million rows against the
 probe side's 6 million, it is read once, and the hash table of its keys is what makes the probe

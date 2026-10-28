@@ -39,7 +39,7 @@ two different things for the same work, and an estimate that is not an upper bou
 first, in steps small enough to build, test and measure on their own, and the instrument measures
 the stage **after** them — so the published numbers are the numbers of the code that ships.
 
-- [ ] **Step 1 — the stage reports the rows the probe consumed.** The reader reports how many rows
+- [x] **Step 1 — the stage reports the rows the probe consumed.** The reader reports how many rows
       the filter examined, and the join's stage reports that. The two paths then say
       `6000000 → 216783` alike.
 - [ ] **Step 2 — the key's interface says how long the column is.** `KeySource` gains `len()`, and the

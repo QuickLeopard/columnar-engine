@@ -26,7 +26,7 @@ use arrow::record_batch::RecordBatch;
 use columnar_core::{ComparisonOp, Encoding, Expr, NullBitmap, Predicate, ScalarValue};
 use columnar_engine::{
     execute, execute_on, Aggregate, AggregateSpec, AggregateValue, Dataset, ExecOptions, JoinSpec,
-    MemoryBudget, ParquetSource, PlanOutput, QueryPlan,
+    MemoryBudget, ParquetSource, PlanOutput, QueryPlan, StageStats,
 };
 use columnar_kernels::Flavor;
 use parquet::arrow::ArrowWriter;
@@ -216,6 +216,11 @@ fn engine_answer_and_output(plan: &QueryPlan, path: &Path) -> ((i64, Option<f64>
     ((count, sum), result.plan_output)
 }
 
+/// The join's own stage, in a plan output.
+fn join_stage(output: &PlanOutput) -> &StageStats {
+    output.stages.iter().find(|stage| stage.stage == "join").expect("the plan had a join stage")
+}
+
 /// The scan that feeds the join answers the same as the one that does not.
 ///
 /// The lazy path probes the join **inside** the scan, before it copies
@@ -260,6 +265,66 @@ fn the_scan_that_feeds_the_join_answers_the_same() {
 
     let join = output.join.as_ref().expect("the plan had a join");
     assert!(join.probe_in_scan, "the scan did not feed the join");
+
+    let _ = std::fs::remove_file(build_path);
+    let _ = std::fs::remove_file(probe_path);
+}
+
+/// The two paths report the join's stage the same way.
+///
+/// The probe examined the same rows on both paths, and the join's stage says
+/// so: the rows the probe **read** are the join's input, and the rows it
+/// **kept** are its output.
+///
+/// Before this was fixed the cold path reported the rows that survived the
+/// probe as its input -- the selection was over the dataset the probe had
+/// already reduced -- and the two paths did not describe the same work. The
+/// cold path's stage read `216783 -> 216783` while the resident path's read
+/// `6000000 -> 216783`, for the same probe over the same six million rows.
+#[test]
+fn the_two_paths_report_the_join_s_the_same_work() {
+    // The probe side's keys are 1..=5 and the build side holds 2, 3, 3, 5
+    // and 9: one key twice, one key that no probe row has, and one probe
+    // row (key 4) that has no partner.
+    let probe_keys = vec![Some(1), Some(2), Some(3), Some(4), Some(5)];
+    let probe_values = vec![Some(10.0), Some(20.0), Some(30.0), Some(40.0), Some(50.0)];
+    let build_keys = vec![Some(2), Some(3), Some(3), Some(5), Some(9)];
+    let build_dates = vec![
+        Some("1994-01-01"),
+        Some("1994-02-01"),
+        Some("1994-03-01"),
+        Some("1994-04-01"),
+        Some("1994-05-01"),
+    ];
+
+    let build_path = temp_path("stage-build");
+    write_build(&build_path, &build_keys, &build_dates);
+    let probe_path = temp_path("stage-probe");
+    write_probe(&probe_path, &probe_keys, &probe_values);
+    let plan = join_plan(&build_path, Vec::new());
+
+    // The eager path materialises the probe side and probes it afterwards.
+    let dataset = probe_dataset(&probe_keys, &probe_values);
+    let eager = execute(&plan, &dataset, &scalar()).expect("the plan runs");
+    // The lazy path probes it inside the scan.
+    let (_, lazy) = engine_answer_and_output(&plan, &probe_path);
+
+    let eager_stage = join_stage(&eager.plan_output);
+    let lazy_stage = join_stage(&lazy);
+
+    assert_eq!(
+        eager_stage.rows_in, lazy_stage.rows_in,
+        "the two paths disagree about the join's input"
+    );
+    assert_eq!(
+        eager_stage.rows_out, lazy_stage.rows_out,
+        "the two paths disagree about the join's output"
+    );
+
+    // The probe read all five probe rows, and kept the four that matched:
+    // key 2 matches once, key 3 matches twice, and key 5 matches once.
+    assert_eq!(eager_stage.rows_in, 5);
+    assert_eq!(eager_stage.rows_out, 4);
 
     let _ = std::fs::remove_file(build_path);
     let _ = std::fs::remove_file(probe_path);

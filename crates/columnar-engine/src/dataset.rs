@@ -372,6 +372,15 @@ pub struct ScanOutput {
     /// The filter runs inside the scan, but it is the **join's** work, and the
     /// plan output reports it in the join's stage.
     pub filter_elapsed: std::time::Duration,
+    /// How many rows the filter looked at.
+    ///
+    /// The rows the filter **examined** are not the rows it kept: the join's
+    /// probe reads every row the pushed-down predicates left, and keeps only
+    /// the ones that match. The count is the join's input, and the join's
+    /// stage reports it, so that the two paths report the same work.
+    ///
+    /// A scan with no filter examined every row it read.
+    pub examined: usize,
 }
 
 /// Copies a batch into the dataset's columns, keeping the rows the mask keeps.
@@ -525,6 +534,7 @@ pub(crate) fn decode_batches_filtered(
     let mut rows = 0usize;
     let mut output: Vec<u32> = Vec::new();
     let mut filter_elapsed = std::time::Duration::ZERO;
+    let mut examined = 0usize;
     for batch in reader {
         let batch = batch.map_err(|error| DatasetError::Parquet(error.to_string()))?;
         let mask = match pushdown.evaluate_batch(&batch, flavor) {
@@ -534,11 +544,17 @@ pub(crate) fn decode_batches_filtered(
         };
         let Some(filter) = filter else {
             rows += push_whole_batch(&mut builders, &positions, &batch, mask.as_ref(), rows)?;
+            examined += batch.num_rows();
             continue;
         };
 
         // The filter's rows: the rows the join keeps, in the batch's own
         // positions, with the multiplicity the join gives them.
+        //
+        // The filter looked at the rows the pushed-down predicates left, and
+        // at every row of the batch when there were none: that is the join's
+        // input, and it is counted here, where the batch is in hand.
+        examined += mask.as_ref().map_or(batch.num_rows(), RowMask::count);
         let started = std::time::Instant::now();
         let kept = filter.keep(&batch, mask.as_ref())?;
         filter_elapsed += started.elapsed();
@@ -552,7 +568,12 @@ pub(crate) fn decode_batches_filtered(
     for builder in builders {
         chunks.push(builder.finish(rows)?);
     }
-    Ok(ScanOutput { dataset: Dataset::with_rows(chunks, rows), rows: output, filter_elapsed })
+    Ok(ScanOutput {
+        dataset: Dataset::with_rows(chunks, rows),
+        rows: output,
+        filter_elapsed,
+        examined,
+    })
 }
 
 /// The position of each materialised column in the projected batch.
@@ -1120,15 +1141,17 @@ pub(crate) fn merge_scans(parts: Vec<ScanOutput>) -> Result<ScanOutput, DatasetE
     let mut datasets = Vec::with_capacity(parts.len());
     let mut offset: u32 = 0;
     let mut filter_elapsed = std::time::Duration::ZERO;
+    let mut examined = 0usize;
     for part in parts {
         for row in part.rows {
             rows.push(row.saturating_add(offset));
         }
         offset = offset.saturating_add(u32::try_from(part.dataset.len()).unwrap_or(u32::MAX));
         filter_elapsed += part.filter_elapsed;
+        examined += part.examined;
         datasets.push(part.dataset);
     }
-    Ok(ScanOutput { dataset: merge(datasets)?, rows, filter_elapsed })
+    Ok(ScanOutput { dataset: merge(datasets)?, rows, filter_elapsed, examined })
 }
 
 /// Merges several datasets, in order, into one.

@@ -324,7 +324,7 @@ pub fn execute_on(
     // The clock starts **after** the build table is built: the table is the
     // join's work, and the join's stage reports it.
     let scan_started = std::time::Instant::now();
-    let (dataset, joined, filter_elapsed) = match &table {
+    let (dataset, joined, filter_elapsed, examined) = match &table {
         Some(table) => {
             let filter = operators::join::JoinFilter::new(&table.table, table.key);
             let output = source.read_filtered(
@@ -334,12 +334,13 @@ pub fn execute_on(
                 flavor,
                 workers,
             )?;
-            (output.dataset, Some(output.rows), output.filter_elapsed)
+            (output.dataset, Some(output.rows), output.filter_elapsed, output.examined)
         }
         None => (
             source.read(&decision.read, &decision.pushdown, flavor, workers)?,
             None,
             std::time::Duration::ZERO,
+            0,
         ),
     };
     let scan_elapsed = scan_started.elapsed();
@@ -362,8 +363,8 @@ pub fn execute_on(
 
     let build_elapsed = table.as_ref().map_or(std::time::Duration::ZERO, |table| table.elapsed);
     let build_rows = table.as_ref().map_or(0, |table| table.table.rows());
-    let streamed =
-        joined.map(|rows| StreamedJoin::new(rows, build_elapsed + filter_elapsed, build_rows));
+    let streamed = joined
+        .map(|rows| StreamedJoin::new(rows, build_elapsed + filter_elapsed, build_rows, examined));
 
     Pipeline {
         resolved: &effective,

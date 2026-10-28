@@ -52,6 +52,15 @@ memory, after the copy. The cold path's join stage is **24.2 ms**; the resident 
 reports **216,783** rows in and the resident path's **6,000,000**, for the same probe — so the two
 numbers are not even about the same thing, and neither is about what the stage *does*.
 
+> **The row counts are fixed, and the cause is named.** The cold path's stage reported the rows that
+> **survived** the probe, because the selection it was handed was over the dataset the probe had
+> **already reduced**. The reader now reports how many rows the filter **examined**, and the join's
+> stage reports that: both paths read `6000000 → 216783`, and the two stages describe the same work.
+> See **R5** and ADR-0034. The **times** above are unchanged — the change is in what the stage says,
+> not in what it does — and the comparison of the two paths' stages, which is the rest of this spec,
+> is still open.
+
+
 **So this spec does not assume there is a win.** It assumes there is a number that has never been
 taken apart, and that the number is worth naming either way. The premise is that the join's stage is
 the engine's own work on the query where the engine is level. **If the measurement shows the stage is

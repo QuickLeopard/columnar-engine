@@ -200,6 +200,13 @@ pub(crate) struct StreamedJoin {
     elapsed: std::time::Duration,
     /// How many build rows the table holds.
     build_rows: usize,
+    /// How many rows the probe examined.
+    ///
+    /// The probe read every row the pushed-down predicates left, and kept only
+    /// the ones that matched. This is the join's **input**, and the join's
+    /// stage reports it: the resident path's probe reads the same rows over
+    /// the same table, and the two stages must say the same thing.
+    examined: usize,
 }
 
 impl StreamedJoin {
@@ -208,8 +215,13 @@ impl StreamedJoin {
     /// The rows are the scan's own output, the elapsed time is the build
     /// table's construction plus the probe's cost, and the build rows are how
     /// many rows the table holds.
-    pub(crate) fn new(rows: Vec<u32>, elapsed: std::time::Duration, build_rows: usize) -> Self {
-        Self { rows, elapsed, build_rows }
+    pub(crate) fn new(
+        rows: Vec<u32>,
+        elapsed: std::time::Duration,
+        build_rows: usize,
+        examined: usize,
+    ) -> Self {
+        Self { rows, elapsed, build_rows, examined }
     }
 }
 
@@ -475,11 +487,17 @@ pub(crate) fn join_outcome(
         // The scan fed the join: the probe already happened, inside the
         // scan and before the copy, and the rows it produced are the
         // dataset's own row numbers.
+        //
+        // The stage's **input** is the rows the probe examined -- every row
+        // the pushed-down predicates left -- and not the rows that survived
+        // it. The resident path's probe reads the same rows, so the two
+        // stages report the same work.
+        //
         // The build side's file was opened before the scan, and it is the
         // join's own work.
         let stage = stage(
             "join",
-            Some((rows(selection.len()), rows(streamed.rows.len()))),
+            Some((rows(streamed.examined), rows(streamed.rows.len()))),
             streamed.elapsed + build.opened,
         );
         let report = explain::JoinReport {
