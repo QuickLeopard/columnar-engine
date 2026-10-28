@@ -32,6 +32,41 @@
 - [ ] The two paths' row counts are made comparable, or the difference between them is named in the
       plan output itself.
 
+## The decomposition
+
+**The review, bottom-up and top-down, found five rules with two owners each, a stage that reports
+two different things for the same work, and an estimate that is not an upper bound.** The fixes come
+first, in steps small enough to build, test and measure on their own, and the instrument measures
+the stage **after** them — so the published numbers are the numbers of the code that ships.
+
+- [ ] **Step 1 — the stage reports the rows the probe consumed.** The reader reports how many rows
+      the filter examined, and the join's stage reports that. The two paths then say
+      `6000000 → 216783` alike.
+- [ ] **Step 2 — the key's interface says how long the column is.** `KeySource` gains `len()`, and the
+      range check is made **once**, so "the row is in range" is one answer on both paths instead of
+      `None` on one and a panic on the other.
+- [ ] **Step 3 — the two key sources are compared.** A differential test holds `KeyColumn` and
+      `ArrowKeys` to the same columns — NULLs, strings, dictionaries, the plain-integer fast path,
+      and a row past the end — and they must agree, value for value.
+- [ ] **Step 4 — the type check is made once, from one source.** The two keys' types are resolved
+      where both are known, and an absent column is **refused** rather than silently typed `Int64`.
+- [ ] **Step 5 — the read decision is made once, in the scan.** The build side asks the scan the same
+      question the probe side does, with its own key as its materialised set; the operator no longer
+      reaches up into `crate::scan`, and a predicate the reader declined is evaluated **once**.
+- [ ] **Step 6 — the estimate is charged the way the read happens.** The build side's estimate counts
+      the file's rows, the read set the join decides to read, and the copies that read holds — and
+      it is **tested**, the way the other estimates are.
+- [ ] **Step 7 — the probe's type support is published by the key module.** The scan asks
+      `ArrowKeys` what the probe can read, instead of borrowing the pushdown's list, so a wrong "yes"
+      is refused at planning time rather than failing mid-read.
+- [ ] **Step 8 — the mapping is the plan's.** The join's copy of "the file's column is the dataset's
+      column" goes, and `plan::ColumnMapping` is the only one.
+- [ ] **Step 9 — the join's helpers take the context.** `ordered_stage`, `join_outcome` and
+      `build_streamed_table` are handed the pipeline's context, the way the other stages are.
+- [ ] **Step 10 — the documents say what the code does, and the dead surface goes.** The two stale
+      documents are corrected, and `KeyColumn::from_decoded`, `KeySlice`'s unread dictionary variants
+      and `KeySlice::integers` are removed.
+
 ## The change
 
 - [ ] Whatever the measurement shows is **not** the join's own work is removed -- or, if it cannot be

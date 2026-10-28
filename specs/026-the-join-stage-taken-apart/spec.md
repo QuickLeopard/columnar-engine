@@ -2,7 +2,7 @@
 
 **Status**: in progress
 **Started**: 2026-10-28
-**ADR**: to be written from the instrument's measurement
+**ADR**: [ADR-0034](../../docs/adr/0034-the-joins-rules.md) — the join's rules, and why each has one owner
 **Predecessor**: [025-the-sort-taken-apart](../025-the-sort-taken-apart/spec.md)
 
 ## The problem
@@ -101,11 +101,88 @@ The instrument's medians, the before and the after side by side, the reason for 
 and the raw reports committed. The gate derives every published figure from the committed reports,
 and the guard checks the figures **in the section that publishes them**.
 
+### R5 — The join's stage reports the rows the probe consumed
+
+**The two paths report different numbers for the same work, and the difference is the join's own.**
+
+Measured on `join-orders`, the resident path's join stage reads
+`join  6000000  216783` and the cold path's reads `join  216783  216783`. The probe examined
+**six million** rows on both paths. On the cold path the probe runs **inside** the reader, so the rows
+it examined are charged to the **scan** stage and the join's stage sees only what survived.
+
+The join's stage reports `selection.len()`, and the selection means different things on the two paths:
+on the cold path it is a selection over the dataset the probe **already reduced**, and on the resident
+path it is a selection over the whole dataset.
+
+**The reader reports how many rows the filter examined**, and the join's stage reports that. The two
+paths then say the same thing: `6000000 → 216783`, and the scan's stage says what it kept.
+
+### R6 — Every rule of the join has one owner
+
+Five rules of the join are written **twice**, in two modules, with nothing checking that the two
+copies agree:
+
+| rule | the two owners |
+|---|---|
+| **a NULL key never matches** | `KeyColumn::value_at` (the validity bitmap) and `ArrowKeys::value_at` (each variant's own `is_null`) |
+| **the two keys have the same type** | `pipeline.rs`'s streamed path (the **file's** schema) and its resident path (the **materialised** chunk) |
+| **what to read, and what to push down** | `operators/join.rs::decide_read` and `scan.rs::decide_scan` |
+| **the probe can read this column type** | `key.rs::ArrowKeys::new` and `scan.rs::pushdown_supports` |
+| **the file's column is the dataset's column** | `operators/join.rs::dataset_indices` and `plan::ColumnMapping::of` |
+
+**Each rule has one owner, and the other caller asks.** The NULL rule is stated once, in the
+interface both key sources implement, and the interface says how long the column is so that "the row
+is in range" has one answer. The type check is made once, from one source. The read decision is made
+once, in the module that owns the scan. The probe's type support is published by the key module and
+asked for by the scan. The mapping is the plan's.
+
+**And the two key sources are compared, not merely trusted.** The join's key lookup has **two**
+implementations, and the only test that compares the two paths uses **integer, non-NULL** keys. A
+differential test holds the two implementations to the same columns — NULLs, strings, dictionaries,
+the plain-integer fast path, and a row past the end — and they must agree, value for value.
+
+### R7 — The build side's memory estimate is an upper bound
+
+`estimate_build_side` is the one estimate with **no test**, and it is not an upper bound. It charges:
+
+- the **survivors** of the build filter, where the probe side's estimate charges the **file's rows** —
+  and the reader's peak is over the file's rows;
+- **one** copy of the read set, where the probe side's estimate charges the parallel read's **two**;
+- the **key column alone**, where the join reads the key **and every predicate the reader declined**.
+
+The budget is checked **before a row is read**, and a plan that passes the check is a plan that has
+done no work at all. That claim only holds if the estimate is an upper bound.
+
+**The estimate is charged the way the read actually happens**: the file's rows, the read set the join
+decides to read, and the copies that read holds. And it is **tested**, the way the other estimates are.
+
+### R8 — The join's helpers take the pipeline's context
+
+`ordered_stage` and `join_outcome` take **seven** parameters each, and `build_streamed_table` takes
+six — one below the line where clippy would complain. Spec 027 gave the pipeline a `Pipeline` context
+and moved these two helpers **verbatim**, leaving them behind.
+
+**The join's helpers take the context.** A new stage is handed the same context as the others, and a
+helper's parameter list stops being a copy of the context's fields.
+
+### R9 — The documents say what the code does
+
+Two documents say the **opposite** of what the code does:
+
+- `explain.rs` says "the scan's elapsed carries the probe's cost". It does not: the scan's elapsed
+  **excludes** the probe, and the join's stage **includes** it.
+- `memory.rs` says the join "abandons the direct table" when a key more than 255 build rows carry,
+  and that neither that case nor the overflow map is charged. The join keeps the table and spills the
+  count into the overflow map, and the overflow map **is** charged.
+
+**And the dead surface goes**: `KeyColumn::from_decoded` is unused, `KeySlice`'s dictionary variants
+are built and never read, and `KeySlice::integers` duplicates `KeyColumn::integer_values`.
+
 ## The scope
 
 **What this spec does not do, and why.**
 
-- **The scan is not touched.** It is **73.6 ms** of the cold query, and it is Arrow's decode of the
+- **The scan's stage is not changed.** It is **73.6 ms** of the cold query, and it is Arrow's decode of the
   two columns the query reads — the decode that was measured **three** times and **every time it was
   refused**. This spec is about the join's stage, and the scan's share of the join's stage is
   measured, not changed.
@@ -129,6 +206,22 @@ and the guard checks the figures **in the section that publishes them**.
   stage; it does not hide it, and it does not claim the engine's stage is smaller than it is.
 - **The join's plan is not changed.** No new plan, no new join type, no new operator. If the
   measurement shows the join's stage is at a floor, that is the finding, and it is published as one.
+
+> **The scope is amended, and the reason recorded.** The requirements above were written for a
+> **measurement**: take the stage apart, name the difference between the two paths, and publish.
+> The review that followed found that the measurement **cannot be made** as it stands, because the
+> two paths do not report the same work in the same place — the join's stage says
+> `216783 → 216783` on one path and `6000000 → 216783` on the other, for the same probe over the
+> same six million rows (R5). Five of the join's rules have two owners each (R6), the build side's
+> memory estimate is not an upper bound (R7), the join's helpers were left behind by spec 027's
+> context (R8), and two documents say the opposite of the code (R9).
+>
+> **So the structure is in scope, and the exclusions above still hold.** The table's shape, the
+> probe's hash, the reader and the plan are all untouched: what changes is **where a rule lives**,
+> **what the stage reports**, and **what the estimate charges**. A measurement of a stage that
+> reports two different things for the same work is not a measurement of the stage, and a budget
+> checked against an estimate that is not an upper bound is not a budget.
+
 
 ## The instrument
 
