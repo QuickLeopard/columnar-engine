@@ -61,8 +61,16 @@ that a ten-parameter function is the normal way to pass state around.
 
 `plan/spec.rs` holds what the caller writes. `plan/resolved.rs` holds what the executor reads.
 `plan/resolve.rs` holds the bridge between them: the name lookups, the type checks, and the
-mapping that moves the resolved plan onto the read set. The three modules have one direction of
-dependency: `resolve` knows both faces, and neither face knows `resolve`.
+late-materialisation policy. The three modules have one direction of dependency: `resolve` knows
+both faces, and neither face knows `resolve`.
+
+> **Amended after step 3, and the reason recorded.** The requirement as first written said the
+> bridge also held "the mapping that moves the resolved plan onto the read set". It does not: the
+> mapping answers *where a column went*, and the scan is what moved it -- so the mapping's
+> **type** is the resolved plan's own vocabulary (`plan/resolved.rs`) and the mapping itself is
+> produced by the scan's decision (`scan.rs`, `ScanDecision::mapping()`). A bridge that built the
+> mapping would have to know the read set before the scan had decided it. The requirement's
+> intent -- one way to move an index, and no panic doing it -- holds, and R2 states it.
 
 ### R2 — The mapping is one type, with one constructor, and it does not panic
 
@@ -70,11 +78,22 @@ The movement of a resolved plan's indices onto the read set is **one type** with
 constructor** and **one way to move an index**. The panic goes: an index that is not in the read
 set is a plan error the caller can see, not a crash inside the engine.
 
-### R3 — The scan's decision and the policy it acts on are in one module
+### R3 — The scan's decision and what it produces are in one module
 
-`scan.rs` holds `ScanDecision`, the decision that produces it, the **late-materialisation policy**
-that feeds it, and the mapping from the file's columns onto the read set. The policy's result
-crosses no module boundary: it is the decision's own input.
+`scan.rs` holds `ScanDecision`, the decision that produces it, and the **mapping** from the file's
+columns onto the read set. The **late-materialisation set** is the resolved plan's own named field,
+`materialised`: the bridge produces it, and the scan reads it by that name, so the boundary
+between them is a named field and not a bare vector.
+
+> **Amended after step 3, and the reason recorded.** The requirement as first written said the
+> late-materialisation **policy** would move into `scan.rs` with the decision. It does not, and it
+> cannot: the policy answers *what the query reads*, and only the bridge knows that -- the bridge
+> is where the plan's column names become indices. Putting the policy in `scan.rs` would make the
+> bridge depend on the scan and the scan depend on the bridge, and the cycle would close. What
+> crosses the boundary is the policy's **result**, as a named field of the resolved plan, which is
+> what the policy was for without the cycle. The requirement's *intent* -- that the scan's view of
+> the file lives in one module -- holds, and more tightly than first written: `ScanDecision` now
+> has a `mapping()` method, so the read set and the mapping it implies cannot drift apart.
 
 ### R4 — The pipeline's state is a context, not ten parameters
 
@@ -134,7 +153,7 @@ published tables are unchanged. This increment moves code; it does not change be
 |---|---|---|
 | the surface | `lib.rs` | the error, the options, `execute`, `execute_on`, the story |
 | the orchestration | `pipeline.rs` | the stages, in the plan's order |
-| the decisions | `scan.rs` | what to read, what to push down, which columns are decoded, the mapping |
+| the decisions | `scan.rs` | what to read, what to push down, the mapping, and whether the scan feeds the join |
 | the bridge | `plan/resolve.rs` | names to indices, the type checks, the column mapping |
 | the two faces | `plan/spec.rs`, `plan/resolved.rs` | what the caller writes; what the executor reads |
 | the leaves | `operators/`, `columnar-core` | the computations; the vocabulary |
@@ -165,7 +184,7 @@ x86-64, and leaves the published figures exactly where they were.
 |---|---|---|
 | 1 | `plan/` | `plan.rs` becomes `plan/{mod,spec,resolved,resolve}.rs` — a move, and nothing else |
 | 2 | the mapping | the four `remap` siblings become one `ColumnMapping` type, and the panic goes |
-| 3 | `scan.rs` | the scan's decision, the materialisation policy and the mapping leave the crate root |
+| 3 | `scan.rs` | the scan's decision and the mapping it produces leave the crate root |
 | 4 | `pipeline.rs` | the pipeline leaves the crate root, and its ten parameters become a context |
 | 5 | one stage shape | the four stage idioms become one |
 | 6 | the estimates | `estimate_join` and `estimate_sort` join the other estimates in `memory.rs` |

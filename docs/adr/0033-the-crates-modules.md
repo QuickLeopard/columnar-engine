@@ -72,10 +72,12 @@ the sort → the project → the evaluate → the aggregate → the plan output.
    representations, and the bridge between them (`plan/resolve.rs`) is the only module that knows
    both.
 2. **A decision and what it produces live together.** The scan's decision and the **mapping** it
-   produces are both in `scan.rs`, so the reader's view of the file — what it fetched, and where
-   each column went — is in one place. The **late-materialisation set** is the resolved plan's own
-   named field, `materialised`: the bridge produces it and the scan reads it by that name, so the
-   boundary between them is a named field and not a bare vector.
+   produces are both in `scan.rs` — `ScanDecision::mapping()` builds it — so the reader's view of
+   the file — what it fetched, and where each column went — is in one place. The mapping's *type*
+   is the resolved plan's own vocabulary and lives in `plan/resolved.rs`. The **late-materialisation
+   set** is the resolved plan's own named field, `materialised`: the bridge produces it and the
+   scan reads it by that name, so the boundary between them is a named field and not a bare
+   vector.
 3. **The crate root is the surface.** `lib.rs` is what a reader opens first: the error, the
    options, the two entry points, and the story. The machinery is in the module that owns it. The
    pipeline and the scan's decision are `pub(crate)` modules of the crate, not modules of its
