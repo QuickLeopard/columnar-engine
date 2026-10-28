@@ -1,6 +1,6 @@
 # Spec 024 — The time the plan output does not name — tasks
 
-**Status**: in progress
+**Status**: done
 **Spec**: [spec.md](spec.md)
 
 ## The instrument

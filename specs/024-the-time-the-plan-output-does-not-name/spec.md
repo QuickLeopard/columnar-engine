@@ -1,7 +1,8 @@
 # Spec 024 — The time the plan output does not name
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-28
+**Finished**: 2026-10-28
 **ADR**: [ADR-0031](../../docs/adr/0031-the-time-the-plan-output-does-not-name.md) — written from the instrument's measurement
 **Predecessor**: [023-the-scan-that-feeds-the-join](../023-the-scan-that-feeds-the-join/spec.md)
 
