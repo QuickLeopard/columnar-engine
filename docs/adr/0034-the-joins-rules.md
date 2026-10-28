@@ -63,7 +63,8 @@ And two things the measurement depended on were **wrong**:
 6. **The reader reports what the filter examined**, and the join's stage reports that, so the two
    paths report the same work in the same place.
 7. **The estimate is charged the way the read happens**: the file's rows, the read set the join
-   decides to read, and the copies that read holds — and it is tested.
+   decides to read, the copies that read holds, the keys the join collects, and the filter's own mask
+   — and it is tested.
 
 ### The decision moved, and the reason is recorded
 

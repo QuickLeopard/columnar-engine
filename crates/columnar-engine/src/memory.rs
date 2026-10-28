@@ -34,9 +34,16 @@
 //! The build side is charged for what it really costs, and the file's own
 //! statistics are what say so:
 //!
-//! - The **dataset** the build side's rows are read into is the rows that
-//!   can survive the build filter, times the key's width, plus the validity
-//!   bitmap. The rows that can survive are bounded from the filter column's
+//! - The **dataset** the build side's rows are read into is the **file's rows**
+//!   -- the peak is during the read, when every row of the file is still in
+//!   flight -- over every column the read takes, times the **copies** the read
+//!   holds at once. The read set is the **reader's own decision**, so the
+//!   estimate asks the reader what the build side's read takes and charges
+//!   exactly the columns the join reads: the key, and every column of a
+//!   predicate the reader declined.
+//! - The **keys** the join collects out of that dataset, and the **filter's**
+//!   mask and selection when the reader declined a predicate. The rows that
+//!   can survive the build filter are bounded from the filter column's
 //!   **row-group statistics**: a row group whose own range cannot satisfy a
 //!   predicate holds no row that can, so its rows are not counted.
 //! - The **table** the join builds. The estimate mirrors the join's own
@@ -333,43 +340,112 @@ fn type_width(data_type: DataType) -> usize {
 
 /// Estimates the working set of a join's **build side**, in bytes.
 ///
-/// The build side is read, filtered, and turned into a table. The estimate
-/// is made over the **file**, before a single row of it is read, and it has
-/// two parts:
+/// The build side is read, filtered, and turned into a table. The estimate is
+/// made over the **file**, before a single row of it is read, and it has
+/// three parts:
 ///
-/// - The **dataset** the build side's rows are read into: the rows that can
-///   survive the build filter, times the key's width, plus the validity
-///   bitmap.
-/// - The **table** the join builds over those rows: the direct-addressed one
-///   when the key is an integer and its range fits, and the hash table
-///   otherwise.
+/// - The **dataset** the read holds: the **file's rows**, over every column
+///   the read takes, and over the **copies** the read holds at once.
+/// - The **keys** the join collects out of that dataset, and the **filter's**
+///   mask and selection when the reader declined a predicate.
+/// - The **table** the join builds over the rows that survive: the
+///   direct-addressed one when the key is an integer and its range fits, and
+///   the hash table otherwise.
 ///
-/// The rows that can survive the build filter come from the filter column's
-/// own **row-group statistics**: a row group whose own range cannot satisfy a
-/// predicate holds no row that can satisfy it, so its rows are not counted,
-/// and the columns of the filter are combined by taking the tightest of them.
-/// A filter column with no statistics, or a predicate the statistics cannot
-/// be compared against, falls back to every row of the file.
+/// The **read set is the reader's own decision**: the estimate asks the reader
+/// what the build side's read takes, so it charges exactly the columns the
+/// join reads -- the key, and every column of a predicate the reader
+/// declined -- rather than a copy of the rules that guesses at them.
+///
+/// The rows charged are the **file's**, not the rows that survive the build
+/// filter, because the peak is during the read: every row of the file is
+/// still in flight then. The estimate is an upper bound.
+///
+/// `threads` is the read's thread count, and it decides the **peak**: one
+/// thread decodes straight into one dataset and holds one copy of it, and a
+/// parallel read holds every part at once and then the merged result, so it
+/// holds **two**.
 #[must_use]
 pub fn estimate_build_side(
     source: &ParquetSource,
     build_key: &str,
     build_filter: &[Predicate],
+    threads: usize,
 ) -> usize {
     let rows = source.rows();
     if rows == 0 {
         return 0;
     }
 
+    let read = build_read(source, build_key, build_filter);
     let survivors = surviving_rows(source, build_filter, rows);
-    let width = source
+
+    // The dataset the read holds: the file's rows, over every column of the
+    // read set, and over the copies the read holds at once.
+    let mut dataset = 0usize;
+    for &index in &read.columns {
+        let width = source.columns().get(index).map_or(8, |column| type_width(column.data_type));
+        dataset =
+            dataset.saturating_add(rows.saturating_mul(width).saturating_add(rows.div_ceil(8)));
+    }
+    let workers = source.worker_count(threads);
+    let mut bytes = dataset.saturating_mul(read_copies(workers));
+
+    // The keys the join collects out of the dataset, and the filter's mask
+    // and selection when the engine's own filter has to apply a predicate.
+    bytes = bytes.saturating_add(survivors.saturating_mul(key_width(source, build_key)));
+    if read.declined {
+        bytes = bytes.saturating_add(rows.div_ceil(8).saturating_mul(2));
+    }
+
+    bytes.saturating_add(build_table_bytes(source, build_key, survivors))
+}
+
+/// What the build side's read takes, and what the engine's filter has to do.
+struct BuildRead {
+    /// The file's root indices the read takes.
+    columns: Vec<usize>,
+    /// Whether the reader declined a predicate, so the engine's filter runs.
+    declined: bool,
+}
+
+/// The build side's read, as the **reader** decides it.
+///
+/// The estimate asks the reader the same question the join asks, so the two
+/// cannot disagree about what is read. A decision that cannot be made -- a
+/// key the file does not have, or a predicate whose column it does not have
+/// -- falls back to the key alone: the plan is refused before the read
+/// anyway, and refusing a plan is not the estimate's job.
+fn build_read(source: &ParquetSource, build_key: &str, build_filter: &[Predicate]) -> BuildRead {
+    let Some(key) = source.column_index(build_key) else {
+        return BuildRead { columns: Vec::new(), declined: false };
+    };
+    let Ok(filters) = crate::plan::resolve_filters(source, build_filter) else {
+        return BuildRead { columns: vec![key], declined: false };
+    };
+    match source.decide_read(&[key], &filters) {
+        Ok(decision) => {
+            BuildRead { columns: decision.read, declined: !decision.declined.is_empty() }
+        }
+        Err(_) => BuildRead { columns: vec![key], declined: false },
+    }
+}
+
+/// The bytes one collected key takes.
+///
+/// An **integer** key is collected into a vector of `i64`s: eight bytes a key.
+/// Every other key is collected into a vector of the join's own key type,
+/// which holds a string header beside the value: thirty-two bytes a key.
+fn key_width(source: &ParquetSource, build_key: &str) -> usize {
+    let data_type = source
         .columns()
         .iter()
         .find(|column| column.name == build_key)
-        .map_or(8, |column| type_width(column.data_type));
-
-    let dataset = survivors.saturating_mul(width).saturating_add(survivors.div_ceil(8));
-    dataset.saturating_add(build_table_bytes(source, build_key, survivors))
+        .map(|column| column.data_type);
+    match data_type {
+        Some(DataType::Float64 | DataType::Utf8) => 32,
+        Some(DataType::Int64) | None => 8,
+    }
 }
 
 /// The bytes the table the join builds over its build side takes.
@@ -600,12 +676,19 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 /// The join's build side is hashed, and the hash table holds one entry per
 /// distinct key, so the build side's row count bounds it. A plan with no
 /// join has no build side, and costs nothing here.
+///
+/// `threads` is the read's thread count: the build side's read holds one copy
+/// of what it reads when it is single-threaded, and two when it is parallel.
 #[must_use]
-pub fn estimate_plan_join(join: Option<&ResolvedJoin>, source: Option<&ParquetSource>) -> usize {
+pub fn estimate_plan_join(
+    join: Option<&ResolvedJoin>,
+    source: Option<&ParquetSource>,
+    threads: usize,
+) -> usize {
     let (Some(join), Some(source)) = (join, source) else {
         return 0;
     };
-    estimate_build_side(source, &join.spec.build_key, &join.spec.build_filter)
+    estimate_build_side(source, &join.spec.build_key, &join.spec.build_filter, threads)
 }
 
 /// Estimates the working set of a plan's **sort**, in bytes.

@@ -162,7 +162,7 @@ the plain-integer fast path, and a row past the end — and they must agree, val
 
 ### R7 — The build side's memory estimate is an upper bound
 
-`estimate_build_side` is the one estimate with **no test**, and it is not an upper bound. It charges:
+`estimate_build_side` is not an upper bound. It charges:
 
 - the **survivors** of the build filter, where the probe side's estimate charges the **file's rows** —
   and the reader's peak is over the file's rows;
@@ -174,6 +174,14 @@ done no work at all. That claim only holds if the estimate is an upper bound.
 
 **The estimate is charged the way the read actually happens**: the file's rows, the read set the join
 decides to read, and the copies that read holds. And it is **tested**, the way the other estimates are.
+
+> **The premise was corrected, and the reason is recorded.** The requirement said the estimate was the
+> one with **no test**. It has tests — seven of them — but none of them held it to the claim this
+> requirement makes, that it is an **upper bound**, and the tests that pinned its formula pinned a
+> formula that is not one. The estimate is now charged the way the read happens, and the tests pin
+> that: the file's rows, the read set the **reader** decides to read, the copies the read holds, the
+> keys the join collects out of the rows that survive, and the filter's own mask and selection. The
+> estimate asks the reader the same question the join asks, so the two cannot drift apart.
 
 ### R8 — The join's helpers take the pipeline's context
 

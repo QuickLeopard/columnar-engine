@@ -58,9 +58,11 @@ the stage **after** them — so the published numbers are the numbers of the cod
       reader rather than staying in `scan.rs`, because the build side and the estimate are below the
       scan and nothing below may depend on anything above it; the reason is recorded in the spec and
       in ADR-0034.
-- [ ] **Step 6 — the estimate is charged the way the read happens.** The build side's estimate counts
-      the file's rows, the read set the join decides to read, and the copies that read holds — and
-      it is **tested**, the way the other estimates are.
+- [x] **Step 6 — the estimate is charged the way the read happens.** The build side's estimate counts
+      the file's rows, the read set the **reader** decides to read, the copies that read holds, the
+      keys the join collects, and the filter's own mask — and it is **tested**, the way the other
+      estimates are. The estimate asks the reader the same question the join asks, so the two cannot
+      drift apart.
 - [ ] **Step 7 — the probe's type support is published by the key module.** The scan asks
       `ArrowKeys` what the probe can read, instead of borrowing the pushdown's list, so a wrong "yes"
       is refused at planning time rather than failing mid-read.

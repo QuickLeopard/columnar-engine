@@ -202,7 +202,11 @@ pub fn execute(
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = memory::estimate_resolved(&resolved, dataset, grouped)
-        .saturating_add(memory::estimate_plan_join(resolved.join.as_ref(), build.source()))
+        .saturating_add(memory::estimate_plan_join(
+            resolved.join.as_ref(),
+            build.source(),
+            options.threads.unwrap_or(1),
+        ))
         .saturating_add(memory::estimate_plan_sort(resolved.sort.as_ref(), dataset.len()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
@@ -302,7 +306,11 @@ pub fn execute_on(
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = memory::estimate_lazy_read(source, &decision.read, workers, grouped)
-        .saturating_add(memory::estimate_plan_join(resolved.join.as_ref(), build.source()))
+        .saturating_add(memory::estimate_plan_join(
+            resolved.join.as_ref(),
+            build.source(),
+            options.threads.unwrap_or(1),
+        ))
         .saturating_add(memory::estimate_plan_sort(resolved.sort.as_ref(), source.rows()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));

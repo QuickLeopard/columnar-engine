@@ -231,14 +231,59 @@ fn the_build_side_estimate_is_at_least_the_space_the_table_really_needs() {
 
     // The key is an integer in a range that fits, so the join builds the
     // direct-addressed table: one byte a key, over the key's own range.
-    let estimate = estimate_build_side(&source, "k", &filter);
+    let estimate = estimate_build_side(&source, "k", &filter, 1);
     assert!(estimate >= ROWS, "the estimate is below the direct-addressed table");
 
-    // The survivors' dataset: the key's width, and the validity bitmap.
-    assert!(
-        estimate >= REAL_SURVIVORS * 8 + REAL_SURVIVORS.div_ceil(8),
-        "the estimate is below the survivors' dataset"
-    );
+    // The dataset the read holds: the file's rows, over the key's width and
+    // the validity bitmap. The peak is during the read, when every row of
+    // the file is still in flight.
+    assert!(estimate >= ROWS * 8 + ROWS.div_ceil(8), "the estimate is below the file's rows");
+}
+
+#[test]
+fn the_build_side_estimate_is_charged_the_read_the_join_reads() {
+    let source = source("build-read");
+    let filter = date_filter();
+
+    // The read set is the **reader's** decision, and the estimate asks the
+    // reader the same question the join asks: the key, and every column of a
+    // predicate the reader declined. The estimate cannot charge a different
+    // set, because it never writes the rules out a second time.
+    //
+    // The file's rows over the key's width and the validity bitmap, the keys
+    // the join collects out of the rows that survive, and the table it builds
+    // over them.
+    let dataset = ROWS * 8 + ROWS.div_ceil(8);
+    let keys = REAL_SURVIVORS * 8;
+    let table = ROWS + overflow_bytes(REAL_SURVIVORS);
+    assert_eq!(estimate_build_side(&source, "k", &filter, 1), dataset + keys + table);
+}
+
+#[test]
+fn a_parallel_read_is_charged_two_copies() {
+    let source = source("build-copies");
+    let filter = date_filter();
+
+    // One thread decodes straight into the dataset and holds one copy of it.
+    // A parallel read holds every part at once and then the merged result, so
+    // it holds **two** -- and the estimate charges the peak, not the result.
+    let one = estimate_build_side(&source, "k", &filter, 1);
+    let many = estimate_build_side(&source, "k", &filter, 8);
+    assert!(many > one, "the parallel read is not charged its peak");
+    assert_eq!(many - one, ROWS * 8 + ROWS.div_ceil(8));
+}
+
+#[test]
+fn a_predicate_the_reader_declined_is_charged_the_filters_own_mask() {
+    let source = source("build-declined");
+
+    // A predicate over the **key** is declined: the key is already being
+    // read, so the engine's filter applies it over the rows that survived,
+    // and the filter holds a mask and a selection vector over them.
+    let on_the_key = vec![Predicate::new("k", ComparisonOp::GtEq, 0_i64)];
+    let estimate = estimate_build_side(&source, "k", &on_the_key, 1);
+    let without = estimate_build_side(&source, "k", &[], 1);
+    assert_eq!(estimate - without, ROWS.div_ceil(8) * 2);
 }
 
 #[test]
@@ -248,7 +293,7 @@ fn a_build_side_whose_key_cannot_be_addressed_is_charged_the_hash_table() {
     // A float key cannot be addressed by its own value, so the join builds a
     // hash table over the rows that survive the filter: a row a surviving
     // row.
-    let estimate = estimate_build_side(&source, "v", &date_filter());
+    let estimate = estimate_build_side(&source, "v", &date_filter(), 1);
     assert!(
         estimate >= REAL_SURVIVORS * HASH_ENTRY_BYTES,
         "the estimate is below the hash table the join may build"
@@ -262,7 +307,7 @@ fn the_build_side_estimate_covers_the_worst_case() {
     // Without a filter every row of the file can survive, and the hash table
     // over every row is the largest table the join may build. The key is a
     // float here, so that is the table the join builds.
-    let estimate = estimate_build_side(&source, "v", &[]);
+    let estimate = estimate_build_side(&source, "v", &[], 1);
     assert!(
         estimate >= ROWS * HASH_ENTRY_BYTES,
         "the estimate is below the table the worst case needs"
@@ -274,8 +319,8 @@ fn a_filtered_build_side_costs_no_more_than_an_unfiltered_one() {
     let source = source("build-filtered");
     let filter = date_filter();
 
-    let unfiltered = estimate_build_side(&source, "k", &[]);
-    let filtered = estimate_build_side(&source, "k", &filter);
+    let unfiltered = estimate_build_side(&source, "k", &[], 1);
+    let filtered = estimate_build_side(&source, "k", &filter, 1);
 
     assert!(filtered <= unfiltered, "a filter cannot make the build side cost more");
     assert!(filtered < unfiltered, "the filter does not narrow the estimate");
@@ -295,13 +340,14 @@ fn the_build_side_bound_is_exactly_the_row_groups_that_can_survive() {
         assert_eq!(group.rows, GROUP_ROWS, "a row group holds a hundred rows");
     }
 
-    // The estimate is the survivors' dataset -- the key's width and the
-    // validity bitmap -- and the table the join will build: the
-    // direct-addressed one, a byte a key over the key's own range, and the
-    // overflow map beside it.
-    let dataset = REAL_SURVIVORS * 8 + REAL_SURVIVORS.div_ceil(8);
+    // The estimate is the file's rows over the key's width and the validity
+    // bitmap, the keys the join collects out of the rows that survive, and
+    // the table the join will build: the direct-addressed one, a byte a key
+    // over the key's own range, and the overflow map beside it.
+    let dataset = ROWS * 8 + ROWS.div_ceil(8);
+    let keys = REAL_SURVIVORS * 8;
     let table = ROWS + overflow_bytes(REAL_SURVIVORS);
-    assert_eq!(estimate_build_side(&source, "k", &filter), dataset + table);
+    assert_eq!(estimate_build_side(&source, "k", &filter, 1), dataset + keys + table);
 }
 
 #[test]
@@ -312,8 +358,8 @@ fn a_row_group_that_cannot_satisfy_the_filter_is_not_counted() {
     // that group, and the estimate falls by its rows.
     let wide = vec![Predicate::new("d", ComparisonOp::GtEq, "2020-01-01")];
     let narrow = vec![Predicate::new("d", ComparisonOp::GtEq, "2020-01-06")];
-    let wide_estimate = estimate_build_side(&source, "k", &wide);
-    let narrow_estimate = estimate_build_side(&source, "k", &narrow);
+    let wide_estimate = estimate_build_side(&source, "k", &wide, 1);
+    let narrow_estimate = estimate_build_side(&source, "k", &narrow, 1);
     assert!(narrow_estimate < wide_estimate, "the narrower filter does not cost less");
 }
 
@@ -324,13 +370,13 @@ fn a_build_side_the_statistics_cannot_bound_costs_every_row() {
     // A filter on a column the file has no statistics for cannot narrow the
     // estimate, so it falls back to every row.
     let unknown = vec![Predicate::new("nope", ComparisonOp::GtEq, 1_i64)];
-    let unfiltered = estimate_build_side(&source, "k", &[]);
-    assert_eq!(estimate_build_side(&source, "k", &unknown), unfiltered);
+    let unfiltered = estimate_build_side(&source, "k", &[], 1);
+    assert_eq!(estimate_build_side(&source, "k", &unknown, 1), unfiltered);
 
     // A column whose values have no place on a line -- a float, say -- is no
     // better: its statistics cannot say how many rows a range lets through.
     let float = vec![Predicate::new("v", ComparisonOp::GtEq, 1.0_f64)];
-    assert_eq!(estimate_build_side(&source, "k", &float), unfiltered);
+    assert_eq!(estimate_build_side(&source, "k", &float, 1), unfiltered);
 }
 
 #[test]
@@ -340,13 +386,14 @@ fn the_build_side_charges_the_table_the_join_will_build() {
     // The key column's range fits the budget, so the join builds the
     // direct-addressed table: one byte a key, over the key's own range.
     assert!(direct_table_fits(u64::try_from(ROWS).expect("the row count fits")));
-    let estimate = estimate_build_side(&source, "k", &[]);
-    assert_eq!(estimate, ROWS * 8 + ROWS.div_ceil(8) + ROWS + overflow_bytes(ROWS));
+    let estimate = estimate_build_side(&source, "k", &[], 1);
+    assert_eq!(estimate, ROWS * 8 + ROWS.div_ceil(8) + ROWS * 8 + ROWS + overflow_bytes(ROWS));
 
     // A key that cannot be addressed by its own value is charged the hash
-    // table over the rows that survive.
-    let hashed = estimate_build_side(&source, "v", &[]);
-    assert_eq!(hashed, ROWS * 8 + ROWS.div_ceil(8) + ROWS * HASH_ENTRY_BYTES);
+    // table over the rows that survive -- and its keys are collected into
+    // the join's own key type, which is wider than an integer.
+    let hashed = estimate_build_side(&source, "v", &[], 1);
+    assert_eq!(hashed, ROWS * 8 + ROWS.div_ceil(8) + ROWS * 32 + ROWS * HASH_ENTRY_BYTES);
 }
 
 #[test]
