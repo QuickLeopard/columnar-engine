@@ -1,7 +1,8 @@
 # Spec 026 — The join's stage, taken apart
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-28
+**Finished**: 2026-10-28
 **ADR**: [ADR-0034](../../docs/adr/0034-the-joins-rules.md) — the join's rules, and why each has one owner
 · [ADR-0035](../../docs/adr/0035-the-join-stage-taken-apart.md) — the join's stage, taken apart
 **Predecessor**: [025-the-sort-taken-apart](../025-the-sort-taken-apart/spec.md)
