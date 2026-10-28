@@ -435,8 +435,8 @@ share of it is **measured, not asserted**: the resident `join-orders` rose from 
 code on this same host, back to back — where the old code reads **25.1 ms**, so the code's share is
 **1.5 ms** and the rest is the machine's. The other seven figures moved by a few percent, **in no
 common direction**, and **the machine's share of them is the whole of it**: the engine's resident
-`q6` fell from **9.5 ms** to **9.4 ms**, `DuckDB`'s from **35.0 ms** to **35.0 ms**, `Polars`' from
-**81.0 ms** to **78.9 ms**, and the peer's from **86.5 ms** to **85.8 ms**.
+`q6` fell from **9.5 ms** to **9.4 ms**, `DuckDB`'s did not move at all (**35.0 ms** in both sets),
+`Polars`' fell from **81.0 ms** to **78.9 ms**, and the peer's from **86.5 ms** to **85.8 ms**.
 
 ### 2b. Cold — read the Parquet file and answer in one go
 
@@ -497,8 +497,8 @@ the ten largest `l_extendedprice` values — is **39.5 ms** for the engine (38.9
 `DuckDB`'s **38.0 ms**, the peer's **39.8 ms** and `Polars`' **1398.0 ms** (1386.5–1400.9 ms): the
 engine is **1.04× behind DuckDB** and **1.01× behind the peer**, and it was **1.05× ahead of DuckDB**
 in the set this one replaces — and **39× ahead of `Polars`** there. The sort's own code is **untouched**
-by this increment, and the engine's cold `sort-topk` moved **1.3 ms** while DuckDB's did not move at
-all: the machine's share of it is the whole of it.
+by this increment, and the engine's cold `sort-topk` moved **2.3 ms** while DuckDB's moved the other way,
+**−1.0 ms**: the machine's share of it is the whole of it.
 
 **Both are published as they are.** A hash join's build side has to be in memory before the probe
 side can be looked up, so the engine reads the `orders` file whole before it probes anything — and
