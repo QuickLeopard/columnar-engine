@@ -33,9 +33,9 @@
 - [ ] A unit test **inside `operators/join.rs`** — the tables are private — holds a `DirectTable` over a
       key that carries 300 build rows and a key that carries three against a `HashedTable` over the same
       keys, compared key by key (R2).
-- [ ] *a build key more than 255 rows carry still counts every one* — the overflow map's semantics.
-- [ ] *a probe key below the table's base matches nothing* — the range rule, and the fact captured after
-      the build loop.
+- [ ] *a build key more than 255 rows carry still counts every one* — the overflow map's semantics, and
+      the fact captured after the build loop.
+- [ ] *a probe key below the table's base matches nothing* — the range rule.
 - [ ] *a NULL key never matches on either side* — the NULL rule.
 - [ ] The join's rows, their order and their count are the same rows; the aggregate's value is the same
       number.

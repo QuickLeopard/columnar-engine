@@ -103,8 +103,8 @@ knows what "does not change" means:
 
 | test | what it holds |
 |---|---|
-| `crates/columnar-engine/tests/join.rs` — *a build key more than 255 rows carry still counts every one* | the overflow map's semantics: a key's count is not lost when its byte fills |
-| `crates/columnar-engine/tests/join.rs` — *a probe key below the table's base matches nothing* | the range rule, and the emptiness fact captured after the build loop |
+| `crates/columnar-engine/tests/join.rs` — *a build key more than 255 rows carry still counts every one* | the overflow map's semantics: a key's count is not lost when its byte fills — and the fact captured **after** the build loop, because a fact captured before it would count the key 255 times |
+| `crates/columnar-engine/tests/join.rs` — *a probe key below the table's base matches nothing* | the range rule |
 | `crates/columnar-engine/tests/join.rs` — *a NULL key never matches on either side* | the NULL rule, which the map does not touch |
 
 The **hashed** path is untouched: a table that is not direct-addressed never consults a map. The direct
