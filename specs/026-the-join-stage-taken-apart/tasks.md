@@ -45,7 +45,7 @@ the stage **after** them — so the published numbers are the numbers of the cod
 - [ ] **Step 2 — the key's interface says how long the column is.** `KeySource` gains `len()`, and the
       range check is made **once**, so "the row is in range" is one answer on both paths instead of
       `None` on one and a panic on the other.
-- [ ] **Step 3 — the two key sources are compared.** A differential test holds `KeyColumn` and
+- [x] **Step 3 — the two key sources are compared.** A differential test holds `KeyColumn` and
       `ArrowKeys` to the same columns — NULLs, strings, dictionaries, the plain-integer fast path,
       and a row past the end — and they must agree, value for value.
 - [ ] **Step 4 — the type check is made once, from one source.** The two keys' types are resolved

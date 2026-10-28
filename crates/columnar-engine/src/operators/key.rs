@@ -46,10 +46,17 @@ pub trait KeySource {
     /// A column with no NULLs is read without touching its validity bitmap.
     fn has_nulls(&self) -> bool;
 
-    /// The column's plain integers, if it holds integers plainly.
+    /// The column's plain integers, if it holds integers plainly **and holds
+    /// no NULLs**.
     ///
     /// It is what opens the join's fast path: an integer key read straight
     /// out of the column, with no enum and no validity bitmap.
+    ///
+    /// A column that holds NULLs is not that. A NULL row has no value, and
+    /// the two sources do not agree on what sits in its slot -- the engine's
+    /// own column keeps what was there and the reader's array keeps a zero.
+    /// Neither is the value, because there is none. So a column with NULLs
+    /// has no plain integers, and it is read a row at a time.
     fn integer_values(&self) -> Option<&[i64]>;
 
     /// The value at a row **in range**, if it holds one.
@@ -182,7 +189,7 @@ impl KeySource for ArrowKeys<'_> {
 
     fn integer_values(&self) -> Option<&[i64]> {
         match self {
-            Self::Int64(values) => Some(values.values()),
+            Self::Int64(values) if values.null_count() == 0 => Some(values.values()),
             _ => None,
         }
     }
@@ -415,14 +422,20 @@ impl<'a> KeyColumn<'a> {
         }
     }
 
-    /// The column's integer values, if it holds integers.
+    /// The column's integer values, if it holds integers and holds no NULLs.
     ///
     /// The values are the column's own: a dictionary-encoded column is read
     /// through its dictionary, and this is the plain column only. It is what
     /// opens the join's fast path -- an integer key read straight out of the
     /// column, with no enum and no validity bitmap.
+    ///
+    /// A column that holds NULLs has none: a NULL row's slot holds what was
+    /// there, and that is not a value.
     #[must_use]
     pub fn integer_values(&self) -> Option<&'a [i64]> {
+        if self.nulls {
+            return None;
+        }
         match &self.values {
             KeyValues::Int64(values) => Some(values),
             _ => None,
