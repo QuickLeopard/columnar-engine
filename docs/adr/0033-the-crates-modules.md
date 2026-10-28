@@ -86,7 +86,7 @@ and the crate root's re-exports stay where they are, so the change is invisible 
 
 ## Consequences
 
-- **`lib.rs` is 378 lines**, down from 1310, and it is a reader's first stop rather than the place
+- **`lib.rs` is 384 lines**, down from 1310, and it is a reader's first stop rather than the place
   the pipeline lives.
 - **A new stage is one module and one shape.** R5 of the spec: every stage reports in one shape,
   so the plan output is assembled in one place.
