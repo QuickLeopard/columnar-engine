@@ -14,7 +14,7 @@ and x86-64, and leaves the published figures exactly where they were.
       constructor and one way to move an index. The panic in `remap_index` goes.
 - [x] **Step 3 — `scan.rs`.** The scan's decision and the mapping it produces leave the crate
       root and live beside each other.
-- [ ] **Step 4 — `pipeline.rs`.** The pipeline leaves the crate root, and `run_pipeline`'s ten
+- [x] **Step 4 — `pipeline.rs`.** The pipeline leaves the crate root, and `run_pipeline`'s ten
       parameters become a context. `#[allow(clippy::too_many_arguments)]` is gone.
 - [ ] **Step 5 — one stage shape.** The four stage idioms become one, so the plan output is
       assembled in one place.

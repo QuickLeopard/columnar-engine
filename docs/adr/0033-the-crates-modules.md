@@ -11,7 +11,7 @@ Plan 001 named the crates and, inside `columnar-engine`, named five things: a **
 **operators**, a **plan**, a **memory budget** and a **plan output**. Those became `source.rs` and
 `dataset.rs`, `operators/`, `plan.rs`, `memory.rs` and `explain.rs`.
 
-Five years of increments later — the join, the sort, the dictionary, the pushdown, the attribution
+Four days of increments later — the join, the sort, the dictionary, the pushdown, the attribution
 — left two files carrying seven jobs between them:
 
 - `plan.rs`, **756 lines**: the plan the caller writes, the resolution, the plan the executor

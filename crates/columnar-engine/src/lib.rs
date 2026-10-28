@@ -86,11 +86,19 @@ pub mod operators;
 pub mod plan;
 pub mod pushdown;
 pub mod queries;
-pub mod scan;
 pub mod source;
+
+// The pipeline and the scan's decision are the engine's own machinery. They
+// are modules of the crate, not of its public surface: nothing outside the
+// crate names them, and the public surface is the crate root's re-exports.
+pub(crate) mod pipeline;
+pub(crate) mod scan;
 
 use columnar_kernels::Flavor;
 
+use crate::pipeline::{
+    build_key_type, require_same_key_type, rows, BuildSide, Pipeline, StreamedJoin,
+};
 use crate::plan::ColumnSchema;
 use crate::scan::{decide_scan, fetched_columns, pushdown_supports, ScanDecision, ScanReport};
 
@@ -196,7 +204,7 @@ pub fn execute(
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = memory::estimate_resolved(&resolved, dataset, grouped)
-        .saturating_add(estimate_join(resolved.join.as_ref(), build.source.as_ref()))
+        .saturating_add(estimate_join(resolved.join.as_ref(), build.source()))
         .saturating_add(estimate_sort(&resolved, dataset.len()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
@@ -217,34 +225,19 @@ pub fn execute(
 
     // The eager path reads the whole file before the plan runs, so the join's
     // probe cannot happen inside the scan: there is no scan to feed.
-    run_pipeline(&resolved, dataset, options, scan, report, estimate, 1, &build, None, started)
-}
-
-/// The join's build side: the file, and how long it took to open it.
-///
-/// The opening is the join's own work, so it is reported in the join's
-/// stage: the plan output accounts for the whole query, and a file opened
-/// outside every stage is a hole in that account.
-struct BuildSide {
-    /// The build side's file, when the plan has a join.
-    source: Option<ParquetSource>,
-    /// How long it took to open it.
-    opened: std::time::Duration,
-}
-
-impl BuildSide {
-    /// Opens the join's build side, if the plan has a join.
-    ///
-    /// The build side is a file of its own, and it is read through the
-    /// engine's own source -- the same reader settings as any other file.
-    fn open(join: Option<&plan::ResolvedJoin>) -> Result<Self, EngineError> {
-        let started = std::time::Instant::now();
-        let source = match join {
-            Some(join) => Some(ParquetSource::open(&join.spec.build_path)?),
-            None => None,
-        };
-        Ok(Self { source, opened: started.elapsed() })
+    Pipeline {
+        resolved: &resolved,
+        dataset,
+        options,
+        build: &build,
+        started,
+        scan,
+        report,
+        estimate,
+        workers: 1,
+        streamed: None,
     }
+    .run()
 }
 
 /// The estimate for the join's build side.
@@ -333,7 +326,7 @@ pub fn execute_on(
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = memory::estimate_lazy_read(source, &decision.read, workers, grouped)
-        .saturating_add(estimate_join(resolved.join.as_ref(), build.source.as_ref()))
+        .saturating_add(estimate_join(resolved.join.as_ref(), build.source()))
         .saturating_add(estimate_sort(&resolved, source.rows()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
@@ -353,7 +346,7 @@ pub fn execute_on(
     let mut build_elapsed = std::time::Duration::ZERO;
     let mut table = None;
     if let (Some(key), Some(spec), Some(build_source)) =
-        (streamed, resolved.join.as_ref(), build.source.as_ref())
+        (streamed, resolved.join.as_ref(), build.source())
     {
         // The join's two keys must have the same type, and the check happens
         // before the table is built: a plan error is refused having read
@@ -419,29 +412,27 @@ pub fn execute_on(
         pushdown_metrics: decision.pushdown.metrics(),
     };
 
-    let streamed = joined.map(|rows| StreamedJoin {
-        rows,
-        elapsed: build_elapsed + filter_elapsed,
-        build_rows: table.map_or(0, |(table, _)| table.rows()),
+    let streamed = joined.map(|rows| {
+        StreamedJoin::new(
+            rows,
+            build_elapsed + filter_elapsed,
+            table.map_or(0, |(table, _)| table.rows()),
+        )
     });
 
-    run_pipeline(
-        &effective, &dataset, options, scan, report, estimate, workers, &build, streamed, started,
-    )
-}
-
-/// A join the scan fed.
-///
-/// The scan probed the join's key before it copied anything, so the join's
-/// output rows are already the dataset's own row numbers.
-struct StreamedJoin {
-    /// The join's output rows: the dataset's own row numbers, one per output
-    /// row.
-    rows: Vec<u32>,
-    /// The build table's construction, and the probe's cost.
-    elapsed: std::time::Duration,
-    /// How many build rows the table holds.
-    build_rows: usize,
+    Pipeline {
+        resolved: &effective,
+        dataset: &dataset,
+        options,
+        build: &build,
+        started,
+        scan,
+        report,
+        estimate,
+        workers,
+        streamed,
+    }
+    .run()
 }
 
 /// The join's key column in the reader's projection, when the scan can feed
@@ -467,708 +458,4 @@ fn streamed_join(
     }
     let projection = source::scan_projection(&decision.read, &decision.pushdown);
     projection.iter().position(|&index| index == join.probe_key)
-}
-
-/// Runs the pipeline over an already-resolved plan.
-///
-/// `started` is the clock the **whole** query is measured against: the plan
-/// output accounts for the query, so the account starts before the plan is
-/// resolved.
-#[allow(clippy::too_many_arguments)]
-fn run_pipeline(
-    resolved: &plan::ResolvedPlan,
-    dataset: &Dataset,
-    options: &ExecOptions,
-    scan: StageStats,
-    report: ScanReport,
-    estimate: usize,
-    workers: usize,
-    build: &BuildSide,
-    streamed: Option<StreamedJoin>,
-    started: std::time::Instant,
-) -> Result<AggregateResult, EngineError> {
-    let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
-    // How many workers the operators may use. The filter's blocks are
-    // 64-row aligned and the projection's are larger, so the two can end up
-    // with different worker counts -- and the plan reports the count that
-    // actually ran for each of them, not the count that was asked for.
-    let operator_workers = options.threads.unwrap_or(1).max(1);
-
-    // --- filter -----------------------------------------------------------
-    // A predicate that was pushed into the reader has already been applied,
-    // and its column is not in the dataset. The filters left here are the
-    // ones the reader did not take, and the conjunction is separable, so
-    // applying them now gives the same answer.
-    //
-    // A plan with no filter at all does not run the filter: every row
-    // survives, and the selection is built here rather than by the filter
-    // operator -- the core's own "every row" selection leaves the padding
-    // bits of its last word set, and walking it would visit rows past the
-    // end of the batch.
-    let filter_started = std::time::Instant::now();
-    let (selection, filter_stats) = if resolved.filter.is_empty() {
-        (columnar_core::SelectionVector::all(dataset.len()), None)
-    } else {
-        let (selection, stats) = operators::filter::filter_all_with_workers(
-            dataset,
-            &resolved.filter,
-            flavor,
-            operator_workers,
-        )?;
-        (selection, Some(stats))
-    };
-    let filter_workers = filter_stats.as_ref().map_or(1, |stats| stats.workers);
-    let filter_stage = filter_stats.map(|stats| StageStats {
-        stage: "filter".to_owned(),
-        rows_in: stats.rows_in,
-        rows_out: stats.rows_out,
-        elapsed: filter_started.elapsed(),
-    });
-
-    // --- join and sort ----------------------------------------------------
-    // The two optional stages decide which rows the aggregate reads, so they
-    // run before the aggregate's input is materialised. A plan with neither
-    // of them takes the plain path, where the aggregate reads the filter's
-    // survivors.
-    let ordered = ordered_stage(resolved, dataset, &selection, build, options, flavor, streamed)?;
-
-    // The materialisation set is built **after** the filter, because it needs
-    // the filter's selection: the columns it gathers are the survivors'
-    // rows.
-    let mut materialised = operators::project::Materialised::with_workers(
-        dataset,
-        selection,
-        options.threads.unwrap_or(1),
-    );
-
-    // --- project ----------------------------------------------------------
-    // The project stage materialises exactly the columns the rest of the
-    // plan reads. A column that is neither filtered nor aggregated is never
-    // decoded: that is the late materialisation the plan output reports.
-    //
-    // A column that only a **global** aggregate reads, and reads as a plain
-    // column, is not materialised at all: the aggregate folds it where it
-    // lies, over the filter's selection, and the copy this stage would have
-    // made is never made. See
-    // [ADR-0016](../../../docs/adr/0016-the-aggregate-reads-in-place.md).
-    let project_started = std::time::Instant::now();
-    let (aggregate_rows, fusable) =
-        project_stage(resolved, dataset, &mut materialised, ordered.as_ref());
-    // The projection does not change the row count: the join and the sort
-    // do, and they report their own counts.
-    //
-    // The count is the rows the projection was **handed**, which is not
-    // always the filter's survivors: behind a join or a sort the projection
-    // gathers only the rows those stages decided on. The plan output used to
-    // report the survivors' count here, which made a projection that
-    // gathered 216,783 rows over six million look like it had gathered six
-    // million.
-    let survivors = materialised.selection().len();
-    let handed = if ordered.is_some() { aggregate_rows } else { survivors };
-    let project_stage = StageStats {
-        stage: "project".to_owned(),
-        rows_in: rows(handed),
-        rows_out: rows(handed),
-        elapsed: project_started.elapsed(),
-    };
-
-    // --- evaluate ---------------------------------------------------------
-    // An aggregate over an expression needs the expression's value, and the
-    // expression's value is a column. So the expression is evaluated over the
-    // rows that survived the filter -- SQL applies WHERE before the
-    // aggregate, and so does this -- and the aggregate sums the result.
-    //
-    // The aggregate operator does not know that the column it is summing was
-    // computed rather than read. That is the point: a computed column is a
-    // column, so the aggregate's NULL rules, its type rules and its
-    // saturation all keep working, and the differential tests that cover them
-    // cover this path too.
-    let evaluate_started = std::time::Instant::now();
-    let (computed, evaluated) = evaluate_aggregates(resolved, &materialised, aggregate_rows)?;
-    let evaluate_stage = if evaluated {
-        Some(StageStats {
-            stage: "evaluate".to_owned(),
-            rows_in: rows(aggregate_rows),
-            rows_out: rows(aggregate_rows),
-            elapsed: evaluate_started.elapsed(),
-        })
-    } else {
-        None
-    };
-
-    // --- aggregate --------------------------------------------------------
-    let mut groups: Vec<Group> = Vec::new();
-    let aggregate_stage = if let Some(aggregate) = &resolved.aggregate {
-        let start = std::time::Instant::now();
-        groups =
-            run_aggregate(aggregate, dataset, &materialised, &computed, &fusable, aggregate_rows);
-        Some(StageStats {
-            stage: "aggregate".to_owned(),
-            rows_in: rows(aggregate_rows),
-            rows_out: rows(groups.len()),
-            elapsed: start.elapsed(),
-        })
-    } else {
-        None
-    };
-
-    // The stages are reported in the **plan's** order -- scan, filter,
-    // project, join, sort, aggregate -- and not in the order the work ran
-    // in: the materialisation of the aggregate's input runs after the join
-    // and the sort, because they decide which rows it holds.
-    let stages: Vec<StageStats> = [
-        Some(scan),
-        filter_stage,
-        Some(project_stage),
-        ordered.as_ref().and_then(|ordered| ordered.join_stage.clone()),
-        ordered.as_ref().and_then(|ordered| ordered.sort_stage.clone()),
-        evaluate_stage,
-        aggregate_stage,
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    let plan_output = PlanOutput {
-        optimization_order: plan::OPTIMIZATION_ORDER,
-        stages: stages.clone(),
-        materialised_columns: materialised.materialised_names(),
-        estimated_bytes: estimate,
-        budget_bytes: options.memory_budget.bytes,
-        kernel_flavor: operators::flavor_name(flavor).to_owned(),
-        pushed_down: report.pushed_down,
-        columns_read: report.columns_read,
-        pushdown_metrics: report.pushdown_metrics,
-        threads: workers,
-        filter_workers,
-        projection_workers: materialised.projection_workers(),
-        join: ordered.as_ref().and_then(|ordered| ordered.join.clone()),
-        sort: ordered.as_ref().and_then(|ordered| ordered.sort.clone()),
-        // The account of the whole query: the stages add up to this, and
-        // whatever fell outside them is named rather than hidden.
-        attribution: explain::Attribution::of(started.elapsed(), &stages),
-    };
-
-    Ok(AggregateResult { groups, stages, plan_output })
-}
-
-/// The rows the stages behind the filter read, when a join or a sort decided
-/// them.
-struct Ordered {
-    /// The dataset's own row numbers, in the order the aggregate reads them.
-    ///
-    /// A row may be named more than once: a join produces one row per match.
-    rows: Vec<u32>,
-    /// The join's stage statistics, if the plan had a join.
-    join_stage: Option<StageStats>,
-    /// The sort's stage statistics, if the plan had a sort.
-    sort_stage: Option<StageStats>,
-    /// What the join did, for the plan output.
-    join: Option<explain::JoinReport>,
-    /// What the sort did, for the plan output.
-    sort: Option<explain::SortReport>,
-}
-
-/// Runs the join and the sort, if the plan has them.
-///
-/// The result is the list of the dataset's rows the aggregate reads, in the
-/// order it reads them. A plan with neither stage takes the plain path, and
-/// this returns `None`.
-fn ordered_stage(
-    resolved: &plan::ResolvedPlan,
-    dataset: &Dataset,
-    selection: &columnar_core::SelectionVector,
-    build: &BuildSide,
-    options: &ExecOptions,
-    flavor: Flavor,
-    streamed: Option<StreamedJoin>,
-) -> Result<Option<Ordered>, EngineError> {
-    if resolved.join.is_none() && resolved.sort.is_none() {
-        return Ok(None);
-    }
-
-    let join = join_outcome(resolved, dataset, selection, build, options, flavor, streamed)?;
-    let sort = sort_outcome(resolved, dataset, selection, join.rows.as_deref())?;
-
-    // The rows the aggregate reads: the sort's output when the plan has a
-    // sort, and the join's output when it has a join and no sort. A plan
-    // with neither stage returned above.
-    let rows = match sort.rows {
-        Some(sorted) => sorted,
-        None => join.rows.unwrap_or_else(|| selection.collect_rows()),
-    };
-
-    Ok(Some(Ordered {
-        rows,
-        join_stage: join.stage,
-        sort_stage: sort.stage,
-        join: join.report,
-        sort: sort.report,
-    }))
-}
-
-/// What the join did, and the rows it produced.
-struct JoinOutcome {
-    /// The rows the join produced, when the plan had a join.
-    rows: Option<Vec<u32>>,
-    /// The join's stage statistics, when the plan had a join.
-    stage: Option<StageStats>,
-    /// What the join did, for the plan output.
-    report: Option<explain::JoinReport>,
-}
-
-/// Runs the join, if the plan has one.
-///
-/// The survivors' own row numbers in the dataset are what the join works
-/// in, so the join's output is a list of the same numbers: there is no
-/// second numbering, and no vector of positions that has to be walked to get
-/// from one to the other.
-///
-/// The numbers are **not** collected first. A plan with no filter has six
-/// million of them, and a list of them is twenty-four megabytes that the
-/// allocator has to hand out for rows the probe reads once. The probe is
-/// handed the selection, and reads the rows as it needs them.
-fn join_outcome(
-    resolved: &plan::ResolvedPlan,
-    dataset: &Dataset,
-    selection: &columnar_core::SelectionVector,
-    build: &BuildSide,
-    options: &ExecOptions,
-    flavor: Flavor,
-    streamed: Option<StreamedJoin>,
-) -> Result<JoinOutcome, EngineError> {
-    let Some(spec) = &resolved.join else {
-        return Ok(JoinOutcome { rows: None, stage: None, report: None });
-    };
-
-    if let Some(streamed) = streamed {
-        // The scan fed the join: the probe already happened, inside the
-        // scan and before the copy, and the rows it produced are the
-        // dataset's own row numbers.
-        let stage = StageStats {
-            stage: "join".to_owned(),
-            rows_in: rows(selection.len()),
-            rows_out: rows(streamed.rows.len()),
-            // The build side's file was opened before the scan, and it is
-            // the join's own work.
-            elapsed: streamed.elapsed + build.opened,
-        };
-        let report = explain::JoinReport {
-            probe_key: spec.spec.probe_key.clone(),
-            build_key: spec.spec.build_key.clone(),
-            build_file: file_name(&spec.spec.build_path),
-            build_rows: streamed.build_rows,
-            output_rows: streamed.rows.len(),
-            probe_in_scan: true,
-        };
-        return Ok(JoinOutcome {
-            rows: Some(streamed.rows),
-            stage: Some(stage),
-            report: Some(report),
-        });
-    }
-
-    let started = std::time::Instant::now();
-    let source = build.source.as_ref().ok_or_else(|| {
-        EngineError::Parquet("the plan has a join but its build side was not opened".to_owned())
-    })?;
-    require_same_key_type(
-        dataset
-            .chunks
-            .get(spec.probe_key)
-            .map_or(columnar_core::DataType::Int64, columnar_core::ColumnChunk::data_type),
-        build_key_type(source, &spec.spec.build_key),
-    )?;
-    let table = operators::join::build_table(
-        source,
-        &spec.spec,
-        flavor,
-        source.worker_count(options.threads.unwrap_or(1)),
-    )?;
-    let keys = key_column(dataset, spec.probe_key)?;
-    // The probe reads the survivors' rows as it needs them. A selection
-    // that holds every row is the **range**, and the range is handed over
-    // as a range: the probe's own loop then keeps its state where it can
-    // be kept, and there is no list of row numbers to build.
-    let matched = match selection.all_rows() {
-        Some(range) => operators::join::probe_rows(&table, &keys, range),
-        None => operators::join::probe_rows(&table, &keys, selection.iter()),
-    };
-    let stage = StageStats {
-        stage: "join".to_owned(),
-        rows_in: rows(selection.len()),
-        rows_out: rows(matched.len()),
-        // The build side's file was opened before the pipeline ran, and it
-        // is the join's own work.
-        elapsed: started.elapsed() + build.opened,
-    };
-    let report = explain::JoinReport {
-        probe_key: spec.spec.probe_key.clone(),
-        build_key: spec.spec.build_key.clone(),
-        build_file: file_name(&spec.spec.build_path),
-        build_rows: table.rows(),
-        output_rows: matched.len(),
-        probe_in_scan: false,
-    };
-    Ok(JoinOutcome { rows: Some(matched), stage: Some(stage), report: Some(report) })
-}
-
-/// What the sort did, and the rows it kept.
-struct SortOutcome {
-    /// The sort's output rows, when the plan had a sort.
-    rows: Option<Vec<u32>>,
-    /// The sort's stage statistics, when the plan had a sort.
-    stage: Option<StageStats>,
-    /// What the sort did, for the plan output.
-    report: Option<explain::SortReport>,
-}
-
-/// Runs the sort, if the plan has one.
-///
-/// The sort is handed the rows the join produced, when there is a join, and
-/// the filter's survivors when there is not. Both are the dataset's own row
-/// numbers, so the sort's key is one lookup.
-///
-/// The rows are handed over as they are: a sort with a limit keeps the best
-/// `limit` rows and drops the rest, so it never needs more than the heap
-/// and the row it is looking at.
-fn sort_outcome(
-    resolved: &plan::ResolvedPlan,
-    dataset: &Dataset,
-    selection: &columnar_core::SelectionVector,
-    joined: Option<&[u32]>,
-) -> Result<SortOutcome, EngineError> {
-    let Some(spec) = &resolved.sort else {
-        return Ok(SortOutcome { rows: None, stage: None, report: None });
-    };
-
-    let started = std::time::Instant::now();
-    let keys = key_column(dataset, spec.column)?;
-    let handed = joined.map_or(selection.len(), <[u32]>::len);
-    // The sort is handed the rows the join produced, when there is a join,
-    // and the filter's survivors when there is not. Both are the dataset's
-    // own row numbers, so the sort's key is one lookup -- and a selection
-    // that holds every row is the range, handed over as a range.
-    let sorted = match joined {
-        Some(rows) => operators::sort::sort_rows(
-            rows.iter().copied(),
-            &keys,
-            spec.spec.descending,
-            spec.spec.limit,
-        ),
-        None => match selection.all_rows() {
-            Some(range) => {
-                operators::sort::sort_rows(range, &keys, spec.spec.descending, spec.spec.limit)
-            }
-            None => operators::sort::sort_rows(
-                selection.iter(),
-                &keys,
-                spec.spec.descending,
-                spec.spec.limit,
-            ),
-        },
-    };
-    let stage = StageStats {
-        stage: "sort".to_owned(),
-        rows_in: rows(handed),
-        rows_out: rows(sorted.len()),
-        elapsed: started.elapsed(),
-    };
-    let report = explain::SortReport {
-        column: spec.spec.column.clone(),
-        descending: spec.spec.descending,
-        limit: spec.spec.limit,
-        rows: sorted.len(),
-    };
-    Ok(SortOutcome { rows: Some(sorted), stage: Some(stage), report: Some(report) })
-}
-
-/// The column at `index`, read one row at a time.
-fn key_column(
-    dataset: &Dataset,
-    index: usize,
-) -> Result<operators::key::KeyColumn<'_>, EngineError> {
-    let chunk = dataset.chunks.get(index).ok_or_else(|| {
-        EngineError::UnknownColumn("a column the plan reads is not in range".to_owned())
-    })?;
-    Ok(operators::key::KeyColumn::from_chunk(chunk))
-}
-
-/// Rejects a join whose two keys have different types.
-///
-/// The engine never casts silently: joining an `int64` key to a `utf8` one
-/// is a plan error rather than something to paper over.
-fn require_same_key_type(
-    probe_type: columnar_core::DataType,
-    build_type: columnar_core::DataType,
-) -> Result<(), EngineError> {
-    if probe_type != build_type {
-        return Err(EngineError::TypeMismatch(format!(
-            "the join's probe key is {} but the build key is {}",
-            probe_type.name(),
-            build_type.name()
-        )));
-    }
-    Ok(())
-}
-
-/// The type of a column of the build side, by name.
-fn build_key_type(source: &ParquetSource, build_key: &str) -> columnar_core::DataType {
-    source
-        .columns()
-        .iter()
-        .find(|column| column.name == build_key)
-        .map_or(columnar_core::DataType::Int64, |column| column.data_type)
-}
-
-/// The name of a file, without its directory.
-fn file_name(path: &std::path::Path) -> String {
-    path.file_name()
-        .map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned())
-}
-
-/// Materialises the columns the stages behind the filter read.
-///
-/// The plain path gathers the columns over the filter's survivors. The
-/// **ordered** path -- the path a join or a sort takes -- gathers them over
-/// the rows the join and the sort decided, which is what keeps the
-/// aggregate's input down to the rows it actually reads.
-///
-/// Returns the number of rows the aggregate reads, and the columns it may
-/// read where they lie. The ordered path has none: the aggregate reads a
-/// list of rows, not a selection, so there is nothing to read in place.
-fn project_stage(
-    resolved: &plan::ResolvedPlan,
-    dataset: &Dataset,
-    materialised: &mut operators::project::Materialised<'_>,
-    ordered: Option<&Ordered>,
-) -> (usize, Vec<usize>) {
-    let fusable = match ordered {
-        Some(_) => Vec::new(),
-        None => fusable_columns(resolved, dataset),
-    };
-    let aggregate_columns =
-        resolved.aggregate.as_ref().map_or_else(Vec::new, plan::ResolvedAggregate::columns);
-    for &column in &resolved.materialised {
-        if fusable.contains(&column) {
-            materialised.note_read_in_place(column);
-        } else if ordered.is_some() && !aggregate_columns.contains(&column) {
-            // The join's key and the sort's column are read where they lie:
-            // the join probes them one row at a time and the sort compares
-            // them, and neither needs a copy of the column.
-            materialised.note_read_in_place(column);
-        } else if let Some(ordered) = ordered {
-            materialised.gather_rows(column, &ordered.rows);
-        } else {
-            materialised.gather(column);
-        }
-    }
-    let rows = match ordered {
-        Some(ordered) => ordered.rows.len(),
-        None => materialised.selection().len(),
-    };
-    (rows, fusable)
-}
-
-/// Runs the aggregation over the rows that survived the filter.
-///
-/// A **global** aggregation folds the survivors one after another, so it never
-/// needs the survivors' values aligned with anything: the columns it reads
-/// are read where they lie, and no column of the survivors is built.
-///
-/// A **grouped** aggregation needs its keys aligned with its values, and the
-/// hash table wants both. Every column is gathered there.
-fn run_aggregate(
-    aggregate: &plan::ResolvedAggregate,
-    dataset: &Dataset,
-    materialised: &operators::project::Materialised<'_>,
-    computed: &[Option<columnar_core::BatchColumn>],
-    fusable: &[usize],
-    selected_rows: usize,
-) -> Vec<Group> {
-    if aggregate.group_by.is_empty() {
-        let values = global_value_sources(aggregate, dataset, materialised, computed, fusable);
-        return operators::aggregate::aggregate_global(&aggregate.spec, &values, selected_rows);
-    }
-
-    let group_by: Vec<&columnar_core::BatchColumn> =
-        aggregate.group_by.iter().map(|&index| materialised.gathered_ref(index)).collect();
-    let values: Vec<Option<&columnar_core::BatchColumn>> = aggregate
-        .aggregates
-        .iter()
-        .zip(computed.iter())
-        .map(|(function, computed)| {
-            if let plan::ResolvedAggregateFn::Sum { expr } = function {
-                if let plan::ResolvedExpr::Column { index, .. } = expr {
-                    return Some(materialised.gathered_ref(*index));
-                }
-                return computed.as_ref();
-            }
-            function.columns().first().map(|&index| materialised.gathered_ref(index))
-        })
-        .collect();
-    operators::aggregate::aggregate(&aggregate.spec, &group_by, &values, selected_rows)
-}
-
-/// The columns the aggregate can read where they lie.
-///
-/// A column qualifies when three things are true:
-///
-/// 1. The aggregation is **global** -- one group. A grouped aggregation
-///    needs the survivors' values aligned with the survivors' keys, and the
-///    gathered column is that alignment.
-/// 2. The column is read by a **plain** aggregate -- a sum over the column, a
-///    count, a min or a max -- and by nothing else. A column an
-///    *expression* reads needs its values aligned with the survivors too,
-///    because the expression is evaluated over the survivors.
-/// 3. The column's **encoding** can be read one row at a time. A
-///    run-length-encoded column holds runs, not values, so reading one of its
-///    rows means finding the run the row falls in.
-///
-/// A column that fails any of the three is gathered, exactly as it always
-/// was.
-fn fusable_columns(resolved: &plan::ResolvedPlan, dataset: &Dataset) -> Vec<usize> {
-    let Some(aggregate) = &resolved.aggregate else {
-        return Vec::new();
-    };
-    if !aggregate.group_by.is_empty() {
-        return Vec::new();
-    }
-
-    let mut plain: Vec<usize> = Vec::new();
-    let mut expression: Vec<usize> = Vec::new();
-    for function in &aggregate.aggregates {
-        match function {
-            plan::ResolvedAggregateFn::Sum { expr } => match expr {
-                plan::ResolvedExpr::Column { index, .. } => plain.push(*index),
-                other => expression.extend(other.columns()),
-            },
-            plan::ResolvedAggregateFn::Count { column }
-            | plan::ResolvedAggregateFn::Min { column }
-            | plan::ResolvedAggregateFn::Max { column } => plain.push(*column),
-            plan::ResolvedAggregateFn::CountStar => {}
-        }
-    }
-
-    // A column an expression reads is gathered, whatever else reads it.
-    plain.retain(|column| !expression.contains(column));
-    plain.retain(|column| {
-        dataset
-            .chunks
-            .get(*column)
-            .and_then(operators::aggregate::SelectedColumn::from_chunk)
-            .is_some()
-    });
-    plain.sort_unstable();
-    plain.dedup();
-    plain
-}
-
-/// The source of each global aggregate's values.
-///
-/// A column that only a plain aggregate reads, and whose encoding can be read
-/// where it lies, is read where it lies: the aggregate folds it over the
-/// filter's selection, and the projection never copies it. Everything else is
-/// gathered.
-fn global_value_sources<'x>(
-    aggregate: &plan::ResolvedAggregate,
-    dataset: &'x Dataset,
-    materialised: &'x operators::project::Materialised<'_>,
-    computed: &'x [Option<columnar_core::BatchColumn>],
-    fusable: &[usize],
-) -> Vec<operators::aggregate::ValueSource<'x>> {
-    aggregate
-        .aggregates
-        .iter()
-        .zip(computed.iter())
-        .map(|(function, computed)| match function {
-            plan::ResolvedAggregateFn::Sum { expr } => match expr {
-                plan::ResolvedExpr::Column { index, .. } => {
-                    if fusable.contains(index) {
-                        selected_source(dataset, materialised, *index)
-                    } else {
-                        operators::aggregate::ValueSource::Gathered(
-                            materialised.gathered_ref(*index),
-                        )
-                    }
-                }
-                _ => operators::aggregate::ValueSource::Gathered(
-                    computed
-                        .as_ref()
-                        .expect("an aggregate over an expression has a computed column"),
-                ),
-            },
-            plan::ResolvedAggregateFn::CountStar => operators::aggregate::ValueSource::Rows,
-            plan::ResolvedAggregateFn::Count { column }
-            | plan::ResolvedAggregateFn::Min { column }
-            | plan::ResolvedAggregateFn::Max { column } => {
-                if fusable.contains(column) {
-                    selected_source(dataset, materialised, *column)
-                } else {
-                    operators::aggregate::ValueSource::Gathered(materialised.gathered_ref(*column))
-                }
-            }
-        })
-        .collect()
-}
-
-/// The source of a column the aggregate reads where it lies.
-fn selected_source<'x>(
-    dataset: &'x Dataset,
-    materialised: &'x operators::project::Materialised<'_>,
-    index: usize,
-) -> operators::aggregate::ValueSource<'x> {
-    let chunk = dataset.chunks.get(index).expect("a materialised column index is in range");
-    let column = operators::aggregate::SelectedColumn::from_chunk(chunk)
-        .expect("a fusable column's encoding can be read where it lies");
-    operators::aggregate::ValueSource::Selected {
-        column,
-        validity: &chunk.validity,
-        selection: materialised.selection(),
-    }
-}
-
-/// Evaluates the aggregates' expressions over the rows that survived the
-/// filter.
-///
-/// Returns one computed column per aggregate -- `None` for the aggregates
-/// that did not need one -- and whether anything was computed at all.
-///
-/// A sum over a **plain column** needs no evaluation: the column is already
-/// materialised, and the aggregate reads it directly. Only a computed
-/// expression needs the stage, and only then does the stage appear in the
-/// plan output.
-fn evaluate_aggregates(
-    resolved: &plan::ResolvedPlan,
-    materialised: &operators::project::Materialised<'_>,
-    rows: usize,
-) -> Result<(Vec<Option<columnar_core::BatchColumn>>, bool), EngineError> {
-    let mut computed: Vec<Option<columnar_core::BatchColumn>> = Vec::new();
-    let mut evaluated = false;
-    let Some(aggregate) = &resolved.aggregate else {
-        return Ok((computed, evaluated));
-    };
-    for function in &aggregate.aggregates {
-        let value = if let plan::ResolvedAggregateFn::Sum { expr } = function {
-            if let plan::ResolvedExpr::Column { .. } = expr {
-                None
-            } else {
-                evaluated = true;
-                Some(operators::expr::evaluate(
-                    expr,
-                    &|index| materialised.gathered_ref(index),
-                    rows,
-                )?)
-            }
-        } else {
-            None
-        };
-        computed.push(value);
-    }
-    Ok((computed, evaluated))
-}
-
-/// Converts a row count into the `u64` the statistics use.
-fn rows(count: usize) -> u64 {
-    u64::try_from(count).unwrap_or(u64::MAX)
 }
