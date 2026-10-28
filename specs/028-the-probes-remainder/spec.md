@@ -1,8 +1,11 @@
 # Spec 028 — The probe's remainder
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-28
+**Finished**: 2026-10-28
 **Amended**: 2026-10-28 — the bottom-up and top-down review's findings, with the reasons recorded below.
+**ADR**: [ADR-0035](../../docs/adr/0035-the-join-stage-taken-apart.md) — the join's stage, taken apart
+· [ADR-0036](../../docs/adr/0036-the-probes-remainder-taken.md) — the probe's remainder, taken
 **Predecessor**: [026-the-join-stage-taken-apart](../026-the-join-stage-taken-apart/spec.md)
 
 ## The problem

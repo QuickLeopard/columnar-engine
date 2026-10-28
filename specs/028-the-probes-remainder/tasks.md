@@ -1,6 +1,6 @@
 # Spec 028 — The probe's remainder
 
-**Status**: in progress
+**Status**: done
 **Spec**: [spec.md](spec.md)
 
 ## The measurement comes first
@@ -69,6 +69,6 @@
 
 ## The gate
 
-- [ ] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check, the
+- [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check, the
       published-figures guard and the page checks all green.
-- [ ] CI green, and the spec's status is `done` with the date it finished.
+- [x] CI green, and the spec's status is `done` with the date it finished.
