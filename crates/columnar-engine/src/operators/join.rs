@@ -295,7 +295,13 @@ struct DirectTable {
     /// here instead, and the table keeps the shape that made the probe a
     /// single load. There are few enough of them to bound: every entry here
     /// accounts for at least 256 build rows.
-    overflow: HashMap<i64, u32>,
+    ///
+    /// **`None` when no key overflowed.** The map is then not allocated at
+    /// all, and the lookup never calls it -- no `get`, no hash of the key,
+    /// and no read of any field of the map. The fact is the table's own
+    /// state, and it is captured **after** the build loop, because the map
+    /// fills *during* the build.
+    overflow: Option<HashMap<i64, u32>>,
     /// The smallest key.
     base: i64,
     /// The build rows the table accounts for.
@@ -342,14 +348,28 @@ impl DirectTable {
                 *entry = entry.saturating_add(1);
             }
         }
+        // The fact that the map holds something is captured **after** the
+        // build loop, because the map fills during it. A fact captured
+        // before the loop would leave every table carrying a map it does
+        // not need -- and a flag set on the fill path alone would leave it
+        // set for every table that ever overflowed, which is the same
+        // thing said the other way round.
+        let overflow = if overflow.is_empty() { None } else { Some(overflow) };
         Some(Self { counts, overflow, base: *min, rows: keys.len() })
     }
 
     /// How many build rows carry `key`.
+    ///
+    /// The overflow map is consulted **only when it holds something**. When
+    /// it holds nothing, the lookup does not call it at all: the count is
+    /// the byte, and the byte is the whole answer.
     fn count(&self, key: i64) -> u32 {
         let index = usize::try_from(key.saturating_sub(self.base)).unwrap_or(usize::MAX);
         let byte = self.counts.get(index).copied().map_or(0, u32::from);
-        let extra = self.overflow.get(&key).copied().unwrap_or(0);
+        let Some(overflow) = &self.overflow else {
+            return byte;
+        };
+        let extra = overflow.get(&key).copied().unwrap_or(0);
         byte.saturating_add(extra)
     }
 }
@@ -588,4 +608,71 @@ where
         }
     }
     out
+}
+
+/// The tables' own tests.
+///
+/// The two tables are **private to this module**, so the comparison between
+/// them is a unit test here and not a test of the public API: the public
+/// API picks the table from the file's own statistics, and it cannot build
+/// the same keys both ways.
+#[cfg(test)]
+mod tests {
+    use super::{DirectTable, HashedTable, JoinKey};
+    use columnar_core::ScalarValue;
+
+    /// A direct table over `keys`, addressed by the key itself.
+    fn direct(keys: &[i64], min: i64, max: i64) -> DirectTable {
+        let range = (ScalarValue::Int64(min), ScalarValue::Int64(max));
+        DirectTable::build(keys, Some(&range)).expect("the range fits a direct table")
+    }
+
+    /// A hash table over the same keys.
+    fn hashed(keys: &[i64]) -> HashedTable {
+        let mut table = HashedTable::default();
+        for key in keys {
+            table.add(JoinKey::Int(*key));
+        }
+        table
+    }
+
+    /// The direct table's answer is the hash table's answer, key by key.
+    ///
+    /// The keys are the interesting ones: one that carries more rows than a
+    /// byte holds, one that carries a few, and one that carries none at all
+    /// -- and a key below the table's base, which the direct table must
+    /// refuse as well as the hash table.
+    #[test]
+    fn the_direct_table_agrees_with_the_hash_table() {
+        let mut keys = Vec::new();
+        keys.extend(std::iter::repeat_n(11_i64, 300));
+        keys.extend(std::iter::repeat_n(12_i64, 3));
+        keys.push(13);
+        let direct = direct(&keys, 11, 13);
+        let hashed = hashed(&keys);
+        for key in 9..=15 {
+            assert_eq!(
+                direct.count(key),
+                hashed.count(&JoinKey::Int(key)),
+                "the key {key} counts the same in both tables"
+            );
+        }
+    }
+
+    /// The overflow map is there only when a key overflowed its byte.
+    ///
+    /// And the fact is captured **after** the build loop: a fact captured
+    /// before it would leave the table carrying a map it does not need, and
+    /// a key that overflowed would count 255 times instead of 300.
+    #[test]
+    fn the_overflow_map_is_allocated_only_when_a_key_overflows() {
+        let small = direct(&[11, 12, 13], 11, 13);
+        assert!(small.overflow.is_none(), "no key overflowed, so there is no map");
+
+        let mut keys = Vec::new();
+        keys.extend(std::iter::repeat_n(11_i64, 300));
+        let large = direct(&keys, 11, 11);
+        assert!(large.overflow.is_some(), "a key overflowed, so there is a map");
+        assert_eq!(large.count(11), 300, "every one of the 300 rows is counted");
+    }
 }
