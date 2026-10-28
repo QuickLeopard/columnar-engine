@@ -55,8 +55,9 @@ use parquet::file::metadata::ParquetMetaData;
 use parquet::file::statistics::Statistics;
 
 use crate::dataset::{decode_batches_filtered, merge_scans, Dataset, DatasetError, ScanOutput};
-use crate::plan::ColumnSchema;
-use crate::pushdown::{PushdownPlan, RowMask};
+use crate::plan::{ColumnMapping, ColumnSchema, ResolvedFilter};
+use crate::pushdown::{Pushdown, PushdownPlan, RowMask};
+use crate::EngineError;
 use columnar_kernels::Flavor;
 
 /// What a scan hands each batch to, before it copies anything.
@@ -218,6 +219,54 @@ pub struct RowGroupRange {
     pub range: Option<(ScalarValue, ScalarValue)>,
     /// The row group's rows.
     pub rows: usize,
+}
+
+/// What a read of a file takes, and what it pushes into the reader.
+///
+/// The decision is made **once**, for every read in the engine: the probe
+/// side's scan and the join's build side ask the same question, and the
+/// reader's rules are the same rules for both.
+///
+/// The rules, in order:
+///
+/// 1. The columns the caller materialises are read.
+/// 2. A predicate whose column is **already being read** is declined. The
+///    engine's filter stage applies the predicates the reader did not take,
+///    over the rows that survived the read. Pushing this one into the reader
+///    would evaluate it over every row of the file *and* leave the filter to
+///    evaluate it again over the survivors; declining it leaves the work to
+///    the filter, once, over fewer rows.
+/// 3. A predicate the pushdown cannot evaluate **exactly** is declined. It
+///    is never approximated.
+/// 4. A declined predicate's column is read, because the engine's filter
+///    stage will need it.
+#[derive(Debug)]
+pub(crate) struct ReadDecision {
+    /// The file's root indices to read, ascending.
+    pub(crate) read: Vec<usize>,
+    /// The predicates to push into the reader.
+    pub(crate) pushdown: PushdownPlan,
+    /// The predicates the engine's own filter has to apply.
+    ///
+    /// A predicate the reader did not take is applied by the engine, over the
+    /// rows that survived the read -- **once**, and by one evaluator.
+    pub(crate) declined: Vec<ResolvedFilter>,
+    /// Whether **every** predicate was pushed into the reader.
+    ///
+    /// A plan whose predicates were all pushed has no filter work left, so the
+    /// read decides the rows on its own.
+    pub(crate) fully_pushed: bool,
+}
+
+impl ReadDecision {
+    /// The mapping from the file's columns onto the read set.
+    ///
+    /// The read set holds every column the caller materialises, and the
+    /// declined predicates' columns beside them, so the mapping holds every
+    /// column the plan names.
+    pub(crate) fn mapping(&self, columns: usize) -> ColumnMapping {
+        ColumnMapping::of(&self.read, columns)
+    }
 }
 
 impl ParquetSource {
@@ -420,6 +469,76 @@ impl ParquetSource {
     #[must_use]
     pub fn worker_count(&self, threads: usize) -> usize {
         threads.min(self.row_groups).max(1)
+    }
+
+    /// Decides what a read of this file takes, and what it pushes into the reader.
+    ///
+    /// The rules are the ones [`ReadDecision`] states, and they are the same
+    /// rules for every read in the engine: the probe side's scan asks this
+    /// question with the plan's materialised set and the plan's predicates,
+    /// and the join's build side asks it with its own key as its materialised
+    /// set and its own predicates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::UnknownColumn`] when a predicate names a column
+    /// the file does not have. A predicate the file cannot hold is a plan
+    /// error, and it is reported as one rather than dropped.
+    pub(crate) fn decide_read(
+        &self,
+        materialised: &[usize],
+        filters: &[ResolvedFilter],
+    ) -> Result<ReadDecision, EngineError> {
+        let mut read = materialised.to_vec();
+        let mut pushdown = PushdownPlan::new();
+        let mut declined: Vec<ResolvedFilter> = Vec::new();
+        let mut fully_pushed = true;
+
+        for filter in filters {
+            let Some(column) = self.columns.get(filter.column) else {
+                return Err(EngineError::UnknownColumn(format!(
+                    "the plan reads column {}, and the file does not hold it",
+                    filter.column
+                )));
+            };
+            if read.contains(&filter.column) {
+                fully_pushed = false;
+                declined.push(filter.clone());
+                continue;
+            }
+            if !crate::pushdown::supports(&column.arrow_type) {
+                fully_pushed = false;
+                declined.push(filter.clone());
+                continue;
+            }
+            // Two predicates on the same column are one conjunction over that
+            // column, and the reader would decode the column once per
+            // predicate. They are pushed together.
+            match pushdown.for_column_mut(filter.column) {
+                Some(existing) => {
+                    existing.and(filter.predicate.op, filter.predicate.value.clone());
+                }
+                None => {
+                    pushdown.push(Pushdown::new(
+                        filter.column,
+                        &column.name,
+                        filter.predicate.op,
+                        filter.predicate.value.clone(),
+                    ));
+                }
+            }
+        }
+
+        for filter in &declined {
+            if !read.contains(&filter.column) {
+                read.push(filter.column);
+            }
+        }
+
+        read.sort_unstable();
+        read.dedup();
+
+        Ok(ReadDecision { read, pushdown, declined, fully_pushed })
     }
 
     /// Reads the file, with the batch size the plan names.
@@ -821,9 +940,112 @@ mod tests {
     use std::fs::File;
     use std::path::Path;
 
+    use columnar_core::{ComparisonOp, Predicate};
+
     use super::{
         gcd, largest_divisor_at_most, ParquetSource, MAX_READER_BATCH_ROWS, MIN_READER_BATCH_ROWS,
     };
+    use crate::plan::ResolvedFilter;
+
+    /// A predicate over a column, by the column's index.
+    fn filter(column: usize, value: i64) -> ResolvedFilter {
+        ResolvedFilter {
+            column,
+            predicate: Predicate::new(format!("column-{column}"), ComparisonOp::Gt, value),
+        }
+    }
+
+    #[test]
+    fn a_predicate_the_reader_can_take_is_pushed_and_not_declined() {
+        let path = std::path::Path::new("/tmp/columnar-engine-decide-pushed.parquet");
+        write_three_columns(path);
+        let source = ParquetSource::open(path).expect("the source opens");
+
+        // The key is the only column being read, and the predicate is over
+        // the amount -- so the reader can take it.
+        let decision = source.decide_read(&[0], &[filter(1, 5)]).expect("the decision is made");
+        assert_eq!(decision.pushdown.len(), 1);
+        assert!(decision.declined.is_empty());
+        assert!(decision.fully_pushed);
+        // The predicate's column is read by the reader, and it is not in the
+        // dataset: the reader drops it afterwards.
+        assert_eq!(decision.read, vec![0]);
+    }
+
+    #[test]
+    fn a_predicate_on_a_column_already_being_read_is_declined() {
+        let path = std::path::Path::new("/tmp/columnar-engine-decide-declined.parquet");
+        write_three_columns(path);
+        let source = ParquetSource::open(path).expect("the source opens");
+
+        // The predicate is over the key, which is being read: the engine's
+        // filter applies it over the rows that survived, and the reader is
+        // not asked to evaluate it over every row of the file.
+        let decision = source.decide_read(&[0], &[filter(0, 5)]).expect("the decision is made");
+        assert_eq!(decision.pushdown.len(), 0);
+        assert_eq!(decision.declined.len(), 1);
+        assert!(!decision.fully_pushed);
+        // The column is in the read set, because the filter will need it.
+        assert_eq!(decision.read, vec![0]);
+    }
+
+    #[test]
+    fn a_predicate_the_file_does_not_have_is_refused() {
+        let path = std::path::Path::new("/tmp/columnar-engine-decide-refused.parquet");
+        write_three_columns(path);
+        let source = ParquetSource::open(path).expect("the source opens");
+
+        // A predicate over a column the file does not have is a plan error,
+        // and it is reported as one: a predicate nobody applies would
+        // silently change the answer.
+        let missing = source.decide_read(&[0], &[filter(9, 5)]);
+        assert!(missing.is_err(), "a predicate over a column the file does not have is refused");
+    }
+
+    #[test]
+    fn two_predicates_on_one_column_are_one_pushdown() {
+        let path = std::path::Path::new("/tmp/columnar-engine-decide-conjunction.parquet");
+        write_three_columns(path);
+        let source = ParquetSource::open(path).expect("the source opens");
+
+        let decision =
+            source.decide_read(&[0], &[filter(1, 5), filter(1, 7)]).expect("the decision is made");
+        assert_eq!(decision.pushdown.len(), 1);
+        assert_eq!(decision.pushdown.predicates()[0].comparisons.len(), 2);
+        assert!(decision.declined.is_empty());
+    }
+
+    #[test]
+    fn the_scan_and_the_reader_ask_the_same_question() {
+        let path = std::path::Path::new("/tmp/columnar-engine-decide-same.parquet");
+        write_three_columns(path);
+        let source = ParquetSource::open(path).expect("the source opens");
+
+        let filters = vec![filter(1, 5), filter(0, 7)];
+        let materialised = vec![0_usize];
+
+        // The scan's decision and the reader's decision are the same
+        // question, so they are the same answer: a second copy of the rules
+        // is a second answer waiting to disagree with the first.
+        let scan = crate::scan::decide_scan(
+            &crate::plan::ResolvedPlan {
+                filter: filters.clone(),
+                projection: Vec::new(),
+                aggregate: None,
+                join: None,
+                sort: None,
+                materialised: materialised.clone(),
+            },
+            &source,
+        )
+        .expect("the decision is made");
+        let reader = source.decide_read(&materialised, &filters).expect("the decision is made");
+
+        assert_eq!(scan.read, reader.read);
+        assert_eq!(scan.pushdown, reader.pushdown);
+        assert_eq!(scan.declined, reader.declined);
+        assert_eq!(scan.fully_pushed, reader.fully_pushed);
+    }
 
     #[test]
     fn the_greatest_common_divisor_is_the_greatest_one() {
@@ -927,6 +1149,35 @@ mod tests {
                     .expect("the batch is built");
             writer.write(&batch).expect("the batch is written");
         }
+        writer.close().expect("the file is closed");
+    }
+
+    /// Writes a Parquet file with three columns: two `int64` and one `utf8`.
+    fn write_three_columns(path: &Path) {
+        use arrow::array::{Int64Array, StringArray};
+        use arrow::datatypes::{DataType, Field, Schema};
+        use arrow::record_batch::RecordBatch;
+        use parquet::arrow::ArrowWriter;
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("key", DataType::Int64, false),
+            Field::new("amount", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, false),
+        ]));
+        let file = File::create(path).expect("the file is created");
+        let mut writer =
+            ArrowWriter::try_new(file, schema.clone(), None).expect("the writer is built");
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(vec![1_i64, 2, 3])),
+                Arc::new(Int64Array::from(vec![10_i64, 20, 30])),
+                Arc::new(StringArray::from(vec!["a", "b", "c"])),
+            ],
+        )
+        .expect("the batch is built");
+        writer.write(&batch).expect("the batch is written");
         writer.close().expect("the file is closed");
     }
 }

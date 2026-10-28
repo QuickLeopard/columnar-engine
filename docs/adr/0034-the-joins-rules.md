@@ -49,9 +49,11 @@ And two things the measurement depended on were **wrong**:
    way. The NULL rule is stated once, in the interface, and the two implementations are held to it
    by a **differential test** over the same columns — NULLs, strings, dictionaries, the plain-integer
    fast path, and a row past the end.
-2. **The scan owns the read decision.** What to read and what to push down is decided **once**, in
-   `scan.rs`, and the build side asks the same question the probe side does, with its own key as
-   its materialised set. The operator does not reach up into the scan.
+2. **The reader owns the read decision.** What to read and what to push down is decided
+   **once**, by the reader — `ParquetSource::decide_read` — and **every** read asks it: the
+   probe side's scan with the plan's materialised set and the plan's predicates, and the
+   build side with its own key as its materialised set and its own predicates. The operator
+   does not reach up into the scan, and it does not re-derive the rules.
 3. **The key module owns the probe's type support.** `ArrowKeys::new` publishes what the probe can
    read, and the scan asks it, instead of borrowing the pushdown's list.
 4. **The plan owns the mapping.** The join's copy of "the file's column is the dataset's column"
@@ -63,21 +65,40 @@ And two things the measurement depended on were **wrong**:
 7. **The estimate is charged the way the read happens**: the file's rows, the read set the join
    decides to read, and the copies that read holds — and it is tested.
 
+### The decision moved, and the reason is recorded
+
+This ADR first said that **the scan** owns the read decision, and that the build side asks
+`scan.rs` for it. **The decision moved down to the reader**, and the reason is the layering.
+
+The build side is an **operator**, and the estimate is a **leaf**: both are **below** the scan,
+and ADR-0033's rule is that nothing below depends on anything above it. A rule that two modules
+below ask cannot live above them — so the operator asking the scan would have been the very
+reach-up this ADR sets out to remove.
+
+The reader is below all three. `scan.rs` asks it, `operators/join.rs` asks it, and `memory.rs`
+asks it — so the estimate charges **exactly** the read set the join reads, rather than a copy of
+the rules that guesses at it. The pushdown's list of the types it evaluates exactly moved with
+it, into `pushdown.rs`: the pushdown owns that list, and a reader that borrows somebody else's
+list promises the pushdown something it may not be able to do.
+
 ## The layout
 
 ```
 lib.rs            the surface
 pipeline.rs       the orchestration: the stages, in the plan's order
-scan.rs           the scan's decision: what to read, what to push down, the mapping
+scan.rs           the scan's own rules: whether the scan feeds the join, and what it fetched
+source.rs         the reader: what a read takes, and what it pushes down
 plan/             the two faces and the bridge: the types, the mapping
 operators/key.rs  the key's two sources, and the rules they share
 operators/join.rs the table and the probe
+pushdown.rs       what the reader can evaluate exactly
 memory.rs         every estimate
 ```
 
-The dependency runs **downward only**: `scan.rs` asks `operators/key.rs` what the probe can read;
-`operators/key.rs` and `operators/join.rs` ask `plan/` for the types and the mapping; `memory.rs`
-asks `plan/` for the plan and `source.rs` for the file. Nothing below reaches up.
+The dependency runs **downward only**: `scan.rs` asks `operators/key.rs` what the probe can read
+and asks `source.rs` what the read takes; `operators/key.rs` and `operators/join.rs` ask `plan/`
+for the types and the mapping, and `source.rs` for the read; `memory.rs` asks `plan/` for the plan
+and `source.rs` for the file. Nothing below reaches up.
 
 ## Consequences
 

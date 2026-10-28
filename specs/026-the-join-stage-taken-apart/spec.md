@@ -142,8 +142,18 @@ copies agree:
 **Each rule has one owner, and the other caller asks.** The NULL rule is stated once, in the
 interface both key sources implement, and the interface says how long the column is so that "the row
 is in range" has one answer. The type check is made once, from one source. The read decision is made
-once, in the module that owns the scan. The probe's type support is published by the key module and
-asked for by the scan. The mapping is the plan's.
+once, by the **reader**, and every read asks it. The probe's type support is published by the key
+module and asked for by the scan. The mapping is the plan's.
+
+> **The read decision lives in the reader, and the reason is recorded.** The requirement was written
+> for the scan's module: "the read decision is made once, in the module that owns the scan". The
+> build side is an **operator**, and the build side's **estimate** is a leaf — both are **below** the
+> scan, and nothing below may depend on anything above it. A rule that two modules below ask cannot
+> live above them, so the operator asking the scan would have been the very reach-up this requirement
+> removes. The reader is below all three: the scan asks it with the plan's materialised set, the
+> build side asks it with its own key as its materialised set, and the estimate asks it so that the
+> estimate charges **exactly** the read set the join reads. The pushdown's list of the types it
+> evaluates exactly moved with it, into the pushdown's own module. See ADR-0034.
 
 **And the two key sources are compared, not merely trusted.** The join's key lookup has **two**
 implementations, and the only test that compares the two paths uses **integer, non-NULL** keys. A

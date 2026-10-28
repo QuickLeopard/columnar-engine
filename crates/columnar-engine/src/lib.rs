@@ -98,7 +98,7 @@ use columnar_kernels::Flavor;
 
 use crate::pipeline::{build_streamed_table, scan_stage, BuildSide, Pipeline, StreamedJoin};
 use crate::plan::ColumnSchema;
-use crate::scan::{decide_scan, fetched_columns, streamed_join, ScanReport};
+use crate::scan::{decide_scan, fetched_columns, pushdown_descriptions, streamed_join, ScanReport};
 
 pub use dataset::{Dataset, DatasetError};
 pub use explain::{PlanOutput, StageStats};
@@ -279,7 +279,7 @@ pub fn execute_on(
     // part of it.
     let started = std::time::Instant::now();
     let resolved = plan.resolve_against(source)?;
-    let decision = decide_scan(&resolved, source);
+    let decision = decide_scan(&resolved, source)?;
     let build = BuildSide::open(resolved.join.as_ref())?;
 
     // The same flavor the filter would use, so the pushdown and the filter
@@ -356,7 +356,7 @@ pub fn execute_on(
         scan_stage(source.rows(), dataset.len(), scan_elapsed.saturating_sub(filter_elapsed));
 
     let report = ScanReport {
-        pushed_down: decision.pushdown_descriptions(),
+        pushed_down: pushdown_descriptions(&decision),
         columns_read: source.column_names(&fetched_columns(&decision)),
         pushdown_metrics: decision.pushdown.metrics(),
     };

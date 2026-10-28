@@ -70,7 +70,7 @@ use arrow::array::{
     Array, BooleanArray, DictionaryArray, Float64Array, Int64Array, LargeStringArray, StringArray,
 };
 use arrow::buffer::{BooleanBuffer, Buffer};
-use arrow::datatypes::Int32Type;
+use arrow::datatypes::{DataType as ArrowType, Int32Type};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use columnar_core::{ComparisonOp, DataType, NullBitmap, ScalarValue};
@@ -205,6 +205,27 @@ impl Pushdown {
             })
             .collect::<Vec<String>>()
             .join(" and ")
+    }
+}
+
+/// Whether the pushdown evaluates this Arrow type exactly.
+///
+/// The pushdown implements the engine's three physical types. A dictionary
+/// column is included because the pushdown compares it once per distinct
+/// value and then maps through the indices, exactly as the engine's own
+/// dictionary path does.
+///
+/// **The list is the pushdown's own.** A reader that borrows somebody else's
+/// list promises the pushdown something it may not be able to do, and the
+/// promise fails half way through a read.
+pub(crate) fn supports(arrow_type: &ArrowType) -> bool {
+    match arrow_type {
+        ArrowType::Int64 | ArrowType::Float64 | ArrowType::Utf8 | ArrowType::LargeUtf8 => true,
+        ArrowType::Dictionary(key, value) => {
+            matches!(key.as_ref(), ArrowType::Int32)
+                && matches!(value.as_ref(), ArrowType::Utf8 | ArrowType::LargeUtf8)
+        }
+        _ => false,
     }
 }
 
@@ -785,7 +806,35 @@ fn mismatch(column: &dyn Array, threshold: DataType) -> ArrowError {
 
 #[cfg(test)]
 mod tests {
-    use super::RowMask;
+    use arrow::datatypes::DataType as ArrowType;
+
+    use super::{supports, RowMask};
+
+    /// The pushdown's list is the pushdown's own, and it says exactly which
+    /// types it evaluates.
+    ///
+    /// The engine's three physical types are in it, and so is a dictionary
+    /// column over `utf8` with `int32` keys -- the pushdown compares the
+    /// dictionary once per distinct value and maps through the indices. A
+    /// dictionary over any other key type is not in the list: the pushdown
+    /// does not know how to walk it.
+    #[test]
+    fn the_pushdowns_list_names_the_types_it_evaluates() {
+        assert!(supports(&ArrowType::Int64));
+        assert!(supports(&ArrowType::Float64));
+        assert!(supports(&ArrowType::Utf8));
+        assert!(supports(&ArrowType::LargeUtf8));
+        assert!(supports(&ArrowType::Dictionary(
+            Box::new(ArrowType::Int32),
+            Box::new(ArrowType::Utf8)
+        )));
+        assert!(!supports(&ArrowType::Dictionary(
+            Box::new(ArrowType::Int64),
+            Box::new(ArrowType::Utf8)
+        )));
+        assert!(!supports(&ArrowType::Boolean));
+        assert!(!supports(&ArrowType::Int32));
+    }
 
     /// The mask's own iteration visits the kept rows, and only those, in
     /// ascending order.

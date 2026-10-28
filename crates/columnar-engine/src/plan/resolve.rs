@@ -70,6 +70,21 @@ impl QueryPlan {
     }
 }
 
+/// Resolves a set of predicates against a schema, and type-checks their
+/// thresholds.
+///
+/// The **bridge** is the only module that knows both faces, and a predicate
+/// is a predicate whichever side of a join it is on: the probe side's
+/// predicates are resolved by [`resolve_filter`], and so are the build side's,
+/// by this function. A rule that the two sides spelled out separately was a
+/// rule they could disagree about.
+pub(crate) fn resolve_filters(
+    schema: &dyn ColumnSchema,
+    predicates: &[Predicate],
+) -> Result<Vec<ResolvedFilter>, EngineError> {
+    predicates.iter().map(|predicate| resolve_filter(predicate, schema)).collect()
+}
+
 /// Resolves the filter's column and type-checks its threshold.
 fn resolve_filter(
     predicate: &Predicate,

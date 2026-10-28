@@ -51,7 +51,7 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 
-use columnar_core::{Predicate, ScalarValue};
+use columnar_core::ScalarValue;
 use columnar_kernels::Flavor;
 
 use crate::dataset::DatasetError;
@@ -60,7 +60,6 @@ use crate::operators::filter::filter_all;
 use crate::operators::key::{ArrowKeys, KeyColumn, KeySource, KeyValue};
 use crate::plan::{JoinSpec, ResolvedFilter};
 use crate::pushdown::RowMask;
-use crate::pushdown::{Pushdown, PushdownPlan};
 use crate::source::{BatchFilter, ParquetSource};
 use crate::EngineError;
 
@@ -390,6 +389,11 @@ impl HashedTable {
 /// by the engine's own filter where it cannot; either way they are applied
 /// **before** the table is built.
 ///
+/// **The read is the reader's decision.** The build side asks the reader the
+/// same question the probe side's scan asks it -- what to read, and what to
+/// push down -- with its own key as its materialised set, so the two reads
+/// cannot disagree about the rules.
+///
 /// # Errors
 ///
 /// Returns [`EngineError::UnknownColumn`] when the build side has no such
@@ -404,26 +408,31 @@ pub fn build_table(
     let key_index = source
         .column_index(&spec.build_key)
         .ok_or_else(|| EngineError::UnknownColumn(spec.build_key.clone()))?;
-    let filters = resolve_filters(source, &spec.build_filter)?;
-    let (read, pushdown, declined) = decide_read(&filters, source, key_index);
+    let filters = crate::plan::resolve_filters(source, &spec.build_filter)?;
+    let decision = source.decide_read(&[key_index], &filters)?;
 
-    let dataset = source.read(&read, &pushdown, flavor, threads)?;
+    let dataset = source.read(&decision.read, &decision.pushdown, flavor, threads)?;
 
     // The predicates the reader could not take are applied here, over the
     // rows that survived the scan. The conjunction is separable, so the
-    // answer is the same either way.
+    // answer is the same either way -- and each of them is applied **once**,
+    // by the filter, because the reader's decision said which ones it did
+    // not take.
     //
     // The dataset holds the read set's columns, and the declined
     // predicates' columns are in it -- so their indices have to move from
-    // the file's to the dataset's.
-    let indices = dataset_indices(&read, source.columns().len());
-    let declined: Vec<ResolvedFilter> = declined
+    // the file's to the dataset's. The mapping is the plan's.
+    let mapping = decision.mapping(source.columns().len());
+    let declined: Vec<ResolvedFilter> = decision
+        .declined
         .iter()
-        .map(|filter| ResolvedFilter {
-            column: indices.get(filter.column).copied().flatten().unwrap_or(filter.column),
-            predicate: filter.predicate.clone(),
+        .map(|filter| {
+            Ok(ResolvedFilter {
+                column: mapping.require(filter.column)?,
+                predicate: filter.predicate.clone(),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<ResolvedFilter>, EngineError>>()?;
     let selection = if declined.is_empty() {
         columnar_core::SelectionVector::all(dataset.len())
     } else {
@@ -579,93 +588,4 @@ where
         }
     }
     out
-}
-
-/// Resolves the build side's predicates, and type-checks their thresholds.
-fn resolve_filters(
-    source: &ParquetSource,
-    predicates: &[Predicate],
-) -> Result<Vec<ResolvedFilter>, EngineError> {
-    predicates
-        .iter()
-        .map(|predicate| {
-            let column = source
-                .column_index(&predicate.column)
-                .ok_or_else(|| EngineError::UnknownColumn(predicate.column.clone()))?;
-            let column_type = source
-                .columns()
-                .get(column)
-                .map_or(columnar_core::DataType::Int64, |column| column.data_type);
-            let value_type = predicate.value.data_type();
-            if column_type != value_type {
-                return Err(EngineError::TypeMismatch(format!(
-                    "the build side's column `{}` is {} but the predicate compares it against a {} threshold",
-                    predicate.column,
-                    column_type.name(),
-                    value_type.name()
-                )));
-            }
-            Ok(ResolvedFilter { column, predicate: predicate.clone() })
-        })
-        .collect()
-}
-
-/// Decides what the build side reads and what it pushes into the reader.
-///
-/// The rules are the scan's own: a predicate whose column is already being
-/// read is declined, because the engine's filter would evaluate it again
-/// over fewer rows; and a predicate the pushdown cannot evaluate **exactly**
-/// is declined, because it is never approximated.
-///
-/// Returns the columns to read, the predicates to push into the reader, and
-/// the predicates the engine's own filter has to apply.
-fn decide_read(
-    filters: &[ResolvedFilter],
-    source: &ParquetSource,
-    key: usize,
-) -> (Vec<usize>, PushdownPlan, Vec<ResolvedFilter>) {
-    let mut read = vec![key];
-    let mut pushdown = PushdownPlan::new();
-    let mut declined: Vec<ResolvedFilter> = Vec::new();
-
-    for filter in filters {
-        let Some(column) = source.columns().get(filter.column) else {
-            continue;
-        };
-        if read.contains(&filter.column) || !crate::scan::pushdown_supports(&column.arrow_type) {
-            declined.push(filter.clone());
-            continue;
-        }
-        // Two predicates on the same column are one conjunction over that
-        // column, and the reader would decode the column once per predicate.
-        match pushdown.for_column_mut(filter.column) {
-            Some(existing) => {
-                existing.and(filter.predicate.op, filter.predicate.value.clone());
-            }
-            None => {
-                pushdown.push(Pushdown::new(
-                    filter.column,
-                    &column.name,
-                    filter.predicate.op,
-                    filter.predicate.value.clone(),
-                ));
-            }
-        }
-    }
-
-    for filter in &declined {
-        if !read.contains(&filter.column) {
-            read.push(filter.column);
-        }
-    }
-    read.sort_unstable();
-    read.dedup();
-    (read, pushdown, declined)
-}
-
-/// The dataset's own index for each of the file's columns.
-///
-/// The entry for a column that is not read is `None`.
-fn dataset_indices(read: &[usize], columns: usize) -> Vec<Option<usize>> {
-    (0..columns).map(|index| read.binary_search(&index).ok()).collect()
 }

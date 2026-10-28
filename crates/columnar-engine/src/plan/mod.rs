@@ -51,6 +51,8 @@ pub use resolved::{
 };
 pub use spec::{Aggregate, AggregateSpec, JoinSpec, QueryPlan, SortSpec};
 
+pub(crate) use resolve::resolve_filters;
+
 /// The pinned optimisation order, printed at the top of every plan output.
 pub const OPTIMIZATION_ORDER: &str =
     "predicate pushdown -> projection pushdown -> late materialization -> join -> sort -> aggregate";
