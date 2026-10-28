@@ -10,7 +10,7 @@ and x86-64, and leaves the published figures exactly where they were.
 
 - [x] **Step 1 — `plan/`.** `plan.rs` becomes `plan/{mod,spec,resolved,resolve}.rs`: the caller's
       plan, the executor's plan, the bridge, and the module's surface. A move, and nothing else.
-- [ ] **Step 2 — the mapping.** The four `remap` siblings become one `ColumnMapping` type, with one
+- [x] **Step 2 — the mapping.** The four `remap` siblings become one `ColumnMapping` type, with one
       constructor and one way to move an index. The panic in `remap_index` goes.
 - [ ] **Step 3 — `scan.rs`.** The scan's decision, the late-materialisation policy that feeds it
       and the mapping leave the crate root and live beside each other.
@@ -25,7 +25,7 @@ and x86-64, and leaves the published figures exactly where they were.
 
 ## The invariants
 
-- [ ] The **354 tests** are green after every step, not only at the end.
+- [x] The **whole test suite** is green after every step, not only at the end.
 - [ ] **No behaviour changes**: the answer, the plan output, the memory estimates and every
       published figure are exactly what they were.
 - [ ] **No new `#[allow]`**, no `unsafe`, no new dependency, and no `unwrap`/`expect` introduced.

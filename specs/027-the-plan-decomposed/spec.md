@@ -100,8 +100,8 @@ crate's documentation. The machinery is in the modules that own it.
 ### R8 — Nothing changes that the engine does
 
 The answer, the plan output, the memory estimates, the timings and every published figure are
-**exactly what they were**. The 354 tests are green, the guard is green, and the published tables
-are unchanged. This increment moves code; it does not change behaviour.
+**exactly what they were**. The **whole** test suite is green, the guard is green, and the
+published tables are unchanged. This increment moves code; it does not change behaviour.
 
 ## The scope
 

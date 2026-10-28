@@ -6,7 +6,59 @@
 
 use columnar_core::{ArithOp, ComparisonOp, DataType, Predicate, ScalarValue};
 
+use crate::EngineError;
+
 use super::spec::{AggregateSpec, JoinSpec, SortSpec};
+
+/// The mapping from a schema's columns onto a subset of them.
+///
+/// The plan is resolved against the **file's** schema, and the dataset it
+/// ends up running over holds only the columns the read set asked for. This
+/// is how a plan's indices move onto that subset.
+///
+/// It is built from the read set, so it holds every column the read set
+/// holds. A column that is not in it is a column the dataset does not have,
+/// and a plan that reads one is an **error the caller sees** -- not a crash
+/// inside the engine.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColumnMapping {
+    /// One entry per column of the schema: the column's index in the subset,
+    /// or `None` when the column is not in it.
+    entries: Vec<Option<usize>>,
+}
+
+impl ColumnMapping {
+    /// The mapping for a schema of `columns` columns, of which `read` are in
+    /// the subset.
+    ///
+    /// `read` must be **sorted and without duplicates**: the mapping is
+    /// built by looking each column up in it.
+    #[must_use]
+    pub fn of(read: &[usize], columns: usize) -> Self {
+        Self { entries: (0..columns).map(|index| read.binary_search(&index).ok()).collect() }
+    }
+
+    /// The index of `column` in the subset, when it is in it.
+    #[must_use]
+    pub fn get(&self, column: usize) -> Option<usize> {
+        self.entries.get(column).copied().flatten()
+    }
+
+    /// The index of `column` in the subset.
+    ///
+    /// # Errors
+    ///
+    /// The column is not in the subset: the plan reads a column the dataset
+    /// does not have. That is a plan error -- the plan was resolved against
+    /// one schema and run over another, and the two disagree.
+    pub fn require(&self, column: usize) -> Result<usize, EngineError> {
+        self.get(column).ok_or_else(|| {
+            EngineError::InvalidPlan(format!(
+                "the plan reads column {column}, and the dataset does not hold it"
+            ))
+        })
+    }
+}
 
 /// An expression whose column names have been resolved to indices.
 #[derive(Debug, Clone, PartialEq)]
@@ -83,19 +135,19 @@ impl ResolvedExpr {
     }
 
     /// Maps this expression's column indices onto a subset of the columns.
-    fn remap(&self, mapping: &[Option<usize>]) -> ResolvedExpr {
-        match self {
+    fn remap(&self, mapping: &ColumnMapping) -> Result<ResolvedExpr, EngineError> {
+        Ok(match self {
             Self::Constant(value) => Self::Constant(value.clone()),
             Self::Column { index, data_type } => {
-                Self::Column { index: remap_index(mapping, *index), data_type: *data_type }
+                Self::Column { index: mapping.require(*index)?, data_type: *data_type }
             }
             Self::Binary { op, left, right } => Self::Binary {
                 op: *op,
-                left: Box::new(left.remap(mapping)),
-                right: Box::new(right.remap(mapping)),
+                left: Box::new(left.remap(mapping)?),
+                right: Box::new(right.remap(mapping)?),
             },
-            Self::Negate(inner) => Self::Negate(Box::new(inner.remap(mapping))),
-        }
+            Self::Negate(inner) => Self::Negate(Box::new(inner.remap(mapping)?)),
+        })
     }
 }
 
@@ -153,42 +205,54 @@ impl ResolvedPlan {
     /// it was pushed into the Parquet reader, which already applied it. The
     /// conjunction is separable, so `(A ∧ B)` applied by the reader and then
     /// `B` applied by the engine is `A ∧ B`.
-    #[must_use]
-    pub fn remap(&self, mapping: &[Option<usize>]) -> ResolvedPlan {
-        let filter = self
+    ///
+    /// # Errors
+    ///
+    /// The plan reads a column the dataset does not hold.
+    pub fn remap(&self, mapping: &ColumnMapping) -> Result<ResolvedPlan, EngineError> {
+        let filter: Vec<ResolvedFilter> = self
             .filter
             .iter()
             .filter_map(|filter| {
-                let column = mapping.get(filter.column).copied().flatten()?;
+                let column = mapping.get(filter.column)?;
                 Some(ResolvedFilter { column, predicate: filter.predicate.clone() })
             })
             .collect();
 
-        let projection = self
-            .projection
-            .iter()
-            .filter_map(|&index| mapping.get(index).copied().flatten())
-            .collect();
+        let projection: Vec<usize> =
+            self.projection.iter().filter_map(|&index| mapping.get(index)).collect();
 
-        let aggregate = self.aggregate.as_ref().map(|aggregate| aggregate.remap(mapping));
+        let aggregate =
+            self.aggregate.as_ref().map(|aggregate| aggregate.remap(mapping)).transpose()?;
 
-        let join = self.join.as_ref().map(|join| ResolvedJoin {
-            spec: join.spec.clone(),
-            probe_key: remap_index(mapping, join.probe_key),
-        });
+        let join = self
+            .join
+            .as_ref()
+            .map(|join| {
+                Ok::<ResolvedJoin, EngineError>(ResolvedJoin {
+                    spec: join.spec.clone(),
+                    probe_key: mapping.require(join.probe_key)?,
+                })
+            })
+            .transpose()?;
 
-        let sort = self.sort.as_ref().map(|sort| ResolvedSort {
-            spec: sort.spec.clone(),
-            column: remap_index(mapping, sort.column),
-        });
+        let sort = self
+            .sort
+            .as_ref()
+            .map(|sort| {
+                Ok::<ResolvedSort, EngineError>(ResolvedSort {
+                    spec: sort.spec.clone(),
+                    column: mapping.require(sort.column)?,
+                })
+            })
+            .transpose()?;
 
-        let materialised = self
-            .materialised
-            .iter()
-            .filter_map(|&index| mapping.get(index).copied().flatten())
-            .collect();
+        let mut materialised = Vec::with_capacity(self.materialised.len());
+        for &index in &self.materialised {
+            materialised.push(mapping.require(index)?);
+        }
 
-        ResolvedPlan { filter, projection, aggregate, join, sort, materialised }
+        Ok(ResolvedPlan { filter, projection, aggregate, join, sort, materialised })
     }
 }
 
@@ -243,16 +307,17 @@ impl ResolvedAggregate {
     /// Every column an aggregation reads is materialised, so every one of
     /// them is in the subset; a column that is not would mean the aggregate
     /// was reading something nobody read.
-    fn remap(&self, mapping: &[Option<usize>]) -> ResolvedAggregate {
-        let group_by = self.group_by.iter().map(|&index| remap_index(mapping, index)).collect();
-        let aggregates = self.aggregates.iter().map(|function| function.remap(mapping)).collect();
-        ResolvedAggregate { spec: self.spec.clone(), group_by, aggregates }
+    fn remap(&self, mapping: &ColumnMapping) -> Result<ResolvedAggregate, EngineError> {
+        let mut group_by = Vec::with_capacity(self.group_by.len());
+        for &index in &self.group_by {
+            group_by.push(mapping.require(index)?);
+        }
+        let mut aggregates = Vec::with_capacity(self.aggregates.len());
+        for function in &self.aggregates {
+            aggregates.push(function.remap(mapping)?);
+        }
+        Ok(ResolvedAggregate { spec: self.spec.clone(), group_by, aggregates })
     }
-}
-
-/// Maps one column index onto a subset.
-fn remap_index(mapping: &[Option<usize>], index: usize) -> usize {
-    mapping.get(index).copied().flatten().expect("a materialised column is in the read set")
 }
 
 /// One resolved aggregate function.
@@ -297,14 +362,14 @@ impl ResolvedAggregateFn {
     }
 
     /// Maps this function's column indices onto a subset of the columns.
-    fn remap(&self, mapping: &[Option<usize>]) -> ResolvedAggregateFn {
-        match self {
-            Self::Sum { expr } => Self::Sum { expr: expr.remap(mapping) },
-            Self::Count { column } => Self::Count { column: remap_index(mapping, *column) },
-            Self::Min { column } => Self::Min { column: remap_index(mapping, *column) },
-            Self::Max { column } => Self::Max { column: remap_index(mapping, *column) },
+    fn remap(&self, mapping: &ColumnMapping) -> Result<ResolvedAggregateFn, EngineError> {
+        Ok(match self {
+            Self::Sum { expr } => Self::Sum { expr: expr.remap(mapping)? },
+            Self::Count { column } => Self::Count { column: mapping.require(*column)? },
+            Self::Min { column } => Self::Min { column: mapping.require(*column)? },
+            Self::Max { column } => Self::Max { column: mapping.require(*column)? },
             Self::CountStar => Self::CountStar,
-        }
+        })
     }
 }
 

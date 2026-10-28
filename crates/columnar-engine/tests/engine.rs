@@ -735,3 +735,25 @@ fn a_global_aggregate_agrees_with_the_single_group_aggregate() {
         .sum();
     assert_eq!(grouped_counts, 3, "the grouped path counts the same rows");
 }
+
+/// A column the dataset does not hold is an error, not a crash.
+///
+/// The plan is resolved against the file's schema and run over the read set,
+/// and the mapping is how its indices move onto the read set. A column that
+/// is not in the mapping is a column the dataset does not have, and the
+/// engine says so rather than panicking on it.
+#[test]
+fn a_column_the_dataset_does_not_hold_is_an_error_not_a_crash() {
+    let mapping = columnar_engine::plan::ColumnMapping::of(&[0, 2], 4);
+
+    assert_eq!(mapping.get(0), Some(0), "the first column is the first in the read set");
+    assert_eq!(mapping.get(1), None, "the second column was not read");
+    assert_eq!(mapping.get(2), Some(1), "the third column is the second in the read set");
+    assert_eq!(mapping.get(3), None, "the fourth column was not read");
+
+    assert!(matches!(mapping.require(0), Ok(0)));
+    assert!(
+        matches!(mapping.require(3), Err(EngineError::InvalidPlan(message)) if message.contains("column 3")),
+        "a column the dataset does not hold is a plan error"
+    );
+}

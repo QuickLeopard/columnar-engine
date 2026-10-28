@@ -45,8 +45,8 @@ mod resolved;
 mod spec;
 
 pub use resolved::{
-    ResolvedAggregate, ResolvedAggregateFn, ResolvedExpr, ResolvedFilter, ResolvedJoin,
-    ResolvedPlan, ResolvedSort,
+    ColumnMapping, ResolvedAggregate, ResolvedAggregateFn, ResolvedExpr, ResolvedFilter,
+    ResolvedJoin, ResolvedPlan, ResolvedSort,
 };
 pub use spec::{Aggregate, AggregateSpec, JoinSpec, QueryPlan, SortSpec};
 

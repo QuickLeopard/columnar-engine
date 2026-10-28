@@ -121,6 +121,13 @@ pub enum EngineError {
     /// `float64` threshold is a plan error, not something to paper over.
     #[error("type mismatch: {0}")]
     TypeMismatch(String),
+    /// The plan is inconsistent: it reads a column the dataset does not have.
+    ///
+    /// The plan was resolved against one schema and run over another, and the
+    /// two disagree. It is a plan error, and it is reported as one: a plan
+    /// that cannot be run is refused, not crashed on.
+    #[error("invalid plan: {0}")]
+    InvalidPlan(String),
     /// The dataset could not be read.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -393,8 +400,8 @@ pub fn execute_on(
 
     // Every index the plan holds is a column of the *file*; the dataset holds
     // only the read set, so the indices have to move.
-    let mapping = build_mapping(&decision.read, source.column_count());
-    let effective = resolved.remap(&mapping);
+    let mapping = plan::ColumnMapping::of(&decision.read, source.column_count());
+    let effective = resolved.remap(&mapping)?;
 
     let scan = StageStats {
         stage: "scan".to_owned(),
@@ -585,13 +592,6 @@ pub(crate) fn pushdown_supports(arrow_type: &arrow::datatypes::DataType) -> bool
         }
         _ => false,
     }
-}
-
-/// Maps the file's column indices onto the read set.
-///
-/// The entry for a column that is not read is `None`.
-fn build_mapping(read: &[usize], columns: usize) -> Vec<Option<usize>> {
-    (0..columns).map(|index| read.binary_search(&index).ok()).collect()
 }
 
 /// What the scan did, for the plan output.
