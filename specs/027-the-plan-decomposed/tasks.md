@@ -26,15 +26,17 @@ and x86-64, and leaves the published figures exactly where they were.
 ## The invariants
 
 - [x] The **whole test suite** is green after every step, not only at the end.
-- [ ] **No behaviour changes**: the answer, the plan output, the memory estimates and every
+- [x] **No behaviour changes**: the answer, the plan output, the memory estimates and every
       published figure are exactly what they were.
-- [ ] **No new `#[allow]`**, no `unsafe`, no new dependency, and no `unwrap`/`expect` introduced.
-- [ ] The **public API does not move**: `columnar_engine::plan::JoinSpec` and the crate root's
+- [x] **No new `#[allow]`**, no `unsafe`, no new dependency, and no `unwrap`/`expect` introduced.
+      The one `#[allow]` is gone, the three `expect`s that moved are the ones that were there
+      before, and the panic that crossed a module boundary is an error now.
+- [x] The **public API does not move**: `columnar_engine::plan::JoinSpec` and the crate root's
       re-exports stay where they are.
-- [ ] The **guard is green** after every step: `python3 scripts/check-published-figures.py` and
+- [x] The **guard is green** after every step: `python3 scripts/check-published-figures.py` and
       `python3 scripts/check-page.py`.
 
 ## The gate
 
-- [ ] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32
+- [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32
       check, the published-figures guard and the page checks all green.

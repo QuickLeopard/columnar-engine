@@ -1,7 +1,8 @@
 # Spec 027 — The plan, decomposed
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-28
+**Finished**: 2026-10-28
 **ADR**: [ADR-0033](../../docs/adr/0033-the-crates-modules.md) — the crate's module layout, and why it is this one
 **Predecessor**: [026-the-join-stage-taken-apart](../026-the-join-stage-taken-apart/spec.md)
 
