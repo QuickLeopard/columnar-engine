@@ -300,9 +300,10 @@ the aggregate's value is checked against the published one.
 
 | what | how | where it lands |
 |---|---|---|
-| the commits | the code this spec writes, and the code it replaces — `d75c0e8`, the code spec 026 closed with | the spec's own history |
-| the join probe's campaigns | `just probe-join "data/lineitem.parquet" "bench-results/join-cost-run1.json"`, three campaigns, five iterations each | `join-cost-run*.json`; the superseded set preserved as `join-cost-spec026-run*.json` |
-| the comparison campaigns | `just compare "data/lineitem.parquet" "3" "1" "bench-results/compare-run1.json"`, three campaigns | `compare-run*.json`; the superseded set preserved as `compare-spec026-run*.json` |
+| the commits | the code this spec writes — `725c091` — and the code it replaces — `be154bb`'s engine, which is the code spec 026 shipped, unchanged since `d75c0e8` | the spec's own history |
+| the join probe's campaigns | `just probe-join "data/lineitem.parquet" "bench-results/join-cost-run1.json"`, three campaigns, five iterations each | `join-cost-run*.json`; the before-set, on the code this spec replaces and measured back to back with it, is `join-cost-before-run*.json`; the sets spec 026 published are preserved as `join-cost-spec026-run*.json` and `join-cost-spec025-run*.json` |
+| the comparison campaigns | `just compare "data/lineitem.parquet" "3" "1" "bench-results/compare-run1.json"`, three campaigns | `compare-run*.json`; the before-set, on the code this spec replaces and measured back to back with it, is `compare-before-run*.json`; the sets spec 026 published are preserved as `compare-spec026-run*.json` and `compare-spec025-run*.json` |
+| the same-moment A/B | the two codes, one campaign each, minutes apart on the same host | `compare-ab-old-run1.json` and `compare-ab-new-run1.json` — a diagnostic, not a set |
 | the host | an Apple M4 Max, arm64, one thread, and the load average the reports carry | in every report |
 | the guard | `scripts/medians.py` derives the tables; `scripts/check-published-figures.py` checks every published figure against the reports, in the section that publishes it | the CI job "published figures match the evidence" |
 
