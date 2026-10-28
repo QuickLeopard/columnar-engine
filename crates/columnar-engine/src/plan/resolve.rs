@@ -37,10 +37,17 @@ impl QueryPlan {
         let projection = resolve_projection(&self.projection, schema)?;
 
         let join = match &self.join {
-            Some(spec) => Some(ResolvedJoin {
-                spec: spec.clone(),
-                probe_key: column_index(schema, &spec.probe_key)?,
-            }),
+            Some(spec) => {
+                let probe_key = column_index(schema, &spec.probe_key)?;
+                Some(ResolvedJoin {
+                    spec: spec.clone(),
+                    probe_key,
+                    // The key's type is resolved out of the **same** schema as
+                    // its index, so that the join's two keys are compared
+                    // against what the plan was resolved against.
+                    probe_type: schema.column_type(probe_key),
+                })
+            }
             None => None,
         };
         let sort = match &self.sort {

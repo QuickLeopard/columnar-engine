@@ -713,8 +713,8 @@ fn a_join_whose_keys_have_different_types_is_a_plan_error() {
     );
 
     // The lazy path rejects it too, and it rejects it **before** it reads
-    // anything: the scan that feeds the join checks the two keys' types
-    // before it builds the table.
+    // anything: the build side is opened first, and the two keys' types are
+    // compared there.
     let probe_path = temp_path("key-types-probe");
     write_probe(&probe_path, &[Some(1)], &[Some(10.0)]);
     let source = ParquetSource::open(&probe_path).expect("the source opens");
@@ -726,4 +726,41 @@ fn a_join_whose_keys_have_different_types_is_a_plan_error() {
 
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(probe_path);
+}
+
+/// A join whose build key the build file does not have is a plan error.
+///
+/// The build side is a file of its own, and the key is named in it. A key the
+/// file does not have is **not** a key of some default type: typing it `int64`
+/// would let a plan join against a column that does not exist, and -- when the
+/// probe's key is a `utf8` one -- would report a type mismatch for a column
+/// that is not there at all.
+#[test]
+fn a_join_whose_build_key_is_absent_is_a_plan_error() {
+    // The build file holds the key under another name, so the plan's build
+    // key names a column the file does not have.
+    let path = temp_path("absent-build-key");
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("o_otherkey", DataType::Int64, true),
+        Field::new("o_orderdate", DataType::Utf8, true),
+    ]));
+    let keys: ArrayRef = Arc::new(Int64Array::from(vec![1_i64, 2]));
+    let dates: ArrayRef = Arc::new(StringArray::from(vec!["1994-01-01", "1994-02-01"]));
+    let batch = RecordBatch::try_new(schema.clone(), vec![keys, dates])
+        .expect("the batch matches the schema");
+    let file = File::create(&path).expect("the temporary file can be created");
+    let mut writer = ArrowWriter::try_new(file, schema, None).expect("the writer starts");
+    writer.write(&batch).expect("the batch is written");
+    writer.close().expect("the file is closed");
+
+    let dataset = probe_dataset(&[Some(1)], &[Some(10.0)]);
+    let plan = join_plan(&path, Vec::new());
+    let error = execute(&plan, &dataset, &scalar()).expect_err("the join is rejected");
+
+    assert!(
+        matches!(error, columnar_engine::EngineError::UnknownColumn(_)),
+        "the error was {error:?}"
+    );
+
+    let _ = std::fs::remove_file(path);
 }

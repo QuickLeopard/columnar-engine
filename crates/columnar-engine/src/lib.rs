@@ -319,7 +319,7 @@ pub fn execute_on(
     // The join's table is built **before** the scan when the scan feeds the
     // join: the probe has to happen before the copy, and the probe needs the
     // table.
-    let table = build_streamed_table(&resolved, &build, source, options, flavor, streamed)?;
+    let table = build_streamed_table(&resolved, &build, options, flavor, streamed)?;
 
     // The clock starts **after** the build table is built: the table is the
     // join's work, and the join's stage reports it.

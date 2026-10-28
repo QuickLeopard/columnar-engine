@@ -48,7 +48,7 @@ the stage **after** them — so the published numbers are the numbers of the cod
 - [x] **Step 3 — the two key sources are compared.** A differential test holds `KeyColumn` and
       `ArrowKeys` to the same columns — NULLs, strings, dictionaries, the plain-integer fast path,
       and a row past the end — and they must agree, value for value.
-- [ ] **Step 4 — the type check is made once, from one source.** The two keys' types are resolved
+- [x] **Step 4 — the type check is made once, from one source.** The two keys' types are resolved
       where both are known, and an absent column is **refused** rather than silently typed `Int64`.
 - [ ] **Step 5 — the read decision is made once, in the scan.** The build side asks the scan the same
       question the probe side does, with its own key as its materialised set; the operator no longer

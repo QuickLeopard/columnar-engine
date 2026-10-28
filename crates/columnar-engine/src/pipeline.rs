@@ -119,10 +119,22 @@ impl BuildSide {
     ///
     /// The build side is a file of its own, and it is read through the
     /// engine's own source -- the same reader settings as any other file.
+    ///
+    /// **This is where the join's two sides meet**, and where the join's two
+    /// keys are compared. The probe's key was resolved against the plan's own
+    /// schema, and the build side's key is resolved here, against the build
+    /// file. The check is made **once**, for both paths, against the types the
+    /// plan was resolved against -- so the cold path and the resident path
+    /// cannot reach different verdicts about the same plan.
     pub(crate) fn open(join: Option<&plan::ResolvedJoin>) -> Result<Self, EngineError> {
         let started = std::time::Instant::now();
         let source = match join {
-            Some(join) => Some(ParquetSource::open(&join.spec.build_path)?),
+            Some(join) => {
+                let source = ParquetSource::open(&join.spec.build_path)?;
+                let build_type = build_key_type(&source, &join.spec.build_key)?;
+                require_same_key_type(join.probe_type, build_type)?;
+                Some(source)
+            }
             None => None,
         };
         Ok(Self { source, opened: started.elapsed() })
@@ -159,7 +171,6 @@ pub(crate) struct StreamedTable {
 pub(crate) fn build_streamed_table(
     resolved: &plan::ResolvedPlan,
     build: &BuildSide,
-    source: &ParquetSource,
     options: &ExecOptions,
     flavor: Flavor,
     key: Option<usize>,
@@ -168,16 +179,6 @@ pub(crate) fn build_streamed_table(
     else {
         return Ok(None);
     };
-    // The join's two keys must have the same type, and the check happens
-    // before the table is built: a plan error is refused having read
-    // nothing at all.
-    require_same_key_type(
-        source
-            .columns()
-            .get(spec.probe_key)
-            .map_or(columnar_core::DataType::Int64, |column| column.data_type),
-        build_key_type(build_source, &spec.spec.build_key),
-    )?;
     let started = std::time::Instant::now();
     let table = operators::join::build_table(
         build_source,
@@ -515,13 +516,6 @@ pub(crate) fn join_outcome(
     let source = build.source.as_ref().ok_or_else(|| {
         EngineError::Parquet("the plan has a join but its build side was not opened".to_owned())
     })?;
-    require_same_key_type(
-        dataset
-            .chunks
-            .get(spec.probe_key)
-            .map_or(columnar_core::DataType::Int64, columnar_core::ColumnChunk::data_type),
-        build_key_type(source, &spec.spec.build_key),
-    )?;
     let table = operators::join::build_table(
         source,
         &spec.spec,
@@ -650,12 +644,21 @@ pub(crate) fn require_same_key_type(
 }
 
 /// The type of a column of the build side, by name.
-pub(crate) fn build_key_type(source: &ParquetSource, build_key: &str) -> columnar_core::DataType {
+///
+/// The build side is a file of its own, and the key is named in it. A key the
+/// file does not have is a **plan error**: it is not a key of some default
+/// type, and typing it `Int64` would let a plan join against a column that
+/// does not exist.
+pub(crate) fn build_key_type(
+    source: &ParquetSource,
+    build_key: &str,
+) -> Result<columnar_core::DataType, EngineError> {
     source
         .columns()
         .iter()
         .find(|column| column.name == build_key)
-        .map_or(columnar_core::DataType::Int64, |column| column.data_type)
+        .map(|column| column.data_type)
+        .ok_or_else(|| EngineError::UnknownColumn(build_key.to_owned()))
 }
 
 /// The name of a file, without its directory.

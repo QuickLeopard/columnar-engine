@@ -178,6 +178,13 @@ pub struct ResolvedJoin {
     pub spec: JoinSpec,
     /// The probe side's key column, by index.
     pub probe_key: usize,
+    /// The probe side's key column's type.
+    ///
+    /// The type is resolved **with** the index, out of the same schema, so
+    /// that the join's two keys can be compared without reading either schema
+    /// again -- and so that both paths compare the same thing. A remap moves
+    /// the index and keeps the type: the column is the same column.
+    pub probe_type: DataType,
 }
 
 /// A sort whose column has been resolved.
@@ -232,6 +239,7 @@ impl ResolvedPlan {
                 Ok::<ResolvedJoin, EngineError>(ResolvedJoin {
                     spec: join.spec.clone(),
                     probe_key: mapping.require(join.probe_key)?,
+                    probe_type: join.probe_type,
                 })
             })
             .transpose()?;
