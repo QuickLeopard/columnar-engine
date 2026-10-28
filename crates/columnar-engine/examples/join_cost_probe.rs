@@ -30,10 +30,25 @@
 //! | **`probe_column`** | the probe over the engine's own column, in memory: the **resident** path's probe |
 //! | **`probe_batches`** | the probe inside the reader's own batch loop: the **cold** path's probe |
 //!
+//! | **`candidate_probe`** | the same lookup, written out by hand, over the same rows and the same table |
+//!
 //! The **table**, the **output** and the probe's **remainder** are the
 //! differences: the table is what `build_whole` costs over the read and the
 //! keys, the output is what the candidate probe costs over the floor, and the
 //! remainder is what the engine's own probe costs over the candidate's.
+//!
+//! # The remainder, taken apart
+//!
+//! | | |
+//! |---|---|
+//! | **`candidate_with_map`** | the candidate **with the overflow map's consult** in it: the same lookup, over the same rows and the same table, and one thing more -- the map the engine's own table consults once a probe row |
+//! | **`cold_candidate`** | the candidate **inside the reader's own batch loop**: the same hand-written lookup, over the reader's own Arrow batches, so that the cold path's remainder is measurable at all |
+//!
+//! The **map's share** is what the candidate with the consult costs over the
+//! candidate without it, and the **cold remainder** is what the engine's probe
+//! in the batches costs over the cold candidate's. Nothing else is different
+//! between the two candidates, so the difference between them is what the one
+//! thing that is different costs -- **measured, not assumed**.
 //!
 //! # The controls
 //!
@@ -66,10 +81,12 @@
 //! as the median with the spread beside it. The report carries the host's load
 //! average, so a figure that drifted can be read against it.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use arrow::array::Int64Array;
 use columnar_core::{ColumnChunk, ComparisonOp, ScalarValue};
 use columnar_engine::operators::join::{build_table, probe_rows};
 use columnar_engine::operators::key::{ArrowKeys, KeyColumn, KeyValue};
@@ -485,6 +502,86 @@ fn candidate_probe(
     out
 }
 
+/// The candidate, with the overflow map's consult in it.
+///
+/// The same lookup, written out by hand, with the **overflow map's consult**
+/// in it -- the map the engine's own table consults once a probe row, and the
+/// map that holds **nothing** for this data, because every key's count fits in
+/// its byte.
+///
+/// The difference between this and the plain candidate is what the consult
+/// costs, **measured rather than assumed**: nothing else is different between
+/// them. The map's value is a byte here, so that the count's width is the
+/// plain candidate's width too; on an empty map the consult reads no value at
+/// all, so the value's width is not part of what it costs.
+fn candidate_with_map(
+    counts: &[u8],
+    base: i64,
+    overflow: &HashMap<i64, u8>,
+    values: &[i64],
+    rows: std::ops::Range<u32>,
+) -> Vec<u32> {
+    let mut out = Vec::new();
+    for row in rows {
+        let index = usize::try_from(row).unwrap_or(usize::MAX);
+        let Some(&key) = values.get(index) else {
+            continue;
+        };
+        let offset = usize::try_from(key.saturating_sub(base)).unwrap_or(usize::MAX);
+        let byte = counts.get(offset).copied().unwrap_or(0);
+        let extra = overflow.get(&key).copied().unwrap_or(0);
+        let count = byte.saturating_add(extra);
+        for _ in 0..count {
+            out.push(row);
+        }
+    }
+    out
+}
+
+/// The candidate inside the reader's own batch loop.
+///
+/// The same hand-written lookup, over the reader's own Arrow batches, so that
+/// the **cold** path's remainder is measurable at all: the cold probe runs
+/// inside the reader, against the caches the decode is using, and the plain
+/// candidate is measured over a column in memory. The two are not the same
+/// measurement, and the difference between them is the cold path's extra cost.
+fn cold_candidate(
+    path: &Path,
+    columns: &[usize],
+    batch_rows: usize,
+    counts: &[u8],
+    base: i64,
+) -> Result<(Timing, Vec<u32>), Box<dyn std::error::Error>> {
+    let mut samples = Vec::with_capacity(ITERATIONS);
+    let mut last = Vec::new();
+    for _ in 0..ITERATIONS {
+        let file = File::open(path)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        let mask = ProjectionMask::roots(builder.parquet_schema(), columns.iter().copied());
+        let reader = builder.with_projection(mask).with_batch_size(batch_rows).build()?;
+
+        let mut matched = Vec::new();
+        let mut offset = 0_u32;
+        let mut elapsed = Duration::ZERO;
+        for batch in reader {
+            let batch = batch?;
+            let rows = u32::try_from(batch.num_rows()).unwrap_or(u32::MAX);
+            let started = Instant::now();
+            let array = batch.column(0);
+            let Some(values) = array.as_any().downcast_ref::<Int64Array>() else {
+                return Err("the probe's key column is not a plain integer".into());
+            };
+            let found = candidate_probe(counts, base, values.values(), 0..rows);
+            matched.extend(found.iter().map(|row| row.saturating_add(offset)));
+            elapsed += started.elapsed();
+            offset = offset.saturating_add(rows);
+        }
+        samples.push(elapsed);
+        last = matched;
+    }
+    Ok((Timing::of(&samples), last))
+}
+
 /// The probe's own table: one byte a count, over the key's own range.
 ///
 /// It is the engine's own table's shape, written out here, and its own
@@ -587,6 +684,10 @@ struct ProbeParts {
     floor: Timing,
     /// The probe's own candidate.
     candidate: Timing,
+    /// The candidate with the overflow map's consult in it.
+    with_map: Timing,
+    /// The candidate inside the reader's own batch loop.
+    cold: Timing,
     /// The rows the engine's probe produced.
     engine_rows: Vec<u32>,
     /// The probe key column's own values.
@@ -677,7 +778,30 @@ fn probe_parts(
         std::hint::black_box(&rows);
         elapsed
     });
-    Ok(ProbeParts { column, batches, floor, candidate, engine_rows, values })
+
+    // The candidate with the overflow map's consult in it. The map is the
+    // engine's own map's **kind** -- the same type, and empty, because every
+    // key's count fits in its byte for this data -- so the consult costs what
+    // the engine's consult costs.
+    let overflow: HashMap<i64, u8> = HashMap::new();
+    let with_map_rows =
+        candidate_with_map(&counts, build.base, &overflow, &values, all_rows.clone());
+    assert_eq!(with_map_rows, candidate_rows, "the map changes no row");
+    let with_map = repeat(ITERATIONS, || {
+        let started = Instant::now();
+        let rows = candidate_with_map(&counts, build.base, &overflow, &values, all_rows.clone());
+        let elapsed = started.elapsed();
+        std::hint::black_box(&rows);
+        elapsed
+    });
+
+    // The cold candidate: the same hand-written lookup, inside the reader's
+    // own batch loop, so that the cold path's remainder is measurable.
+    let (cold, cold_rows) =
+        cold_candidate(path, &[probe_index, value_index], batch_rows, &counts, build.base)?;
+    assert_eq!(cold_rows, engine_rows, "the cold candidate probes differently");
+
+    Ok(ProbeParts { column, batches, floor, candidate, with_map, cold, engine_rows, values })
 }
 
 /// The probe key column's own values, as a plain slice of integers.
@@ -742,6 +866,8 @@ fn measure(path: &Path) -> Result<Measured, Box<dyn std::error::Error>> {
         ("probe_batches", probe.batches),
         ("floor_probe", probe.floor),
         ("candidate_probe", probe.candidate),
+        ("candidate_with_map", probe.with_map),
+        ("cold_candidate", probe.cold),
         ("read_plain", read_plain_timing),
         ("read_small", read_small),
     ];
@@ -785,6 +911,8 @@ fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn st
             "build_table": part("build_whole") - part("build_read") - part("build_keys"),
             "output_rows": part("candidate_probe") - part("floor_probe"),
             "the_probe_s_remainder": part("probe_column") - part("candidate_probe"),
+            "the_map_s_share": part("candidate_with_map") - part("candidate_probe"),
+            "the_cold_remainder": part("probe_batches") - part("cold_candidate"),
             "the_two_paths": part("stage_cold") - part("stage_resident"),
             "the_two_probes": part("probe_batches") - part("probe_column"),
         },
