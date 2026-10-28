@@ -2190,7 +2190,7 @@ overhead in the stage to remove.
 
 **The cache state is not it either.** The operator costs the same with the caches pushed out as with
 them warm (**3.23 ms** against **3.25 ms**), and the read costs the same per value over four
-megabytes as over forty-eight (**0.50 ns** against **0.55 ns**). The read was never waiting for
+megabytes as over forty-eight (**0.50 ns** against **0.53 ns**). The read was never waiting for
 memory. It was **counting**.
 
 **The operator is not at the floor.** The floor was **3.6 ms**, and it was the read of the column — a
@@ -2199,7 +2199,7 @@ column: a third of the operator's **3.23 ms**. The sort's own work was **2.3 ms*
 3.2 ms, and it was the comparison, made **a row at a time**.
 
 **And the scan that feeds the sort is worse, so it is refused.** The top-k over the reader's own
-Arrow arrays — where the values are hot — costs **6.19 ms** on top of the decode, against the old
+Arrow arrays — where the values are hot — costs **6.3 ms** on top of the decode, against the old
 stage's **4.18 ms** for the whole of it. Reading the keys where they lie is not the lever; **how they
 are compared** is.
 
