@@ -2330,9 +2330,13 @@ every key's count fits in its byte. The candidate has no map to consult. The flo
 under is **4.418 ms** — the table's own load, one a probe row — and the **216,783 output rows** cost
 **2.549 ms** of the candidate's **6.959 ms**.
 
-**How much of the remainder the map is, is written down as the next question rather than assumed:**
-[spec 028](specs/028-the-probes-remainder/spec.md) removes the lookup and measures what is left of the
-**3.095 ms**.
+**How much of the remainder the map is, is not measured here, and it is not assumed either.** The
+committed reports have **no part that isolates it** — the candidate differs from the engine's lookup in
+more than the map — and the consult is **already hash-free**: `hashbrown` returns before it hashes when
+the table is empty, so what is paid a probe row is one load of the map's emptiness and one branch. **That
+is the next question**, and it is written down rather than guessed at:
+[spec 028](specs/028-the-probes-remainder/spec.md) measures it first, and takes the lookup if the
+measurement says it is worth taking.
 
 **The two paths differ by the probe, and the probe's own measurement does not agree with the stage.**
 The stages differ by **1.519 ms**. The build side's read is **the same call on both paths** — the same

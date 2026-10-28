@@ -4,6 +4,7 @@
 **Date**: 2026-10-28
 **Spec**: [spec 026](../../specs/026-the-join-stage-taken-apart/spec.md)
 **Predecessor**: [ADR-0034](0034-the-joins-rules.md)
+**Successor**: [ADR-0036](0036-the-probes-remainder-taken.md) — the remainder this ADR published as a finding, **not taken**, is taken
 
 ## Context
 
