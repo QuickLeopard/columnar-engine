@@ -204,8 +204,8 @@ pub fn execute(
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = memory::estimate_resolved(&resolved, dataset, grouped)
-        .saturating_add(estimate_join(resolved.join.as_ref(), build.source()))
-        .saturating_add(estimate_sort(&resolved, dataset.len()));
+        .saturating_add(memory::estimate_plan_join(resolved.join.as_ref(), build.source()))
+        .saturating_add(memory::estimate_plan_sort(resolved.sort.as_ref(), dataset.len()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
     }
@@ -235,28 +235,6 @@ pub fn execute(
         streamed: None,
     }
     .run()
-}
-
-/// The estimate for the join's build side.
-///
-/// The build side is hashed, and the hash table holds one entry per distinct
-/// key, so the build side's row count bounds it.
-fn estimate_join(join: Option<&plan::ResolvedJoin>, source: Option<&ParquetSource>) -> usize {
-    let (Some(join), Some(source)) = (join, source) else {
-        return 0;
-    };
-    memory::estimate_build_side(source, &join.spec.build_key, &join.spec.build_filter)
-}
-
-/// The estimate for the sort.
-///
-/// With a limit the sort keeps a bounded heap of `limit` rows; without one it
-/// sorts every row, and the rows it sorts are its working set.
-fn estimate_sort(resolved: &plan::ResolvedPlan, rows: usize) -> usize {
-    match &resolved.sort {
-        Some(sort) => memory::estimate_sort(rows, sort.spec.limit),
-        None => 0,
-    }
 }
 
 /// Executes `plan` over a Parquet file, reading only what the plan needs.
@@ -323,8 +301,8 @@ pub fn execute_on(
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = memory::estimate_lazy_read(source, &decision.read, workers, grouped)
-        .saturating_add(estimate_join(resolved.join.as_ref(), build.source()))
-        .saturating_add(estimate_sort(&resolved, source.rows()));
+        .saturating_add(memory::estimate_plan_join(resolved.join.as_ref(), build.source()))
+        .saturating_add(memory::estimate_plan_sort(resolved.sort.as_ref(), source.rows()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
     }

@@ -75,7 +75,7 @@
 
 use columnar_core::{ComparisonOp, DataType, Encoding, Predicate, ScalarValue};
 
-use crate::plan::{QueryPlan, ResolvedPlan};
+use crate::plan::{QueryPlan, ResolvedJoin, ResolvedPlan, ResolvedSort};
 use crate::source::ParquetSource;
 use crate::Dataset;
 
@@ -593,6 +593,32 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let day_of_year = (153 * month_of_year + 2) / 5 + day - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
+}
+
+/// Estimates the working set of a plan's **join**, in bytes.
+///
+/// The join's build side is hashed, and the hash table holds one entry per
+/// distinct key, so the build side's row count bounds it. A plan with no
+/// join has no build side, and costs nothing here.
+#[must_use]
+pub fn estimate_plan_join(join: Option<&ResolvedJoin>, source: Option<&ParquetSource>) -> usize {
+    let (Some(join), Some(source)) = (join, source) else {
+        return 0;
+    };
+    estimate_build_side(source, &join.spec.build_key, &join.spec.build_filter)
+}
+
+/// Estimates the working set of a plan's **sort**, in bytes.
+///
+/// With a limit the sort keeps a bounded heap of `limit` rows; without one it
+/// sorts every row, and the rows it sorts are its working set. A plan with no
+/// sort has no working set of its own, and costs nothing here.
+#[must_use]
+pub fn estimate_plan_sort(sort: Option<&ResolvedSort>, rows: usize) -> usize {
+    match sort {
+        Some(sort) => estimate_sort(rows, sort.spec.limit),
+        None => 0,
+    }
 }
 
 /// Estimates the working set of a **sort**, in bytes.

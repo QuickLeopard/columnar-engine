@@ -18,7 +18,7 @@ and x86-64, and leaves the published figures exactly where they were.
       parameters become a context. `#[allow(clippy::too_many_arguments)]` is gone.
 - [x] **Step 5 — one stage shape.** The four stage idioms become one, so the plan output is
       assembled in one place.
-- [ ] **Step 6 — the estimates.** `estimate_join` and `estimate_sort` join the other estimates in
+- [x] **Step 6 — the estimates.** `estimate_join` and `estimate_sort` join the other estimates in
       `memory.rs`.
 - [ ] **Step 7 — the surface.** The crate root keeps the public surface and the story, and nothing
       else.
