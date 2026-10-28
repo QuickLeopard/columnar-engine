@@ -27,6 +27,20 @@ use columnar_core::{BatchColumn, BatchData, ColumnChunk, Encoding, NullBitmap};
 ///
 /// See [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md).
 pub trait KeySource {
+    /// How many rows the column holds.
+    ///
+    /// The length is what makes "the row is in range" a question with an
+    /// answer. Without it, the two sources cannot say whether a row past the
+    /// end holds a value, and one of them would **panic** on it while the
+    /// other would not.
+    fn len(&self) -> usize;
+
+    /// Whether the column holds no rows at all.
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Whether the column holds a NULL at all.
     ///
     /// A column with no NULLs is read without touching its validity bitmap.
@@ -38,14 +52,36 @@ pub trait KeySource {
     /// out of the column, with no enum and no validity bitmap.
     fn integer_values(&self) -> Option<&[i64]>;
 
-    /// The value at `row`, if it holds one.
+    /// The value at a row **in range**, if it holds one.
     ///
     /// A row that holds no value has no key: a NULL never matches anything,
     /// and it has no place in an order either.
-    fn value_at(&self, row: usize) -> Option<KeyValue<'_>>;
+    ///
+    /// The row must be in range. Use [`KeySource::value_at`], which checks.
+    fn value_at_in_range(&self, row: usize) -> Option<KeyValue<'_>>;
+
+    /// The value at `row`, if it holds one.
+    ///
+    /// A row that holds no value has no key: a NULL never matches anything,
+    /// and it has no place in an order either. A row **past the end** of the
+    /// column has no value either.
+    ///
+    /// The range check is made **here**, once, for every source: the two
+    /// paths cannot answer differently about a row that is not there.
+    #[inline]
+    fn value_at(&self, row: usize) -> Option<KeyValue<'_>> {
+        if row >= self.len() {
+            return None;
+        }
+        self.value_at_in_range(row)
+    }
 }
 
 impl KeySource for KeyColumn<'_> {
+    fn len(&self) -> usize {
+        self.validity.len()
+    }
+
     fn has_nulls(&self) -> bool {
         self.nulls
     }
@@ -54,8 +90,8 @@ impl KeySource for KeyColumn<'_> {
         KeyColumn::integer_values(self)
     }
 
-    fn value_at(&self, row: usize) -> Option<KeyValue<'_>> {
-        KeyColumn::value_at(self, row)
+    fn value_at_in_range(&self, row: usize) -> Option<KeyValue<'_>> {
+        KeyColumn::value_at_in_range(self, row)
     }
 }
 
@@ -122,6 +158,16 @@ impl<'a> ArrowKeys<'a> {
 }
 
 impl KeySource for ArrowKeys<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Int64(values) => values.len(),
+            Self::Float64(values) => values.len(),
+            Self::Utf8(values) => values.len(),
+            Self::LargeUtf8(values) => values.len(),
+            Self::Dictionary { keys, .. } | Self::LargeDictionary { keys, .. } => keys.len(),
+        }
+    }
+
     fn has_nulls(&self) -> bool {
         match self {
             Self::Int64(values) => values.null_count() != 0,
@@ -141,7 +187,7 @@ impl KeySource for ArrowKeys<'_> {
         }
     }
 
-    fn value_at(&self, row: usize) -> Option<KeyValue<'_>> {
+    fn value_at_in_range(&self, row: usize) -> Option<KeyValue<'_>> {
         match self {
             Self::Int64(values) => {
                 if values.is_null(row) {
@@ -386,17 +432,24 @@ impl<'a> KeyColumn<'a> {
     /// The value of `row`, if it holds one.
     ///
     /// A row that holds no value has no key: a NULL never matches anything,
-    /// and it has no place in an order either.
+    /// and it has no place in an order either. A row **past the end** of the
+    /// column has no value either.
+    ///
+    /// The range check is made by [`KeySource::value_at`], where it lives for
+    /// every source: the two paths cannot answer differently about a row that
+    /// is not there.
+    pub fn value_at(&self, row: usize) -> Option<KeyValue<'_>> {
+        <Self as KeySource>::value_at(self, row)
+    }
+
+    /// The value of a row **in range**, if it holds one.
     ///
     /// # Panics
     ///
     /// Panics if `row` is out of range for the column. The rows come from a
     /// selection built over this very column, so they are in range by
     /// construction.
-    pub fn value_at(&self, row: usize) -> Option<KeyValue<'_>> {
-        if row >= self.validity.len() {
-            return None;
-        }
+    pub fn value_at_in_range(&self, row: usize) -> Option<KeyValue<'_>> {
         if self.nulls && !self.validity.is_valid(row) {
             return None;
         }
