@@ -368,15 +368,28 @@ The like-for-like comparison: all three systems hold the data in memory and answ
 | query | **engine** | duckdb | polars | datafusion | |
 |---|---|---|---|---|---|
 | `scan` | **0.0 ms** | 1.0 ms | 0.2 ms | 0.9 ms | engine wins |
-| `filter-numeric` | **2.7 ms** | 11.0 ms | 8.2 ms | 9.3 ms | engine wins |
-| `filter-string` | **3.1 ms** | 30.0 ms | 37.1 ms | 14.9 ms | engine wins |
-| `filter-range` | **6.5 ms** | 19.0 ms | 11.3 ms | 10.4 ms | engine wins |
-| `q6` | **9.5 ms** | 45.0 ms | 69.2 ms | 24.0 ms | engine wins, by 4.7× |
-| `q6-revenue` | **14.6 ms** | 46.0 ms | 69.8 ms | 61.2 ms | engine wins, by 3.1× |
-| `join-orders` | **24.2 ms** (22.8–27.8) | 35.0 ms (31.0–41.0) | 81.0 ms (69.0–95.0) | 86.5 ms (76.8–94.4) | engine wins — **and it reads the build side inside the clock** |
-| `sort-topk` | **2.7 ms** (2.5–2.9) | 3.0 ms (3.0–3.0) | 1379.5 ms (1301.5–6969.2) | 3.6 ms (3.3–18.8) | **engine wins** — and it beats the peer by 1.3× |
+| `filter-numeric` | **2.5 ms** | 12.0 ms | 9.8 ms | 9.5 ms | engine wins |
+| `filter-string` | **3.3 ms** | 33.0 ms | 36.8 ms | 15.8 ms | engine wins |
+| `filter-range` | **6.6 ms** | 19.0 ms | 10.8 ms | 10.1 ms | engine wins |
+| `q6` | **9.4 ms** | 45.0 ms | 67.4 ms | 23.8 ms | engine wins, by 4.8× |
+| `q6-revenue` | **15.0 ms** | 47.0 ms | 71.1 ms | 65.2 ms | engine wins, by 3.1× |
+| `join-orders` | **26.6 ms** (25.7–26.7) | 35.0 ms (35.0–37.0) | 78.9 ms (78.7–79.2) | 85.8 ms (85.7–86.6) | engine wins — **and it reads the build side inside the clock** |
+| `sort-topk` | **2.7 ms** (2.6–2.7) | 3.0 ms (3.0–3.0) | 1356.8 ms (1347.4–1364.0) | 3.8 ms (3.7–3.8) | **engine wins** — and it beats the peer by 1.4× |
 
-**The set this one replaces, for the same rows — every figure in the table above moved:**
+**The set this one replaces, for the same rows:**
+
+| query | **engine** | duckdb | polars | datafusion |
+|---|---|---|---|---|
+| `scan` | **0.0 ms** | 1.0 ms | 0.2 ms | 0.9 ms |
+| `filter-numeric` | **2.7 ms** | 11.0 ms | 8.2 ms | 9.3 ms |
+| `filter-string` | **3.1 ms** | 30.0 ms | 37.1 ms | 14.9 ms |
+| `filter-range` | **6.5 ms** | 19.0 ms | 11.3 ms | 10.4 ms |
+| `q6` | **9.5 ms** | 45.0 ms | 69.2 ms | 24.0 ms |
+| `q6-revenue` | **14.6 ms** | 46.0 ms | 69.8 ms | 61.2 ms |
+| `join-orders` | 24.2 ms (22.8–27.8) | 35.0 ms (31.0–41.0) | 81.0 ms (69.0–95.0) | 86.5 ms (76.8–94.4) |
+| `sort-topk` | 2.7 ms (2.5–2.9) | 3.0 ms (3.0–3.0) | 1379.5 ms (1301.5–6969.2) | 3.6 ms (3.3–18.8) |
+
+**And the last set — the one before the set this one replaces:**
 
 | query | **engine** | duckdb | polars | datafusion |
 |---|---|---|---|---|
@@ -387,20 +400,7 @@ The like-for-like comparison: all three systems hold the data in memory and answ
 | `q6` | **9.4 ms** | 46.0 ms | 68.7 ms | 22.9 ms |
 | `q6-revenue` | **15.4 ms** | 47.0 ms | 72.5 ms | 62.1 ms |
 | `join-orders` | 23.8 ms (22.9–25.8) | 33.0 ms (33.0–37.0) | 77.9 ms (75.0–86.7) | 80.6 ms (78.9–94.1) |
-| `sort-topk` | 5.7 ms (5.1–5.9) | **3.0 ms** (3.0–3.0) | 1270.5 ms (1229.8–1377.0) | 4.1 ms (4.0–5.0) |
-
-**And the last set — the one before the set this one replaces:**
-
-| query | **engine** | duckdb | polars | datafusion |
-|---|---|---|---|---|
-| `scan` | **0.0 ms** | 1.0 ms | 0.2 ms | 0.9 ms |
-| `filter-numeric` | **2.7 ms** | 11.0 ms | 7.1 ms | 9.3 ms |
-| `filter-string` | **3.4 ms** | 31.0 ms | 36.6 ms | 15.3 ms |
-| `filter-range` | **6.2 ms** | 19.0 ms | 10.3 ms | 10.7 ms |
-| `q6` | **9.6 ms** | 45.0 ms | 71.8 ms | 25.1 ms |
-| `q6-revenue` | **15.1 ms** | 46.0 ms | 71.0 ms | 64.0 ms |
-| `join-orders` | 30.7 ms (29.9–30.8) | 35.0 ms (35.0–35.0) | 80.0 ms (76.6–82.0) | 88.2 ms (85.2–89.6) |
-| `sort-topk` | 11.0 ms (9.6–11.0) | **3.0 ms** (3.0–4.0) | 1347.6 ms (1303.0–1380.7) | 3.6 ms (3.5–3.6) |
+| `sort-topk` | 5.7 ms (5.1–5.9) | 3.0 ms (3.0–3.0) | 1270.5 ms (1229.8–1377.0) | 4.1 ms (4.0–5.0) |
 
 **The engine wins all eight queries in that table, against a Rust peer on the same Arrow
 stack.** The `datafusion` column is `DataFusion` 49.0.2 reading the same Parquet
@@ -408,14 +408,14 @@ through Arrow 55.2.0, one thread, in the same harness. The sort was the one it d
 was published as a loss; it is a win now.
 
 **The sort was a loss, and it is a win now.** The engine's
-resident `sort-topk` is **2.7 ms** — the median of a **2.5–2.9 ms** range across the three
-campaigns — against `DuckDB`'s **3.0 ms** and the `DataFusion` peer's **3.6 ms**: the engine is
-**1.1× ahead of DuckDB** and **1.3× ahead of the peer** on this query, and it was **1.9× behind
-DuckDB** in the set above. And it is **510× ahead of `Polars`**, whose **1379.5 ms**
-(1301.5–6969.2 ms) is the price of sorting six million rows where the engine keeps a heap of ten —
+resident `sort-topk` is **2.7 ms** — the median of a **2.6–2.7 ms** range across the three
+campaigns — against `DuckDB`'s **3.0 ms** and the `DataFusion` peer's **3.8 ms**: the engine is
+**1.1× ahead of DuckDB** and **1.4× ahead of the peer** on this query, and it was **1.9× behind
+DuckDB** in the last set. And it is **502× ahead of `Polars`**, whose **1356.8 ms**
+(1347.4–1364.0 ms) is the price of sorting six million rows where the engine keeps a heap of ten —
 the plan says so: `sort: l_extendedprice DESC LIMIT 10 (10 rows kept)`. The same query is published
 cold in [§2b](#2b-cold--read-the-parquet-file-and-answer-in-one-go), where the engine is ahead of
-DuckDB and the peer and **39× ahead of `Polars`** as well.
+DuckDB and the peer and **35× ahead of `Polars`** as well.
 
 **The join is in this table now, and the asymmetry is named.** In resident mode the incumbents have
 **both** tables in memory before the clock starts — `DuckDB` has loaded the `orders` file into a temp
@@ -423,21 +423,20 @@ table, `Polars` and the peer have registered both relations — while the engine
 **reads the build side inside the clock**: the join's build side is a file, and the engine does not
 hold it in memory before the query. The engine therefore does **more** work inside its clock than the
 incumbents do inside theirs. Spec 020 withheld the figure for exactly this reason; it is published
-now because the asymmetry **works against the engine** and the engine wins anyway — **23.8 ms**
-(22.9–25.8 ms) against `DuckDB`'s **33.0 ms** (33.0–37.0 ms), the peer's **80.6 ms** (78.9–94.1 ms)
-and `Polars`' **77.9 ms** (75.0–86.7 ms). A figure that cannot be made fairly is named, not
+now because the asymmetry **works against the engine** and the engine wins anyway — **26.6 ms**
+(25.7–26.7 ms) against `DuckDB`'s **35.0 ms** (35.0–37.0 ms), the peer's **85.8 ms** (85.7–86.6 ms)
+and `Polars`' **78.9 ms** (78.7–79.2 ms). A figure that cannot be made fairly is named, not
 published; a figure that can be made *unfairly in the engine's favour* is published with the
 unfairness written down beside it.
 
 **What moved, and why.** One figure in this table moved for the **code's** reason, and the code's
-share of it is **measured, not asserted**: the resident `sort-topk` fell from **5.7 ms** to
-**2.7 ms**, because the sort now compares its keys **in blocks** instead of one row at a time —
-[§3n](#3n-the-sort-taken-apart) takes that apart, and
-[§2h](#2h-the-hot-paths-taken-apart) measures the code's share against the old code on this same
-host, back to back. The other seven figures moved by a few percent, **in no common direction**, and
-**the machine's share of them is the whole of it**: the engine's resident `q6` rose from **9.4 ms**
-to **9.5 ms**, `DuckDB`'s fell from **46.0 ms** to **45.0 ms**, `Polars`' from **68.7 ms** to
-**69.2 ms**.
+share of it is **measured, not asserted**: the resident `join-orders` rose from **24.2 ms** to
+**26.6 ms**, and [§2h](#2h-the-hot-paths-taken-apart) measures the code's share of that against the old
+code on this same host, back to back — where the old code reads **25.1 ms**, so the code's share is
+**1.5 ms** and the rest is the machine's. The other seven figures moved by a few percent, **in no
+common direction**, and **the machine's share of them is the whole of it**: the engine's resident
+`q6` fell from **9.5 ms** to **9.4 ms**, `DuckDB`'s from **35.0 ms** to **35.0 ms**, `Polars`' from
+**81.0 ms** to **78.9 ms**, and the peer's from **86.5 ms** to **85.8 ms**.
 
 ### 2b. Cold — read the Parquet file and answer in one go
 
@@ -446,16 +445,29 @@ and every answer is cross-checked against the engine's.
 
 | query | **engine** (eager) | **engine** (lazy) | duckdb | polars | datafusion |
 |---|---|---|---|---|---|
+| `scan` | 549.9 ms | **0.1 ms** | 2.0 ms | 1.0 ms | 1.1 ms |
+| `filter-numeric` | 544.8 ms | **4.5 ms** | 22.0 ms | 44.0 ms | 14.5 ms |
+| `filter-string` | 546.5 ms | **9.4 ms** | 21.0 ms | 160.4 ms | 23.7 ms |
+| `filter-range` | 551.5 ms | 16.3 ms | 31.0 ms | **15.2 ms** | 20.7 ms |
+| `q6` | 552.3 ms | **15.4 ms** | 32.0 ms | 190.5 ms | 34.8 ms |
+| `q6-revenue` | 558.2 ms | **58.9 ms** | 67.0 ms | 198.7 ms | 112.6 ms |
+| `join-orders` | 566.2 ms | **97.6 ms** (95.2–98.5) | 91.0 ms (90.0–94.0) | 219.1 ms (218.9–224.7) | 168.8 ms (165.8–171.3) |
+| `sort-topk` | 542.8 ms | **39.5 ms** (38.9–39.6) | 38.0 ms (38.0–39.0) | 1398.0 ms (1386.5–1400.9) | 39.8 ms (38.4–40.0) |
+
+**The set this one replaces, for the same rows:**
+
+| query | **engine** (eager) | **engine** (lazy) | duckdb | polars | datafusion |
+|---|---|---|---|---|---|
 | `scan` | 556.3 ms | **0.1 ms** | 2.0 ms | 1.0 ms | 1.2 ms |
 | `filter-numeric` | 557.4 ms | **5.0 ms** | 21.0 ms | 43.0 ms | 14.2 ms |
 | `filter-string` | 564.7 ms | **9.2 ms** | 20.0 ms | 155.6 ms | 23.5 ms |
-| `filter-range` | 525.4 ms | 15.6 ms | 33.0 ms | **15.0 ms** | 20.1 ms |
+| `filter-range` | 525.4 ms | **15.6 ms** | 33.0 ms | 15.0 ms | 20.1 ms |
 | `q6` | 564.6 ms | **15.7 ms** | 33.0 ms | 195.6 ms | 36.7 ms |
 | `q6-revenue` | 565.7 ms | **62.4 ms** | 68.0 ms | 192.7 ms | 115.2 ms |
-| `join-orders` | 571.9 ms | **96.7 ms** (88.5–100.7) | 95.0 ms (86.0–104.0) | 222.8 ms (209.4–264.2) | 168.5 ms (160.0–200.9) |
-| `sort-topk` | 553.8 ms | **37.2 ms** (36.1–46.3) | 39.0 ms (36.0–224.0) | 1447.0 ms (1309.0–7655.3) | 40.3 ms (37.5–226.8) |
+| `join-orders` | 571.9 ms | **96.7 ms** (88.5–100.7) | 95.0 ms | 222.8 ms | 168.5 ms |
+| `sort-topk` | 553.8 ms | **37.2 ms** (36.1–46.3) | 39.0 ms | 1447.0 ms | 40.3 ms |
 
-**The set this one replaces, for the same rows — every figure in the table above moved:**
+**And the last set — the one before the set this one replaces:**
 
 | query | **engine** (eager) | **engine** (lazy) | duckdb | polars | datafusion |
 |---|---|---|---|---|---|
@@ -465,41 +477,36 @@ and every answer is cross-checked against the engine's.
 | `filter-range` | 532.4 ms | 16.5 ms | 30.0 ms | **15.0 ms** | 19.4 ms |
 | `q6` | 534.0 ms | **14.8 ms** | 31.0 ms | 190.1 ms | 35.4 ms |
 | `q6-revenue` | 546.0 ms | **56.1 ms** | 67.0 ms | 193.8 ms | 111.2 ms |
-| `join-orders` | 549.6 ms | **89.8 ms** (89.7–100.3) | 90.0 ms (88.0–95.0) | 216.5 ms (208.1–234.2) | 159.4 ms (159.2–168.6) |
+| `join-orders` | 549.6 ms | **89.8 ms** (89.7–100.3) | 90.0 ms | 216.5 ms | 159.4 ms |
 | `sort-topk` | 539.0 ms | 40.1 ms (39.2–42.2) | **37.0 ms** (37.0–39.0) | 1316.6 ms (1291.4–1403.6) | 37.7 ms (37.4–39.8) |
 
-**And the last set — the one before the set this one replaces:**
+**The join is behind DuckDB in this set, and the gap is DuckDB's own measurement.** The **join** —
+`lineitem` against `orders`, on the order key, with a date range on the build side — is **97.6 ms** for
+the engine (95.2–98.5 ms), cold, one thread, on the same `lineitem` file and the `orders` file
+beside it. `DuckDB` does it in **91.0 ms** (90.0–94.0 ms), the `DataFusion` peer in **168.8 ms**
+(165.8–171.3 ms) and `Polars` in **219.1 ms** (218.9–224.7 ms): the engine is **6.6 ms behind**
+DuckDB, **1.7× ahead of the peer**, and **2.2× ahead of `Polars`**. It was **level** with DuckDB in
+the set this one replaces — **96.7 ms** against **95.0 ms** — and **the gap is DuckDB's figure that
+moved**: DuckDB's own cold join fell from **95.0 ms** to **91.0 ms** across the two sets while the
+engine's rose from **96.7 ms** to **97.6 ms**, and the engine's **old code, measured on this same host
+in this same session**, reads **97.3 ms** against the same DuckDB's **92.0 ms**. The gap is there for
+the code that shipped in spec 026 as well, so it is not this increment's.
 
-| query | **engine** (eager) | **engine** (lazy) | duckdb | polars | datafusion |
-|---|---|---|---|---|---|
-| `scan` | 541.6 ms | **0.1 ms** | 1.0 ms | 1.0 ms | 1.1 ms |
-| `filter-numeric` | 544.2 ms | **4.9 ms** | 22.0 ms | 43.6 ms | 15.0 ms |
-| `filter-string` | 567.6 ms | **9.5 ms** | 22.0 ms | 163.7 ms | 23.2 ms |
-| `filter-range` | 548.1 ms | 16.4 ms | 32.0 ms | **14.6 ms** | 19.6 ms |
-| `q6` | 541.3 ms | **15.3 ms** | 32.0 ms | 191.4 ms | 36.0 ms |
-| `q6-revenue` | 563.5 ms | **59.8 ms** | 67.0 ms | 195.1 ms | 115.1 ms |
-| `join-orders` | 568.3 ms | 100.4 ms (100.4–102.4) | **93.0 ms** (91.0–94.0) | 221.2 ms (220.3–222.4) | 169.4 ms (166.5–169.8) |
-| `sort-topk` | 555.4 ms | 49.6 ms (45.6–50.6) | **38.0 ms** (37.0–40.0) | 1388.9 ms (1377.4–1400.6) | 39.1 ms (38.0–40.0) |
-
-**The join is level with DuckDB, and the sort is ahead of it.** The **join** —
-`lineitem` against `orders`, on the order key, with a date range on the build side — is **96.7 ms** for
-the engine (88.5–100.7 ms), cold, one thread, on the same `lineitem` file and the `orders` file
-beside it. `DuckDB` does it in **95.0 ms** (86.0–104.0 ms), the `DataFusion` peer in **168.5 ms**
-(160.0–200.9 ms) and `Polars` in **222.8 ms** (209.4–264.2 ms): the engine and DuckDB are **level** —
-**1.7 ms** apart, inside their spreads — the engine is **1.7× ahead of the peer**, and **2.3× ahead of
-`Polars`**. The **sort** — the ten largest `l_extendedprice` values — is **37.2 ms** for the engine
-(36.1–46.3 ms) against `DuckDB`'s **39.0 ms** (36.0–224.0 ms), the peer's **40.3 ms** (37.5–226.8 ms)
-and `Polars`' **1447.0 ms** (1309.0–7655.3 ms): the engine is **1.05× ahead of DuckDB**, **1.08× ahead
-of the peer**, and **39× ahead of `Polars`** — and it was **1.08× behind DuckDB** in the set above.
+**The sort is ahead of DuckDB in the set this one replaces, and level with it here.** The **sort** —
+the ten largest `l_extendedprice` values — is **39.5 ms** for the engine (38.9–39.6 ms) against
+`DuckDB`'s **38.0 ms**, the peer's **39.8 ms** and `Polars`' **1398.0 ms** (1386.5–1400.9 ms): the
+engine is **1.04× behind DuckDB** and **1.01× behind the peer**, and it was **1.05× ahead of DuckDB**
+in the set this one replaces — and **39× ahead of `Polars`** there. The sort's own code is **untouched**
+by this increment, and the engine's cold `sort-topk` moved **1.3 ms** while DuckDB's did not move at
+all: the machine's share of it is the whole of it.
 
 **Both are published as they are.** A hash join's build side has to be in memory before the probe
 side can be looked up, so the engine reads the `orders` file whole before it probes anything — and
 the incumbents do the same thing with their own build sides, which is why the **cold** numbers are
-the ones that can be compared at all. The join is level with DuckDB, to **1.7 ms**; the sort keeps a
-bounded heap of ten rows and is **ahead** of DuckDB now. Neither is hidden and neither is explained
-away: the numbers, the spreads and the conditions are in the table above, **the code's share of them
-is measured against the old code on this same host** in
-[§2h](#2h-the-hot-paths-taken-apart), and the defects this increment found are in
+the ones that can be compared at all. The join is **6.6 ms** behind DuckDB in this set, and the sort
+is level with it; neither is hidden and neither is explained away: the numbers, the spreads and the
+conditions are in the table above, **the code's share of them is measured against the old code on this
+same host** in [§2h](#2h-the-hot-paths-taken-apart), and the defects this increment found are in
 [§4](#4-the-defects-the-increments-found). See
 [ADR-0028](docs/adr/0028-the-hot-paths-taken-apart.md).
 
@@ -1025,34 +1032,43 @@ reason: it consults nothing, so there is nothing for a filter to guard.
 old code was re-measured here, in its own three campaigns — committed as
 `bench-results/compare-before-run{1,2,3}.json` — so the host's drift is divided out:
 
-| | the last set (load 9.8–13.2) | the set this one replaces (load 4.08–7.38) | old code, this host (load 6.28–6.86) | new code, this host (load 6.28–7.10) | the code's share |
+| | the last set (load 4.08–7.38) | the set this one replaces (load 6.28–7.10) | old code, this host (load 7.59–13.77) | new code, this host (load 7.58–8.97) | the code's share |
 |---|---|---|---|---|---|
-| `join-orders` cold, lazy | 100.4 ms | 89.8 ms | 95.9 ms | **96.7 ms** | **+0.8%** — the machine's |
-| `join-orders` resident | 30.7 ms | 23.8 ms | 25.0 ms | **24.2 ms** | **−3.2%** — the machine's |
-| `sort-topk` cold, lazy | 49.6 ms | 40.1 ms | 42.6 ms | **37.2 ms** | **−12.7%** |
-| `sort-topk` resident | 11.0 ms | 5.7 ms | 5.6 ms | **2.7 ms** | **−51.8%** |
-| *`q6` cold, lazy — the control* | *15.3 ms* | *14.8 ms* | *15.1 ms* | *15.7 ms* | *+4.0%* |
-| *`q6-revenue` cold, lazy — the control* | *59.8 ms* | *56.1 ms* | *58.7 ms* | *62.4 ms* | *+6.3%* |
+| `join-orders` cold, lazy | 89.8 ms | 96.7 ms | 97.3 ms | **97.6 ms** | **+0.3%** — the machine's |
+| `join-orders` resident | 23.8 ms | 24.2 ms | 25.1 ms | **26.6 ms** | **+6.0%** — **not the machine's**, and the parts cannot say what it is |
+| `sort-topk` cold, lazy | 40.1 ms | 37.2 ms | 38.2 ms | **39.5 ms** | **+3.4%** — the machine's |
+| `sort-topk` resident | 5.7 ms | 2.7 ms | 3.0 ms | **2.7 ms** | **−10.0%** — the machine's |
+| *`q6` cold, lazy — the control* | *14.8 ms* | *15.7 ms* | *15.5 ms* | *15.4 ms* | *−0.6%* |
+| *`q6-revenue` cold, lazy — the control* | *56.1 ms* | *62.4 ms* | *59.0 ms* | *58.9 ms* | *−0.2%* |
 
-**The control is the point.** The six queries this increment did not touch moved by **0% to +6.3%**
-in the cold lazy path between the two host-matched sets — the host was busier in the later campaigns,
-so every one of those movements works **against** the sort rather than for it. The sort's
-**−12.7%** is therefore at least the **16.7 points** between the sort's movement and the control's
-worst, and at most **19.0%**, and the code's share of it is all of the difference: the sort's stage
-fell from **5.2 ms** to **2.2 ms** on the same host, back to back. The join's **+0.8%** and its
-resident **−3.2%** are the machine's — the join's stage is unchanged by this increment — and the
-control's own movements are what says so.
+**The control is the point.** The queries this increment did not touch moved by **−0.6% to −0.2%** in
+the cold lazy path between the two host-matched sets — the host was **faster** in the later campaigns,
+so every one of those movements works **against** the code, not for it. The join's cold **+0.3%** is
+inside the untouched sort's **+3.4%**, so it is the machine's: the join's cold stage moved
+**26.0 ms** to **26.4 ms**, inside both spreads. The join's **resident +6.0%** is the other way: the
+machine got faster, so the code's share of that movement is at least the **6.0 points** between it and
+the control's best, and at most the **16.0 points** between it and the untouched sort's **−10.0%**.
+
+**And the movement is not the machine's drift, and the parts cannot say what it is.** A same-moment
+A/B — the old code and the new code, one campaign each, minutes apart on this same host, committed as
+`bench-results/compare-ab-old-run1.json` and `bench-results/compare-ab-new-run1.json` — reads the old
+code's **resident** join stage at **21.7 ms** and the new code's at **23.2 ms**, and the old code's
+cold query at **95.0 ms** against the new code's **93.2 ms**. So the resident path really did move, and
+the cold path really did not. **The parts cannot account for it**: the probe's own measurement is
+**0.950 ms faster** ([§3o](#3o-the-joins-stage-taken-apart)), the **build side's read** is
+**0.275 ms faster**, and the **floor** — the table's own load, which this change cannot touch — moved
+**1.514 ms slower**. **This increment does not claim what the resident movement is.**
 
 **The plan output reads it a stage at a time, and the stages are in the committed reports too.** The
 engine's own account of the same work, from the same three campaigns:
 
-| stage | the last set (load 9.8–13.2) | the set this one replaces (load 4.08–7.38) | old code, this host (load 6.28–6.86) | new code, this host (load 6.28–7.10) |
+| stage | the last set (load 4.08–7.38) | the set this one replaces (load 6.28–7.10) | old code, this host (load 7.59–13.77) | new code, this host (load 7.58–8.97) |
 |---|---|---|---|---|
-| `join-orders` scan | 71.4 ms | 67.4 ms | 69.4 ms | **73.6 ms** |
-| `join-orders` project | 0.9 ms | 0.5 ms | 0.6 ms | **0.6 ms** |
-| `join-orders` **join** | **21.9 ms** | **22.6 ms** | **25.7 ms** | **24.2 ms** |
-| `sort-topk` scan | 39.3 ms | 35.2 ms | 36.5 ms | **39.0 ms** |
-| `sort-topk` **sort** | **5.3 ms** | **4.9 ms** | **5.2 ms** | **2.2 ms** |
+| `join-orders` scan | 67.4 ms | 73.6 ms | 70.5 ms | **70.2 ms** |
+| `join-orders` project | 0.5 ms | 0.6 ms | 0.5 ms | **0.5 ms** |
+| `join-orders` **join** | **22.6 ms** | **24.2 ms** | **26.0 ms** | **26.4 ms** |
+| `sort-topk` scan | 35.2 ms | 39.0 ms | 36.2 ms | **36.1 ms** |
+| `sort-topk` **sort** | **4.9 ms** | **2.2 ms** | **2.2 ms** | **2.4 ms** |
 
 **And the project stage changed shape, not only its time.** It reports the **216,783 rows it
 gathered** now, where it used to report the 6,000,000 it was handed — the defect R6 removed, and
@@ -1060,27 +1076,33 @@ the change spec 023 made to the scan's own rows out. The stage table above is re
 so the rows are in there too.
 
 **The scan stages are the control for the scan.** They are Arrow's decode, which this increment did
-not touch: the sort's rose from **36.5 ms** to **39.0 ms** — **6.9%** — on this same host, and the
-join's from **69.4 ms** to **73.6 ms** — **6.1%**. Both are inside the control band of the query
-figures above, which is what says so: the decode moved because the machine did, and the decode is
-not what this increment touched.
+not touch: the sort's moved from **36.2 ms** to **36.1 ms** on this same host, and the join's from
+**70.5 ms** to **70.2 ms**. **Neither moved**, and that is what says the decode did not move — and it
+is the control the spec names, because the scan's elapsed is the reader's own work **less** the
+probe's, so a probe that got faster cancels out of it.
 
-**The sort's own stage fell by the code's share, and the stage is now the whole of the query's own
-work.** The sort's stage fell from **5.2 ms** to **2.2 ms** on this host, back to back with the old
-code, and the plan output's account of the query still closes: **0.01 ms** outside the stages. What
-fell is not the read — the read of the 48 MB key column is the same 48 MB it always was — but the
-**comparison**, which now happens in blocks instead of a row at a time.
-[§3n](#3n-the-sort-taken-apart) is where that is taken apart, with the instrument that measured it.
+**The sort's own stage is unchanged, because this increment did not touch the sort.** Its stage moved
+from **2.2 ms** to **2.4 ms** on this host, back to back with the old code, and the plan output's
+account of the query still closes: **0.01 ms** outside the stages. The sort's own work — the
+**comparison**, in blocks rather than a row at a time — is where
+[§3n](#3n-the-sort-taken-apart) takes it apart, and it is not what this increment touched.
+
+**And the resident stage is the one figure this increment cannot explain.** The **resident** join
+stage is **23.6 ms** against **22.2 ms** for the old code on this same host, and the same-moment A/B
+reads **23.2 ms** against **21.7 ms**. The cold stage moved **26.0 ms** to **26.4 ms**, inside both
+spreads, and the cold query moved **97.3 ms** to **97.6 ms**. So the movement is in the **resident**
+path alone, it is not the machine's drift, and the parts that would explain it say the opposite. It is
+published as it is, and it is the next question.
 
 **And the plan output says so, in the reports.** Every campaign records the plan output of every
 query it ran, and the last line of that table is now the account:
 
 ```
-scan       6000000  216783    71.0 ms
+scan       6000000  216783    70.2 ms
 project    216783   216783     0.5 ms
-join       6000000  216783    25.1 ms
+join       6000000  216783    26.4 ms
 aggregate  216783   1          0.2 ms
-accounted: 96.81 ms of the query's 96.82 ms (0.01 ms outside the stages)
+accounted: 97.39 ms of the query's 97.40 ms (0.01 ms outside the stages)
 ```
 
 **The join's stage reports the rows the probe consumed**, where the report this block was taken from
@@ -2022,8 +2044,8 @@ scan, and that trade is not measured. Both fallbacks are named in
 
 All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **7.8–8.1**
 while the campaigns ran — the reports carry it. The raw reports are `bench-results/scan-cost-run{1,2,3}.json` and
-`bench-results/compare-run{1,2,3}.json`, and `python3 scripts/medians.py` derives the tables above
-from them. See [ADR-0030](docs/adr/0030-the-scan-that-feeds-the-join.md).
+`bench-results/compare-spec023-run{1,2,3}.json` — the set this section was measured from, kept
+under its own name — and `python3 scripts/medians.py` derives the tables above from them. See [ADR-0030](docs/adr/0030-the-scan-that-feeds-the-join.md).
 
 ### 3m. The time the plan output does not name
 
@@ -2253,23 +2275,24 @@ the campaigns ran — the reports carry it. The raw reports are
 
 ### 3o. The join's stage, taken apart
 
-**The join's stage is the engine's own work on the query where the engine is level.** The engine's cold
-`join-orders` is **96.7 ms** against DuckDB's **95.0 ms** — **1.7 ms** apart, inside both spreads —
-while the peer's is **168.5 ms** and Polars' **222.8 ms**. The plan output says where the engine's own
-time is, and it is the join's stage: **24.2 ms** of the cold query, a **quarter** of it, and **all** of
-it the engine's own work.
+**The join's stage is the engine's own work on the query.** The engine's cold
+`join-orders` is **97.6 ms** against DuckDB's **91.0 ms** — **6.6 ms** apart, outside both spreads —
+while the peer's is **168.8 ms** and Polars' **219.1 ms**. The plan output says where the engine's own
+time is, and it is the join's stage: **26.4 ms** of the cold query, a **quarter** of it, and **all** of it
+the engine's own work.
 
 **And the stage had never been taken apart.** Spec 021 measured the join's *probe* — **9.0 ms** against
 a **1.7 ms** floor — two increments ago, on a different code version and a different host state. The
 build side's read was measured separately, at **9.99 ms**, as part of the *scan's* decomposition.
 **No measurement had ever put the stage and its parts in the same session**, and none had ever asked
-what the stage's **other** parts were.
+what the stage's **other** parts were. Spec 026 asked, and this increment asks the next question: **what
+the probe's remainder is**.
 
 **And the two paths did not agree, and nobody had said why.** The same parts are charged to the join's
 stage on both paths: the build side's open, the table's construction, and the probe over six million
 rows. On the cold path the probe runs **inside the scan**, over the reader's own batches, before
 anything is copied; on the resident path it runs over the engine's own column, in memory, after the
-copy. The cold stage is **24.2 ms** and the resident one **21.3 ms** — **2.9 ms** apart — and they
+copy. The cold stage is **26.4 ms** and the resident one **23.6 ms** — **2.8 ms** apart — and they
 reported **different row counts for the same probe**: `216783 → 216783` on the cold path and
 `6000000 → 216783` on the resident one.
 
@@ -2283,9 +2306,48 @@ code that ships**. See [ADR-0034](docs/adr/0034-the-joins-rules.md).
 plan through the engine's own entry point, takes the join's stage from the plan output on **both**
 paths, and measures the parts on the same data, the same rows and the same table, in the same session.
 The engine's **216,783** rows are checked against the probe's own, **in order**, before anything is
-timed, and the aggregate's value is checked against the published one.
+timed, and the aggregate's value is checked against the published one. It gained **two candidates** in
+this increment: the candidate **with the overflow map's consult** in it, and the **cold candidate**, the
+same hand-written lookup inside the reader's own batch loop — so that the map's share and the cold
+path's remainder are **measured** rather than assumed.
+
+**And this increment's own comparison — the code it replaces, measured back to back with the code it
+ships, on the same host and with the same instrument:**
 
 | part | the old code | the new code | what it is |
+|---|---|---|---|
+| the stage, cold | 25.271 ms | 26.550 ms | the engine's own join stage, the cold path |
+| the stage, resident | 19.797 ms | 22.106 ms | the engine's own join stage, the resident path |
+| the build side's open | 0.030 ms | 0.029 ms | opening `orders.parquet`: its metadata, its schema |
+| the build side's read | 11.890 ms | 11.615 ms | reading the build side's columns through the engine's own reader |
+| the build side's keys | 0.344 ms | 0.327 ms | the per-row walk that collects the build side's keys |
+| the build side, whole | 12.289 ms | 11.903 ms | the read, the keys and the table together |
+| the table, on its own | 0.218 ms | 0.204 ms | one byte a count, over the key's own range |
+| the probe, over the column | 11.373 ms | 10.423 ms | the resident path's probe: the engine's own column, in memory |
+| the probe, in the batches | 14.826 ms | 13.921 ms | the cold path's probe: inside the reader's own batch loop |
+| the floor the probe cannot go under | 4.753 ms | 6.267 ms | the table's own load, one a probe row |
+| the candidate, written out | 7.159 ms | 7.157 ms | the same lookup, written out by hand over the same rows |
+| the candidate with the overflow consult | 7.342 ms | 7.106 ms | the candidate **with the map's consult** in it, and nothing else different |
+| the cold candidate | 11.168 ms | 10.520 ms | the same lookup, inside the reader's own batch loop |
+| the read, plain | 0.559 ms | 0.563 ms | the plain read of the probe key column: the floor a read cannot go under |
+| the read, the small control | 0.041 ms | 0.041 ms | the same read over 512K values |
+
+**And the differences the instrument computes from its own parts:**
+
+| difference | the old code | the new code | what it is |
+|---|---|---|---|
+| the table, as the difference | 0.065 ms | −0.038 ms | the whole over the read and the keys: the table's own cost, and it is **below the noise** |
+| the output rows | 2.392 ms | 0.987 ms | the candidate over the floor: what the 216,783 output rows cost |
+| the probe's remainder | 4.417 ms | 3.337 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
+| the map's share | 0.183 ms | 0.020 ms | the candidate with the consult over the candidate without it: **what the map costs** |
+| the cold remainder | 3.670 ms | 3.311 ms | the engine's probe in the batches over the cold candidate's |
+| the two paths | 5.473 ms | 4.343 ms | the cold stage over the resident stage |
+| the two probes | 3.496 ms | 3.408 ms | the batched probe over the column's |
+
+**And spec 026's comparison, preserved — the code before it against the code it shipped, from the set
+that is kept under its own name:**
+
+| part | the code before spec 026 | the code spec 026 shipped | what it is |
 |---|---|---|---|
 | the stage, cold | 20.582 ms | 20.735 ms | the engine's own join stage, the cold path |
 | the stage, resident | 19.283 ms | 19.216 ms | the engine's own join stage, the resident path |
@@ -2301,9 +2363,7 @@ timed, and the aggregate's value is checked against the published one.
 | the read, plain | 0.506 ms | 0.509 ms | the plain read of the probe key column: the floor a read cannot go under |
 | the read, the small control | 0.038 ms | 0.039 ms | the same read over 512K values |
 
-**And the differences the instrument computes from its own parts:**
-
-| difference | the old code | the new code | what it is |
+| difference | the code before spec 026 | the code spec 026 shipped | what it is |
 |---|---|---|---|
 | the table, as the difference | −0.101 ms | −0.039 ms | the whole over the read and the keys: the table's own cost, and it is **below the noise** |
 | the output rows | 2.527 ms | 2.549 ms | the candidate over the floor: what the 216,783 output rows cost |
@@ -2311,75 +2371,89 @@ timed, and the aggregate's value is checked against the published one.
 | the two paths | 1.344 ms | 1.519 ms | the cold stage over the resident stage |
 | the two probes | 0.280 ms | 0.170 ms | the batched probe over the column's |
 
-**Three findings, and they are the answer.**
+**Three findings, and the third is this increment's.**
 
-**The build side's read is more than half the stage.** The build side's whole is **11.831 ms** of the
-cold stage's **20.735 ms** — **57%** — and the read itself is **11.542 ms** of it. That read is
-Arrow's decode of the build side's columns out of `orders.parquet`: **1,500,000** rows, of which the
-pushed-down date predicate leaves **216,345** keys. It has been measured three times and **refused
-every time**, and this section does not touch it. The keys are **0.339 ms** and the open is
-**0.028 ms**; the table's own construction is **below the noise** — the whole over the read and the
-keys is **−0.039 ms** — and the table measured on its own is **0.212 ms**.
+**The build side's read is more than half the stage.** The build side's whole is **11.903 ms** of the
+cold stage's **26.550 ms** — **45%** — and the read itself is **11.615 ms**. That read is Arrow's decode
+of the build side's columns out of `orders.parquet`: **1,500,000** rows, of which the pushed-down date
+predicate leaves **216,345** keys. It has been measured three times and **refused every time**, and this
+section does not touch it. The keys are **0.327 ms** and the open is **0.029 ms**; the table's own
+construction is **below the noise** — the whole over the read and the keys is **−0.038 ms** — and the
+table measured on its own is **0.204 ms**.
 
-**The probe is not at the floor, and the code names why.** The engine's probe over its own column costs
-**10.051 ms**; the same lookup, written out by hand over the same six million rows and the same table,
-costs **6.959 ms**. The difference is **3.095 ms** — the probe's remainder — and the engine's own
-per-row lookup names it: `DirectTable::count` consults the **overflow map** once a probe row
-(`crates/columnar-engine/src/operators/join.rs:352`), and the map is **empty** for this data, because
-every key's count fits in its byte. The candidate has no map to consult. The floor the probe cannot go
-under is **4.418 ms** — the table's own load, one a probe row — and the **216,783 output rows** cost
-**2.549 ms** of the candidate's **6.959 ms**.
+**The probe is not at the floor, and the map is not why.** The engine's probe over its own column costs
+**10.423 ms**; the same lookup, written out by hand over the same six million rows and the same table,
+costs **7.157 ms**. The difference is **3.337 ms** — the probe's remainder — and spec 026 named a
+candidate for it: the engine's per-row lookup consults the **overflow map**, and the map is **empty**
+for this data, because every key's count fits in its byte.
 
-**How much of the remainder the map is, is not measured here, and it is not assumed either.** The
-committed reports have **no part that isolates it** — the candidate differs from the engine's lookup in
-more than the map — and the consult is **already hash-free**: `hashbrown` returns before it hashes when
-the table is empty, so what is paid a probe row is one load of the map's emptiness and one branch. **That
-is the next question**, and it is written down rather than guessed at:
-[spec 028](specs/028-the-probes-remainder/spec.md) measures it first, and takes the lookup if the
-measurement says it is worth taking.
+**The map's share is now measured, and it is nothing.** The candidate **with the consult** costs
+**7.106 ms** against the candidate without it at **7.157 ms**: the map's share is **0.020 ms** of a
+**3.337 ms** remainder. In the code it replaces it was **0.183 ms**. Across the six campaigns the share
+ranges from **−0.278 ms** to **0.406 ms**, and the candidate's own spread across three campaigns is
+**0.709 ms** — so the share is **at or below the noise**, and the map was **never** the remainder.
+**The remainder is the lookup's shape**: the method over `&self`, the `Option` chain, the `u32` width
+and the saturating add — none of which the hand-written candidate has. The map's consult was a fixed
+cost on every probe row for a case that does not happen, and it was a cost of **nothing**.
+
+**The change is taken anyway, and it is a simplification, not a win.** The table's overflow map is an
+`Option` now, so when nothing overflows **the map is not allocated at all** and the lookup does not call
+it — no `get`, no hash of the key, and no read of any field of the map, because there is no map to
+read. The fact is captured **after** the build loop, because the map fills during it. The semantics do
+not change, and the **estimate does not move**.
+
+**And the change bought nothing the query can see.** The probe's own measurement moved **0.950 ms**
+faster, and the ranges do not overlap — but the parts are **bounds**, not a decomposition: the **floor**,
+which this change cannot touch, moved **1.514 ms slower** in the same two sessions, and the output rows'
+cost — the candidate over that floor — moved **1.405 ms** the other way with it. The **stage** is the
+engine's own account and the authority, and the stage moved the other way: **26.550 ms** against
+**25.271 ms** cold and **22.106 ms** against **19.797 ms** resident.
+[§2h](#2h-the-hot-paths-taken-apart) divides the host's share out of the query-level figures: the
+**cold** query moved **97.3 ms** to **97.6 ms**, inside the untouched queries' own drift, and the
+**resident** one moved **25.1 ms** to **26.6 ms** against a control that moved **0.3 ms** the other way.
+**This increment does not claim what the resident movement is.**
 
 **The two paths differ by the probe, and the probe's own measurement does not agree with the stage.**
-The stages differ by **1.519 ms**. The build side's read is **the same call on both paths** — the same
+The stages differ by **4.343 ms**. The build side's read is **the same call on both paths** — the same
 `build_table`, over the same file — so the difference is in the probe: the cold path's probe runs
-inside the reader, over the reader's own batches, against the caches the decode is using. The stage
-charges its own probe **8.876 ms** cold and **7.357 ms** resident — the stage, less the build side's
-whole and the open — and the difference between those two is the **1.519 ms** the stages differ by.
-Measured on its own, the two probes differ by **0.170 ms**: **10.221 ms** in the batches against
-**10.051 ms** over the column. **The two measurements do not agree**, and they cannot: the parts are
-measured one at a time, each against a file and a table the measurement before it has pushed out of the
-caches, where the stage runs its parts in **one pipeline**, with the build side's read immediately before
-the probe. The parts are therefore **bounds**, not a decomposition that adds up — they over-explain the
-cold stage by **1.35 ms** and the resident one by **2.69 ms** — and **the stage is the engine's own
-account, and it is the authority.** Between the stage's **1.519 ms** and the probe's **0.170 ms** there
-is a **remainder**, and it is named as one.
+inside the reader, over the reader's own batches, against the caches the decode is using. Measured on
+its own, the two probes differ by **3.408 ms**: **13.921 ms** in the batches against **10.423 ms** over
+the column. The **cold remainder** is **3.311 ms** — what the engine's probe in the batches pays over
+the same lookup written out inside the reader's own loop — and it is the cold path's own remainder,
+named.
 
-**And the read is counting, not waiting for memory.** The probe key column's plain read is **0.509 ms**
-over 48 MB and **0.039 ms** over 512K values: the same per byte, so the read is not waiting for
+**And the read is counting, not waiting for memory.** The probe key column's plain read is **0.563 ms**
+over 48 MB and **0.041 ms** over 512K values: the same per byte, so the read is not waiting for
 memory.
 
 **And the stage now says what it does.** The two paths report the same work: `6000000 → 216783`,
-both of them. Before this increment the cold path said `216783 → 216783` — the rows that *survived*
-the probe — and the resident path said `6000000 → 216783`, so the two stages described different
-things. The **times** did not move: the change is in what the stage says, not in what it does.
+both of them. Before spec 026 the cold path said `216783 → 216783` — the rows that *survived* the
+probe — and the resident path said `6000000 → 216783`, so the two stages described different things.
+The **times** did not move: the change is in what the stage says, not in what it does.
 
 **And the published campaigns' difference is the same sign and a different size.** The comparison set
-publishes the cold stage at **24.2 ms** and the resident one at **21.3 ms** — **2.9 ms** apart — and
-those campaigns ran at a load average of **6.28–7.10**, where this section's ran at **4.93–5.47**. The
-difference between the paths is **1.519 ms** here and **2.9 ms** there: the same sign, and both are
+publishes the cold stage at **26.4 ms** and the resident one at **23.6 ms** — **2.8 ms** apart — and
+those campaigns ran at a load average of **7.58–8.97**, where this section's ran at **8.09–8.81**.
+The difference between the paths is **4.343 ms** here and **2.8 ms** there: the same sign, and both are
 published rather than one being quietly dropped.
 
-**What this did not do.** The **scan's decode** is untouched: it is the scan's business, and it has
-been measured three times and refused every time. The **build side's reader** is untouched — the build
-side is read through the engine's own `ParquetSource`, so the same reader settings apply to it as to
-any other file. The **table's shape** is untouched — the direct-addressed table was chosen by
-measurement in spec 021 and beat every candidate in that campaign — and so is the **probe's hash**. The
-**eager path's load** is untouched, and so is the **plan**.
+**What this did not do.** The **scan's decode** is untouched: it is the scan's business, and it has been
+measured three times and refused every time. The **build side's reader** is untouched — the build side
+is read through the engine's own `ParquetSource`, so the same reader settings apply to it as to any
+other file. The **table's shape** is untouched — the direct-addressed table was chosen by measurement in
+spec 021 and beat every candidate in that campaign — and so is the **probe's hash**. The **eager path's
+load** is untouched, and so is the **plan**. And the **map** was not measured away: it is still there,
+for the keys that overflow their byte, and it is still counted exactly.
 
-All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **4.93–5.47** while
+All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **8.09–8.81** while
 the campaigns ran — the reports carry it. The raw reports are
 `bench-results/join-cost-run{1,2,3}.json` and `bench-results/join-cost-before-run{1,2,3}.json`, and
-`python3 scripts/medians.py` derives the tables above from them. See
-[ADR-0035](docs/adr/0035-the-join-stage-taken-apart.md).
+`python3 scripts/medians.py` derives the tables above from them. The two sets spec 026 published are
+kept under their own names — `bench-results/join-cost-spec026-run{1,2,3}.json` and
+`bench-results/join-cost-spec025-run{1,2,3}.json` — and the table above that preserves spec 026's
+comparison is derived from those. See
+[ADR-0035](docs/adr/0035-the-join-stage-taken-apart.md) and
+[ADR-0036](docs/adr/0036-the-probes-remainder-taken.md).
 
 ---
 
@@ -2631,8 +2705,8 @@ To publish a table, run `just compare` at least three times, keep the reports, a
 medians with `scripts/medians.py`. The three reports behind the table in §2 are committed as
 `bench-results/compare-run1.json`, `compare-run2.json` and `compare-run3.json`.
 
-**Three more sets of reports sit beside them**, and every figure this file publishes is derived from
-one of the four:
+**Four more sets of reports sit beside them**, and every figure this file publishes is derived from
+one of the five:
 
 ```bash
 # the set this file publishes now
@@ -2642,10 +2716,13 @@ python3 scripts/medians.py bench-results/compare-run*.json
 python3 scripts/medians.py bench-results/compare-before-run*.json
 
 # the set this one replaces
-python3 scripts/medians.py bench-results/compare-spec024-run*.json
+python3 scripts/medians.py bench-results/compare-spec026-run*.json
 
 # the set before that one
-python3 scripts/medians.py bench-results/compare-spec021-run*.json
+python3 scripts/medians.py bench-results/compare-spec024-run*.json
+
+# the set the code before spec 026 shipped was measured from
+python3 scripts/medians.py bench-results/compare-spec025-run*.json
 ```
 
 The third is what makes the published **old-and-new** figures checkable rather than typed, and the

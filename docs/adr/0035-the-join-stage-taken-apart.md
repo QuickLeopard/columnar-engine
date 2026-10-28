@@ -89,13 +89,25 @@ it.** The build side's whole is **11.831 ms** of the cold stage's **20.735 ms** 
 read itself is **11.542 ms**. It is Arrow's decode of the build side's columns out of `orders.parquet`,
 and it has been measured three times and **refused every time**. This ADR does not touch it.
 
-**The probe is not at the floor, and the code names why.** The engine's probe over its own column costs
-**10.051 ms**; the same lookup, written out by hand over the same six million rows and the same table,
-costs **6.959 ms**. The difference is **3.095 ms**, and the engine's per-row lookup names it:
-`DirectTable::count` consults the **overflow map** once a probe row, and the map is **empty** for this
-data, because every key's count fits in its byte. **This is published as a finding, not taken**: the
-table's shape was chosen by measurement in spec 021, and a different table is a different spec with its
-own measurement to earn its place.
+**The probe is not at the floor, and the code named a candidate for why.** The engine's probe over its
+own column costs **10.051 ms**; the same lookup, written out by hand over the same six million rows and
+the same table, costs **6.959 ms**. The difference is **3.095 ms**, and the engine's per-row lookup
+named a candidate for it: `DirectTable::count` consulted the **overflow map** once a probe row, and the
+map is **empty** for this data, because every key's count fits in its byte. **This was published as a
+finding, not taken**: the table's shape was chosen by measurement in spec 021, and a different table is
+a different spec with its own measurement to earn its place.
+
+> **The candidate has been measured, and it was not the reason.** [ADR-0036](0036-the-probes-remainder-taken.md)
+> took the remainder apart: the same hand-written lookup **with** the map's consult in it costs
+> **0.020 ms** more than the one without it, over six campaigns that range from **−0.278 ms** to
+> **0.406 ms** — **at or below the noise**, against a candidate whose own spread is **0.709 ms**. The
+> remainder is the lookup's **shape**, not the map. The map's consult is **gone** — the table's map is
+> an `Option` now, so when nothing overflows it is not allocated at all — and the change bought
+> **nothing measurable**: the probe's own measurement is **0.950 ms** faster, but the floor, which the
+> change cannot touch, moved **1.514 ms** slower in the same two sessions, and the **resident** join
+> stage moved **23.6 ms** against **22.2 ms**, reproducibly, in a same-moment A/B, while the **cold**
+> stage and the **scan's** stage did not move. **That movement is not this ADR's business, and it is
+> not explained away here.**
 
 **The two paths differ by the probe, and the remainder is named.** The stages differ by **1.519 ms**,
 and the build side's read is the same call on both paths, so the difference is the probe. The probe,

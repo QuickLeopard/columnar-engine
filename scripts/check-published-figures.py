@@ -27,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
 BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("compare-before-run*.json"))
-SPEC021_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec021-run*.json"))
+SPEC026_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec026-run*.json"))
 SPEC024_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec024-run*.json"))
 QUERY_COST_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-run*.json"))
 QUERY_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-before-run*.json"))
@@ -35,6 +35,8 @@ SORT_COST_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-run*.json"))
 SORT_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-before-run*.json"))
 JOIN_COST_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-run*.json"))
 JOIN_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-before-run*.json"))
+JOIN_COST_SPEC026_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec026-run*.json"))
+JOIN_COST_SPEC025_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec025-run*.json"))
 PROBE_REPORTS = sorted((ROOT / "bench-results").glob("operator-probe-*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
@@ -113,10 +115,15 @@ BEFORE_CHECKS = [
 
 # (document, label, system, mode, metric, query, places)
 #
-# The set **before** the one this file publishes now -- spec 021's set. Its
-# figures are published beside the new ones, so they are derived from the
-# reports they came from rather than typed into the prose.
-SPEC021_CHECKS = [
+# The **last** set -- the one before the set this one replaces. Its figures are
+# published beside the new ones, so they are derived from the reports they came
+# from rather than typed into the prose.
+#
+# The window slides: every set that is published moves one place along it, and
+# the oldest one leaves the document. The set that leaves is **kept**, under its
+# own name, so that every figure it published stays derivable from a committed
+# report.
+SPEC024_CHECKS = [
     ("PERF.md", "the last set's lazy join-orders cold", "engine", "lazy", "cold", "join-orders", 1),
     ("PERF.md", "the last set's lazy sort-topk cold", "engine", "lazy", "cold", "sort-topk", 1),
     ("PERF.md", "the last set's sort-topk resident", "engine", "eager", "resident", "sort-topk", 1),
@@ -132,12 +139,12 @@ SPEC021_CHECKS = [
 
 # (document, label, system, mode, metric, query, places)
 #
-# The set **this one replaces** -- spec 024's set, the one that was published
+# The set **this one replaces** -- spec 026's set, the one that was published
 # before it. Its figures are published beside the new ones, old against new,
 # so they are derived from the reports they came from rather than typed into
 # the prose. The reports are kept under their own name so that every figure
 # this file quotes stays derivable from a committed report.
-SPEC024_CHECKS = [
+SPEC026_CHECKS = [
     ("PERF.md", "the replaced set's lazy join-orders cold", "engine", "lazy", "cold", "join-orders", 1),
     ("PERF.md", "the replaced set's lazy sort-topk cold", "engine", "lazy", "cold", "sort-topk", 1),
     ("PERF.md", "the replaced set's lazy q6-revenue cold", "engine", "lazy", "cold", "q6-revenue", 1),
@@ -252,49 +259,96 @@ SORT_COST_CHECKS = [
 # elsewhere in the document cannot satisfy the check by accident.
 JOIN_COST_SECTION = "### 3o"
 
+# (part, the label the section publishes it under, places)
+JOIN_COST_PARTS = (
+    ("stage_cold", "the stage, cold", 3),
+    ("stage_resident", "the stage, resident", 3),
+    ("build_open", "the build side's open", 3),
+    ("build_read", "the build side's read", 3),
+    ("build_keys", "the build side's keys", 3),
+    ("build_whole", "the build side, whole", 3),
+    ("table_own", "the table, on its own", 3),
+    ("probe_column", "the probe, over the column", 3),
+    ("probe_batches", "the probe, in the batches", 3),
+    ("floor_probe", "the floor the probe", 3),
+    ("candidate_probe", "the candidate, written out", 3),
+    ("candidate_with_map", "the candidate with the overflow consult", 3),
+    ("cold_candidate", "the cold candidate", 3),
+    ("read_plain", "the read, plain", 3),
+    ("read_small", "the read, the small control", 3),
+)
+
+# The thirteen parts the instrument measured before this increment.
+JOIN_COST_OLD_PARTS = (
+    ("stage_cold", "the stage, cold", 3),
+    ("stage_resident", "the stage, resident", 3),
+    ("build_open", "the build side's open", 3),
+    ("build_read", "the build side's read", 3),
+    ("build_keys", "the build side's keys", 3),
+    ("build_whole", "the build side, whole", 3),
+    ("table_own", "the table, on its own", 3),
+    ("probe_column", "the probe, over the column", 3),
+    ("probe_batches", "the probe, in the batches", 3),
+    ("floor_probe", "the floor the probe", 3),
+    ("candidate_probe", "the candidate, written out", 3),
+    ("read_plain", "the read, plain", 3),
+    ("read_small", "the read, the small control", 3),
+)
+
+# The four sets the join probe's figures come from.
+#
+# "after" is the code this increment wrote and "before" is the code it
+# replaced, measured **back to back** with it on the same host and with the
+# same instrument. "spec026" is the set spec 026 published -- the same code as
+# "before", measured with the instrument as it stood then -- and "spec025" is
+# the code before spec 026's ten fixes. The last two are preserved under their
+# own names, so that every figure this section publishes stays derivable from
+# a committed report.
+#
+# The instrument grew two parts in this increment, so the two sets it measured
+# carry two more figures than the two it did not.
+JOIN_COST_SETS = (
+    ("after", "the new code's", JOIN_COST_PARTS),
+    ("before", "the old code's", JOIN_COST_PARTS),
+    ("spec026", "spec 026's set's", JOIN_COST_OLD_PARTS),
+    ("spec025", "the code before spec 026's", JOIN_COST_OLD_PARTS),
+)
+
 JOIN_COST_CHECKS = [
-    ("PERF.md", "the new code's stage, cold", "after", "stage_cold", 3),
-    ("PERF.md", "the new code's stage, resident", "after", "stage_resident", 3),
-    ("PERF.md", "the new code's build side's open", "after", "build_open", 3),
-    ("PERF.md", "the new code's build side's read", "after", "build_read", 3),
-    ("PERF.md", "the new code's build side's keys", "after", "build_keys", 3),
-    ("PERF.md", "the new code's build side, whole", "after", "build_whole", 3),
-    ("PERF.md", "the new code's table, on its own", "after", "table_own", 3),
-    ("PERF.md", "the new code's probe, over the column", "after", "probe_column", 3),
-    ("PERF.md", "the new code's probe, in the batches", "after", "probe_batches", 3),
-    ("PERF.md", "the new code's floor the probe", "after", "floor_probe", 3),
-    ("PERF.md", "the new code's candidate, written out", "after", "candidate_probe", 3),
-    ("PERF.md", "the new code's read, plain", "after", "read_plain", 3),
-    ("PERF.md", "the new code's read, the small control", "after", "read_small", 3),
-    ("PERF.md", "the old code's stage, cold", "before", "stage_cold", 3),
-    ("PERF.md", "the old code's stage, resident", "before", "stage_resident", 3),
-    ("PERF.md", "the old code's build side's open", "before", "build_open", 3),
-    ("PERF.md", "the old code's build side's read", "before", "build_read", 3),
-    ("PERF.md", "the old code's build side's keys", "before", "build_keys", 3),
-    ("PERF.md", "the old code's build side, whole", "before", "build_whole", 3),
-    ("PERF.md", "the old code's table, on its own", "before", "table_own", 3),
-    ("PERF.md", "the old code's probe, over the column", "before", "probe_column", 3),
-    ("PERF.md", "the old code's probe, in the batches", "before", "probe_batches", 3),
-    ("PERF.md", "the old code's floor the probe", "before", "floor_probe", 3),
-    ("PERF.md", "the old code's candidate, written out", "before", "candidate_probe", 3),
-    ("PERF.md", "the old code's read, plain", "before", "read_plain", 3),
-    ("PERF.md", "the old code's read, the small control", "before", "read_small", 3),
+    ("PERF.md", f"{prefix} {label}", which, part, places)
+    for which, prefix, parts in JOIN_COST_SETS
+    for part, label, places in parts
 ]
 
 # The differences the instrument computes from its own parts: the table's own
 # cost, the output rows, the probe's remainder, and the two paths and the two
 # probes.
+# (difference, the label the section publishes it under, places)
+JOIN_COST_DERIVED = (
+    ("build_table", "the table, as the difference", 3),
+    ("output_rows", "the output rows", 3),
+    ("the_probe_s_remainder", "the probe's remainder", 3),
+    ("the_map_s_share", "the map's share", 3),
+    ("the_cold_remainder", "the cold remainder", 3),
+    ("the_two_paths", "the two paths", 3),
+    ("the_two_probes", "the two probes", 3),
+)
+
+# The five differences the instrument computed before this increment.
+JOIN_COST_OLD_DERIVED = (
+    ("build_table", "the table, as the difference", 3),
+    ("output_rows", "the output rows", 3),
+    ("the_probe_s_remainder", "the probe's remainder", 3),
+    ("the_two_paths", "the two paths", 3),
+    ("the_two_probes", "the two probes", 3),
+)
+
 JOIN_COST_DERIVED_CHECKS = [
-    ("PERF.md", "the new code's table, as the difference", "after", "build_table", 3),
-    ("PERF.md", "the new code's output rows", "after", "output_rows", 3),
-    ("PERF.md", "the new code's probe's remainder", "after", "the_probe_s_remainder", 3),
-    ("PERF.md", "the new code's two paths", "after", "the_two_paths", 3),
-    ("PERF.md", "the new code's two probes", "after", "the_two_probes", 3),
-    ("PERF.md", "the old code's table, as the difference", "before", "build_table", 3),
-    ("PERF.md", "the old code's output rows", "before", "output_rows", 3),
-    ("PERF.md", "the old code's probe's remainder", "before", "the_probe_s_remainder", 3),
-    ("PERF.md", "the old code's two paths", "before", "the_two_paths", 3),
-    ("PERF.md", "the old code's two probes", "before", "the_two_probes", 3),
+    ("PERF.md", f"{prefix} {label}", which, difference, places)
+    for which, prefix, parts in JOIN_COST_SETS
+    for difference, label, places in (
+        JOIN_COST_DERIVED if parts is JOIN_COST_PARTS else JOIN_COST_OLD_DERIVED
+    )
 ]
 
 # (document, label, report, measurement, places)
@@ -584,7 +638,7 @@ def collect(runs: list[dict]) -> dict[tuple[str, str, str, str], list[float]]:
     return out
 
 
-# (document, label, set, query, stage, places)
+# (document, label, set, query, mode, stage, places)
 #
 # The **plan output** is the engine's own account of the work, and it is in the
 # committed reports: every campaign records it. Spec 021 publishes the stage
@@ -592,21 +646,28 @@ def collect(runs: list[dict]) -> dict[tuple[str, str, str, str], list[float]]:
 # share can be read a stage at a time rather than from a clock around the whole
 # query. These are the figures that table rests on.
 STAGE_CHECKS = [
-    ("PERF.md", "the new set's join stage", "new", "join-orders", "join", 1),
-    ("PERF.md", "the new set's sort stage", "new", "sort-topk", "sort", 1),
-    ("PERF.md", "the new set's join scan", "new", "join-orders", "scan", 1),
-    ("PERF.md", "the new set's sort scan", "new", "sort-topk", "scan", 1),
-    ("PERF.md", "the old set's join stage", "before", "join-orders", "join", 1),
-    ("PERF.md", "the old set's sort stage", "before", "sort-topk", "sort", 1),
-    ("PERF.md", "the old set's join scan", "before", "join-orders", "scan", 1),
-    ("PERF.md", "the old set's sort scan", "before", "sort-topk", "scan", 1),
-    ("PERF.md", "the last set's join stage", "last", "join-orders", "join", 1),
-    ("PERF.md", "the last set's sort stage", "last", "sort-topk", "sort", 1),
-    ("PERF.md", "the last set's join scan", "last", "join-orders", "scan", 1),
-    ("PERF.md", "the replaced set's join stage", "replaced", "join-orders", "join", 1),
-    ("PERF.md", "the replaced set's sort stage", "replaced", "sort-topk", "sort", 1),
-    ("PERF.md", "the replaced set's join scan", "replaced", "join-orders", "scan", 1),
-    ("PERF.md", "the replaced set's sort scan", "replaced", "sort-topk", "scan", 1),
+    ("PERF.md", "the new set's join stage", "new", "join-orders", "lazy", "join", 1),
+    ("PERF.md", "the new set's sort stage", "new", "sort-topk", "lazy", "sort", 1),
+    ("PERF.md", "the new set's join scan", "new", "join-orders", "lazy", "scan", 1),
+    ("PERF.md", "the new set's sort scan", "new", "sort-topk", "lazy", "scan", 1),
+    ("PERF.md", "the old set's join stage", "before", "join-orders", "lazy", "join", 1),
+    ("PERF.md", "the old set's sort stage", "before", "sort-topk", "lazy", "sort", 1),
+    ("PERF.md", "the old set's join scan", "before", "join-orders", "lazy", "scan", 1),
+    ("PERF.md", "the old set's sort scan", "before", "sort-topk", "lazy", "scan", 1),
+    ("PERF.md", "the last set's join stage", "last", "join-orders", "lazy", "join", 1),
+    ("PERF.md", "the last set's sort stage", "last", "sort-topk", "lazy", "sort", 1),
+    ("PERF.md", "the last set's join scan", "last", "join-orders", "lazy", "scan", 1),
+    ("PERF.md", "the replaced set's join stage", "replaced", "join-orders", "lazy", "join", 1),
+    ("PERF.md", "the replaced set's sort stage", "replaced", "sort-topk", "lazy", "sort", 1),
+    ("PERF.md", "the replaced set's join scan", "replaced", "join-orders", "lazy", "scan", 1),
+    ("PERF.md", "the replaced set's sort scan", "replaced", "sort-topk", "lazy", "scan", 1),
+    # The campaigns' **resident** join stage. The mode is the row's own, so
+    # the resident path's stage can be checked like the cold one -- and the
+    # resident *query* figure is still deliberately absent, because the
+    # engine's resident path reads the build side inside the clock and the
+    # incumbents read it before the clock starts.
+    ("PERF.md", "the new set's resident join stage", "new", "join-orders", "eager", "join", 1),
+    ("PERF.md", "the old set's resident join stage", "before", "join-orders", "eager", "join", 1),
 ]
 
 
@@ -1106,10 +1167,10 @@ def main() -> int:
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
 
-    if SPEC021_REPORTS:
-        spec021_runs = [json.loads(path.read_text()) for path in SPEC021_REPORTS]
-        last = collect(spec021_runs)
-        for doc, label, system, mode, metric, query, places in SPEC021_CHECKS:
+    if SPEC024_REPORTS:
+        spec024_runs = [json.loads(path.read_text()) for path in SPEC024_REPORTS]
+        last = collect(spec024_runs)
+        for doc, label, system, mode, metric, query, places in SPEC024_CHECKS:
             values = last.get((system, mode, metric, query))
             if not values:
                 failures.append(f"{doc}: no figure for {label} in the last set's reports")
@@ -1124,10 +1185,10 @@ def main() -> int:
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
 
-    if SPEC024_REPORTS:
-        spec024_runs = [json.loads(path.read_text()) for path in SPEC024_REPORTS]
-        replaced = collect(spec024_runs)
-        for doc, label, system, mode, metric, query, places in SPEC024_CHECKS:
+    if SPEC026_REPORTS:
+        spec026_runs = [json.loads(path.read_text()) for path in SPEC026_REPORTS]
+        replaced = collect(spec026_runs)
+        for doc, label, system, mode, metric, query, places in SPEC026_CHECKS:
             values = replaced.get((system, mode, metric, query))
             if not values:
                 failures.append(f"{doc}: no figure for {label} in the replaced set's reports")
@@ -1220,7 +1281,12 @@ def main() -> int:
     if JOIN_COST_REPORTS or JOIN_COST_BEFORE_REPORTS:
         join_parts: dict[str, dict[str, list[float]]] = {}
         join_derived: dict[str, dict[str, list[float]]] = {}
-        for which, paths in (("after", JOIN_COST_REPORTS), ("before", JOIN_COST_BEFORE_REPORTS)):
+        for which, paths in (
+            ("after", JOIN_COST_REPORTS),
+            ("before", JOIN_COST_BEFORE_REPORTS),
+            ("spec026", JOIN_COST_SPEC026_REPORTS),
+            ("spec025", JOIN_COST_SPEC025_REPORTS),
+        ):
             parts, derived = _join_cost_figures(paths)
             join_parts[which] = parts
             join_derived[which] = derived
@@ -1273,13 +1339,13 @@ def main() -> int:
         stage_sets["new"] = collect_stages(runs)
     if BEFORE_REPORTS:
         stage_sets["before"] = collect_stages(before_runs)
-    if SPEC021_REPORTS:
-        stage_sets["last"] = collect_stages(spec021_runs)
     if SPEC024_REPORTS:
-        stage_sets["replaced"] = collect_stages(spec024_runs)
+        stage_sets["last"] = collect_stages(spec024_runs)
+    if SPEC026_REPORTS:
+        stage_sets["replaced"] = collect_stages(spec026_runs)
 
-    for doc, label, which, query, stage, places in STAGE_CHECKS:
-        values = stage_sets.get(which, {}).get((query, "lazy", stage))
+    for doc, label, which, query, mode, stage, places in STAGE_CHECKS:
+        values = stage_sets.get(which, {}).get((query, mode, stage))
         if not values:
             failures.append(f"{doc}: no figure for {label} in the {which} reports")
             continue
@@ -1873,8 +1939,8 @@ def main() -> int:
     print(
         f"\nall published figures agree with the committed reports: "
         f"{len(REPORTS)} campaigns, {len(BEFORE_REPORTS)} before, "
-        f"{len(SPEC024_REPORTS)} of the replaced set, "
-        f"{len(SPEC021_REPORTS)} of the last set, {len(PROBE_REPORTS)} probe, "
+        f"{len(SPEC026_REPORTS)} of the replaced set, "
+        f"{len(SPEC024_REPORTS)} of the last set, {len(PROBE_REPORTS)} probe, "
         f"{len(STAGE_CHECKS)} of the plan output, "
         f"{len(QUERY_COST_CHECKS) + len(QUERY_COST_SHAPE_CHECKS)} of the query probe, "
         f"{len(SORT_COST_CHECKS)} of the sort probe, "

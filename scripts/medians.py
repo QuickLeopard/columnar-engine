@@ -1404,6 +1404,8 @@ JOIN_COST_PARTS = (
     ("probe_batches", "the probe, in the batches"),
     ("floor_probe", "the floor the probe cannot go under"),
     ("candidate_probe", "the candidate, written out"),
+    ("candidate_with_map", "the candidate with the overflow consult"),
+    ("cold_candidate", "the cold candidate"),
     ("read_plain", "the read, plain"),
     ("read_small", "the read, the small control"),
 )
@@ -1419,6 +1421,8 @@ JOIN_COST_DERIVED = (
     ("build_table", "the table, as the difference"),
     ("output_rows", "the output rows"),
     ("the_probe_s_remainder", "the probe's remainder"),
+    ("the_map_s_share", "the map's share"),
+    ("the_cold_remainder", "the cold remainder"),
     ("the_two_paths", "the two paths"),
     ("the_two_probes", "the two probes"),
 )
@@ -1448,10 +1452,7 @@ def _join_cost_figures(
     return parts, derived
 
 
-def print_join_cost(
-    after_files: list[tuple[str, list[dict]]],
-    before_files: list[tuple[str, list[dict]]],
-) -> None:
+def print_join_cost(sets: list[tuple[str, list[tuple[str, list[dict]]]]]) -> None:
     """Print the join probe's medians.
 
     This is spec 026: the join's stage, taken apart -- the engine's own stage
@@ -1459,8 +1460,14 @@ def print_join_cost(
     measured both ways, the floor the probe cannot go under, and the candidate
     that is the cross-check. The "before" set is the same probe against the
     code the increment replaced, measured back to back on the same host.
+
+    Spec 028 measures the probe's remainder, so the instrument gained two
+    parts -- the candidate with the overflow map's consult in it, and the
+    candidate inside the reader's own batch loop -- and the section publishes
+    four sets: the two this increment measured, and the two that spec 026
+    measured and that are preserved under their own names.
     """
-    for label, files in (("the new code", after_files), ("the old code", before_files)):
+    for label, files in sets:
         if not files:
             continue
         parts, derived = _join_cost_figures(files)
@@ -1696,14 +1703,22 @@ def main() -> int:
         )
 
     # Spec 026's join probe: the join's stage, taken apart -- measured against
-    # the code the increment replaces, back to back on the same host.
-    join_after = sorted(Path("bench-results").glob("join-cost-run*.json"))
-    join_before = sorted(Path("bench-results").glob("join-cost-before-run*.json"))
-    if join_after:
-        print_join_cost(
-            [("A", [load(p) for p in join_after])],
-            [("A", [load(p) for p in join_before])] if join_before else [],
-        )
+    # the code the increment replaces, back to back on the same host. Spec 028
+    # measured it again, with two more parts in the instrument, and the two
+    # sets spec 026 published are preserved under their own names.
+    join_sets = [
+        ("the code this increment ships", "join-cost-run*.json"),
+        ("the code this increment replaces", "join-cost-before-run*.json"),
+        ("spec 026's set, as spec 026 measured it", "join-cost-spec026-run*.json"),
+        ("the code before spec 026", "join-cost-spec025-run*.json"),
+    ]
+    join_sets = [
+        (label, [("A", [load(p) for p in sorted(Path("bench-results").glob(pattern))])])
+        for label, pattern in join_sets
+        if sorted(Path("bench-results").glob(pattern))
+    ]
+    if join_sets:
+        print_join_cost(join_sets)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))

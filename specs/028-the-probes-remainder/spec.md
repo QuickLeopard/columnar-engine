@@ -184,11 +184,27 @@ are preserved under the name of the spec that took them, and the new sets take t
 | what | the name it takes now | the name it is preserved under |
 |---|---|---|
 | the comparison campaigns | `compare-run*.json` | `compare-spec026-run*.json` |
+| the comparison campaigns, on the code spec 026 replaced | `compare-before-run*.json` | `compare-spec025-run*.json` |
 | the join probe's campaigns, on spec 026's code | `join-cost-run*.json` | `join-cost-spec026-run*.json` |
 | the join probe's campaigns, on the code before spec 026's ten fixes | `join-cost-before-run*.json` | `join-cost-spec025-run*.json` |
+| the join probe's campaigns, on spec 026's code, with this increment's instrument | `join-cost-before-run*.json` | — |
 
-**§3o's "old code" column becomes spec 026's own after-set** — the code this spec replaces — and its
-"new code" column is this spec's set.
+**§3o's "old code" column becomes the code this spec replaces** — spec 026's code — measured **back to
+back** with this spec's set and with the same instrument, and its "new code" column is this spec's set.
+
+> **The requirement is amended, and the reason recorded.** The table named **three** sets where there are
+> **five**, because it listed only the sets the increment supersedes and not the sets those supersede in
+> turn. The repository's rule is that **every** superseded set is preserved under the name of the spec whose
+> code it measured: spec 026's campaigns superseded two sets of their own — the code spec 026 replaced — and
+> those are now `compare-spec025-run*.json` and `join-cost-spec025-run*.json`. The comparison campaigns' row
+> for them was missing altogether.
+>
+> The **last row** is the new one, and it is the reason the third row's name is free: this spec measures the
+> code it replaces **back to back** with the code it writes, with the same instrument, so its "before" set is
+> a new measurement of spec 026's code — and the name it takes is the one the row above frees. Two sets
+> therefore measure spec 026's code: the one spec 026 took, with the instrument of that day, and this spec's,
+> with the instrument as it stands. The section says which is which, and the difference between them is the
+> host's.
 
 `scripts/check-published-figures.py` and `scripts/medians.py` are extended for the third set, and the
 guard checks every published figure — the old set's and the new set's — against the reports, **in the
@@ -293,6 +309,47 @@ the aggregate's value is checked against the published one.
 **And the figures themselves**, filled from the campaigns: the stage on both paths, the probe on both
 paths, the remainder's **attribution** — the map's share and the rest — the floor, the candidates, and
 the comparison campaigns' query times, with every figure that moved published old-and-new.
+
+### What the campaigns said
+
+The campaigns were taken in one session on this host, at a load average of **8.09–8.81** for the join
+probe's and **7.58–13.77** for the comparison's. The code this spec replaces is `be154bb`'s — the
+instrument's commit, whose engine is the code spec 026 shipped — and the code it writes is `725c091`.
+
+**The map's share is at or below the noise, and the map was never the remainder.** The candidate
+**with** the map's consult in it costs **7.106 ms** against the candidate without it at **7.157 ms**:
+the share is **0.020 ms** of a **3.337 ms** remainder. In the code it replaces the share was
+**0.183 ms**. Across the six campaigns the share ranges from **−0.278 ms** to **0.406 ms**, and the
+candidate's own spread across three campaigns is **0.709 ms** — so the share is at or below the noise.
+**The remainder is the lookup's shape**: the method over `&self`, the `Option` chain, the `u32` width
+and the saturating add, none of which the hand-written candidate has.
+
+**The change is taken, and it bought nothing the query can see.** The probe's own measurement is
+**0.950 ms** faster (the two sets' ranges do not overlap), but the **floor** — the table's own load,
+which this change cannot touch — moved **1.514 ms** slower in the same two sessions, and the
+**output rows'** cost moved with it. The **stage** is the engine's own account and the authority: the
+**cold** stage moved **26.0 ms** to **26.4 ms**, inside both spreads, and the **scan's** stage, the
+control, did not move at all (**70.5 ms** to **70.2 ms**). The **resident** stage moved **22.2 ms** to
+**23.6 ms**, and a **same-moment A/B** — one campaign each, the old code and the new, minutes apart on
+the same host, committed as `bench-results/compare-ab-old-run1.json` and
+`bench-results/compare-ab-new-run1.json` — reads the old code's resident stage at **21.7 ms** and the
+new code's at **23.2 ms**. So the movement is real and it is not the machine's drift, and **the parts
+cannot account for it**: the probe's own measurement is faster and the build side's read is **0.275 ms**
+faster. **This spec does not claim what the resident movement is**; it is published as it is, and it is
+the next question.
+
+**The estimate did not move, and the semantics did not change.** The unit test in
+`crates/columnar-engine/src/operators/join.rs` holds both: the direct table's answer is the hash
+table's answer, key for key, and the overflow map is `None` when nothing overflowed and `Some` when a
+key did — and that key counts **300** times, not 255.
+
+> **The requirement is met, and what it cost is recorded.** R1 asked for the lookup not to call the map
+> when the map holds nothing, and it does not: the map is an `Option`, it is **not allocated at all**
+> when nothing overflows, and the lookup reads the option and nothing else. R3 asked for the probe to
+> get faster, and says that if it does not, that is the finding and it is published as it is. The
+> probe's own measurement did get faster — **0.950 ms** — and the query did not, because the parts are
+> bounds and the stage is the authority. **The map's share of the remainder was the prize, and the
+> prize was not there.**
 
 ## The references
 

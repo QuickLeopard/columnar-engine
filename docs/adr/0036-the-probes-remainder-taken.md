@@ -60,9 +60,16 @@ The map fills **during** the build — a key whose byte fills writes to it — s
 **after** the build loop, and a flag set on the fill path alone would leave it set for every table. When
 nothing overflows, the map is **not allocated at all**.
 
-The lookup does not call the map when the map holds nothing: no `get`, no hash of the key, and no read of
-any field of the map. The map's key and value types do not change, its **hasher** does not change, and
-its **semantics** do not change: a key with more than 255 build rows still counts exactly.
+The lookup does not **call** the map when the map holds nothing: no `get`, and no hash of the key. The map
+is an `Option`, and the lookup reads the option and nothing else — so it does not read a field of the map
+either, and there is no map to read: when nothing overflows, **the map is not allocated at all**. The map's
+key and value types do not change, its **hasher** does not change, and its **semantics** do not change: a key
+with more than 255 build rows still counts exactly.
+
+> **The wording is amended, and the reason recorded.** It said "and no read of any field of the map", which
+> the review rejected: reading the map's **emptiness** *is* reading the map's own state, so the clause
+> forbade the natural implementation. What is wanted is narrower and falsifiable — the lookup does not
+> **call** the map at all — and the `Option` satisfies it, because there is no map to call.
 
 **And the hasher is named, because there are two.** The **hashed** table uses the engine's own
 `JoinHasher`, a hand-written hash chosen by measurement in spec 021. The **overflow map** is a plain
@@ -105,6 +112,23 @@ and `scripts/medians.py` and `scripts/check-published-figures.py` follow all thr
 documents that state it — `PERF.md` §3o, ADR-0035 and the README — say what the code now does.
 
 ## Consequences
+
+**And the measurement says what the prize was: nothing.** The candidate **with** the map's consult in
+it costs **7.106 ms** against the candidate without it at **7.157 ms** — the map's share is
+**0.020 ms** of a **3.337 ms** remainder. In the code it replaces the share was **0.183 ms**. Across
+the six campaigns the share ranges from **−0.278 ms** to **0.406 ms**, and the candidate's own spread
+across three campaigns is **0.709 ms**: the share is **at or below the noise**. **The map was never the
+remainder.** What is left is the lookup's **shape** — the method over `&self`, the `Option` chain, the
+`u32` width and the saturating add — and none of it is the map's consult.
+
+**The change is taken, and it is a simplification rather than a win.** The table's overflow map is an
+`Option` now: when nothing overflows, **the map is not allocated at all**, and the lookup does not call
+it. The semantics do not change, the estimate does not move, and the probe's own measurement is
+**0.950 ms** faster — but the **floor**, which this change cannot touch, moved **1.514 ms** slower in
+the same two sessions, and the **resident** join stage moved **23.6 ms** against **22.2 ms** —
+reproducibly, in a same-moment A/B — while the **cold** stage (**26.0 ms** to **26.4 ms**) and the
+**scan's** stage, the control, did not move. **The parts cannot account for the resident movement, and
+this ADR does not claim what it is.** It is the next question.
 
 **The prize is a measurement, not a promise.** The cold `join-orders` is **96.7 ms** against DuckDB's
 **95.0 ms** — level, **1.7 ms** apart, inside both spreads — and the remainder is **3.095 ms** of the
