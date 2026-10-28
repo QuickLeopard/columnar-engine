@@ -75,6 +75,13 @@ pub(crate) struct Pipeline<'a> {
     pub(crate) dataset: &'a Dataset,
     /// The options the query was given.
     pub(crate) options: &'a ExecOptions,
+    /// The kernel flavor the query runs with.
+    ///
+    /// The flavor is resolved **once**, by the caller, and carried here: the
+    /// read and the operators must run the same kernels over the same values,
+    /// and a flavor decided twice is a flavor that could be decided twice
+    /// differently.
+    pub(crate) flavor: Flavor,
     /// The join's build side, when the plan has a join.
     pub(crate) build: &'a BuildSide,
     /// The clock the **whole** query is measured against.
@@ -218,6 +225,7 @@ impl Pipeline<'_> {
             resolved,
             dataset,
             options,
+            flavor,
             build,
             started,
             scan,
@@ -226,7 +234,6 @@ impl Pipeline<'_> {
             workers,
             streamed,
         } = self;
-        let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
         // How many workers the operators may use. The filter's blocks are
         // 64-row aligned and the projection's are larger, so the two can end up
         // with different worker counts -- and the plan reports the count that

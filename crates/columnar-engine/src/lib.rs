@@ -224,6 +224,9 @@ pub fn execute(
         resolved: &resolved,
         dataset,
         options,
+        // The flavor is resolved once, here, and the pipeline runs the same
+        // kernels the caller asked for.
+        flavor: options.flavor.unwrap_or_else(columnar_kernels::best),
         build: &build,
         started,
         scan,
@@ -366,6 +369,9 @@ pub fn execute_on(
         resolved: &effective,
         dataset: &dataset,
         options,
+        // The same flavor the read used, so the operators run the same
+        // kernels over the same values.
+        flavor,
         build: &build,
         started,
         scan,
