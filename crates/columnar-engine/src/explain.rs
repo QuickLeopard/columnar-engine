@@ -57,8 +57,10 @@ pub struct JoinReport {
     /// Whether the probe ran **inside** the scan.
     ///
     /// When the scan feeds the join, the probe happens before the copy, and
-    /// the plan output says so: the scan's elapsed carries the probe's cost,
-    /// and the join's stage reports the build table's construction.
+    /// the plan output says so: the scan's elapsed does **not** carry the
+    /// probe's cost -- the probe's time is taken out of the scan's -- and the
+    /// join's stage reports the build table's construction and the probe
+    /// together.
     pub probe_in_scan: bool,
 }
 

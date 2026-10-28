@@ -15,7 +15,7 @@ use arrow::array::{
     Array, DictionaryArray, Float64Array, Int32Array, Int64Array, LargeStringArray, StringArray,
 };
 use arrow::datatypes::{DataType as ArrowType, Int32Type};
-use columnar_core::{BatchColumn, BatchData, ColumnChunk, Encoding, NullBitmap};
+use columnar_core::{BatchData, ColumnChunk, Encoding, NullBitmap};
 
 /// Where a probe's keys come from.
 ///
@@ -291,62 +291,16 @@ pub struct KeyColumn<'a> {
     nulls: bool,
 }
 
-/// A key column's values, resolved once.
+/// A key column's plain numbers.
 ///
-/// The operators that read a key a row at a time resolve the column's
-/// encoding **once**, before the loop, and read the values out of the slice
-/// they are given. The encoding is a property of the column, not of the row,
-/// and a row at a time the column's own value is read -- with no enum built
-/// for it and no `Option` wrapped around it.
-#[derive(Debug, Clone)]
-pub enum KeySlice<'a> {
+/// It is what the **sort's** fast path reads: the numbers are the column's own
+/// values -- with no enum built for them and no `Option` wrapped around them.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PlainNumbers<'a> {
     /// Plain integers.
-    Int64(&'a [i64]),
+    Integers(&'a [i64]),
     /// Plain doubles.
-    Float64(&'a [f64]),
-    /// Plain strings.
-    Utf8(&'a [String]),
-    /// Dictionary-encoded integers.
-    Int64Dict {
-        /// The distinct values.
-        dict: &'a [i64],
-        /// One index into the dictionary per row.
-        indices: &'a [i32],
-    },
-    /// Dictionary-encoded doubles.
-    Float64Dict {
-        /// The distinct values.
-        dict: &'a [f64],
-        /// One index into the dictionary per row.
-        indices: &'a [i32],
-    },
-    /// Dictionary-encoded strings.
-    Utf8Dict {
-        /// The distinct values.
-        dict: &'a [String],
-        /// One index into the dictionary per row.
-        indices: &'a [i32],
-    },
-}
-
-impl<'a> KeySlice<'a> {
-    /// The plain integers, when the column holds them plainly.
-    #[must_use]
-    pub fn integers(&self) -> Option<&'a [i64]> {
-        match self {
-            Self::Int64(values) => Some(values),
-            _ => None,
-        }
-    }
-
-    /// The plain doubles, when the column holds them plainly.
-    #[must_use]
-    pub fn doubles(&self) -> Option<&'a [f64]> {
-        match self {
-            Self::Float64(values) => Some(values),
-            _ => None,
-        }
-    }
+    Doubles(&'a [f64]),
 }
 
 /// Where a key column's values are.
@@ -402,16 +356,6 @@ impl<'a> KeyColumn<'a> {
         Self::new(values, &chunk.validity)
     }
 
-    /// The column in an already-decoded column.
-    pub fn from_decoded(column: &'a BatchColumn) -> Self {
-        let values = match &column.data {
-            BatchData::Int64(values) => KeyValues::Int64(values),
-            BatchData::Float64(values) => KeyValues::Float64(values),
-            BatchData::Utf8(values) => KeyValues::Utf8(values),
-        };
-        Self::new(values, &column.validity)
-    }
-
     /// A column over `values`, with `validity` saying which rows hold one.
     fn new(values: KeyValues<'a>, validity: &'a NullBitmap) -> Self {
         let nulls = validity.null_count() != 0;
@@ -426,21 +370,25 @@ impl<'a> KeyColumn<'a> {
         self.nulls
     }
 
-    /// The column's values, resolved once.
-    #[must_use]
-    pub fn slice(&self) -> KeySlice<'_> {
+    /// The column's plain numbers, if it holds numbers plainly and holds no
+    /// NULLs.
+    ///
+    /// It is the **sort's** fast path. The plain column answers with its own
+    /// values, and a run-length-encoded column answers with its decoded copy
+    /// -- which holds plain integers, read where they lie.
+    ///
+    /// A column that holds NULLs has none: a NULL row's slot holds what was
+    /// there, and that is not a value.
+    pub(crate) fn plain_numbers(&self) -> Option<PlainNumbers<'_>> {
+        if self.nulls {
+            return None;
+        }
         match &self.values {
-            KeyValues::Int64(values) => KeySlice::Int64(values),
-            KeyValues::Float64(values) => KeySlice::Float64(values),
-            KeyValues::Utf8(values) => KeySlice::Utf8(values),
-            KeyValues::Int64Dict { dict, indices } => KeySlice::Int64Dict { dict, indices },
-            KeyValues::Float64Dict { dict, indices } => KeySlice::Float64Dict { dict, indices },
-            KeyValues::Utf8Dict { dict, indices } => KeySlice::Utf8Dict { dict, indices },
-            KeyValues::Decoded(data) => match data {
-                BatchData::Int64(values) => KeySlice::Int64(values),
-                BatchData::Float64(values) => KeySlice::Float64(values),
-                BatchData::Utf8(values) => KeySlice::Utf8(values),
-            },
+            KeyValues::Int64(values) => Some(PlainNumbers::Integers(values)),
+            KeyValues::Float64(values) => Some(PlainNumbers::Doubles(values)),
+            KeyValues::Decoded(BatchData::Int64(values)) => Some(PlainNumbers::Integers(values)),
+            KeyValues::Decoded(BatchData::Float64(values)) => Some(PlainNumbers::Doubles(values)),
+            _ => None,
         }
     }
 

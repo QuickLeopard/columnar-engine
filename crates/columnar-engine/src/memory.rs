@@ -455,12 +455,14 @@ fn key_width(source: &ParquetSource, build_key: &str) -> usize {
 /// build key's own range when the key is an integer and the range fits, and a
 /// **hash table** over the rows that survive the filter otherwise.
 ///
-/// There are two cases in which the join abandons the direct table it built
-/// and hashes instead: a key outside the range the file's statistics claim
-/// (which means the file's statistics are wrong), and a key more than 255
-/// build rows carry (which means the key has very few distinct values, and
-/// the hash table over those is smaller than the direct table, not larger).
-/// Neither is charged for here, and both are named in the join's own code.
+/// The direct table's **overflow map** is charged too: the keys more than 255
+/// build rows carry do not fit in a byte, and their counts go there rather
+/// than abandoning the table. Every entry there accounts for at least 256
+/// build rows, so there are at most one in every 256 of the rows that survive.
+///
+/// The one case the estimate cannot cover is a key **outside** the range the
+/// file's statistics claim: the statistics are wrong, the join notices, and
+/// the hash table takes over -- which the estimate did not charge for.
 fn build_table_bytes(source: &ParquetSource, build_key: &str, survivors: usize) -> usize {
     match direct_table_bytes(source, build_key) {
         Some(bytes) => bytes.saturating_add(overflow_map_bytes(survivors)),

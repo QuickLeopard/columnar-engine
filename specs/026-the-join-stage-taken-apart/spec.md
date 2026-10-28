@@ -212,6 +212,15 @@ Two documents say the **opposite** of what the code does:
 **And the dead surface goes**: `KeyColumn::from_decoded` is unused, `KeySlice`'s dictionary variants
 are built and never read, and `KeySlice::integers` duplicates `KeyColumn::integer_values`.
 
+> **The dead surface went further than the requirement said, and the reason is recorded.** Removing
+> `KeySlice`'s dictionary variants alone would have left two variants nobody reads and changed
+> `slice()`'s signature, so **the whole of `KeySlice` went**: the sort's fast path now reads the
+> column's own values through `KeyColumn::plain_numbers`, which covers the plain column and the
+> run-length-encoded one. And `KeySlice::integers` was **not** a duplicate of
+> `KeyColumn::integer_values`: it also answered for a decoded column, and the trait's method does
+> not. So the **join's** fast path is untouched — `integer_values` still answers for the plain column
+> only — and the **sort's** fast path covers exactly what it covered before.
+
 ## The scope
 
 **What this spec does not do, and why.**

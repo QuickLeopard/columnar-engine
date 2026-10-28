@@ -59,7 +59,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use crate::operators::key::{KeyColumn, KeyValue};
+use crate::operators::key::{KeyColumn, KeyValue, PlainNumbers};
 
 /// How many keys the block comparison reads at a time.
 ///
@@ -199,13 +199,14 @@ where
     // general path below reads a `KeyValue`, which is 24 bytes wide because
     // one of its variants is a string, and building one of those a row was
     // the sort's largest cost after the key read itself.
-    if !keys.has_nulls() {
-        if let Some(values) = keys.slice().doubles() {
+    match keys.plain_numbers() {
+        Some(PlainNumbers::Doubles(values)) => {
             return sort_numbers(rows, values, descending, limit);
         }
-        if let Some(values) = keys.slice().integers() {
+        Some(PlainNumbers::Integers(values)) => {
             return sort_numbers(rows, values, descending, limit);
         }
+        None => {}
     }
     let mut key_at = |row: u32| keys.value_at(usize::try_from(row).unwrap_or(usize::MAX));
     match limit {

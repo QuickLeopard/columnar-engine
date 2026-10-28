@@ -75,9 +75,11 @@ the stage **after** them — so the published numbers are the numbers of the cod
       two things that are not the context's. The table build is the **build side's own method**: it
       runs before the scan, and the context is what the scan makes, so there is no context to hand it
       yet. The reason is recorded in the spec.
-- [ ] **Step 10 — the documents say what the code does, and the dead surface goes.** The two stale
-      documents are corrected, and `KeyColumn::from_decoded`, `KeySlice`'s unread dictionary variants
-      and `KeySlice::integers` are removed.
+- [x] **Step 10 — the documents say what the code does, and the dead surface goes.** The two stale
+      documents are corrected, and `KeyColumn::from_decoded` and `KeySlice` — the dictionary variants
+      that were built and never read, and the integers that answered for a decoded column — are
+      removed. The sort's fast path reads the column's own values through `plain_numbers` instead,
+      and covers exactly what it covered before. The reason is recorded in the spec.
 
 ## The change
 
