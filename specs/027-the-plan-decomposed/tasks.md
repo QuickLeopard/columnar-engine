@@ -12,8 +12,8 @@ and x86-64, and leaves the published figures exactly where they were.
       plan, the executor's plan, the bridge, and the module's surface. A move, and nothing else.
 - [x] **Step 2 — the mapping.** The four `remap` siblings become one `ColumnMapping` type, with one
       constructor and one way to move an index. The panic in `remap_index` goes.
-- [ ] **Step 3 — `scan.rs`.** The scan's decision, the late-materialisation policy that feeds it
-      and the mapping leave the crate root and live beside each other.
+- [x] **Step 3 — `scan.rs`.** The scan's decision and the mapping it produces leave the crate
+      root and live beside each other.
 - [ ] **Step 4 — `pipeline.rs`.** The pipeline leaves the crate root, and `run_pipeline`'s ten
       parameters become a context. `#[allow(clippy::too_many_arguments)]` is gone.
 - [ ] **Step 5 — one stage shape.** The four stage idioms become one, so the plan output is

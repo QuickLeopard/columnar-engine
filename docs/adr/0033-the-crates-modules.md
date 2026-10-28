@@ -39,8 +39,8 @@ crates/columnar-engine/src/
   lib.rs           the public surface, and the story: the error, the options,
                    execute, execute_on
   pipeline.rs      the orchestration: the stages, in the plan's order
-  scan.rs          the scan's decision: what to read, what to push down, which
-                   columns are decoded, and the mapping onto the read set
+  scan.rs          the scan's decision: what to read, what to push down, and
+                   the mapping onto the read set
   plan/
     mod.rs         the plan module's surface and the pinned optimisation order
     spec.rs        what the caller writes
@@ -70,9 +70,11 @@ the sort → the project → the evaluate → the aggregate → the plan output.
    and what the executor reads (`plan/resolved.rs`) are different things with different
    representations, and the bridge between them (`plan/resolve.rs`) is the only module that knows
    both.
-2. **A decision and the policy it acts on live together.** The late-materialisation policy and the
-   scan's decision are both in `scan.rs`. A policy in one module and its consumer in another is a
-   boundary with a `Vec<usize>` in it.
+2. **A decision and what it produces live together.** The scan's decision and the **mapping** it
+   produces are both in `scan.rs`, so the reader's view of the file — what it fetched, and where
+   each column went — is in one place. The **late-materialisation set** is the resolved plan's own
+   named field, `materialised`: the bridge produces it and the scan reads it by that name, so the
+   boundary between them is a named field and not a bare vector.
 3. **The crate root is the surface.** `lib.rs` is what a reader opens first: the error, the
    options, the two entry points, and the story. The machinery is in the module that owns it.
 

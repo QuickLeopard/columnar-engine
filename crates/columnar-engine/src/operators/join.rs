@@ -632,7 +632,7 @@ fn decide_read(
         let Some(column) = source.columns().get(filter.column) else {
             continue;
         };
-        if read.contains(&filter.column) || !crate::pushdown_supports(&column.arrow_type) {
+        if read.contains(&filter.column) || !crate::scan::pushdown_supports(&column.arrow_type) {
             declined.push(filter.clone());
             continue;
         }

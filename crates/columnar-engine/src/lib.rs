@@ -86,12 +86,13 @@ pub mod operators;
 pub mod plan;
 pub mod pushdown;
 pub mod queries;
+pub mod scan;
 pub mod source;
 
 use columnar_kernels::Flavor;
 
 use crate::plan::ColumnSchema;
-use crate::pushdown::Pushdown;
+use crate::scan::{decide_scan, fetched_columns, pushdown_supports, ScanDecision, ScanReport};
 
 pub use dataset::{Dataset, DatasetError};
 pub use explain::{PlanOutput, StageStats};
@@ -400,7 +401,7 @@ pub fn execute_on(
 
     // Every index the plan holds is a column of the *file*; the dataset holds
     // only the read set, so the indices have to move.
-    let mapping = plan::ColumnMapping::of(&decision.read, source.column_count());
+    let mapping = decision.mapping(source.column_count());
     let effective = resolved.remap(&mapping)?;
 
     let scan = StageStats {
@@ -466,143 +467,6 @@ fn streamed_join(
     }
     let projection = source::scan_projection(&decision.read, &decision.pushdown);
     projection.iter().position(|&index| index == join.probe_key)
-}
-
-/// The columns whose bytes were fetched from the file.
-///
-/// That is the read set -- the columns the plan materialises -- plus the
-/// columns the pushed-down predicates read to evaluate themselves. The
-/// reader fetches both, and a column outside this list was never touched.
-fn fetched_columns(decision: &ScanDecision) -> Vec<usize> {
-    let mut fetched = decision.read.clone();
-    for predicate in decision.pushdown.predicates() {
-        if !fetched.contains(&predicate.column) {
-            fetched.push(predicate.column);
-        }
-    }
-    fetched.sort_unstable();
-    fetched
-}
-
-/// What a scan reads, and what it pushes into the reader.
-#[derive(Debug)]
-struct ScanDecision {
-    /// The file's root indices to read, ascending.
-    read: Vec<usize>,
-    /// The predicates to push into the reader.
-    pushdown: PushdownPlan,
-    /// Whether **every** predicate was pushed into the reader.
-    ///
-    /// A plan whose predicates were all pushed has no filter work left, so
-    /// the scan decides the rows on its own. That is what feeding the join
-    /// needs: the join's probe has to happen before the copy, and the copy
-    /// has to happen before the filter.
-    fully_pushed: bool,
-}
-
-impl ScanDecision {
-    /// A human-readable description of each pushed predicate.
-    fn pushdown_descriptions(&self) -> Vec<String> {
-        self.pushdown.predicates().iter().map(Pushdown::describe).collect()
-    }
-}
-
-/// Decides what a scan reads and what it pushes down.
-///
-/// The rules, in order:
-///
-/// 1. The plan's materialised columns are read. That is the late
-///    materialisation set: the group-by, the aggregate and the projection.
-/// 2. A predicate whose column is **already being read** is declined. The
-///    engine's filter stage applies the predicates the scan did not, over the
-///    rows that survived the scan. Pushing this one into the scan would
-///    evaluate it over every row of the file *and* leave the filter to
-///    evaluate it again over the survivors; declining it leaves the work to
-///    the filter, once, over fewer rows.
-/// 3. A predicate the pushdown cannot evaluate **exactly** is declined. It
-///    is never approximated.
-/// 4. A declined predicate's column is read, because the engine's filter
-///    stage will need it.
-fn decide_scan(resolved: &plan::ResolvedPlan, source: &ParquetSource) -> ScanDecision {
-    let mut read = resolved.materialised.clone();
-    let mut pushdown = PushdownPlan::new();
-    let mut pushed_columns: Vec<usize> = Vec::new();
-    let mut fully_pushed = true;
-
-    for filter in &resolved.filter {
-        let Some(column) = source.columns().get(filter.column) else {
-            fully_pushed = false;
-            continue;
-        };
-        if read.contains(&filter.column) {
-            fully_pushed = false;
-            continue;
-        }
-        if !pushdown_supports(&column.arrow_type) {
-            fully_pushed = false;
-            continue;
-        }
-        // Two predicates on the same column are one conjunction over that
-        // column, and the reader would decode the column once per predicate.
-        // They are pushed together.
-        match pushdown.for_column_mut(filter.column) {
-            Some(existing) => {
-                existing.and(filter.predicate.op, filter.predicate.value.clone());
-            }
-            None => {
-                pushdown.push(Pushdown::new(
-                    filter.column,
-                    &column.name,
-                    filter.predicate.op,
-                    filter.predicate.value.clone(),
-                ));
-            }
-        }
-        pushed_columns.push(filter.column);
-    }
-
-    for filter in &resolved.filter {
-        if pushed_columns.contains(&filter.column) {
-            continue;
-        }
-        if !read.contains(&filter.column) {
-            read.push(filter.column);
-        }
-    }
-
-    read.sort_unstable();
-    read.dedup();
-
-    ScanDecision { read, pushdown, fully_pushed }
-}
-
-/// Whether the pushdown evaluates this Arrow type exactly.
-///
-/// The pushdown implements the engine's three physical types. A dictionary
-/// column is included because the pushdown compares it once per distinct
-/// value and then maps through the indices, exactly as the engine's own
-/// dictionary path does.
-pub(crate) fn pushdown_supports(arrow_type: &arrow::datatypes::DataType) -> bool {
-    use arrow::datatypes::DataType as ArrowType;
-    match arrow_type {
-        ArrowType::Int64 | ArrowType::Float64 | ArrowType::Utf8 | ArrowType::LargeUtf8 => true,
-        ArrowType::Dictionary(key, value) => {
-            matches!(key.as_ref(), ArrowType::Int32)
-                && matches!(value.as_ref(), ArrowType::Utf8 | ArrowType::LargeUtf8)
-        }
-        _ => false,
-    }
-}
-
-/// What the scan did, for the plan output.
-#[derive(Debug, Default)]
-struct ScanReport {
-    /// The predicates that were pushed into the reader.
-    pushed_down: Vec<String>,
-    /// The columns that were read from the file.
-    columns_read: Vec<String>,
-    /// What the pushed-down predicates cost.
-    pushdown_metrics: PushdownMetrics,
 }
 
 /// Runs the pipeline over an already-resolved plan.
