@@ -65,9 +65,11 @@ pub(crate) fn scan_stage(
 
 /// What the pipeline is given to run.
 ///
-/// Every stage reads the same context: the plan, the dataset, the options,
-/// the clock, and what the scan and the build side decided. Carrying them
-/// in one struct is what lets the pipeline's own function take one argument.
+/// Every stage reads the same context: the plan, the dataset it runs over, the
+/// options, the flavor, the build side, the clock, and what the scan and the
+/// build side decided. Carrying them in one struct is what lets a helper's
+/// parameter list stop being a copy of the context's fields, and a new stage
+/// is handed the same context as the others.
 pub(crate) struct Pipeline<'a> {
     /// The plan, resolved.
     pub(crate) resolved: &'a plan::ResolvedPlan,
@@ -89,8 +91,8 @@ pub(crate) struct Pipeline<'a> {
     /// The scan's own stage report.
     ///
     /// The scan is the first stage, and it always runs, so it always has a
-    /// report. The report is an `Option` because every stage's report is one:
-    /// a stage that did not run has none.
+    /// report. The report is an `Option` because every stage's report is one: a
+    /// stage that did not run has none.
     pub(crate) scan: Option<StageStats>,
     /// What the scan did, for the plan output.
     pub(crate) report: ScanReport,
@@ -168,25 +170,33 @@ pub(crate) struct StreamedTable {
 ///
 /// Returns `None` when the scan does not feed the join, and when the plan has
 /// no join at all.
-pub(crate) fn build_streamed_table(
-    resolved: &plan::ResolvedPlan,
-    build: &BuildSide,
-    options: &ExecOptions,
-    flavor: Flavor,
-    key: Option<usize>,
-) -> Result<Option<StreamedTable>, EngineError> {
-    let (Some(key), Some(spec), Some(build_source)) = (key, resolved.join.as_ref(), build.source())
-    else {
-        return Ok(None);
-    };
-    let started = std::time::Instant::now();
-    let table = operators::join::build_table(
-        build_source,
-        &spec.spec,
-        flavor,
-        build_source.worker_count(options.threads.unwrap_or(1)),
-    )?;
-    Ok(Some(StreamedTable { table, key, elapsed: started.elapsed() }))
+impl BuildSide {
+    /// The join's table, built before the scan.
+    ///
+    /// This is the **build side's** own work, and it happens before the scan
+    /// rather than during the pipeline -- so it does not take the pipeline's
+    /// context, which is what the scan makes. It takes the build side's own
+    /// state, and the three things that are not the context's: the plan's
+    /// join, the options, and the flavor.
+    pub(crate) fn streamed_table(
+        &self,
+        join: Option<&plan::ResolvedJoin>,
+        options: &ExecOptions,
+        flavor: Flavor,
+        key: Option<usize>,
+    ) -> Result<Option<StreamedTable>, EngineError> {
+        let (Some(key), Some(spec), Some(build_source)) = (key, join, self.source()) else {
+            return Ok(None);
+        };
+        let started = std::time::Instant::now();
+        let table = operators::join::build_table(
+            build_source,
+            &spec.spec,
+            flavor,
+            build_source.worker_count(options.threads.unwrap_or(1)),
+        )?;
+        Ok(Some(StreamedTable { table, key, elapsed: started.elapsed() }))
+    }
 }
 
 /// A join the scan fed.
@@ -233,25 +243,12 @@ impl StreamedJoin {
 /// resolved.
 impl Pipeline<'_> {
     /// Runs the stages, in the plan's order.
-    pub(crate) fn run(self) -> Result<AggregateResult, EngineError> {
-        let Pipeline {
-            resolved,
-            dataset,
-            options,
-            flavor,
-            build,
-            started,
-            scan,
-            report,
-            estimate,
-            workers,
-            streamed,
-        } = self;
+    pub(crate) fn run(mut self) -> Result<AggregateResult, EngineError> {
         // How many workers the operators may use. The filter's blocks are
         // 64-row aligned and the projection's are larger, so the two can end up
         // with different worker counts -- and the plan reports the count that
         // actually ran for each of them, not the count that was asked for.
-        let operator_workers = options.threads.unwrap_or(1).max(1);
+        let operator_workers = self.options.threads.unwrap_or(1).max(1);
 
         // --- filter -----------------------------------------------------------
         // A predicate that was pushed into the reader has already been applied,
@@ -265,13 +262,13 @@ impl Pipeline<'_> {
         // bits of its last word set, and walking it would visit rows past the
         // end of the batch.
         let filter_started = std::time::Instant::now();
-        let (selection, filter_stats) = if resolved.filter.is_empty() {
-            (columnar_core::SelectionVector::all(dataset.len()), None)
+        let (selection, filter_stats) = if self.resolved.filter.is_empty() {
+            (columnar_core::SelectionVector::all(self.dataset.len()), None)
         } else {
             let (selection, stats) = operators::filter::filter_all_with_workers(
-                dataset,
-                &resolved.filter,
-                flavor,
+                self.dataset,
+                &self.resolved.filter,
+                self.flavor,
                 operator_workers,
             )?;
             (selection, Some(stats))
@@ -288,16 +285,18 @@ impl Pipeline<'_> {
         // run before the aggregate's input is materialised. A plan with neither
         // of them takes the plain path, where the aggregate reads the filter's
         // survivors.
-        let ordered =
-            ordered_stage(resolved, dataset, &selection, build, options, flavor, streamed)?;
+        // The scan's own result is taken out of the context here: the join
+        // stage owns it, and it is the only stage that reads it.
+        let streamed = self.streamed.take();
+        let ordered = ordered_stage(&self, streamed, &selection)?;
 
         // The materialisation set is built **after** the filter, because it needs
         // the filter's selection: the columns it gathers are the survivors'
         // rows.
         let mut materialised = operators::project::Materialised::with_workers(
-            dataset,
+            self.dataset,
             selection,
-            options.threads.unwrap_or(1),
+            self.options.threads.unwrap_or(1),
         );
 
         // --- project ----------------------------------------------------------
@@ -312,7 +311,7 @@ impl Pipeline<'_> {
         // [ADR-0016](../../../docs/adr/0016-the-aggregate-reads-in-place.md).
         let project_started = std::time::Instant::now();
         let (aggregate_rows, fusable) =
-            project_stage(resolved, dataset, &mut materialised, ordered.as_ref());
+            project_stage(self.resolved, self.dataset, &mut materialised, ordered.as_ref());
         // The projection does not change the row count: the join and the sort
         // do, and they report their own counts.
         //
@@ -338,12 +337,13 @@ impl Pipeline<'_> {
         // column, so the aggregate's NULL rules, its type rules and its
         // saturation all keep working, and the differential tests that cover them
         // cover this path too.
-        let (computed, evaluate_stats) = evaluate_stage(resolved, &materialised, aggregate_rows)?;
+        let (computed, evaluate_stats) =
+            evaluate_stage(self.resolved, &materialised, aggregate_rows)?;
 
         // --- aggregate --------------------------------------------------------
         let (groups, aggregate_stats) = aggregate_stage(
-            resolved.aggregate.as_ref(),
-            dataset,
+            self.resolved.aggregate.as_ref(),
+            self.dataset,
             &materialised,
             &computed,
             &fusable,
@@ -359,7 +359,7 @@ impl Pipeline<'_> {
         // when the stage did not run. The stages that ran are named, and the
         // ones that did not are not.
         let stages: Vec<StageStats> = [
-            scan,
+            self.scan,
             filter_stage,
             project_stage,
             ordered.as_ref().and_then(|ordered| ordered.join_stage.clone()),
@@ -375,20 +375,20 @@ impl Pipeline<'_> {
             optimization_order: plan::OPTIMIZATION_ORDER,
             stages: stages.clone(),
             materialised_columns: materialised.materialised_names(),
-            estimated_bytes: estimate,
-            budget_bytes: options.memory_budget.bytes,
-            kernel_flavor: operators::flavor_name(flavor).to_owned(),
-            pushed_down: report.pushed_down,
-            columns_read: report.columns_read,
-            pushdown_metrics: report.pushdown_metrics,
-            threads: workers,
+            estimated_bytes: self.estimate,
+            budget_bytes: self.options.memory_budget.bytes,
+            kernel_flavor: operators::flavor_name(self.flavor).to_owned(),
+            pushed_down: self.report.pushed_down,
+            columns_read: self.report.columns_read,
+            pushdown_metrics: self.report.pushdown_metrics,
+            threads: self.workers,
             filter_workers,
             projection_workers: materialised.projection_workers(),
             join: ordered.as_ref().and_then(|ordered| ordered.join.clone()),
             sort: ordered.as_ref().and_then(|ordered| ordered.sort.clone()),
             // The account of the whole query: the stages add up to this, and
             // whatever fell outside them is named rather than hidden.
-            attribution: explain::Attribution::of(started.elapsed(), &stages),
+            attribution: explain::Attribution::of(self.started.elapsed(), &stages),
         };
 
         Ok(AggregateResult { groups, stages, plan_output })
@@ -418,20 +418,16 @@ pub(crate) struct Ordered {
 /// order it reads them. A plan with neither stage takes the plain path, and
 /// this returns `None`.
 pub(crate) fn ordered_stage(
-    resolved: &plan::ResolvedPlan,
-    dataset: &Dataset,
-    selection: &columnar_core::SelectionVector,
-    build: &BuildSide,
-    options: &ExecOptions,
-    flavor: Flavor,
+    pipeline: &Pipeline<'_>,
     streamed: Option<StreamedJoin>,
+    selection: &columnar_core::SelectionVector,
 ) -> Result<Option<Ordered>, EngineError> {
-    if resolved.join.is_none() && resolved.sort.is_none() {
+    if pipeline.resolved.join.is_none() && pipeline.resolved.sort.is_none() {
         return Ok(None);
     }
 
-    let join = join_outcome(resolved, dataset, selection, build, options, flavor, streamed)?;
-    let sort = sort_outcome(resolved, dataset, selection, join.rows.as_deref())?;
+    let join = join_outcome(pipeline, streamed, selection)?;
+    let sort = sort_outcome(pipeline, selection, join.rows.as_deref())?;
 
     // The rows the aggregate reads: the sort's output when the plan has a
     // sort, and the join's output when it has a join and no sort. A plan
@@ -472,15 +468,11 @@ pub(crate) struct JoinOutcome {
 /// allocator has to hand out for rows the probe reads once. The probe is
 /// handed the selection, and reads the rows as it needs them.
 pub(crate) fn join_outcome(
-    resolved: &plan::ResolvedPlan,
-    dataset: &Dataset,
-    selection: &columnar_core::SelectionVector,
-    build: &BuildSide,
-    options: &ExecOptions,
-    flavor: Flavor,
+    pipeline: &Pipeline<'_>,
     streamed: Option<StreamedJoin>,
+    selection: &columnar_core::SelectionVector,
 ) -> Result<JoinOutcome, EngineError> {
-    let Some(spec) = &resolved.join else {
+    let Some(spec) = &pipeline.resolved.join else {
         return Ok(JoinOutcome { rows: None, stage: None, report: None });
     };
 
@@ -499,7 +491,7 @@ pub(crate) fn join_outcome(
         let stage = stage(
             "join",
             Some((rows(streamed.examined), rows(streamed.rows.len()))),
-            streamed.elapsed + build.opened,
+            streamed.elapsed + pipeline.build.opened,
         );
         let report = explain::JoinReport {
             probe_key: spec.spec.probe_key.clone(),
@@ -513,16 +505,16 @@ pub(crate) fn join_outcome(
     }
 
     let started = std::time::Instant::now();
-    let source = build.source.as_ref().ok_or_else(|| {
+    let source = pipeline.build.source.as_ref().ok_or_else(|| {
         EngineError::Parquet("the plan has a join but its build side was not opened".to_owned())
     })?;
     let table = operators::join::build_table(
         source,
         &spec.spec,
-        flavor,
-        source.worker_count(options.threads.unwrap_or(1)),
+        pipeline.flavor,
+        source.worker_count(pipeline.options.threads.unwrap_or(1)),
     )?;
-    let keys = key_column(dataset, spec.probe_key)?;
+    let keys = key_column(pipeline.dataset, spec.probe_key)?;
     // The probe reads the survivors' rows as it needs them. A selection
     // that holds every row is the **range**, and the range is handed over
     // as a range: the probe's own loop then keeps its state where it can
@@ -536,7 +528,7 @@ pub(crate) fn join_outcome(
         Some((rows(selection.len()), rows(matched.len()))),
         // The build side's file was opened before the pipeline ran, and it
         // is the join's own work.
-        started.elapsed() + build.opened,
+        started.elapsed() + pipeline.build.opened,
     );
     let report = explain::JoinReport {
         probe_key: spec.spec.probe_key.clone(),
@@ -569,17 +561,16 @@ pub(crate) struct SortOutcome {
 /// `limit` rows and drops the rest, so it never needs more than the heap
 /// and the row it is looking at.
 pub(crate) fn sort_outcome(
-    resolved: &plan::ResolvedPlan,
-    dataset: &Dataset,
+    pipeline: &Pipeline<'_>,
     selection: &columnar_core::SelectionVector,
     joined: Option<&[u32]>,
 ) -> Result<SortOutcome, EngineError> {
-    let Some(spec) = &resolved.sort else {
+    let Some(spec) = &pipeline.resolved.sort else {
         return Ok(SortOutcome { rows: None, stage: None, report: None });
     };
 
     let started = std::time::Instant::now();
-    let keys = key_column(dataset, spec.column)?;
+    let keys = key_column(pipeline.dataset, spec.column)?;
     let handed = joined.map_or(selection.len(), <[u32]>::len);
     // The sort is handed the rows the join produced, when there is a join,
     // and the filter's survivors when there is not. Both are the dataset's

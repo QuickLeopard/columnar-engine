@@ -96,7 +96,7 @@ pub(crate) mod scan;
 
 use columnar_kernels::Flavor;
 
-use crate::pipeline::{build_streamed_table, scan_stage, BuildSide, Pipeline, StreamedJoin};
+use crate::pipeline::{scan_stage, BuildSide, Pipeline, StreamedJoin};
 use crate::plan::ColumnSchema;
 use crate::scan::{decide_scan, fetched_columns, pushdown_descriptions, streamed_join, ScanReport};
 
@@ -327,7 +327,7 @@ pub fn execute_on(
     // The join's table is built **before** the scan when the scan feeds the
     // join: the probe has to happen before the copy, and the probe needs the
     // table.
-    let table = build_streamed_table(&resolved, &build, options, flavor, streamed)?;
+    let table = build.streamed_table(resolved.join.as_ref(), options, flavor, streamed)?;
 
     // The clock starts **after** the build table is built: the table is the
     // join's work, and the join's stage reports it.

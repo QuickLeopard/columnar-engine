@@ -70,8 +70,11 @@ the stage **after** them — so the published numbers are the numbers of the cod
 - [x] **Step 8 — the mapping is the plan's.** The join's copy of "the file's column is the dataset's
       column" went with the read decision: the decision carries the plan's `ColumnMapping`, and the
       silent `unwrap_or` fallback that spec 027 removed from the plan's copy is gone for good.
-- [ ] **Step 9 — the join's helpers take the context.** `ordered_stage`, `join_outcome` and
-      `build_streamed_table` are handed the pipeline's context, the way the other stages are.
+- [x] **Step 9 — the join's helpers take the context.** `ordered_stage` and `join_outcome` took
+      **seven** parameters each — a copy of the context's fields — and now take the context and the
+      two things that are not the context's. The table build is the **build side's own method**: it
+      runs before the scan, and the context is what the scan makes, so there is no context to hand it
+      yet. The reason is recorded in the spec.
 - [ ] **Step 10 — the documents say what the code does, and the dead surface goes.** The two stale
       documents are corrected, and `KeyColumn::from_decoded`, `KeySlice`'s unread dictionary variants
       and `KeySlice::integers` are removed.

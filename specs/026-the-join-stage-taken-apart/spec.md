@@ -185,12 +185,19 @@ decides to read, and the copies that read holds. And it is **tested**, the way t
 
 ### R8 — The join's helpers take the pipeline's context
 
-`ordered_stage` and `join_outcome` take **seven** parameters each, and `build_streamed_table` takes
-six — one below the line where clippy would complain. Spec 027 gave the pipeline a `Pipeline` context
+`ordered_stage` and `join_outcome` take **seven** parameters each, and `build_streamed_table` takes six — one below the line where clippy would complain. Spec 027 gave the pipeline a `Pipeline` context
 and moved these two helpers **verbatim**, leaving them behind.
 
 **The join's helpers take the context.** A new stage is handed the same context as the others, and a
 helper's parameter list stops being a copy of the context's fields.
+
+> **One helper cannot take the context, and the reason is recorded.** The table is built **before** the
+> scan — the probe happens inside the scan, and the probe needs the table — and the context the
+> pipeline carries is **what the scan makes**: the dataset the stages run over, the scan's own stage,
+> and the account of what the reader took. There is no context to hand it yet. So the table build is
+> the **build side's own method**, taking the build side's state and the three things that are not the
+> context's: the plan's join, the options, and the flavor. The two helpers that run *after* the scan
+> take the context, and their parameter lists went from seven to three.
 
 ### R9 — The documents say what the code does
 
