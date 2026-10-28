@@ -3,6 +3,7 @@
 **Status**: in progress
 **Started**: 2026-10-28
 **ADR**: [ADR-0034](../../docs/adr/0034-the-joins-rules.md) — the join's rules, and why each has one owner
+· [ADR-0035](../../docs/adr/0035-the-join-stage-taken-apart.md) — the join's stage, taken apart
 **Predecessor**: [025-the-sort-taken-apart](../025-the-sort-taken-apart/spec.md)
 
 ## The problem
@@ -287,8 +288,106 @@ committed as `bench-results/join-cost-before-run{1,2,3}.json`.
 
 ## The measurement
 
-To be filled from the instrument's campaigns. The parts, the medians, the two paths, and the
-attribution of the **2.9 ms** between them.
+**Three campaigns on this host, five iterations each, before and after.** The "after" set is the code
+this spec writes, at `88263b4`; the "before" set is the code it replaces, at `60e5f5a`, measured in its
+own worktree, back to back on the same machine. The raw reports are
+`bench-results/join-cost-run{1,2,3}.json` and `bench-results/join-cost-before-run{1,2,3}.json`, and
+`python3 scripts/medians.py` derives every figure below from them. The host's load average was
+**4.93–5.47** while the "after" campaigns ran and **5.43–5.47** while the "before" ones did.
+
+**The parts.** The stage, on both paths, from the plan output; the build side's open, read, keys and
+table; the probe measured both ways; the floor the probe cannot go under; and the candidate, written out
+by hand. The new code first, the old code second:
+
+| part | the old code | the new code |
+|---|---|---|
+| the stage, cold | 20.582 ms | 20.735 ms |
+| the stage, resident | 19.283 ms | 19.216 ms |
+| the build side's open | 0.029 ms | 0.028 ms |
+| the build side's read | 11.602 ms | 11.542 ms |
+| the build side's keys | 0.333 ms | 0.339 ms |
+| the build side, whole | 11.809 ms | 11.831 ms |
+| the table, on its own | 0.209 ms | 0.212 ms |
+| the probe, over the column | 10.270 ms | 10.051 ms |
+| the probe, in the batches | 10.550 ms | 10.221 ms |
+| the floor the probe cannot go under | 4.421 ms | 4.418 ms |
+| the candidate, written out | 6.905 ms | 6.959 ms |
+| the read, plain | 0.506 ms | 0.509 ms |
+| the read, the small control | 0.038 ms | 0.039 ms |
+
+**And the differences the instrument computes from its own parts:**
+
+| difference | the old code | the new code |
+|---|---|---|
+| the table, as the difference | −0.101 ms | −0.039 ms |
+| the output rows | 2.527 ms | 2.549 ms |
+| the probe's remainder | 3.346 ms | 3.095 ms |
+| the two paths | 1.344 ms | 1.519 ms |
+| the two probes | 0.280 ms | 0.170 ms |
+
+**The stage is the build side's read and the probe, and the build side's read is more than half of it.**
+The build side's whole is **11.831 ms** of the cold stage's **20.735 ms** — **57%** — and the read itself
+is **11.542 ms** of it: Arrow's decode of the build side's columns out of `orders.parquet`, of which the
+pushed-down date predicate leaves **216,345** keys. It has been measured three times and refused every
+time, and this spec does not touch it. The keys are **0.339 ms** and the open is **0.028 ms**. The
+table's own construction is **below the noise** — the whole over the read and the keys is **−0.039 ms** —
+and the table measured on its own is **0.212 ms**.
+
+**The probe is not at the floor, and the code names why.** The engine's probe over its own column costs
+**10.051 ms**; the same lookup, written out by hand over the same six million rows and the same table,
+costs **6.959 ms**. The difference is the probe's remainder, **3.095 ms**, and the engine's own per-row
+lookup names it: `DirectTable::count` consults the **overflow map** once a probe row
+(`crates/columnar-engine/src/operators/join.rs:352`), and the map is **empty** for this data, because
+every key's count fits in its byte. The candidate has no map to consult. The floor the probe cannot go
+under is **4.418 ms** — the table's own load, one a probe row — and the **216,783 output rows** cost
+**2.549 ms** of the candidate's **6.959 ms**.
+
+**The two paths, and the attribution of the difference.** The stages differ by **1.519 ms** — the
+**2.9 ms** the published campaigns report is the same difference measured in another campaign set, at a
+load average of **6.28–7.10** rather than this one's **4.93–5.47**, and both are published. The build
+side's read is **the same call on both paths** — the same `build_table`, over the same file — so the
+difference is in the probe: the cold path's probe runs inside the reader, over the reader's own batches,
+against the caches the decode is using. The probe, measured on its own, differs by **0.170 ms**, and
+**the two measurements do not agree**. They cannot: the parts are measured one at a time, each against a
+file and a table the measurement before it has pushed out of the caches, where the stage runs its parts
+in one pipeline, with the build side's read immediately before the probe. The parts are therefore
+**bounds**, not a decomposition that adds up — they over-explain the cold stage by **1.32 ms** and the
+resident one by **2.67 ms** — and the stage, the engine's own account, is the authority. The **1.35 ms**
+between the stage's difference and the probe's is the **remainder**, and it is named as one.
+
+**And the read is counting, not waiting for memory.** The probe key column's plain read is **0.509 ms**
+over 48 MB and **0.039 ms** over 512K values: the same per byte.
+
+**And the stage now says what it does.** Before this spec's first fix the two paths reported different
+row counts for the same probe: the cold path said `216783 → 216783` — the rows that survived the probe
+— and the resident path said `6000000 → 216783`. Both now say `6000000 → 216783` (R5). The **times** did
+not move: every difference between the old code's figures and the new code's is inside the noise.
+
+**What was published, and what moved.** The figures are published in
+[`PERF.md` §3o](../../PERF.md#3o-the-joins-stage-taken-apart) and in the README's status table, and the
+guard checks every one of them against the committed reports **in the section that publishes them**.
+**One** published figure moved: the plan output's cold-path join row count, from `216783` back to
+`6000000` — which is the number [`PERF.md` §2h](../../PERF.md#2h-the-hot-paths-taken-apart) and
+[`PERF.md` §3l](../../PERF.md#3l-the-scan-taken-apart-and-the-scan-that-feeds-the-join) already publish.
+The reason is R5: the stage reports the rows the probe consumed, so that the two paths describe the same
+work.
+
+> **The comparison campaigns were not re-run, and the reason is recorded.** The tasks called for them, and
+> they were **not** run. The ten fixes do not change the work the query does — the same plan, the same
+> operators, the same reads — and the instrument's own before-and-after campaigns are the measurement that
+> says so: the stage is **20.735 ms** against **20.582 ms**, the resident one **19.216 ms** against
+> **19.283 ms**, and the probe **10.051 ms** against **10.270 ms**. A re-run would have measured the
+> **host**, not the code, and would have moved every published figure in the file for no reason a reader
+> could act on. The comparison set stays as it was published, and the one figure the fix moved is published
+> old-and-new above.
+
+> **A collateral fix, and the reason recorded.** A recipe's arguments are **positional**: `just` assigns
+> the first argument to the first parameter, and it does not read `name=value` as an assignment. The
+> commands this repository published for the probes were therefore broken — they passed
+> `data=data/lineitem.parquet` as the path — and the new one would have been broken the same way. The
+> commands in `PERF.md` §6 and in `bench-results/README.md` are positional now, `just probe-join` is a
+> recipe like the others, and `PERF.md` §6 says so in one sentence. The fix is in scope because this
+> spec adds a command of the same shape, and a method whose commands do not run is not a method.
 
 ## The references
 
@@ -302,4 +401,4 @@ attribution of the **2.9 ms** between them.
 | [spec 023](../023-the-scan-that-feeds-the-join/spec.md) | the join's probe moved inside the scan, and the rule it set |
 | [spec 024](../024-the-time-the-plan-output-does-not-name/spec.md) | the selection that holds every row is the range, and the plan output's account of the whole query |
 | [spec 025](../025-the-sort-taken-apart/spec.md) | the sort taken apart, the floor that was a scalar read, and the method this spec follows |
-| [`PERF.md`](../../PERF.md) §2a, §2b, §2h, §3l, §3m, §3n | the published tables this spec's figures are re-derived into |
+| [`PERF.md`](../../PERF.md) §2a, §2b, §2h, §3l, §3m, §3n, §3o | the published tables this spec's figures are re-derived into |

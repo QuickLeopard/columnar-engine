@@ -1389,6 +1389,101 @@ def print_sort_cost(
             print(f"{fallback:<52}{statistics.median(values):>12.2f}")
 
 
+# The names are the probe's own and the labels are the ones the published
+# table uses, so the derivation and the document cannot drift apart over a
+# name.
+JOIN_COST_PARTS = (
+    ("stage_cold", "the stage, cold"),
+    ("stage_resident", "the stage, resident"),
+    ("build_open", "the build side's open"),
+    ("build_read", "the build side's read"),
+    ("build_keys", "the build side's keys"),
+    ("build_whole", "the build side, whole"),
+    ("table_own", "the table, on its own"),
+    ("probe_column", "the probe, over the column"),
+    ("probe_batches", "the probe, in the batches"),
+    ("floor_probe", "the floor the probe cannot go under"),
+    ("candidate_probe", "the candidate, written out"),
+    ("read_plain", "the read, plain"),
+    ("read_small", "the read, the small control"),
+)
+
+# The differences: the figures the instrument computes from its own parts, so
+# that a difference is derived rather than typed. The table is the difference
+# between the whole and the read and the keys; the output rows are the
+# difference between the candidate and the floor; the probe's remainder is the
+# difference between the engine's probe and the candidate's; the two paths and
+# the two probes are the differences between the two stages and between the two
+# probes.
+JOIN_COST_DERIVED = (
+    ("build_table", "the table, as the difference"),
+    ("output_rows", "the output rows"),
+    ("the_probe_s_remainder", "the probe's remainder"),
+    ("the_two_paths", "the two paths"),
+    ("the_two_probes", "the two probes"),
+)
+
+
+def _join_cost_figures(
+    files: list[tuple[str, list[dict]]],
+) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+    """The join probe's figures, across the campaigns.
+
+    The report has two parts: the **parts** -- the stage on both paths, the
+    build side's open, read, keys and table, the probe measured both ways, the
+    floor and the candidate -- and the **differences**, which the probe
+    computes from its own parts.
+
+    This collects them across the campaigns, so the median is taken over the
+    campaigns rather than over the iterations inside one of them.
+    """
+    parts: dict[str, list[float]] = {}
+    derived: dict[str, list[float]] = {}
+    for _, runs in files:
+        for run in runs:
+            for key, value in run.get("parts_ms", {}).items():
+                parts.setdefault(key, []).append(value)
+            for key, value in run.get("derived_ms", {}).items():
+                derived.setdefault(key, []).append(value)
+    return parts, derived
+
+
+def print_join_cost(
+    after_files: list[tuple[str, list[dict]]],
+    before_files: list[tuple[str, list[dict]]],
+) -> None:
+    """Print the join probe's medians.
+
+    This is spec 026: the join's stage, taken apart -- the engine's own stage
+    on both paths, the build side's open, read, keys and table, the probe
+    measured both ways, the floor the probe cannot go under, and the candidate
+    that is the cross-check. The "before" set is the same probe against the
+    code the increment replaced, measured back to back on the same host.
+    """
+    for label, files in (("the new code", after_files), ("the old code", before_files)):
+        if not files:
+            continue
+        parts, derived = _join_cost_figures(files)
+        campaigns = min(len(runs) for _, runs in files)
+        print(f"\n=== THE JOIN'S STAGE, TAKEN APART -- {label} ({campaigns} campaigns each) ===")
+
+        print("\n-- the parts --")
+        print(f"{'the part':<52}{'median':>12}")
+        for key, part in JOIN_COST_PARTS:
+            values = parts.get(key, [])
+            if not values:
+                continue
+            print(f"{part:<52}{statistics.median(values):>12.3f}")
+
+        print("\n-- the differences --")
+        print(f"{'the difference':<52}{'median':>12}")
+        for key, difference in JOIN_COST_DERIVED:
+            values = derived.get(key, [])
+            if not values:
+                continue
+            print(f"{difference:<52}{statistics.median(values):>12.3f}")
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -1598,6 +1693,16 @@ def main() -> int:
         print_sort_cost(
             [("A", [load(p) for p in sort_after])],
             [("A", [load(p) for p in sort_before])] if sort_before else [],
+        )
+
+    # Spec 026's join probe: the join's stage, taken apart -- measured against
+    # the code the increment replaces, back to back on the same host.
+    join_after = sorted(Path("bench-results").glob("join-cost-run*.json"))
+    join_before = sorted(Path("bench-results").glob("join-cost-before-run*.json"))
+    if join_after:
+        print_join_cost(
+            [("A", [load(p) for p in join_after])],
+            [("A", [load(p) for p in join_before])] if join_before else [],
         )
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.

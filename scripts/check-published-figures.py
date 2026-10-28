@@ -33,6 +33,8 @@ QUERY_COST_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-run*.json"
 QUERY_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-before-run*.json"))
 SORT_COST_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-run*.json"))
 SORT_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-before-run*.json"))
+JOIN_COST_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-run*.json"))
+JOIN_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-before-run*.json"))
 PROBE_REPORTS = sorted((ROOT / "bench-results").glob("operator-probe-*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
@@ -230,6 +232,69 @@ SORT_COST_CHECKS = [
     ("PERF.md", "the old code's read, the small control", "before", "read_small", 2),
     ("PERF.md", "the old code's comparison, in blocks", "before", "floor_block", 2),
     ("PERF.md", "the old code's candidate, in blocks", "before", "candidate_block", 2),
+]
+
+# Spec 026's instrument: the join's stage, taken apart. The engine's own stage
+# on both paths, the build side's open, read, keys and table, the probe
+# measured both ways, the floor the probe cannot go under, and the candidate
+# that is the cross-check.
+#
+# The "after" set is the probe against the code the increment wrote and the
+# "before" set is the same probe against the code it replaced, measured back to
+# back on the same host, so **both halves** of every published figure are
+# derived from a committed report rather than typed into the prose.
+#
+# The places are three: the parts run from a third of a millisecond to twenty,
+# and two places would say "0.03" for the build side's open and lose it.
+#
+# The section that publishes them is named as well: the figures are looked for
+# **inside** it, so that a figure which happens to equal an unrelated number
+# elsewhere in the document cannot satisfy the check by accident.
+JOIN_COST_SECTION = "### 3o"
+
+JOIN_COST_CHECKS = [
+    ("PERF.md", "the new code's stage, cold", "after", "stage_cold", 3),
+    ("PERF.md", "the new code's stage, resident", "after", "stage_resident", 3),
+    ("PERF.md", "the new code's build side's open", "after", "build_open", 3),
+    ("PERF.md", "the new code's build side's read", "after", "build_read", 3),
+    ("PERF.md", "the new code's build side's keys", "after", "build_keys", 3),
+    ("PERF.md", "the new code's build side, whole", "after", "build_whole", 3),
+    ("PERF.md", "the new code's table, on its own", "after", "table_own", 3),
+    ("PERF.md", "the new code's probe, over the column", "after", "probe_column", 3),
+    ("PERF.md", "the new code's probe, in the batches", "after", "probe_batches", 3),
+    ("PERF.md", "the new code's floor the probe", "after", "floor_probe", 3),
+    ("PERF.md", "the new code's candidate, written out", "after", "candidate_probe", 3),
+    ("PERF.md", "the new code's read, plain", "after", "read_plain", 3),
+    ("PERF.md", "the new code's read, the small control", "after", "read_small", 3),
+    ("PERF.md", "the old code's stage, cold", "before", "stage_cold", 3),
+    ("PERF.md", "the old code's stage, resident", "before", "stage_resident", 3),
+    ("PERF.md", "the old code's build side's open", "before", "build_open", 3),
+    ("PERF.md", "the old code's build side's read", "before", "build_read", 3),
+    ("PERF.md", "the old code's build side's keys", "before", "build_keys", 3),
+    ("PERF.md", "the old code's build side, whole", "before", "build_whole", 3),
+    ("PERF.md", "the old code's table, on its own", "before", "table_own", 3),
+    ("PERF.md", "the old code's probe, over the column", "before", "probe_column", 3),
+    ("PERF.md", "the old code's probe, in the batches", "before", "probe_batches", 3),
+    ("PERF.md", "the old code's floor the probe", "before", "floor_probe", 3),
+    ("PERF.md", "the old code's candidate, written out", "before", "candidate_probe", 3),
+    ("PERF.md", "the old code's read, plain", "before", "read_plain", 3),
+    ("PERF.md", "the old code's read, the small control", "before", "read_small", 3),
+]
+
+# The differences the instrument computes from its own parts: the table's own
+# cost, the output rows, the probe's remainder, and the two paths and the two
+# probes.
+JOIN_COST_DERIVED_CHECKS = [
+    ("PERF.md", "the new code's table, as the difference", "after", "build_table", 3),
+    ("PERF.md", "the new code's output rows", "after", "output_rows", 3),
+    ("PERF.md", "the new code's probe's remainder", "after", "the_probe_s_remainder", 3),
+    ("PERF.md", "the new code's two paths", "after", "the_two_paths", 3),
+    ("PERF.md", "the new code's two probes", "after", "the_two_probes", 3),
+    ("PERF.md", "the old code's table, as the difference", "before", "build_table", 3),
+    ("PERF.md", "the old code's output rows", "before", "output_rows", 3),
+    ("PERF.md", "the old code's probe's remainder", "before", "the_probe_s_remainder", 3),
+    ("PERF.md", "the old code's two paths", "before", "the_two_paths", 3),
+    ("PERF.md", "the old code's two probes", "before", "the_two_probes", 3),
 ]
 
 # (document, label, report, measurement, places)
@@ -440,6 +505,39 @@ def _sort_cost_parts(paths: list[Path]) -> dict[str, list[float]]:
         for key, value in run.get("parts_ms", {}).items():
             out.setdefault(key, []).append(value)
     return out
+
+
+def _join_cost_figures(
+    paths: list[Path],
+) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+    """The join probe's parts and differences, from the committed reports.
+
+    The parts are the stage on both paths, the build side's open, read, keys
+    and table, the probe measured both ways, the floor and the candidate; the
+    differences are the ones the probe computes from its own parts. Each one is
+    the median of the probe's own iterations, and this collects them across the
+    campaigns so that the published figure is the median over the campaigns.
+    """
+    parts: dict[str, list[float]] = {}
+    derived: dict[str, list[float]] = {}
+    for path in paths:
+        run = json.loads(path.read_text())
+        for key, value in run.get("parts_ms", {}).items():
+            parts.setdefault(key, []).append(value)
+        for key, value in run.get("derived_ms", {}).items():
+            derived.setdefault(key, []).append(value)
+    return parts, derived
+
+
+def rendered_figure(figure: float, places: int) -> str:
+    """A figure as the document writes it.
+
+    The documents are read with the typographic minus normalised to an ASCII
+    hyphen, so a negative figure is rendered the same way: the guard has to
+    look for the character the document has, or a figure that is negative could
+    never be found.
+    """
+    return f"{figure:.{places}f}"
 
 
 def figure_in(text: str, rendered: str) -> bool:
@@ -1117,6 +1215,59 @@ def main() -> int:
                 else:
                     print(f"ok  {doc:<10} {label:<28} {rendered}")
 
+    # Spec 026's join probe: the join's stage, taken apart -- the new code and
+    # the old one, measured back to back on the same host.
+    if JOIN_COST_REPORTS or JOIN_COST_BEFORE_REPORTS:
+        join_parts: dict[str, dict[str, list[float]]] = {}
+        join_derived: dict[str, dict[str, list[float]]] = {}
+        for which, paths in (("after", JOIN_COST_REPORTS), ("before", JOIN_COST_BEFORE_REPORTS)):
+            parts, derived = _join_cost_figures(paths)
+            join_parts[which] = parts
+            join_derived[which] = derived
+        # The figures are looked for **in the section that publishes them**,
+        # not anywhere in the document: a figure that happens to equal an
+        # unrelated number -- a multiplier, a spread, another probe's
+        # measurement -- would otherwise satisfy the check by accident.
+        published = section_of(texts["PERF.md"], JOIN_COST_SECTION)
+        if published is None:
+            failures.append(
+                f"PERF.md: the section that publishes the join probe's figures "
+                f"({JOIN_COST_SECTION}) is not in the document"
+            )
+        else:
+            for doc, label, which, part, places in JOIN_COST_CHECKS:
+                values = join_parts[which].get(part, [])
+                if not values:
+                    failures.append(
+                        f"{doc}: no figure for {label} in the join probe's reports"
+                    )
+                    continue
+                figure = statistics.median(values)
+                rendered = rendered_figure(figure, places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"{doc}: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {doc:<10} {label:<40} {rendered}")
+            for doc, label, which, difference, places in JOIN_COST_DERIVED_CHECKS:
+                values = join_derived[which].get(difference, [])
+                if not values:
+                    failures.append(
+                        f"{doc}: no figure for {label} in the join probe's reports"
+                    )
+                    continue
+                figure = statistics.median(values)
+                rendered = rendered_figure(figure, places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"{doc}: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {doc:<10} {label:<40} {rendered}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -1726,7 +1877,8 @@ def main() -> int:
         f"{len(SPEC021_REPORTS)} of the last set, {len(PROBE_REPORTS)} probe, "
         f"{len(STAGE_CHECKS)} of the plan output, "
         f"{len(QUERY_COST_CHECKS) + len(QUERY_COST_SHAPE_CHECKS)} of the query probe, "
-        f"{len(SORT_COST_CHECKS)} of the sort probe"
+        f"{len(SORT_COST_CHECKS)} of the sort probe, "
+        f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe"
     )
     return 0
 

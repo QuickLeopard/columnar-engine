@@ -2251,6 +2251,128 @@ the campaigns ran — the reports carry it. The raw reports are
 
 ---
 
+### 3o. The join's stage, taken apart
+
+**The join's stage is the engine's own work on the query where the engine is level.** The engine's cold
+`join-orders` is **96.7 ms** against DuckDB's **95.0 ms** — **1.7 ms** apart, inside both spreads —
+while the peer's is **168.5 ms** and Polars' **222.8 ms**. The plan output says where the engine's own
+time is, and it is the join's stage: **24.2 ms** of the cold query, a **quarter** of it, and **all** of
+it the engine's own work.
+
+**And the stage had never been taken apart.** Spec 021 measured the join's *probe* — **9.0 ms** against
+a **1.7 ms** floor — two increments ago, on a different code version and a different host state. The
+build side's read was measured separately, at **9.99 ms**, as part of the *scan's* decomposition.
+**No measurement had ever put the stage and its parts in the same session**, and none had ever asked
+what the stage's **other** parts were.
+
+**And the two paths did not agree, and nobody had said why.** The same parts are charged to the join's
+stage on both paths: the build side's open, the table's construction, and the probe over six million
+rows. On the cold path the probe runs **inside the scan**, over the reader's own batches, before
+anything is copied; on the resident path it runs over the engine's own column, in memory, after the
+copy. The cold stage is **24.2 ms** and the resident one **21.3 ms** — **2.9 ms** apart — and they
+reported **different row counts for the same probe**: `216783 → 216783` on the cold path and
+`6000000 → 216783` on the resident one.
+
+**The review came first, and it changed what is measured.** Five of the join's rules had **two owners
+each**; the stage reported two different things for the same work; the build side's memory estimate was
+**not an upper bound**; the join's helpers were left behind by spec 027's context; and two documents
+said the opposite of the code. The ten fixes are in the tree, and **these figures are the numbers of the
+code that ships**. See [ADR-0034](docs/adr/0034-the-joins-rules.md).
+
+**The instrument**: `crates/columnar-engine/examples/join_cost_probe.rs`. It runs the engine's **own**
+plan through the engine's own entry point, takes the join's stage from the plan output on **both**
+paths, and measures the parts on the same data, the same rows and the same table, in the same session.
+The engine's **216,783** rows are checked against the probe's own, **in order**, before anything is
+timed, and the aggregate's value is checked against the published one.
+
+| part | the old code | the new code | what it is |
+|---|---|---|---|
+| the stage, cold | 20.582 ms | 20.735 ms | the engine's own join stage, the cold path |
+| the stage, resident | 19.283 ms | 19.216 ms | the engine's own join stage, the resident path |
+| the build side's open | 0.029 ms | 0.028 ms | opening `orders.parquet`: its metadata, its schema |
+| the build side's read | 11.602 ms | 11.542 ms | reading the build side's columns through the engine's own reader |
+| the build side's keys | 0.333 ms | 0.339 ms | the per-row walk that collects the build side's keys |
+| the build side, whole | 11.809 ms | 11.831 ms | the read, the keys and the table together |
+| the table, on its own | 0.209 ms | 0.212 ms | one byte a count, over the key's own range |
+| the probe, over the column | 10.270 ms | 10.051 ms | the resident path's probe: the engine's own column, in memory |
+| the probe, in the batches | 10.550 ms | 10.221 ms | the cold path's probe: inside the reader's own batch loop |
+| the floor the probe cannot go under | 4.421 ms | 4.418 ms | the table's own load, one a probe row |
+| the candidate, written out | 6.905 ms | 6.959 ms | the same lookup, written out by hand over the same rows |
+| the read, plain | 0.506 ms | 0.509 ms | the plain read of the probe key column: the floor a read cannot go under |
+| the read, the small control | 0.038 ms | 0.039 ms | the same read over 512K values |
+
+**And the differences the instrument computes from its own parts:**
+
+| difference | the old code | the new code | what it is |
+|---|---|---|---|
+| the table, as the difference | −0.101 ms | −0.039 ms | the whole over the read and the keys: the table's own cost, and it is **below the noise** |
+| the output rows | 2.527 ms | 2.549 ms | the candidate over the floor: what the 216,783 output rows cost |
+| the probe's remainder | 3.346 ms | 3.095 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
+| the two paths | 1.344 ms | 1.519 ms | the cold stage over the resident stage |
+| the two probes | 0.280 ms | 0.170 ms | the batched probe over the column's |
+
+**Three findings, and they are the answer.**
+
+**The build side's read is more than half the stage.** The build side's whole is **11.831 ms** of the
+cold stage's **20.735 ms** — **57%** — and the read itself is **11.542 ms** of it. That read is
+Arrow's decode of the build side's columns out of `orders.parquet`: **1,500,000** rows, of which the
+pushed-down date predicate leaves **216,345** keys. It has been measured three times and **refused
+every time**, and this section does not touch it. The keys are **0.339 ms** and the open is
+**0.028 ms**; the table's own construction is **below the noise** — the whole over the read and the
+keys is **−0.039 ms** — and the table measured on its own is **0.212 ms**.
+
+**The probe is not at the floor, and the code names why.** The engine's probe over its own column costs
+**10.051 ms**; the same lookup, written out by hand over the same six million rows and the same table,
+costs **6.959 ms**. The difference is **3.095 ms** — the probe's remainder — and the engine's own
+per-row lookup names it: `DirectTable::count` consults the **overflow map** once a probe row
+(`crates/columnar-engine/src/operators/join.rs:352`), and the map is **empty** for this data, because
+every key's count fits in its byte. The candidate has no map to consult. The floor the probe cannot go
+under is **4.418 ms** — the table's own load, one a probe row — and the **216,783 output rows** cost
+**2.549 ms** of the candidate's **6.959 ms**.
+
+**The two paths differ by the probe, and the probe's own measurement does not agree with the stage.**
+The stages differ by **1.519 ms**. The build side's read is **the same call on both paths** — the same
+`build_table`, over the same file — so the difference is in the probe: the cold path's probe runs
+inside the reader, over the reader's own batches, against the caches the decode is using. The probe,
+measured on its own, differs by **0.170 ms** — **10.221 ms** in the batches against **10.051 ms** over
+the column — and **the two measurements do not agree**. They cannot: the parts are measured one at a
+time, each against a file and a table the measurement before it has pushed out of the caches, where the
+stage runs its parts in **one pipeline**, with the build side's read immediately before the probe. The
+parts are therefore **bounds**, not a decomposition that adds up — they over-explain the cold stage by
+**1.32 ms** and the resident one by **2.67 ms** — and **the stage is the engine's own account, and it
+is the authority.** The **1.35 ms** between the stage's difference and the probe's is the **remainder**,
+and it is named as one.
+
+**And the read is counting, not waiting for memory.** The probe key column's plain read is **0.509 ms**
+over 48 MB and **0.039 ms** over 512K values: the same per byte, so the read is not waiting for
+memory.
+
+**And the stage now says what it does.** The two paths report the same work: `6000000 → 216783`,
+both of them. Before this increment the cold path said `216783 → 216783` — the rows that *survived*
+the probe — and the resident path said `6000000 → 216783`, so the two stages described different
+things. The **times** did not move: the change is in what the stage says, not in what it does.
+
+**And the published campaigns' difference is the same sign and a different size.** The comparison set
+publishes the cold stage at **24.2 ms** and the resident one at **21.3 ms** — **2.9 ms** apart — and
+those campaigns ran at a load average of **6.28–7.10**, where this section's ran at **4.93–5.47**. The
+difference between the paths is **1.519 ms** here and **2.9 ms** there: the same sign, and both are
+published rather than one being quietly dropped.
+
+**What this did not do.** The **scan's decode** is untouched: it is the scan's business, and it has
+been measured three times and refused every time. The **build side's reader** is untouched — the build
+side is read through the engine's own `ParquetSource`, so the same reader settings apply to it as to
+any other file. The **table's shape** is untouched — the direct-addressed table was chosen by
+measurement in spec 021 and beat every candidate in that campaign — and so is the **probe's hash**. The
+**eager path's load** is untouched, and so is the **plan**.
+
+All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **4.93–5.47** while
+the campaigns ran — the reports carry it. The raw reports are
+`bench-results/join-cost-run{1,2,3}.json` and `bench-results/join-cost-before-run{1,2,3}.json`, and
+`python3 scripts/medians.py` derives the tables above from them. See
+[ADR-0035](docs/adr/0035-the-join-stage-taken-apart.md).
+
+---
+
 ## 4. The defects the increments found
 
 Twenty-seven, all found by measurement, all recorded with their before-and-after numbers in the ADRs
@@ -2452,6 +2574,10 @@ just perf-baseline  # rewrite the baseline from a fresh measurement
 `just compare` needs `DuckDB` on `PATH` or in `tools/bin/`, and the `polars` Python package
 installed. Both versions are recorded in the report.
 
+**A recipe's arguments are positional**, in the order the recipe declares them: `just` assigns the
+first argument to the first parameter, and it does not read `name=value` as an assignment. A recipe
+that takes a file and an output takes the file first.
+
 **The row-group files of §3j are made by the same generator with one flag different:**
 
 ```bash
@@ -2459,18 +2585,18 @@ just dataset                       # the published file: six row groups
 just dataset-row-groups 500000     # twelve row groups
 just dataset-row-groups 250000     # twenty-four row groups
 
-just sweep data="data/lineitem-rg250k.parquet" query="q6" threads="1,2,4,6,8,14" \
-    iterations="3" mode="cold" out="bench-results/scaling-rg24-run1.json"
-just probe data="data/lineitem-rg250k.parquet" out="bench-results/row-groups-24-run1.json"
+just sweep "data/lineitem-rg250k.parquet" "q6" "1,2,4,6,8,14" \
+    "3" "cold" "bench-results/scaling-rg24-run1.json"
+just probe "data/lineitem-rg250k.parquet" "bench-results/row-groups-24-run1.json"
 ```
 
 **And the two instruments spec 016 added**, one per file, three campaigns each:
 
 ```bash
-just probe-cost       data="data/lineitem.parquet" \
-    out="bench-results/row-group-cost-6-run1.json"
-just probe-batch-size data="data/lineitem.parquet" \
-    out="bench-results/batch-size-run1.json"
+just probe-cost       "data/lineitem.parquet" \
+    "bench-results/row-group-cost-6-run1.json"
+just probe-batch-size "data/lineitem.parquet" \
+    "bench-results/batch-size-run1.json"
 ```
 
 `probe-cost` is the per-row-group cost probe: the crate's own read of each column, the engine's
@@ -2532,9 +2658,11 @@ cargo run --release -p columnar-engine --example operator_probe -- \
 and the time between them — is spec 024's, and it has two sets of reports as well:
 
 ```bash
-just probe-query data="data/lineitem.parquet" out="bench-results/query-cost-run1.json"
+just probe-query "data/lineitem.parquet" "bench-results/query-cost-run1.json"
 
-just probe-sort data="data/lineitem.parquet" out="bench-results/sort-cost-run1.json"
+just probe-sort "data/lineitem.parquet" "bench-results/sort-cost-run1.json"
+
+just probe-join  "data/lineitem.parquet" "bench-results/join-cost-run1.json"
 ```
 
 The probe runs the engine's **own** plans through the engine's own entry point and checks the answers

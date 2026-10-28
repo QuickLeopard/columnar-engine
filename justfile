@@ -287,6 +287,16 @@ probe-query data="data/lineitem.parquet" out="bench-results/query-cost-run1.json
 probe-sort data="data/lineitem.parquet" out="bench-results/sort-cost-run1.json":
     cargo run --release -p columnar-engine --example sort_cost_probe -- {{data}} --out {{out}}
 
+# Take the **join's stage apart**: the engine's own join stage on both paths,
+# the build side's open, read, keys and table, the probe measured both ways --
+# inside the reader's batches and over the engine's own column -- the floor the
+# probe cannot go under, and the candidate that is the cross-check.
+#
+# The probe is spec 026's instrument, and it checks the engine's 216,783 rows
+# against its own, in order, before anything is timed.
+probe-join data="data/lineitem.parquet" out="bench-results/join-cost-run1.json":
+    cargo run --release -p columnar-engine --example join_cost_probe -- {{data}} --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

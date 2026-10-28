@@ -25,6 +25,8 @@ python3 scripts/medians.py
 | `query-cost-before-run1.json` … `query-cost-before-run3.json` | the same probe against the code spec 025 replaced, measured back to back on the same host |
 | `sort-cost-run1.json` … `sort-cost-run3.json` | the **sort probe** against the code spec 025 wrote — the sort's stage on both paths, the sort's own call over the same rows and the same key column, the reads that are the floor, the comparison in blocks, and the candidate that is the cross-check |
 | `sort-cost-before-run1.json` … `sort-cost-before-run3.json` | the same probe against the code spec 025 replaced, measured back to back on the same host |
+| `join-cost-run1.json` … `join-cost-run3.json` | the **join probe** against the code spec 026 wrote -- the join's stage on both paths, the build side's open, read, keys and table, the probe measured both ways, the floor the probe cannot go under, and the candidate that is the cross-check |
+| `join-cost-before-run1.json` … `join-cost-before-run3.json` | the same probe against the code spec 026 replaced, measured back to back on the same host |
 | `operator-probe-before.json` | the **operator probe** against the code spec 021 replaced — the join's probe and the sort, taken apart |
 | `operator-probe-after.json` | the operator probe against the code spec 021 wrote, measured back to back with the file above on the same host |
 | `dictionary-cost-{6,12,24}-run{1,2,3}.json` | the **dictionary probe** against the code spec 022 wrote — the same read in two shapes, the reader expanding the dictionary-encoded columns and the reader keeping them, on the six-, twelve- and twenty-four-row-group files |
@@ -141,6 +143,7 @@ questions.
 | §3l | *what is the join's scan made of* | `scan-cost-run*.json` |
 | §3m | *where does the time the plan output does not name go* | `query-cost-run*.json`, `query-cost-before-run*.json` |
 | §3n | *what is in the sort's stage that is not the sort's own work* | `sort-cost-run*.json`, `sort-cost-before-run*.json` |
+| §3o | *what is in the join's stage, and what the two paths do not agree about* | `join-cost-run*.json`, `join-cost-before-run*.json` |
 
 The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and
 the **attribution** — the crate's read of each column against the engine's own scan. The ladder is
@@ -207,8 +210,8 @@ the time between them — is written the same way, with one report per campaign
 and one set against the code the increment replaced:
 
 ```bash
-just probe-query data="data/lineitem.parquet" \
-    out="bench-results/query-cost-run1.json"
+just probe-query "data/lineitem.parquet" \
+    "bench-results/query-cost-run1.json"
 ```
 
 The **dictionary probe** and the **scan probe** are written the same way, one report per
@@ -216,10 +219,20 @@ campaign, and the dictionary probe's set is measured against the code the increm
 back to back on the same host:
 
 ```bash
-just probe-dictionary data="data/lineitem-rg24.parquet" \
-    out="bench-results/dictionary-cost-24-run1.json"
-just probe-scan data="data/lineitem.parquet" \
-    out="bench-results/scan-cost-run1.json"
+just probe-dictionary "data/lineitem-rg24.parquet" \
+    "bench-results/dictionary-cost-24-run1.json"
+just probe-scan "data/lineitem.parquet" \
+    "bench-results/scan-cost-run1.json"
+```
+
+The **join probe** -- the join's stage on both paths, the build side's open,
+read, keys and table, the probe measured both ways, the floor and the candidate
+-- is written the same way, with one report per campaign and one set against the
+code the increment replaced:
+
+```bash
+just probe-join "data/lineitem.parquet" \
+    "bench-results/join-cost-run1.json"
 ```
 
 The **operator probe** writes its own two reports, one per code version:
@@ -296,10 +309,10 @@ cargo run --release -p columnar-engine --example materialised_column_probe -- \
 The per-row-group cost and the reader's batch limit are written by their probes, the same way:
 
 ```bash
-just probe-cost data="data/lineitem-rg24.parquet" \
-    out="bench-results/row-group-cost-24-run1.json"
-just probe-batch-size data="data/lineitem.parquet" \
-    out="bench-results/batch-size-run1.json"
+just probe-cost "data/lineitem-rg24.parquet" \
+    "bench-results/row-group-cost-24-run1.json"
+just probe-batch-size "data/lineitem.parquet" \
+    "bench-results/batch-size-run1.json"
 ```
 
 The three files are swept and probed **interleaved**, because this machine is shared and a
