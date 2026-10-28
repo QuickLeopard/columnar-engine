@@ -1,0 +1,98 @@
+{
+  "build_key": "o_orderkey",
+  "commit": "60e5f5a",
+  "derived_ms": {
+    "build_table": -0.05424899999999938,
+    "output_rows": 2.4385829999999995,
+    "the_probe_s_remainder": 3.3461239999999997,
+    "the_two_paths": 1.183955000000001,
+    "the_two_probes": 0.1397510000000004
+  },
+  "engine_rows": 216783,
+  "file": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem.parquet",
+  "host_load_average": 5.43,
+  "iterations": 5,
+  "parts_ms": {
+    "build_keys": 0.339208,
+    "build_open": 0.029249999999999998,
+    "build_read": 11.602125,
+    "build_whole": 11.887084,
+    "candidate_probe": 6.905417,
+    "floor_probe": 4.466834,
+    "probe_batches": 10.391292,
+    "probe_column": 10.251541,
+    "read_plain": 0.500291,
+    "read_small": 0.038417,
+    "stage_cold": 20.466831000000003,
+    "stage_resident": 19.282876,
+    "table_own": 0.21208300000000002
+  },
+  "probe": "join-cost",
+  "probe_key": "l_orderkey",
+  "rows": 6000000,
+  "spreads_ms": {
+    "build_keys": [
+      0.338541,
+      0.35362499999999997
+    ],
+    "build_open": [
+      0.027167,
+      0.035958
+    ],
+    "build_read": [
+      11.522875,
+      11.630417000000001
+    ],
+    "build_whole": [
+      11.782292,
+      12.133458999999998
+    ],
+    "candidate_probe": [
+      6.792833,
+      6.986542
+    ],
+    "floor_probe": [
+      4.252375,
+      4.5173749999999995
+    ],
+    "probe_batches": [
+      10.175419999999999,
+      10.503211
+    ],
+    "probe_column": [
+      9.220374999999999,
+      10.459417
+    ],
+    "read_plain": [
+      0.495708,
+      0.5195420000000001
+    ],
+    "read_small": [
+      0.03825,
+      0.042917000000000004
+    ],
+    "stage_cold": [
+      20.413083,
+      20.876915
+    ],
+    "stage_resident": [
+      19.190792000000002,
+      20.425124
+    ],
+    "table_own": [
+      0.202042,
+      0.21775
+    ]
+  },
+  "stage_rows": {
+    "cold": [
+      216783,
+      216783
+    ],
+    "resident": [
+      6000000,
+      216783
+    ]
+  },
+  "table_rows": 216345
+}

@@ -1,0 +1,98 @@
+{
+  "build_key": "o_orderkey",
+  "commit": "88263b4",
+  "derived_ms": {
+    "build_table": -0.038957999999998494,
+    "output_rows": 2.5490000000000004,
+    "the_probe_s_remainder": 3.0952920000000006,
+    "the_two_paths": 1.2793759999999992,
+    "the_two_probes": 0.28862900000000025
+  },
+  "engine_rows": 216783,
+  "file": "data/lineitem.parquet",
+  "host_load_average": 5.1,
+  "iterations": 5,
+  "parts_ms": {
+    "build_keys": 0.32795799999999997,
+    "build_open": 0.031541,
+    "build_read": 11.541625,
+    "build_whole": 11.830625000000001,
+    "candidate_probe": 6.9670000000000005,
+    "floor_probe": 4.418,
+    "probe_batches": 10.350921000000001,
+    "probe_column": 10.062292000000001,
+    "read_plain": 0.509417,
+    "read_small": 0.038583,
+    "stage_cold": 20.601042,
+    "stage_resident": 19.321666,
+    "table_own": 0.224375
+  },
+  "probe": "join-cost",
+  "probe_key": "l_orderkey",
+  "rows": 6000000,
+  "spreads_ms": {
+    "build_keys": [
+      0.32787499999999997,
+      0.330125
+    ],
+    "build_open": [
+      0.028458999999999998,
+      0.034999999999999996
+    ],
+    "build_read": [
+      11.433375000000002,
+      11.653291
+    ],
+    "build_whole": [
+      11.653500000000001,
+      12.168167
+    ],
+    "candidate_probe": [
+      6.859834,
+      7.024292
+    ],
+    "floor_probe": [
+      4.274542,
+      4.583625
+    ],
+    "probe_batches": [
+      10.083544999999999,
+      10.521793
+    ],
+    "probe_column": [
+      8.981833,
+      10.37775
+    ],
+    "read_plain": [
+      0.506375,
+      0.5191669999999999
+    ],
+    "read_small": [
+      0.038334,
+      0.042917000000000004
+    ],
+    "stage_cold": [
+      20.423167999999997,
+      21.160083
+    ],
+    "stage_resident": [
+      19.008623999999998,
+      20.170833
+    ],
+    "table_own": [
+      0.209708,
+      0.23266699999999998
+    ]
+  },
+  "stage_rows": {
+    "cold": [
+      6000000,
+      216783
+    ],
+    "resident": [
+      6000000,
+      216783
+    ]
+  },
+  "table_rows": 216345
+}

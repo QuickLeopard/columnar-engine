@@ -1,0 +1,98 @@
+{
+  "build_key": "o_orderkey",
+  "commit": "88263b4",
+  "derived_ms": {
+    "build_table": -0.10270899999999866,
+    "output_rows": 2.6644580000000007,
+    "the_probe_s_remainder": 3.0927089999999993,
+    "the_two_paths": 1.8121200000000002,
+    "the_two_probes": 0.16954400000000014
+  },
+  "engine_rows": 216783,
+  "file": "data/lineitem.parquet",
+  "host_load_average": 5.1,
+  "iterations": 5,
+  "parts_ms": {
+    "build_keys": 0.339,
+    "build_open": 0.028166,
+    "build_read": 11.567958999999998,
+    "build_whole": 11.80425,
+    "candidate_probe": 6.958541,
+    "floor_probe": 4.294083,
+    "probe_batches": 10.220794,
+    "probe_column": 10.05125,
+    "read_plain": 0.542083,
+    "read_small": 0.0385,
+    "stage_cold": 20.934079,
+    "stage_resident": 19.121959,
+    "table_own": 0.202459
+  },
+  "probe": "join-cost",
+  "probe_key": "l_orderkey",
+  "rows": 6000000,
+  "spreads_ms": {
+    "build_keys": [
+      0.338625,
+      0.354083
+    ],
+    "build_open": [
+      0.026541,
+      0.034749999999999996
+    ],
+    "build_read": [
+      11.498,
+      11.575042
+    ],
+    "build_whole": [
+      11.747542,
+      11.944125
+    ],
+    "candidate_probe": [
+      6.8858749999999995,
+      7.029167
+    ],
+    "floor_probe": [
+      4.229,
+      4.5277080000000005
+    ],
+    "probe_batches": [
+      10.027750000000001,
+      10.353584000000001
+    ],
+    "probe_column": [
+      8.976541,
+      10.36225
+    ],
+    "read_plain": [
+      0.5108750000000001,
+      0.557084
+    ],
+    "read_small": [
+      0.0385,
+      0.043625000000000004
+    ],
+    "stage_cold": [
+      20.386626,
+      21.311662
+    ],
+    "stage_resident": [
+      18.939208999999998,
+      20.399583999999997
+    ],
+    "table_own": [
+      0.200292,
+      0.210375
+    ]
+  },
+  "stage_rows": {
+    "cold": [
+      6000000,
+      216783
+    ],
+    "resident": [
+      6000000,
+      216783
+    ]
+  },
+  "table_rows": 216345
+}

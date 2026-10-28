@@ -1,0 +1,98 @@
+{
+  "build_key": "o_orderkey",
+  "commit": "88263b4",
+  "derived_ms": {
+    "build_table": 0.018459000000001613,
+    "output_rows": 2.3104580000000006,
+    "the_probe_s_remainder": 3.0958749999999995,
+    "the_two_paths": 1.5186670000000007,
+    "the_two_probes": 0.15599899999999955
+  },
+  "engine_rows": 216783,
+  "file": "data/lineitem.parquet",
+  "host_load_average": 4.93,
+  "iterations": 5,
+  "parts_ms": {
+    "build_keys": 0.35233299999999995,
+    "build_open": 0.028374999999999997,
+    "build_read": 11.536166,
+    "build_whole": 11.906958000000001,
+    "candidate_probe": 6.906833000000001,
+    "floor_probe": 4.596375,
+    "probe_batches": 10.158707,
+    "probe_column": 10.002708,
+    "read_plain": 0.49637499999999996,
+    "read_small": 0.041958,
+    "stage_cold": 20.735125,
+    "stage_resident": 19.216458,
+    "table_own": 0.21212499999999998
+  },
+  "probe": "join-cost",
+  "probe_key": "l_orderkey",
+  "rows": 6000000,
+  "spreads_ms": {
+    "build_keys": [
+      0.339042,
+      0.356583
+    ],
+    "build_open": [
+      0.026667,
+      0.033667
+    ],
+    "build_read": [
+      11.439917000000001,
+      11.618834
+    ],
+    "build_whole": [
+      11.830625000000001,
+      12.108959
+    ],
+    "candidate_probe": [
+      6.8253330000000005,
+      6.997167
+    ],
+    "floor_probe": [
+      4.230583,
+      4.720707999999999
+    ],
+    "probe_batches": [
+      10.019751000000001,
+      10.400087000000001
+    ],
+    "probe_column": [
+      9.060749999999999,
+      10.201625
+    ],
+    "read_plain": [
+      0.492583,
+      0.515
+    ],
+    "read_small": [
+      0.039416,
+      0.04775
+    ],
+    "stage_cold": [
+      20.4805,
+      21.424996
+    ],
+    "stage_resident": [
+      19.018,
+      20.229709
+    ],
+    "table_own": [
+      0.209166,
+      0.216083
+    ]
+  },
+  "stage_rows": {
+    "cold": [
+      6000000,
+      216783
+    ],
+    "resident": [
+      6000000,
+      216783
+    ]
+  },
+  "table_rows": 216345
+}

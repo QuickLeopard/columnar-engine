@@ -1,0 +1,98 @@
+{
+  "build_key": "o_orderkey",
+  "commit": "60e5f5a",
+  "derived_ms": {
+    "build_table": -0.10087399999999958,
+    "output_rows": 2.5272500000000004,
+    "the_probe_s_remainder": 3.321707999999999,
+    "the_two_paths": 1.344253000000002,
+    "the_two_probes": 0.2801220000000004
+  },
+  "engine_rows": 216783,
+  "file": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem.parquet",
+  "host_load_average": 5.47,
+  "iterations": 5,
+  "parts_ms": {
+    "build_keys": 0.332666,
+    "build_open": 0.028125,
+    "build_read": 11.528125,
+    "build_whole": 11.759917,
+    "candidate_probe": 6.947834,
+    "floor_probe": 4.420584,
+    "probe_batches": 10.549664,
+    "probe_column": 10.269542,
+    "read_plain": 0.538125,
+    "read_small": 0.038417,
+    "stage_cold": 20.582295000000002,
+    "stage_resident": 19.238042,
+    "table_own": 0.20845799999999998
+  },
+  "probe": "join-cost",
+  "probe_key": "l_orderkey",
+  "rows": 6000000,
+  "spreads_ms": {
+    "build_keys": [
+      0.328458,
+      0.397042
+    ],
+    "build_open": [
+      0.025875,
+      0.035459
+    ],
+    "build_read": [
+      11.461542,
+      11.892167
+    ],
+    "build_whole": [
+      11.705125,
+      11.975249999999999
+    ],
+    "candidate_probe": [
+      6.842499999999999,
+      6.977583
+    ],
+    "floor_probe": [
+      4.231459,
+      4.501792
+    ],
+    "probe_batches": [
+      10.342711,
+      10.799704
+    ],
+    "probe_column": [
+      9.192709,
+      10.39
+    ],
+    "read_plain": [
+      0.505375,
+      0.603708
+    ],
+    "read_small": [
+      0.038209,
+      0.043542
+    ],
+    "stage_cold": [
+      20.552587,
+      21.167458
+    ],
+    "stage_resident": [
+      19.097792,
+      20.547791999999998
+    ],
+    "table_own": [
+      0.200209,
+      0.21425
+    ]
+  },
+  "stage_rows": {
+    "cold": [
+      216783,
+      216783
+    ],
+    "resident": [
+      6000000,
+      216783
+    ]
+  },
+  "table_rows": 216345
+}

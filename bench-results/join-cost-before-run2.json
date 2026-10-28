@@ -1,0 +1,98 @@
+{
+  "build_key": "o_orderkey",
+  "commit": "60e5f5a",
+  "derived_ms": {
+    "build_table": -0.1762910000000006,
+    "output_rows": 2.553374,
+    "the_probe_s_remainder": 3.4027089999999998,
+    "the_two_paths": 1.4015029999999982,
+    "the_two_probes": 0.36687200000000075
+  },
+  "engine_rows": 216783,
+  "file": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem.parquet",
+  "host_load_average": 5.47,
+  "iterations": 5,
+  "parts_ms": {
+    "build_keys": 0.332416,
+    "build_open": 0.0285,
+    "build_read": 11.653292,
+    "build_whole": 11.809417,
+    "candidate_probe": 6.898916,
+    "floor_probe": 4.345542,
+    "probe_batches": 10.668497,
+    "probe_column": 10.301625,
+    "read_plain": 0.505833,
+    "read_small": 0.041415999999999994,
+    "stage_cold": 20.701544,
+    "stage_resident": 19.300041,
+    "table_own": 0.20900000000000002
+  },
+  "probe": "join-cost",
+  "probe_key": "l_orderkey",
+  "rows": 6000000,
+  "spreads_ms": {
+    "build_keys": [
+      0.33216700000000005,
+      0.345417
+    ],
+    "build_open": [
+      0.026542,
+      0.041875
+    ],
+    "build_read": [
+      11.537417,
+      11.749832999999999
+    ],
+    "build_whole": [
+      11.692915999999999,
+      11.914083000000002
+    ],
+    "candidate_probe": [
+      6.794,
+      6.957708
+    ],
+    "floor_probe": [
+      4.307709,
+      4.423166
+    ],
+    "probe_batches": [
+      10.505835,
+      10.934415
+    ],
+    "probe_column": [
+      9.285292,
+      10.609041
+    ],
+    "read_plain": [
+      0.49125,
+      0.541417
+    ],
+    "read_small": [
+      0.0395,
+      0.044042000000000005
+    ],
+    "stage_cold": [
+      20.427209,
+      21.096166999999998
+    ],
+    "stage_resident": [
+      19.160417,
+      20.89725
+    ],
+    "table_own": [
+      0.200959,
+      0.212167
+    ]
+  },
+  "stage_rows": {
+    "cold": [
+      216783,
+      216783
+    ],
+    "resident": [
+      6000000,
+      216783
+    ]
+  },
+  "table_rows": 216345
+}
