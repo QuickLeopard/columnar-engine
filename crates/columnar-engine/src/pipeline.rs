@@ -130,6 +130,57 @@ impl BuildSide {
     }
 }
 
+/// The join's table, built before the scan when the scan feeds the join.
+pub(crate) struct StreamedTable {
+    /// The table the probe reads.
+    pub(crate) table: operators::join::BuildTable,
+    /// The join's key, in the reader's projection.
+    pub(crate) key: usize,
+    /// How long the table took to build.
+    pub(crate) elapsed: std::time::Duration,
+}
+
+/// Builds the join's table before the scan, when the scan feeds the join.
+///
+/// The probe has to happen **before** the copy, and the probe needs the table,
+/// so the table is built before the scan rather than during the pipeline. The
+/// join's stage still reports it: the plan output accounts for the whole
+/// query, and a table built outside every stage would be a hole in it.
+///
+/// Returns `None` when the scan does not feed the join, and when the plan has
+/// no join at all.
+pub(crate) fn build_streamed_table(
+    resolved: &plan::ResolvedPlan,
+    build: &BuildSide,
+    source: &ParquetSource,
+    options: &ExecOptions,
+    flavor: Flavor,
+    key: Option<usize>,
+) -> Result<Option<StreamedTable>, EngineError> {
+    let (Some(key), Some(spec), Some(build_source)) = (key, resolved.join.as_ref(), build.source())
+    else {
+        return Ok(None);
+    };
+    // The join's two keys must have the same type, and the check happens
+    // before the table is built: a plan error is refused having read
+    // nothing at all.
+    require_same_key_type(
+        source
+            .columns()
+            .get(spec.probe_key)
+            .map_or(columnar_core::DataType::Int64, |column| column.data_type),
+        build_key_type(build_source, &spec.spec.build_key),
+    )?;
+    let started = std::time::Instant::now();
+    let table = operators::join::build_table(
+        build_source,
+        &spec.spec,
+        flavor,
+        build_source.worker_count(options.threads.unwrap_or(1)),
+    )?;
+    Ok(Some(StreamedTable { table, key, elapsed: started.elapsed() }))
+}
+
 /// A join the scan fed.
 ///
 /// The scan probed the join's key before it copied anything, so the join's

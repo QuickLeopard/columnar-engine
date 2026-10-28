@@ -39,8 +39,9 @@ crates/columnar-engine/src/
   lib.rs           the public surface, and the story: the error, the options,
                    execute, execute_on
   pipeline.rs      the orchestration: the stages, in the plan's order
-  scan.rs          the scan's decision: what to read, what to push down, and
-                   the mapping onto the read set
+  scan.rs          the scan's decision: what to read, what to push down, the
+                   mapping onto the read set, and whether the scan feeds the
+                   join
   plan/
     mod.rs         the plan module's surface and the pinned optimisation order
     spec.rs        what the caller writes
@@ -76,15 +77,17 @@ the sort → the project → the evaluate → the aggregate → the plan output.
    named field, `materialised`: the bridge produces it and the scan reads it by that name, so the
    boundary between them is a named field and not a bare vector.
 3. **The crate root is the surface.** `lib.rs` is what a reader opens first: the error, the
-   options, the two entry points, and the story. The machinery is in the module that owns it.
+   options, the two entry points, and the story. The machinery is in the module that owns it. The
+   pipeline and the scan's decision are `pub(crate)` modules of the crate, not modules of its
+   public surface: nothing outside the crate names them.
 
 **`plan.rs` becomes `plan/`.** The public paths do not move: `columnar_engine::plan::JoinSpec`
 and the crate root's re-exports stay where they are, so the change is invisible to a caller.
 
 ## Consequences
 
-- **`lib.rs` loses about two thirds of its lines** and becomes a reader's first stop rather than
-  the place the pipeline lives.
+- **`lib.rs` is 378 lines**, down from 1310, and it is a reader's first stop rather than the place
+  the pipeline lives.
 - **A new stage is one module and one shape.** R5 of the spec: every stage reports in one shape,
   so the plan output is assembled in one place.
 - **`#[allow(clippy::too_many_arguments)]` goes, and needs no ADR to justify its absence.** The

@@ -26,7 +26,7 @@
 
 use crate::plan::ColumnMapping;
 use crate::pushdown::{Pushdown, PushdownMetrics, PushdownPlan};
-use crate::source::ParquetSource;
+use crate::source::{scan_projection, ParquetSource};
 
 /// The columns whose bytes were fetched from the file.
 ///
@@ -146,6 +146,31 @@ pub(crate) fn decide_scan(
     read.dedup();
 
     ScanDecision { read, pushdown, fully_pushed }
+}
+
+/// The join's key column in the reader's projection, when the scan can feed
+/// the join.
+///
+/// The scan feeds the join when the join's probe can happen **before** the
+/// copy: the plan has a join, every predicate was pushed into the reader --
+/// so the filter stage has no work to do -- and the join's key is a type the
+/// probe reads. See
+/// [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md).
+pub(crate) fn streamed_join(
+    resolved: &crate::plan::ResolvedPlan,
+    decision: &ScanDecision,
+    source: &ParquetSource,
+) -> Option<usize> {
+    let join = resolved.join.as_ref()?;
+    if !decision.fully_pushed {
+        return None;
+    }
+    let column = source.columns().get(join.probe_key)?;
+    if !pushdown_supports(&column.arrow_type) {
+        return None;
+    }
+    let projection = scan_projection(&decision.read, &decision.pushdown);
+    projection.iter().position(|&index| index == join.probe_key)
 }
 
 /// Whether the pushdown evaluates this Arrow type exactly.

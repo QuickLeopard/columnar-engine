@@ -20,7 +20,7 @@ and x86-64, and leaves the published figures exactly where they were.
       assembled in one place.
 - [x] **Step 6 — the estimates.** `estimate_join` and `estimate_sort` join the other estimates in
       `memory.rs`.
-- [ ] **Step 7 — the surface.** The crate root keeps the public surface and the story, and nothing
+- [x] **Step 7 — the surface.** The crate root keeps the public surface and the story, and nothing
       else.
 
 ## The invariants

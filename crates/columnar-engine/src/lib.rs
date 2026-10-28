@@ -96,11 +96,9 @@ pub(crate) mod scan;
 
 use columnar_kernels::Flavor;
 
-use crate::pipeline::{
-    build_key_type, require_same_key_type, scan_stage, BuildSide, Pipeline, StreamedJoin,
-};
+use crate::pipeline::{build_streamed_table, scan_stage, BuildSide, Pipeline, StreamedJoin};
 use crate::plan::ColumnSchema;
-use crate::scan::{decide_scan, fetched_columns, pushdown_supports, ScanDecision, ScanReport};
+use crate::scan::{decide_scan, fetched_columns, streamed_join, ScanReport};
 
 pub use dataset::{Dataset, DatasetError};
 pub use explain::{PlanOutput, StageStats};
@@ -318,38 +316,14 @@ pub fn execute_on(
     // The join's table is built **before** the scan when the scan feeds the
     // join: the probe has to happen before the copy, and the probe needs the
     // table.
-    let mut build_elapsed = std::time::Duration::ZERO;
-    let mut table = None;
-    if let (Some(key), Some(spec), Some(build_source)) =
-        (streamed, resolved.join.as_ref(), build.source())
-    {
-        // The join's two keys must have the same type, and the check happens
-        // before the table is built: a plan error is refused having read
-        // nothing at all.
-        require_same_key_type(
-            source
-                .columns()
-                .get(spec.probe_key)
-                .map_or(columnar_core::DataType::Int64, |column| column.data_type),
-            build_key_type(build_source, &spec.spec.build_key),
-        )?;
-        let started = std::time::Instant::now();
-        let built = operators::join::build_table(
-            build_source,
-            &spec.spec,
-            flavor,
-            build_source.worker_count(options.threads.unwrap_or(1)),
-        )?;
-        build_elapsed = started.elapsed();
-        table = Some((built, key));
-    }
+    let table = build_streamed_table(&resolved, &build, source, options, flavor, streamed)?;
 
     // The clock starts **after** the build table is built: the table is the
     // join's work, and the join's stage reports it.
     let scan_started = std::time::Instant::now();
     let (dataset, joined, filter_elapsed) = match &table {
-        Some((table, key)) => {
-            let filter = operators::join::JoinFilter::new(table, *key);
+        Some(table) => {
+            let filter = operators::join::JoinFilter::new(&table.table, table.key);
             let output = source.read_filtered(
                 &decision.read,
                 &decision.pushdown,
@@ -383,13 +357,10 @@ pub fn execute_on(
         pushdown_metrics: decision.pushdown.metrics(),
     };
 
-    let streamed = joined.map(|rows| {
-        StreamedJoin::new(
-            rows,
-            build_elapsed + filter_elapsed,
-            table.map_or(0, |(table, _)| table.rows()),
-        )
-    });
+    let build_elapsed = table.as_ref().map_or(std::time::Duration::ZERO, |table| table.elapsed);
+    let build_rows = table.as_ref().map_or(0, |table| table.table.rows());
+    let streamed =
+        joined.map(|rows| StreamedJoin::new(rows, build_elapsed + filter_elapsed, build_rows));
 
     Pipeline {
         resolved: &effective,
@@ -404,29 +375,4 @@ pub fn execute_on(
         streamed,
     }
     .run()
-}
-
-/// The join's key column in the reader's projection, when the scan can feed
-/// the join.
-///
-/// The scan feeds the join when the join's probe can happen **before** the
-/// copy: the plan has a join, every predicate was pushed into the reader --
-/// so the filter stage has no work to do -- and the join's key is a type the
-/// probe reads. See
-/// [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md).
-fn streamed_join(
-    resolved: &plan::ResolvedPlan,
-    decision: &ScanDecision,
-    source: &ParquetSource,
-) -> Option<usize> {
-    let join = resolved.join.as_ref()?;
-    if !decision.fully_pushed {
-        return None;
-    }
-    let column = source.columns().get(join.probe_key)?;
-    if !pushdown_supports(&column.arrow_type) {
-        return None;
-    }
-    let projection = source::scan_projection(&decision.read, &decision.pushdown);
-    projection.iter().position(|&index| index == join.probe_key)
 }
