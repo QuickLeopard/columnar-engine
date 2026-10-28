@@ -29,12 +29,13 @@
 //!
 //! The plan has two forms, and they are two modules:
 //!
-//! - [`spec`] holds what the **caller** writes: the plan's shape, named in
-//!   the terms the caller has.
-//! - [`resolved`] holds what the **executor** reads: the same plan, with
+//! - `spec` holds what the **caller** writes: the plan's shape, named in
+//!   the terms the caller has. [`QueryPlan`] is that face.
+//! - `resolved` holds what the **executor** reads: the same plan, with
 //!   every column name resolved to an index and every type checked.
+//!   [`ResolvedPlan`] is that face.
 //!
-//! [`resolve`] is the bridge between them, and it is the only module that
+//! `resolve` is the bridge between them, and it is the only module that
 //! knows both. The three depend on each other in one direction only:
 //! `resolve` knows the two faces, and neither face knows `resolve`.
 
@@ -59,7 +60,7 @@ pub const OPTIMIZATION_ORDER: &str =
 /// The plan resolves against this rather than against a decoded dataset, so
 /// that a query over a Parquet file can be checked -- an unknown column, a
 /// type mismatch -- before a single row is read. The eager path resolves
-/// against a [`Dataset`], which implements this trait over its chunks; the
+/// against a [`crate::Dataset`], which implements this trait over its chunks; the
 /// lazy path resolves against the file's schema.
 pub trait ColumnSchema {
     /// How many columns the schema has.
