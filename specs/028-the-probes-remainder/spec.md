@@ -352,6 +352,19 @@ key did — and that key counts **300** times, not 255.
 > bounds and the stage is the authority. **The map's share of the remainder was the prize, and the
 > prize was not there.**
 
+> **A defect in the test suite, found by the gate, and the reason recorded.** The CI run on this
+> spec's head failed in `the_round_trip_answers_a_query`, with `NotFound` on the file it reads back.
+> The round-trip test wrote to **one fixed path** in the temporary directory, the two tests in that
+> file ran **in parallel**, and each of them **removed** the file when it was done — so the first
+> test to finish deleted the file the second one was reading. It is a race and not a failure of the
+> code: the same suite has passed here every time, and the failure came on a contended runner, where
+> the two tests overlapped. **The race is reproduced here**: **200** concurrent runs of the old test
+> binary failed **169** times, with the same `NotFound` at the same line the runner reported; the
+> fixed one failed **0** times in **200**. The file now belongs to the call that made it — the
+> process's own id and a counter in the name, and the file removed when the handle is dropped, the
+> way the other test files in this repository already do it. Nothing about the engine changed, and no
+> figure moved.
+
 ## The references
 
 | | |

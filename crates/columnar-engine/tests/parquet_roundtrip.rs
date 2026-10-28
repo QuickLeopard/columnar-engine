@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, DictionaryArray, Float64Array, Int32Array, Int64Array, StringArray};
@@ -138,27 +139,58 @@ fn lineitem_batch() -> RecordBatch {
     RecordBatch::try_new(lineitem_schema(), columns).expect("the batch matches the schema")
 }
 
+/// A temporary file that removes itself when it is dropped.
+struct TempFile {
+    path: PathBuf,
+}
+
+impl TempFile {
+    /// A path under the system's temporary directory, unique to this call.
+    ///
+    /// The name carries the process's own id and a counter, so two calls in
+    /// one process -- and two processes on one machine -- never write over
+    /// each other's file.
+    fn new(name: &str) -> Self {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let path = std::env::temp_dir()
+            .join(format!("columnar-engine-roundtrip-{name}-{pid}-{unique}.parquet"));
+        Self { path }
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// Writes the `lineitem` file and reads it back.
-fn round_trip() -> (Dataset, PathBuf) {
-    let path = std::env::temp_dir().join("columnar-engine-lineitem-roundtrip.parquet");
-    let file = File::create(&path).expect("the temporary file can be created");
+///
+/// The file belongs to this call alone: the two tests run in parallel, and
+/// each one removes its own file when it is dropped, so a shared name would
+/// have one test delete the file the other one was reading.
+fn round_trip() -> (Dataset, TempFile) {
+    let file = TempFile::new("lineitem");
+    let handle = File::create(&file.path).expect("the temporary file can be created");
     let properties = WriterProperties::builder()
         // The comment column is high-cardinality: it is stored plainly, so
         // the reader has to cope with a plain string column as well.
         .set_column_dictionary_enabled(ColumnPath::from("l_comment"), false)
         .build();
-    let mut writer =
-        ArrowWriter::try_new(file, lineitem_schema(), Some(properties)).expect("the writer starts");
+    let mut writer = ArrowWriter::try_new(handle, lineitem_schema(), Some(properties))
+        .expect("the writer starts");
     writer.write(&lineitem_batch()).expect("the batch is written");
     writer.close().expect("the file is closed");
 
-    let dataset = Dataset::read_parquet(&path).expect("the file is read back");
-    (dataset, path)
+    let dataset = Dataset::read_parquet(&file.path).expect("the file is read back");
+    (dataset, file)
 }
 
 #[test]
 fn the_round_trip_keeps_the_rows_and_the_schema() {
-    let (dataset, path) = round_trip();
+    let (dataset, _file) = round_trip();
 
     assert_eq!(dataset.len(), ROWS);
     assert!(!dataset.is_empty());
@@ -209,13 +241,11 @@ fn the_round_trip_keeps_the_rows_and_the_schema() {
     assert_eq!(comment.validity.null_count(), ROWS / 100);
     assert_eq!(comment.value_at(0), None);
     assert_eq!(comment.value_at(1), Some(ScalarValue::Utf8("comment for order 1".to_owned())));
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn the_round_trip_answers_a_query() {
-    let (dataset, path) = round_trip();
+    let (dataset, _file) = round_trip();
 
     // `l_discount < 0.05` selects the rows whose `row % 11` is 0..=4.
     let plan = QueryPlan::new(
@@ -265,6 +295,4 @@ fn the_round_trip_answers_a_query() {
             other => panic!("unexpected aggregate value {other:?}"),
         }
     }
-
-    let _ = std::fs::remove_file(path);
 }
