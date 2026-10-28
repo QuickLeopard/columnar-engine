@@ -349,11 +349,11 @@ impl DirectTable {
             }
         }
         // The fact that the map holds something is captured **after** the
-        // build loop, because the map fills during it. A fact captured
-        // before the loop would leave every table carrying a map it does
-        // not need -- and a flag set on the fill path alone would leave it
-        // set for every table that ever overflowed, which is the same
-        // thing said the other way round.
+        // build loop, because the map fills *during* it. A fact read before
+        // the loop is false for every table -- the map is empty until the
+        // build fills it -- and a key with three hundred build rows would
+        // count two hundred and fifty-five of them instead of three
+        // hundred.
         let overflow = if overflow.is_empty() { None } else { Some(overflow) };
         Some(Self { counts, overflow, base: *min, rows: keys.len() })
     }
@@ -661,9 +661,9 @@ mod tests {
 
     /// The overflow map is there only when a key overflowed its byte.
     ///
-    /// And the fact is captured **after** the build loop: a fact captured
-    /// before it would leave the table carrying a map it does not need, and
-    /// a key that overflowed would count 255 times instead of 300.
+    /// And the fact is captured **after** the build loop: a fact read before
+    /// it would be false for every table, and a key that overflowed would
+    /// count 255 times instead of 300.
     #[test]
     fn the_overflow_map_is_allocated_only_when_a_key_overflows() {
         let small = direct(&[11, 12, 13], 11, 13);
