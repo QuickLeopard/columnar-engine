@@ -220,11 +220,11 @@ load average of **6.28–7.10**.
 
 | | |
 |---|---|
-| [ADR-0021](../../../docs/adr/0021-the-materialised-column-and-a-rust-peer.md) | the peer the sort is compared against, and how the two are held to the same conditions |
-| [ADR-0028](../../../docs/adr/0028-the-hot-paths-taken-apart.md) | the join's probe and the sort taken apart the first time, and the instrument that took them apart |
-| [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md) | the scan that feeds the join, and the rule that the rows are read where they lie |
-| [ADR-0031](../../../docs/adr/0031-the-time-the-plan-output-does-not-name.md) | the plan output's account of the whole query, and the range the sort is now handed |
+| [ADR-0021](../../docs/adr/0021-the-materialised-column-and-a-rust-peer.md) | the peer the sort is compared against, and how the two are held to the same conditions |
+| [ADR-0028](../../docs/adr/0028-the-hot-paths-taken-apart.md) | the join's probe and the sort taken apart the first time, and the instrument that took them apart |
+| [ADR-0030](../../docs/adr/0030-the-scan-that-feeds-the-join.md) | the scan that feeds the join, and the rule that the rows are read where they lie |
+| [ADR-0031](../../docs/adr/0031-the-time-the-plan-output-does-not-name.md) | the plan output's account of the whole query, and the range the sort is now handed |
 | [spec 021](../021-the-hot-paths-taken-apart/spec.md) | the sort's own cost measured against its floor, and the negative result that the floor is the read |
 | [spec 023](../023-the-scan-that-feeds-the-join/spec.md) | the join's probe moved inside the scan, and the rule it set |
 | [spec 024](../024-the-time-the-plan-output-does-not-name/spec.md) | the selection that holds every row is the range, and the plan output's account of the whole query |
-| [`PERF.md`](../../../PERF.md) §2a, §2b, §2h, §3n | the published tables this spec's figures are re-derived into |
+| [`PERF.md`](../../PERF.md) §2a, §2b, §2h, §3n | the published tables this spec's figures are re-derived into |
