@@ -19,9 +19,12 @@ python3 scripts/medians.py
 | `compare-run3.json` | the third |
 | `compare-before-run1.json` … `compare-before-run3.json` | the **old code, re-measured on this host** — back to back with the campaigns above, so the code's share of every moved figure is separated from the machine's. The control is the six queries this increment did not touch. |
 | `compare-spec021-run1.json` … `compare-spec021-run3.json` | the set **before that one**: the code spec 022 and 023 replaced, on the host it was measured on. Committed so the published old-and-new figures are derived rather than typed. |
-| `compare-spec023-run1.json` … `compare-spec023-run3.json` | the set **this one replaces**: the code spec 024 replaced, on the host it was measured on. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
-| `query-cost-run1.json` … `query-cost-run3.json` | the **query probe** against the code spec 024 wrote — the whole query, the plan output's own stage table, and the time between them, per query: the part of the query the plan output does not name |
-| `query-cost-before-run1.json` … `query-cost-before-run3.json` | the same probe against the code spec 024 replaced, measured back to back on the same host |
+| `compare-spec023-run1.json` … `compare-spec023-run3.json` | the set **before that one**: the code spec 024 replaced, on the host it was measured on. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
+| `compare-spec024-run1.json` … `compare-spec024-run3.json` | the set **this one replaces**: the code spec 025 replaced, on the host it was measured on. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
+| `query-cost-run1.json` … `query-cost-run3.json` | the **query probe** against the code spec 025 wrote — the whole query, the plan output's own stage table, and the time between them, per query: the part of the query the plan output does not name |
+| `query-cost-before-run1.json` … `query-cost-before-run3.json` | the same probe against the code spec 025 replaced, measured back to back on the same host |
+| `sort-cost-run1.json` … `sort-cost-run3.json` | the **sort probe** against the code spec 025 wrote — the sort's stage on both paths, the sort's own call over the same rows and the same key column, the reads that are the floor, the comparison in blocks, and the candidate that is the cross-check |
+| `sort-cost-before-run1.json` … `sort-cost-before-run3.json` | the same probe against the code spec 025 replaced, measured back to back on the same host |
 | `operator-probe-before.json` | the **operator probe** against the code spec 021 replaced — the join's probe and the sort, taken apart |
 | `operator-probe-after.json` | the operator probe against the code spec 021 wrote, measured back to back with the file above on the same host |
 | `dictionary-cost-{6,12,24}-run{1,2,3}.json` | the **dictionary probe** against the code spec 022 wrote — the same read in two shapes, the reader expanding the dictionary-encoded columns and the reader keeping them, on the six-, twelve- and twenty-four-row-group files |
@@ -118,7 +121,7 @@ questions.
 | §1 | *how fast is the comparison kernel, against two baselines* | `kernel-run*.json` |
 | §1b | *how fast is it on x86-64 hardware, and on which processor* | `avx2-run*.json` |
 | §2a, §2b | *which is faster when every system is given one thread* | `compare-run*.json` |
-| §2a, §2b (the set this one replaces) | *the same table, one increment ago* | `compare-spec023-run*.json` |
+| §2a, §2b (the set this one replaces) | *the same table, one increment ago* | `compare-spec024-run*.json` |
 | §2a, §2b (the set before that one) | *the same table, two increments ago* | `compare-spec021-run*.json` |
 | §2h | *what the join's probe and the sort cost, apart* | `operator-probe-*.json` |
 | §2h (the code's share) | *what the change did, as opposed to the machine* | `compare-before-run*.json` |
@@ -137,6 +140,7 @@ questions.
 | §3k | *what is the dictionary worth, and whose cost is the residual* | `dictionary-cost-*-run*.json`, `dictionary-cost-before-*-run*.json` |
 | §3l | *what is the join's scan made of* | `scan-cost-run*.json` |
 | §3m | *where does the time the plan output does not name go* | `query-cost-run*.json`, `query-cost-before-run*.json` |
+| §3n | *what is in the sort's stage that is not the sort's own work* | `sort-cost-run*.json`, `sort-cost-before-run*.json` |
 
 The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and
 the **attribution** — the crate's read of each column against the engine's own scan. The ladder is
@@ -185,7 +189,7 @@ checks every figure this repository publishes against all five of them:
 
 ```bash
 python3 scripts/medians.py bench-results/compare-before-run*.json    # the old code, this host
-python3 scripts/medians.py bench-results/compare-spec023-run*.json  # the set this one replaces
+python3 scripts/medians.py bench-results/compare-spec024-run*.json  # the set this one replaces
 python3 scripts/medians.py bench-results/compare-spec021-run*.json  # the set before that one
 python3 scripts/check-published-figures.py
 ```
@@ -194,8 +198,9 @@ Every campaign also records the **plan output** of every query it ran — the
 stage breakdown, the rows each stage was handed and produced, and the memory
 the engine estimated. So the engine's own account of the work is in the
 committed reports too, and the guard checks the stage figures against them as
-well: the join stage's **21.9 ms**, the sort stage's **5.3 ms** and the old
-code's **107.4 ms** and **14.5 ms** are derived, not typed.
+well: the join stage's **24.2 ms**, the sort stage's **2.2 ms**, the old
+code's **25.7 ms** and **5.2 ms**, and the last set's **21.9 ms** and
+**5.3 ms** are derived, not typed.
 
 The **query probe** — the whole query, the plan output's own stage table, and
 the time between them — is written the same way, with one report per campaign

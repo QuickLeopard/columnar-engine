@@ -18,6 +18,8 @@ use std::cmp::Ordering;
 use std::path::Path;
 
 use columnar_core::{Encoding, Expr, NullBitmap};
+use columnar_engine::operators::key::KeyColumn;
+use columnar_engine::operators::sort;
 use columnar_engine::{
     execute, Aggregate, AggregateSpec, AggregateValue, Dataset, ExecOptions, MemoryBudget,
     QueryPlan, SortSpec,
@@ -456,4 +458,97 @@ fn the_published_sort_query_runs() {
     // 15.
     let expected: f64 = 90.0 + 80.0 + 70.0 + 60.0 + 50.0 + 40.0 + 30.0 + 25.0 + 20.0 + 15.0;
     assert_eq!(sum.to_bits(), expected.to_bits(), "the sort kept the wrong rows: {sum}");
+}
+
+/// The rows of a column of plain doubles, as the key column reads them.
+fn key_column(keys: &[Option<f64>]) -> columnar_core::ColumnChunk {
+    chunk(
+        "k",
+        Encoding::Float64 { values: keys.iter().map(|key| key.unwrap_or_default()).collect() },
+        &null_rows(keys),
+    )
+}
+
+/// The rows the sort keeps, as the engine's row numbers.
+fn engine_rows(keys: &[Option<f64>], descending: bool, limit: usize, scattered: bool) -> Vec<u32> {
+    let chunk = key_column(keys);
+    let column = KeyColumn::from_chunk(&chunk);
+    let rows = u32::try_from(keys.len()).unwrap_or(u32::MAX);
+    if scattered {
+        // A scattered selection: the sort reads the keys a row at a time.
+        sort::sort_rows((0..rows).collect::<Vec<u32>>(), &column, descending, Some(limit))
+    } else {
+        // A contiguous run: the sort compares the keys in blocks.
+        sort::sort_rows(0..rows, &column, descending, Some(limit))
+    }
+}
+
+/// The sort over a **contiguous run** keeps the same rows as the reference.
+///
+/// The block comparison only skips a block when no row in it beats the
+/// threshold, so the blocks are only exercised over more rows than one block
+/// holds. The keys repeat, so the tie-break decides many of the pairs, and
+/// the best rows are spread over the whole column rather than at its front:
+/// a sort that only looked at the first block would miss them.
+#[test]
+fn the_blocks_keep_the_same_rows_as_the_reference() {
+    let rows = 5_000_usize;
+    let keys: Vec<Option<f64>> =
+        (0..rows).map(|row| Some(f64::from(u32::try_from(row % 37).unwrap_or(0)))).collect();
+
+    for descending in [false, true] {
+        for limit in [1_usize, 10, 100, 1_000] {
+            let sorted = engine_rows(&keys, descending, limit, false);
+            let expected: Vec<u32> = reference_sort(&keys, descending, Some(limit))
+                .into_iter()
+                .map(|row| u32::try_from(row).unwrap_or(u32::MAX))
+                .collect();
+            assert_eq!(
+                sorted, expected,
+                "the blocks kept different rows: limit {limit}, descending {descending}"
+            );
+        }
+    }
+}
+
+/// The blocks and the row at a time walk keep the same rows.
+///
+/// The sort reads its keys in blocks when it is handed a **contiguous run**
+/// and a row at a time when it is handed a scattered selection. The two are
+/// the same sort, and they have to keep the same rows in the same order.
+#[test]
+fn the_blocks_and_the_row_at_a_time_walk_agree() {
+    let rows = 5_000_usize;
+    let keys: Vec<Option<f64>> =
+        (0..rows).map(|row| Some(f64::from(u32::try_from(row % 37).unwrap_or(0)))).collect();
+
+    for descending in [false, true] {
+        let blocks = engine_rows(&keys, descending, 10, false);
+        let walked = engine_rows(&keys, descending, 10, true);
+        assert_eq!(blocks, walked, "the two shapes of the sort disagree");
+    }
+}
+
+/// The total order holds in the blocks: a NaN is ordered, not refused.
+///
+/// The block comparison is over the values' **total** keys, so a NaN is
+/// above every number and a negative zero is below a positive one -- the
+/// same rule the row at a time walk follows.
+#[test]
+fn the_total_order_holds_in_the_blocks() {
+    let rows = 5_000_usize;
+    let mut keys: Vec<Option<f64>> =
+        (0..rows).map(|row| Some(f64::from(u32::try_from(row % 11).unwrap_or(0)))).collect();
+    // A NaN in the first block, and a negative zero in the last one.
+    keys[0] = Some(f64::NAN);
+    keys[rows - 1] = Some(-0.0);
+
+    for descending in [false, true] {
+        let sorted = engine_rows(&keys, descending, 10, false);
+        let expected: Vec<u32> = reference_sort(&keys, descending, Some(10))
+            .into_iter()
+            .map(|row| u32::try_from(row).unwrap_or(u32::MAX))
+            .collect();
+        assert_eq!(sorted, expected, "the blocks ordered the values wrongly");
+    }
 }

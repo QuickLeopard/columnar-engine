@@ -277,6 +277,16 @@ probe-scan data="data/lineitem.parquet" out="bench-results/scan-cost-run1.json":
 probe-query data="data/lineitem.parquet" out="bench-results/query-cost-run1.json":
     cargo run --release -p columnar-engine --example query_cost_probe -- {{data}} --out {{out}}
 
+# Take the **sort apart**: the engine's own sort stage on both paths, the
+# sort's own call over the same rows and the same key column, the reads that
+# are the floor, the comparison in blocks, and the candidate that is the
+# cross-check.
+#
+# The probe is spec 025's instrument, and it checks the engine's ten rows
+# against its own before anything is timed.
+probe-sort data="data/lineitem.parquet" out="bench-results/sort-cost-run1.json":
+    cargo run --release -p columnar-engine --example sort_cost_probe -- {{data}} --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

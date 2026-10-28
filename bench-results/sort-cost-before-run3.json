@@ -1,0 +1,96 @@
+{
+  "commit": "642c197",
+  "engine_rows": [
+    1417687,
+    4825422,
+    739243,
+    2420600,
+    1055130,
+    4722314,
+    740022,
+    5519752,
+    100190,
+    3891326
+  ],
+  "fallback_iterations": 3,
+  "fallbacks_ms": {
+    "operator_all": 529.0650420000001,
+    "operator_text": 48.762
+  },
+  "file": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem.parquet",
+  "host_load_average": 6.28,
+  "iterations": 5,
+  "key": "l_extendedprice",
+  "limit": 10,
+  "parts_ms": {
+    "candidate_block": 1.030083,
+    "floor_block": 0.932084,
+    "fused_decode": 32.648,
+    "fused_topk": 37.555125000000004,
+    "key_column": 1.0000000000000002e-6,
+    "operator_cold": 3.225541,
+    "operator_warm": 3.2451250000000003,
+    "read_plain": 3.06325,
+    "read_shape": 3.871375,
+    "read_small": 0.26175,
+    "rows_range": 1.3221669999999999,
+    "stage_cold": 4.274,
+    "stage_resident": 4.514375
+  },
+  "probe": "sort-cost",
+  "rows": 6000000,
+  "spreads_ms": {
+    "candidate_block": [
+      0.977625,
+      1.377208
+    ],
+    "floor_block": [
+      0.91,
+      1.218375
+    ],
+    "fused_decode": [
+      32.498875000000005,
+      32.975125
+    ],
+    "fused_topk": [
+      37.469167,
+      38.035667000000004
+    ],
+    "key_column": [
+      1.0000000000000002e-6,
+      1.0000000000000002e-6
+    ],
+    "operator_cold": [
+      3.134458,
+      3.4147079999999996
+    ],
+    "operator_warm": [
+      3.1021669999999997,
+      3.365209
+    ],
+    "read_plain": [
+      2.949958,
+      3.303541
+    ],
+    "read_shape": [
+      3.78475,
+      4.1526250000000005
+    ],
+    "read_small": [
+      0.249209,
+      0.28650000000000003
+    ],
+    "rows_range": [
+      1.285666,
+      1.400875
+    ],
+    "stage_cold": [
+      3.781041,
+      4.54375
+    ],
+    "stage_resident": [
+      3.626125,
+      5.734875000000001
+    ]
+  }
+}

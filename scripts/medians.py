@@ -1285,6 +1285,110 @@ def print_query_cost(
                 print(line)
 
 
+# The probe's parts, and what they are called in the table.
+#
+# The names are the probe's own and the labels are the ones the published
+# table uses, so the derivation and the document cannot drift apart over a
+# name.
+SORT_COST_PARTS = (
+    ("stage_cold", "the stage, cold"),
+    ("stage_resident", "the stage, resident"),
+    ("operator_cold", "the operator, cold"),
+    ("operator_warm", "the operator, warm"),
+    ("read_shape", "the read, the engine's shape"),
+    ("read_plain", "the read, plain"),
+    ("read_small", "the read, the small control"),
+    ("floor_block", "the comparison, in blocks"),
+    ("candidate_block", "the candidate, in blocks"),
+    ("rows_range", "the rows, walked"),
+    ("key_column", "the key column's construction"),
+    ("fused_decode", "the decode, on its own"),
+    ("fused_topk", "the fused top-k"),
+)
+
+# The fallbacks: the two paths the published query does **not** take. They are
+# named so that a reader can see what the bounded sort over a numeric column
+# is worth against the sort that has to sort every row, and against the sort
+# that has to read a key as an enum.
+SORT_COST_FALLBACKS = (
+    ("operator_all", "the sort with no limit"),
+    ("operator_text", "the sort over strings"),
+)
+
+
+def _sort_cost_figures(
+    files: list[tuple[str, list[dict]]],
+) -> tuple[dict[str, list[float]], dict[str, list[list[float]]], dict[str, list[float]]]:
+    """The sort probe's figures, across the campaigns.
+
+    The report has three parts: the **parts** -- the stage, the operator, the
+    reads and the candidates, each one the median of its own iterations -- the
+    **spread** beside every one of them, and the **fallbacks**, the two paths
+    the published query does not take.
+
+    This collects them across the campaigns, so the median is taken over the
+    campaigns rather than over the iterations inside one of them.
+    """
+    parts: dict[str, list[float]] = {}
+    spreads: dict[str, list[list[float]]] = {}
+    fallbacks: dict[str, list[float]] = {}
+    for _, runs in files:
+        for run in runs:
+            for key, value in run.get("parts_ms", {}).items():
+                parts.setdefault(key, []).append(value)
+            for key, value in run.get("spreads_ms", {}).items():
+                spreads.setdefault(key, []).append(value)
+            for key, value in run.get("fallbacks_ms", {}).items():
+                fallbacks.setdefault(key, []).append(value)
+    return parts, spreads, fallbacks
+
+
+def print_sort_cost(
+    after_files: list[tuple[str, list[dict]]],
+    before_files: list[tuple[str, list[dict]]],
+) -> None:
+    """Print the sort probe's medians.
+
+    This is spec 025: the sort's stage, taken apart -- the engine's own stage
+    on both paths, the sort's own call over the same rows and the same key
+    column, the reads that are the floor, and the candidate that is the
+    cross-check. The "before" set is the same probe against the code the
+    increment replaced, measured back to back on the same host.
+    """
+    for label, files in (("the new code", after_files), ("the old code", before_files)):
+        if not files:
+            continue
+        parts, spreads, fallbacks = _sort_cost_figures(files)
+        campaigns = min(len(runs) for _, runs in files)
+        print(f"\n=== THE SORT, TAKEN APART -- {label} ({campaigns} campaigns each) ===")
+
+        print("\n-- the parts --")
+        print(f"{'the part':<52}{'median':>12}{'the spread':>20}")
+        for key, part in SORT_COST_PARTS:
+            values = parts.get(key, [])
+            if not values:
+                continue
+            line = f"{part:<52}{statistics.median(values):>12.2f}"
+            bounds = spreads.get(key, [])
+            if bounds:
+                low = statistics.median([bound[0] for bound in bounds])
+                high = statistics.median([bound[1] for bound in bounds])
+                line += f"{f'{low:.2f}-{high:.2f}':>20}"
+            else:
+                line += f"{'-':>20}"
+            print(line)
+
+        # The fallbacks are measured fewer times and the report carries no
+        # spread for them, so the table is the median alone.
+        print("\n-- the fallbacks: the paths the published query does not take --")
+        print(f"{'the fallback':<52}{'median':>12}")
+        for key, fallback in SORT_COST_FALLBACKS:
+            values = fallbacks.get(key, [])
+            if not values:
+                continue
+            print(f"{fallback:<52}{statistics.median(values):>12.2f}")
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -1484,6 +1588,16 @@ def main() -> int:
         print_query_cost(
             [("A", [load(p) for p in query_after])],
             [("A", [load(p) for p in query_before])] if query_before else [],
+        )
+
+    # Spec 025's sort probe: the sort's stage, taken apart -- measured against
+    # the code the increment replaces, back to back on the same host.
+    sort_after = sorted(Path("bench-results").glob("sort-cost-run*.json"))
+    sort_before = sorted(Path("bench-results").glob("sort-cost-before-run*.json"))
+    if sort_after:
+        print_sort_cost(
+            [("A", [load(p) for p in sort_after])],
+            [("A", [load(p) for p in sort_before])] if sort_before else [],
         )
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.

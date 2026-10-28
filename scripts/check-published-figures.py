@@ -28,9 +28,11 @@ ROOT = Path(__file__).resolve().parent.parent
 REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
 BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("compare-before-run*.json"))
 SPEC021_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec021-run*.json"))
-SPEC023_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec023-run*.json"))
+SPEC024_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec024-run*.json"))
 QUERY_COST_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-run*.json"))
 QUERY_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-before-run*.json"))
+SORT_COST_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-run*.json"))
+SORT_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-before-run*.json"))
 PROBE_REPORTS = sorted((ROOT / "bench-results").glob("operator-probe-*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
@@ -128,12 +130,12 @@ SPEC021_CHECKS = [
 
 # (document, label, system, mode, metric, query, places)
 #
-# The set **this one replaces** -- spec 023's set, the one that was published
+# The set **this one replaces** -- spec 024's set, the one that was published
 # before it. Its figures are published beside the new ones, old against new,
 # so they are derived from the reports they came from rather than typed into
 # the prose. The reports are kept under their own name so that every figure
 # this file quotes stays derivable from a committed report.
-SPEC023_CHECKS = [
+SPEC024_CHECKS = [
     ("PERF.md", "the replaced set's lazy join-orders cold", "engine", "lazy", "cold", "join-orders", 1),
     ("PERF.md", "the replaced set's lazy sort-topk cold", "engine", "lazy", "cold", "sort-topk", 1),
     ("PERF.md", "the replaced set's lazy q6-revenue cold", "engine", "lazy", "cold", "q6-revenue", 1),
@@ -190,6 +192,44 @@ QUERY_COST_CHECKS = [
     ("PERF.md", "the new code's unnamed time, the sort, cold", "after", "cold", "sort-topk", "unnamed_ms", 3),
     ("PERF.md", "the old code's unnamed time, the revenue query, cold", "before", "cold", "q6-revenue", "unnamed_ms", 3),
     ("PERF.md", "the new code's unnamed time, the revenue query, cold", "after", "cold", "q6-revenue", "unnamed_ms", 3),
+]
+
+# (document, label, which, part, places)
+#
+# Spec 025's instrument: the sort, taken apart. The engine's own stage on both
+# paths, the sort's own call over the same rows and the same key column, the
+# reads that are the floor, and the candidate that is the cross-check.
+#
+# The "after" set is the probe against the code the increment wrote and the
+# "before" set is the same probe against the code it replaced, measured back
+# to back on the same host, so **both halves** of every published figure are
+# derived from a committed report rather than typed into the prose.
+#
+# The places are the published ones: these are milliseconds in the hundredths,
+# as the probe's own table carries them.
+#
+# The section that publishes them is named as well: the figures are looked for
+# **inside** it, so that a figure which happens to equal an unrelated number
+# elsewhere in the document cannot satisfy the check by accident.
+SORT_COST_SECTION = "### 3n"
+
+SORT_COST_CHECKS = [
+    ("PERF.md", "the new code's stage, cold", "after", "stage_cold", 2),
+    ("PERF.md", "the new code's stage, resident", "after", "stage_resident", 2),
+    ("PERF.md", "the new code's operator, cold", "after", "operator_cold", 2),
+    ("PERF.md", "the new code's operator, warm", "after", "operator_warm", 2),
+    ("PERF.md", "the new code's read, plain", "after", "read_plain", 2),
+    ("PERF.md", "the new code's read, the small control", "after", "read_small", 2),
+    ("PERF.md", "the new code's comparison, in blocks", "after", "floor_block", 2),
+    ("PERF.md", "the new code's candidate, in blocks", "after", "candidate_block", 2),
+    ("PERF.md", "the old code's stage, cold", "before", "stage_cold", 2),
+    ("PERF.md", "the old code's stage, resident", "before", "stage_resident", 2),
+    ("PERF.md", "the old code's operator, cold", "before", "operator_cold", 2),
+    ("PERF.md", "the old code's operator, warm", "before", "operator_warm", 2),
+    ("PERF.md", "the old code's read, plain", "before", "read_plain", 2),
+    ("PERF.md", "the old code's read, the small control", "before", "read_small", 2),
+    ("PERF.md", "the old code's comparison, in blocks", "before", "floor_block", 2),
+    ("PERF.md", "the old code's candidate, in blocks", "before", "candidate_block", 2),
 ]
 
 # (document, label, report, measurement, places)
@@ -384,6 +424,52 @@ def _query_cost_queries(paths: list[Path]) -> dict[str, dict[str, dict[str, list
                         continue
                     out.setdefault(which, {}).setdefault(query, {}).setdefault(key, []).append(value)
     return out
+
+
+def _sort_cost_parts(paths: list[Path]) -> dict[str, list[float]]:
+    """The sort probe's parts, from the committed reports.
+
+    The parts are the stage, the operator, the reads and the candidates; each
+    one is the median of the probe's own iterations, and this collects them
+    across the campaigns so that the published figure is the median over the
+    campaigns.
+    """
+    out: dict[str, list[float]] = {}
+    for path in paths:
+        run = json.loads(path.read_text())
+        for key, value in run.get("parts_ms", {}).items():
+            out.setdefault(key, []).append(value)
+    return out
+
+
+def figure_in(text: str, rendered: str) -> bool:
+    """Whether a figure appears in the text as a number of its own.
+
+    The plain `in` test would find a figure that is only part of a longer
+    number -- "0.25" inside "0.257" -- so a figure that had drifted could
+    still be found in the document by accident. The figure has to start where
+    a number starts and has to end where one ends: it may be followed by the
+    units or by the end of the sentence, but not by more digits.
+    """
+    return re.search(r"(?<![\d.])" + re.escape(rendered) + r"(?!\d)", text) is not None
+
+
+def section_of(text: str, heading: str) -> str | None:
+    """The text of a section, from its heading to the next one.
+
+    The heading is the prefix of the heading line -- "### 3n" -- and the
+    section runs to the next heading of the same level or above it.
+    """
+    lines = text.splitlines()
+    start = next((index for index, line in enumerate(lines) if line.startswith(heading)), None)
+    if start is None:
+        return None
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if lines[index].startswith("## ") or lines[index].startswith("### "):
+            end = index
+            break
+    return "\n".join(lines[start:end])
 
 
 def collect(runs: list[dict]) -> dict[tuple[str, str, str, str], list[float]]:
@@ -940,10 +1026,10 @@ def main() -> int:
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
 
-    if SPEC023_REPORTS:
-        spec023_runs = [json.loads(path.read_text()) for path in SPEC023_REPORTS]
-        replaced = collect(spec023_runs)
-        for doc, label, system, mode, metric, query, places in SPEC023_CHECKS:
+    if SPEC024_REPORTS:
+        spec024_runs = [json.loads(path.read_text()) for path in SPEC024_REPORTS]
+        replaced = collect(spec024_runs)
+        for doc, label, system, mode, metric, query, places in SPEC024_CHECKS:
             values = replaced.get((system, mode, metric, query))
             if not values:
                 failures.append(f"{doc}: no figure for {label} in the replaced set's reports")
@@ -996,6 +1082,41 @@ def main() -> int:
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
 
+    # Spec 025's sort probe: the sort, taken apart -- the new code and the
+    # old one, measured back to back on the same host.
+    if SORT_COST_REPORTS or SORT_COST_BEFORE_REPORTS:
+        sort_cost_parts = {
+            "after": _sort_cost_parts(SORT_COST_REPORTS),
+            "before": _sort_cost_parts(SORT_COST_BEFORE_REPORTS),
+        }
+        # The figures are looked for **in the section that publishes them**,
+        # not anywhere in the document: a figure that happens to equal an
+        # unrelated number -- a multiplier, a spread, another probe's
+        # measurement -- would otherwise satisfy the check by accident.
+        published = section_of(texts["PERF.md"], SORT_COST_SECTION)
+        if published is None:
+            failures.append(
+                f"PERF.md: the section that publishes the sort probe's figures "
+                f"({SORT_COST_SECTION}) is not in the document"
+            )
+        else:
+            for doc, label, which, part, places in SORT_COST_CHECKS:
+                values = sort_cost_parts[which].get(part, [])
+                if not values:
+                    failures.append(
+                        f"{doc}: no figure for {label} in the sort probe's reports"
+                    )
+                    continue
+                figure = statistics.median(values)
+                rendered = f"{figure:.{places}f}"
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"{doc}: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {doc:<10} {label:<28} {rendered}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -1003,8 +1124,8 @@ def main() -> int:
         stage_sets["before"] = collect_stages(before_runs)
     if SPEC021_REPORTS:
         stage_sets["last"] = collect_stages(spec021_runs)
-    if SPEC023_REPORTS:
-        stage_sets["replaced"] = collect_stages(spec023_runs)
+    if SPEC024_REPORTS:
+        stage_sets["replaced"] = collect_stages(spec024_runs)
 
     for doc, label, which, query, stage, places in STAGE_CHECKS:
         values = stage_sets.get(which, {}).get((query, "lazy", stage))
@@ -1601,10 +1722,11 @@ def main() -> int:
     print(
         f"\nall published figures agree with the committed reports: "
         f"{len(REPORTS)} campaigns, {len(BEFORE_REPORTS)} before, "
-        f"{len(SPEC023_REPORTS)} of the replaced set, "
+        f"{len(SPEC024_REPORTS)} of the replaced set, "
         f"{len(SPEC021_REPORTS)} of the last set, {len(PROBE_REPORTS)} probe, "
         f"{len(STAGE_CHECKS)} of the plan output, "
-        f"{len(QUERY_COST_CHECKS) + len(QUERY_COST_SHAPE_CHECKS)} of the query probe"
+        f"{len(QUERY_COST_CHECKS) + len(QUERY_COST_SHAPE_CHECKS)} of the query probe, "
+        f"{len(SORT_COST_CHECKS)} of the sort probe"
     )
     return 0
 
