@@ -97,7 +97,7 @@ pub(crate) mod scan;
 use columnar_kernels::Flavor;
 
 use crate::pipeline::{
-    build_key_type, require_same_key_type, rows, BuildSide, Pipeline, StreamedJoin,
+    build_key_type, require_same_key_type, scan_stage, BuildSide, Pipeline, StreamedJoin,
 };
 use crate::plan::ColumnSchema;
 use crate::scan::{decide_scan, fetched_columns, pushdown_supports, ScanDecision, ScanReport};
@@ -210,12 +210,9 @@ pub fn execute(
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
     }
 
-    let scan = StageStats {
-        stage: "scan".to_owned(),
-        rows_in: rows(dataset.len()),
-        rows_out: rows(dataset.len()),
-        elapsed: std::time::Duration::ZERO,
-    };
+    // The eager path read the whole file before the clock started, so the
+    // scan's own stage is empty: it cost nothing here.
+    let scan = scan_stage(dataset.len(), dataset.len(), std::time::Duration::ZERO);
 
     let report = ScanReport {
         pushed_down: Vec::new(),
@@ -397,14 +394,10 @@ pub fn execute_on(
     let mapping = decision.mapping(source.column_count());
     let effective = resolved.remap(&mapping)?;
 
-    let scan = StageStats {
-        stage: "scan".to_owned(),
-        rows_in: rows(source.rows()),
-        rows_out: rows(dataset.len()),
-        // The filter ran inside the scan, but it is the **join's** work, and
-        // the join's stage reports it.
-        elapsed: scan_elapsed.saturating_sub(filter_elapsed),
-    };
+    // The filter ran inside the scan, but it is the **join's** work, and the
+    // join's stage reports it.
+    let scan =
+        scan_stage(source.rows(), dataset.len(), scan_elapsed.saturating_sub(filter_elapsed));
 
     let report = ScanReport {
         pushed_down: decision.pushdown_descriptions(),

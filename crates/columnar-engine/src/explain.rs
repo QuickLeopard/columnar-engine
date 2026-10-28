@@ -26,6 +26,18 @@ pub struct StageStats {
     pub elapsed: std::time::Duration,
 }
 
+impl StageStats {
+    /// A stage's report: what it was handed, what it produced, and how long it
+    /// took.
+    ///
+    /// This is the **one** way a stage reports its work. The stage's name, the
+    /// rows entering it, the rows leaving it, and its own time -- the same
+    /// four things, in the same order, for every stage the engine runs.
+    pub fn new(stage: &str, rows_in: u64, rows_out: u64, elapsed: std::time::Duration) -> Self {
+        Self { stage: stage.to_owned(), rows_in, rows_out, elapsed }
+    }
+}
+
 /// What the join did, for the plan output.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JoinReport {

@@ -30,6 +30,39 @@ use crate::scan::ScanReport;
 use crate::source::ParquetSource;
 use crate::{Dataset, EngineError, ExecOptions};
 
+/// A stage's report.
+///
+/// This is the **one** shape a stage reports in: the stage's name, the rows it
+/// was handed, the rows it produced, and how long it took. A stage that did
+/// not run has no report, and the plan output does not name it.
+///
+/// The rows are `None` when the stage did not run, and the report is `None`
+/// with them: the two travel together, so a stage cannot report a count for a
+/// stage that did not happen.
+pub(crate) fn stage(
+    name: &str,
+    rows: Option<(u64, u64)>,
+    elapsed: std::time::Duration,
+) -> Option<StageStats> {
+    rows.map(|(rows_in, rows_out)| StageStats::new(name, rows_in, rows_out, elapsed))
+}
+
+/// The scan's own stage report.
+///
+/// The scan is the first stage, and it always runs, so it always has a
+/// report. The report is an `Option` because every stage's report is one: a
+/// stage that did not run has none.
+///
+/// The scan's own numbers are the caller's: how many rows the file held, how
+/// many the scan kept, and how long the read took.
+pub(crate) fn scan_stage(
+    rows_in: usize,
+    rows_out: usize,
+    elapsed: std::time::Duration,
+) -> Option<StageStats> {
+    stage("scan", Some((rows(rows_in), rows(rows_out))), elapsed)
+}
+
 /// What the pipeline is given to run.
 ///
 /// Every stage reads the same context: the plan, the dataset, the options,
@@ -46,8 +79,12 @@ pub(crate) struct Pipeline<'a> {
     pub(crate) build: &'a BuildSide,
     /// The clock the **whole** query is measured against.
     pub(crate) started: Instant,
-    /// The scan's own stage statistics.
-    pub(crate) scan: StageStats,
+    /// The scan's own stage report.
+    ///
+    /// The scan is the first stage, and it always runs, so it always has a
+    /// report. The report is an `Option` because every stage's report is one:
+    /// a stage that did not run has none.
+    pub(crate) scan: Option<StageStats>,
     /// What the scan did, for the plan output.
     pub(crate) report: ScanReport,
     /// The estimated working set, in bytes.
@@ -169,12 +206,11 @@ impl Pipeline<'_> {
             (selection, Some(stats))
         };
         let filter_workers = filter_stats.as_ref().map_or(1, |stats| stats.workers);
-        let filter_stage = filter_stats.map(|stats| StageStats {
-            stage: "filter".to_owned(),
-            rows_in: stats.rows_in,
-            rows_out: stats.rows_out,
-            elapsed: filter_started.elapsed(),
-        });
+        let filter_stage = stage(
+            "filter",
+            filter_stats.map(|stats| (stats.rows_in, stats.rows_out)),
+            filter_started.elapsed(),
+        );
 
         // --- join and sort ----------------------------------------------------
         // The two optional stages decide which rows the aggregate reads, so they
@@ -217,12 +253,8 @@ impl Pipeline<'_> {
         // million.
         let survivors = materialised.selection().len();
         let handed = if ordered.is_some() { aggregate_rows } else { survivors };
-        let project_stage = StageStats {
-            stage: "project".to_owned(),
-            rows_in: rows(handed),
-            rows_out: rows(handed),
-            elapsed: project_started.elapsed(),
-        };
+        let project_stage =
+            stage("project", Some((rows(handed), rows(handed))), project_started.elapsed());
 
         // --- evaluate ---------------------------------------------------------
         // An aggregate over an expression needs the expression's value, and the
@@ -251,10 +283,14 @@ impl Pipeline<'_> {
         // project, join, sort, aggregate -- and not in the order the work ran
         // in: the materialisation of the aggregate's input runs after the join
         // and the sort, because they decide which rows it holds.
+        //
+        // Every stage's report is the same thing: an `Option` that is `None`
+        // when the stage did not run. The stages that ran are named, and the
+        // ones that did not are not.
         let stages: Vec<StageStats> = [
-            Some(scan),
+            scan,
             filter_stage,
-            Some(project_stage),
+            project_stage,
             ordered.as_ref().and_then(|ordered| ordered.join_stage.clone()),
             ordered.as_ref().and_then(|ordered| ordered.sort_stage.clone()),
             evaluate_stats,
@@ -381,14 +417,13 @@ pub(crate) fn join_outcome(
         // The scan fed the join: the probe already happened, inside the
         // scan and before the copy, and the rows it produced are the
         // dataset's own row numbers.
-        let stage = StageStats {
-            stage: "join".to_owned(),
-            rows_in: rows(selection.len()),
-            rows_out: rows(streamed.rows.len()),
-            // The build side's file was opened before the scan, and it is
-            // the join's own work.
-            elapsed: streamed.elapsed + build.opened,
-        };
+        // The build side's file was opened before the scan, and it is the
+        // join's own work.
+        let stage = stage(
+            "join",
+            Some((rows(selection.len()), rows(streamed.rows.len()))),
+            streamed.elapsed + build.opened,
+        );
         let report = explain::JoinReport {
             probe_key: spec.spec.probe_key.clone(),
             build_key: spec.spec.build_key.clone(),
@@ -397,11 +432,7 @@ pub(crate) fn join_outcome(
             output_rows: streamed.rows.len(),
             probe_in_scan: true,
         };
-        return Ok(JoinOutcome {
-            rows: Some(streamed.rows),
-            stage: Some(stage),
-            report: Some(report),
-        });
+        return Ok(JoinOutcome { rows: Some(streamed.rows), stage, report: Some(report) });
     }
 
     let started = std::time::Instant::now();
@@ -430,14 +461,13 @@ pub(crate) fn join_outcome(
         Some(range) => operators::join::probe_rows(&table, &keys, range),
         None => operators::join::probe_rows(&table, &keys, selection.iter()),
     };
-    let stage = StageStats {
-        stage: "join".to_owned(),
-        rows_in: rows(selection.len()),
-        rows_out: rows(matched.len()),
+    let stage = stage(
+        "join",
+        Some((rows(selection.len()), rows(matched.len()))),
         // The build side's file was opened before the pipeline ran, and it
         // is the join's own work.
-        elapsed: started.elapsed() + build.opened,
-    };
+        started.elapsed() + build.opened,
+    );
     let report = explain::JoinReport {
         probe_key: spec.spec.probe_key.clone(),
         build_key: spec.spec.build_key.clone(),
@@ -446,7 +476,7 @@ pub(crate) fn join_outcome(
         output_rows: matched.len(),
         probe_in_scan: false,
     };
-    Ok(JoinOutcome { rows: Some(matched), stage: Some(stage), report: Some(report) })
+    Ok(JoinOutcome { rows: Some(matched), stage, report: Some(report) })
 }
 
 /// What the sort did, and the rows it kept.
@@ -504,19 +534,14 @@ pub(crate) fn sort_outcome(
             ),
         },
     };
-    let stage = StageStats {
-        stage: "sort".to_owned(),
-        rows_in: rows(handed),
-        rows_out: rows(sorted.len()),
-        elapsed: started.elapsed(),
-    };
+    let stage = stage("sort", Some((rows(handed), rows(sorted.len()))), started.elapsed());
     let report = explain::SortReport {
         column: spec.spec.column.clone(),
         descending: spec.spec.descending,
         limit: spec.spec.limit,
         rows: sorted.len(),
     };
-    Ok(SortOutcome { rows: Some(sorted), stage: Some(stage), report: Some(report) })
+    Ok(SortOutcome { rows: Some(sorted), stage, report: Some(report) })
 }
 
 /// The column at `index`, read one row at a time.
@@ -623,13 +648,9 @@ pub(crate) fn aggregate_stage(
     };
     let started = std::time::Instant::now();
     let groups = run_aggregate(aggregate, dataset, materialised, computed, fusable, aggregate_rows);
-    let stage = StageStats {
-        stage: "aggregate".to_owned(),
-        rows_in: rows(aggregate_rows),
-        rows_out: rows(groups.len()),
-        elapsed: started.elapsed(),
-    };
-    (groups, Some(stage))
+    let stage =
+        stage("aggregate", Some((rows(aggregate_rows), rows(groups.len()))), started.elapsed());
+    (groups, stage)
 }
 
 /// Runs the aggregation over the rows that survived the filter.
@@ -805,13 +826,9 @@ pub(crate) fn evaluate_stage(
     if !evaluated {
         return Ok((computed, None));
     }
-    let stage = StageStats {
-        stage: "evaluate".to_owned(),
-        rows_in: rows(aggregate_rows),
-        rows_out: rows(aggregate_rows),
-        elapsed: started.elapsed(),
-    };
-    Ok((computed, Some(stage)))
+    let stage =
+        stage("evaluate", Some((rows(aggregate_rows), rows(aggregate_rows))), started.elapsed());
+    Ok((computed, stage))
 }
 
 /// Evaluates the aggregates' expressions over the rows that survived the

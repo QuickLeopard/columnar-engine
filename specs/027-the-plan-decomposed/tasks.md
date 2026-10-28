@@ -16,7 +16,7 @@ and x86-64, and leaves the published figures exactly where they were.
       root and live beside each other.
 - [x] **Step 4 — `pipeline.rs`.** The pipeline leaves the crate root, and `run_pipeline`'s ten
       parameters become a context. `#[allow(clippy::too_many_arguments)]` is gone.
-- [ ] **Step 5 — one stage shape.** The four stage idioms become one, so the plan output is
+- [x] **Step 5 — one stage shape.** The four stage idioms become one, so the plan output is
       assembled in one place.
 - [ ] **Step 6 — the estimates.** `estimate_join` and `estimate_sort` join the other estimates in
       `memory.rs`.
