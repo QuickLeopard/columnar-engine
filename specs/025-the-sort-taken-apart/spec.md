@@ -1,7 +1,8 @@
 # Spec 025 — The sort, taken apart
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-28
+**Finished**: 2026-10-28
 **ADR**: [ADR-0032](../../docs/adr/0032-the-sort-taken-apart.md) — written from the instrument's measurement
 **Predecessor**: [024-the-time-the-plan-output-does-not-name](../024-the-time-the-plan-output-does-not-name/spec.md)
 
