@@ -2018,7 +2018,7 @@ probe row, not a stream of them; what is saved is the copy of the rows the join 
 plan whose **probe side has a predicate of its own** takes the materialising scan: the predicate
 would have to be evaluated over every row of the file rather than over the rows that survived the
 scan, and that trade is not measured. Both fallbacks are named in
-[spec 023](../specs/023-the-scan-that-feeds-the-join/spec.md)'s scope, not hidden in a footnote.
+[spec 023](specs/023-the-scan-that-feeds-the-join/spec.md)'s scope, not hidden in a footnote.
 
 All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **7.8–8.1**
 while the campaigns ran — the reports carry it. The raw reports are `bench-results/scan-cost-run{1,2,3}.json` and
@@ -2329,6 +2329,10 @@ per-row lookup names it: `DirectTable::count` consults the **overflow map** once
 every key's count fits in its byte. The candidate has no map to consult. The floor the probe cannot go
 under is **4.418 ms** — the table's own load, one a probe row — and the **216,783 output rows** cost
 **2.549 ms** of the candidate's **6.959 ms**.
+
+**How much of the remainder the map is, is written down as the next question rather than assumed:**
+[spec 028](specs/028-the-probes-remainder/spec.md) removes the lookup and measures what is left of the
+**3.095 ms**.
 
 **The two paths differ by the probe, and the probe's own measurement does not agree with the stage.**
 The stages differ by **1.519 ms**. The build side's read is **the same call on both paths** — the same

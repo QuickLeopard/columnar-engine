@@ -343,6 +343,10 @@ every key's count fits in its byte. The candidate has no map to consult. The flo
 under is **4.418 ms** — the table's own load, one a probe row — and the **216,783 output rows** cost
 **2.549 ms** of the candidate's **6.959 ms**.
 
+**How much of the remainder the map is, is the next spec's measurement and not an assumption here:**
+[spec 028](../028-the-probes-remainder/spec.md) removes the lookup and measures what is left of the
+**3.095 ms**.
+
 **The two paths, and the attribution of the difference.** The stages differ by **1.519 ms** — the
 **2.9 ms** the published campaigns report is the same difference measured in another campaign set, at a
 load average of **6.28–7.10** rather than this one's **4.93–5.47**, and both are published. The build
