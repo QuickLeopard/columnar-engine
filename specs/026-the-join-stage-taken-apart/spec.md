@@ -347,13 +347,16 @@ under is **4.418 ms** — the table's own load, one a probe row — and the **21
 load average of **6.28–7.10** rather than this one's **4.93–5.47**, and both are published. The build
 side's read is **the same call on both paths** — the same `build_table`, over the same file — so the
 difference is in the probe: the cold path's probe runs inside the reader, over the reader's own batches,
-against the caches the decode is using. The probe, measured on its own, differs by **0.170 ms**, and
-**the two measurements do not agree**. They cannot: the parts are measured one at a time, each against a
-file and a table the measurement before it has pushed out of the caches, where the stage runs its parts
-in one pipeline, with the build side's read immediately before the probe. The parts are therefore
-**bounds**, not a decomposition that adds up — they over-explain the cold stage by **1.32 ms** and the
-resident one by **2.67 ms** — and the stage, the engine's own account, is the authority. The **1.35 ms**
-between the stage's difference and the probe's is the **remainder**, and it is named as one.
+against the caches the decode is using. The stage charges its own probe **8.876 ms** cold and
+**7.357 ms** resident — the stage, less the build side's whole and the open — and the difference between
+those two is the **1.519 ms** the stages differ by. Measured on its own, the two probes differ by
+**0.170 ms**: **10.221 ms** in the batches against **10.051 ms** over the column. **The two measurements
+do not agree**, and they cannot: the parts are measured one at a time, each against a file and a table
+the measurement before it has pushed out of the caches, where the stage runs its parts in one pipeline,
+with the build side's read immediately before the probe. The parts are therefore **bounds**, not a
+decomposition that adds up — they over-explain the cold stage by **1.35 ms** and the resident one by
+**2.69 ms** — and the stage, the engine's own account, is the authority. Between the stage's
+**1.519 ms** and the probe's **0.170 ms** there is a **remainder**, and it is named as one.
 
 **And the read is counting, not waiting for memory.** The probe key column's plain read is **0.509 ms**
 over 48 MB and **0.039 ms** over 512K values: the same per byte.
