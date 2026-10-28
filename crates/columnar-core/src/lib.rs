@@ -40,7 +40,7 @@ pub use chunk::{ColumnChunk, Encoding};
 pub use expr::{ArithOp, Expr};
 pub use null::NullBitmap;
 pub use predicate::{ComparisonOp, Predicate};
-pub use selection::{SelectionKind, SelectionVector, BITMAP_DISPATCH_DENSITY};
+pub use selection::{SelectionIter, SelectionKind, SelectionVector, BITMAP_DISPATCH_DENSITY};
 pub use types::{DataType, ScalarValue};
 
 /// The engine's version string, stamped into every published benchmark

@@ -62,7 +62,7 @@ use crate::plan::{JoinSpec, ResolvedFilter};
 use crate::pushdown::RowMask;
 use crate::pushdown::{Pushdown, PushdownPlan};
 use crate::source::{BatchFilter, ParquetSource};
-use crate::{operators, EngineError};
+use crate::EngineError;
 
 /// The hash the join's table uses.
 ///
@@ -425,7 +425,7 @@ pub fn build_table(
         })
         .collect();
     let selection = if declined.is_empty() {
-        operators::all_rows(dataset.len())
+        columnar_core::SelectionVector::all(dataset.len())
     } else {
         filter_all(&dataset, &declined, flavor)?.0
     };
@@ -508,7 +508,7 @@ where
 pub fn probe_rows<S, I>(table: &BuildTable, keys: &S, rows: I) -> Vec<u32>
 where
     S: KeySource + ?Sized,
-    I: Iterator<Item = u32>,
+    I: IntoIterator<Item = u32>,
 {
     match &table.inner {
         TableInner::Direct(direct) => probe_direct(direct, keys, rows),
@@ -524,7 +524,7 @@ where
 fn probe_direct<S, I>(direct: &DirectTable, keys: &S, rows: I) -> Vec<u32>
 where
     S: KeySource + ?Sized,
-    I: Iterator<Item = u32>,
+    I: IntoIterator<Item = u32>,
 {
     let mut out: Vec<u32> = Vec::new();
     if let Some(values) = keys.integer_values() {
@@ -562,7 +562,7 @@ where
 fn probe_hashed<S, I>(hashed: &HashedTable, keys: &S, rows: I) -> Vec<u32>
 where
     S: KeySource + ?Sized,
-    I: Iterator<Item = u32>,
+    I: IntoIterator<Item = u32>,
 {
     let mut out: Vec<u32> = Vec::new();
     for row in rows {

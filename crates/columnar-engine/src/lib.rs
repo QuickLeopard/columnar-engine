@@ -178,13 +178,17 @@ pub fn execute(
     dataset: &Dataset,
     options: &ExecOptions,
 ) -> Result<AggregateResult, EngineError> {
+    // The clock starts before the plan is resolved: the plan output is the
+    // engine's account of the **whole** query, and the plan's resolution is
+    // part of it.
+    let started = std::time::Instant::now();
     let resolved = plan.resolve(dataset)?;
-    let build = open_build_side(resolved.join.as_ref())?;
+    let build = BuildSide::open(resolved.join.as_ref())?;
 
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = memory::estimate_resolved(&resolved, dataset, grouped)
-        .saturating_add(estimate_join(resolved.join.as_ref(), build.as_ref()))
+        .saturating_add(estimate_join(resolved.join.as_ref(), build.source.as_ref()))
         .saturating_add(estimate_sort(&resolved, dataset.len()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
@@ -205,19 +209,33 @@ pub fn execute(
 
     // The eager path reads the whole file before the plan runs, so the join's
     // probe cannot happen inside the scan: there is no scan to feed.
-    run_pipeline(&resolved, dataset, options, scan, report, estimate, 1, build.as_ref(), None)
+    run_pipeline(&resolved, dataset, options, scan, report, estimate, 1, &build, None, started)
 }
 
-/// Opens the join's build side, if the plan has a join.
+/// The join's build side: the file, and how long it took to open it.
 ///
-/// The build side is a file of its own, and it is read through the engine's
-/// own source -- the same reader settings as any other file.
-fn open_build_side(
-    join: Option<&plan::ResolvedJoin>,
-) -> Result<Option<ParquetSource>, EngineError> {
-    match join {
-        Some(join) => Ok(Some(ParquetSource::open(&join.spec.build_path)?)),
-        None => Ok(None),
+/// The opening is the join's own work, so it is reported in the join's
+/// stage: the plan output accounts for the whole query, and a file opened
+/// outside every stage is a hole in that account.
+struct BuildSide {
+    /// The build side's file, when the plan has a join.
+    source: Option<ParquetSource>,
+    /// How long it took to open it.
+    opened: std::time::Duration,
+}
+
+impl BuildSide {
+    /// Opens the join's build side, if the plan has a join.
+    ///
+    /// The build side is a file of its own, and it is read through the
+    /// engine's own source -- the same reader settings as any other file.
+    fn open(join: Option<&plan::ResolvedJoin>) -> Result<Self, EngineError> {
+        let started = std::time::Instant::now();
+        let source = match join {
+            Some(join) => Some(ParquetSource::open(&join.spec.build_path)?),
+            None => None,
+        };
+        Ok(Self { source, opened: started.elapsed() })
     }
 }
 
@@ -279,9 +297,13 @@ pub fn execute_on(
     source: &ParquetSource,
     options: &ExecOptions,
 ) -> Result<AggregateResult, EngineError> {
+    // The clock starts before the plan is resolved: the plan output is the
+    // engine's account of the **whole** query, and the plan's resolution is
+    // part of it.
+    let started = std::time::Instant::now();
     let resolved = plan.resolve_against(source)?;
     let decision = decide_scan(&resolved, source);
-    let build = open_build_side(resolved.join.as_ref())?;
+    let build = BuildSide::open(resolved.join.as_ref())?;
 
     // The same flavor the filter would use, so the pushdown and the filter
     // run the same kernel over the same values.
@@ -303,7 +325,7 @@ pub fn execute_on(
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = memory::estimate_lazy_read(source, &decision.read, workers, grouped)
-        .saturating_add(estimate_join(resolved.join.as_ref(), build.as_ref()))
+        .saturating_add(estimate_join(resolved.join.as_ref(), build.source.as_ref()))
         .saturating_add(estimate_sort(&resolved, source.rows()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
@@ -323,7 +345,7 @@ pub fn execute_on(
     let mut build_elapsed = std::time::Duration::ZERO;
     let mut table = None;
     if let (Some(key), Some(spec), Some(build_source)) =
-        (streamed, resolved.join.as_ref(), build.as_ref())
+        (streamed, resolved.join.as_ref(), build.source.as_ref())
     {
         // The join's two keys must have the same type, and the check happens
         // before the table is built: a plan error is refused having read
@@ -396,15 +418,7 @@ pub fn execute_on(
     });
 
     run_pipeline(
-        &effective,
-        &dataset,
-        options,
-        scan,
-        report,
-        estimate,
-        workers,
-        build.as_ref(),
-        streamed,
+        &effective, &dataset, options, scan, report, estimate, workers, &build, streamed, started,
     )
 }
 
@@ -592,6 +606,10 @@ struct ScanReport {
 }
 
 /// Runs the pipeline over an already-resolved plan.
+///
+/// `started` is the clock the **whole** query is measured against: the plan
+/// output accounts for the query, so the account starts before the plan is
+/// resolved.
 #[allow(clippy::too_many_arguments)]
 fn run_pipeline(
     resolved: &plan::ResolvedPlan,
@@ -601,8 +619,9 @@ fn run_pipeline(
     report: ScanReport,
     estimate: usize,
     workers: usize,
-    build: Option<&ParquetSource>,
+    build: &BuildSide,
     streamed: Option<StreamedJoin>,
+    started: std::time::Instant,
 ) -> Result<AggregateResult, EngineError> {
     let flavor = options.flavor.unwrap_or_else(columnar_kernels::best);
     // How many workers the operators may use. The filter's blocks are
@@ -624,7 +643,7 @@ fn run_pipeline(
     // end of the batch.
     let filter_started = std::time::Instant::now();
     let (selection, filter_stats) = if resolved.filter.is_empty() {
-        (operators::all_rows(dataset.len()), None)
+        (columnar_core::SelectionVector::all(dataset.len()), None)
     } else {
         let (selection, stats) = operators::filter::filter_all_with_workers(
             dataset,
@@ -761,6 +780,9 @@ fn run_pipeline(
         projection_workers: materialised.projection_workers(),
         join: ordered.as_ref().and_then(|ordered| ordered.join.clone()),
         sort: ordered.as_ref().and_then(|ordered| ordered.sort.clone()),
+        // The account of the whole query: the stages add up to this, and
+        // whatever fell outside them is named rather than hidden.
+        attribution: explain::Attribution::of(started.elapsed(), &stages),
     };
 
     Ok(AggregateResult { groups, stages, plan_output })
@@ -792,7 +814,7 @@ fn ordered_stage(
     resolved: &plan::ResolvedPlan,
     dataset: &Dataset,
     selection: &columnar_core::SelectionVector,
-    build: Option<&ParquetSource>,
+    build: &BuildSide,
     options: &ExecOptions,
     flavor: Flavor,
     streamed: Option<StreamedJoin>,
@@ -801,111 +823,200 @@ fn ordered_stage(
         return Ok(None);
     }
 
-    // The survivors' own row numbers in the dataset. Every stage behind the
-    // filter works in those numbers, so a stage's output is a stage's input
-    // with nothing to translate: there is no second numbering, and no
-    // vector of positions that has to be walked to get from one to the other.
-    let dataset_row_numbers = selection.rows();
-    let mut row_numbers: Vec<u32>;
+    let join = join_outcome(resolved, dataset, selection, build, options, flavor, streamed)?;
+    let sort = sort_outcome(resolved, dataset, selection, join.rows.as_deref())?;
 
-    let mut join_stage = None;
-    let mut join = None;
-    if let Some(spec) = &resolved.join {
-        if let Some(streamed) = streamed {
-            // The scan fed the join: the probe already happened, inside the
-            // scan and before the copy, and the rows it produced are the
-            // dataset's own row numbers.
-            row_numbers = streamed.rows;
-            join_stage = Some(StageStats {
-                stage: "join".to_owned(),
-                rows_in: rows(dataset_row_numbers.len()),
-                rows_out: rows(row_numbers.len()),
-                elapsed: streamed.elapsed,
-            });
-            join = Some(explain::JoinReport {
-                probe_key: spec.spec.probe_key.clone(),
-                build_key: spec.spec.build_key.clone(),
-                build_file: file_name(&spec.spec.build_path),
-                build_rows: streamed.build_rows,
-                output_rows: row_numbers.len(),
-                probe_in_scan: true,
-            });
-        } else {
-            let started = std::time::Instant::now();
-            let source = build.ok_or_else(|| {
-                EngineError::Parquet(
-                    "the plan has a join but its build side was not opened".to_owned(),
-                )
-            })?;
-            require_same_key_type(
-                dataset
-                    .chunks
-                    .get(spec.probe_key)
-                    .map_or(columnar_core::DataType::Int64, columnar_core::ColumnChunk::data_type),
-                build_key_type(source, &spec.spec.build_key),
-            )?;
-            let table = operators::join::build_table(
-                source,
-                &spec.spec,
-                flavor,
-                source.worker_count(options.threads.unwrap_or(1)),
-            )?;
-            let keys = key_column(dataset, spec.probe_key)?;
-            row_numbers = operators::join::probe(&table, &keys, &dataset_row_numbers);
-            join_stage = Some(StageStats {
-                stage: "join".to_owned(),
-                rows_in: rows(dataset_row_numbers.len()),
-                rows_out: rows(row_numbers.len()),
-                elapsed: started.elapsed(),
-            });
-            join = Some(explain::JoinReport {
-                probe_key: spec.spec.probe_key.clone(),
-                build_key: spec.spec.build_key.clone(),
-                build_file: file_name(&spec.spec.build_path),
-                build_rows: table.rows(),
-                output_rows: row_numbers.len(),
-                probe_in_scan: false,
-            });
-        }
-    } else {
-        // With no join, the rows behind the filter are the survivors
-        // themselves, and the sort is handed them as they are.
-        row_numbers = dataset_row_numbers;
+    // The rows the aggregate reads: the sort's output when the plan has a
+    // sort, and the join's output when it has a join and no sort. A plan
+    // with neither stage returned above.
+    let rows = match sort.rows {
+        Some(sorted) => sorted,
+        None => join.rows.unwrap_or_else(|| selection.collect_rows()),
+    };
+
+    Ok(Some(Ordered {
+        rows,
+        join_stage: join.stage,
+        sort_stage: sort.stage,
+        join: join.report,
+        sort: sort.report,
+    }))
+}
+
+/// What the join did, and the rows it produced.
+struct JoinOutcome {
+    /// The rows the join produced, when the plan had a join.
+    rows: Option<Vec<u32>>,
+    /// The join's stage statistics, when the plan had a join.
+    stage: Option<StageStats>,
+    /// What the join did, for the plan output.
+    report: Option<explain::JoinReport>,
+}
+
+/// Runs the join, if the plan has one.
+///
+/// The survivors' own row numbers in the dataset are what the join works
+/// in, so the join's output is a list of the same numbers: there is no
+/// second numbering, and no vector of positions that has to be walked to get
+/// from one to the other.
+///
+/// The numbers are **not** collected first. A plan with no filter has six
+/// million of them, and a list of them is twenty-four megabytes that the
+/// allocator has to hand out for rows the probe reads once. The probe is
+/// handed the selection, and reads the rows as it needs them.
+fn join_outcome(
+    resolved: &plan::ResolvedPlan,
+    dataset: &Dataset,
+    selection: &columnar_core::SelectionVector,
+    build: &BuildSide,
+    options: &ExecOptions,
+    flavor: Flavor,
+    streamed: Option<StreamedJoin>,
+) -> Result<JoinOutcome, EngineError> {
+    let Some(spec) = &resolved.join else {
+        return Ok(JoinOutcome { rows: None, stage: None, report: None });
+    };
+
+    if let Some(streamed) = streamed {
+        // The scan fed the join: the probe already happened, inside the
+        // scan and before the copy, and the rows it produced are the
+        // dataset's own row numbers.
+        let stage = StageStats {
+            stage: "join".to_owned(),
+            rows_in: rows(selection.len()),
+            rows_out: rows(streamed.rows.len()),
+            // The build side's file was opened before the scan, and it is
+            // the join's own work.
+            elapsed: streamed.elapsed + build.opened,
+        };
+        let report = explain::JoinReport {
+            probe_key: spec.spec.probe_key.clone(),
+            build_key: spec.spec.build_key.clone(),
+            build_file: file_name(&spec.spec.build_path),
+            build_rows: streamed.build_rows,
+            output_rows: streamed.rows.len(),
+            probe_in_scan: true,
+        };
+        return Ok(JoinOutcome {
+            rows: Some(streamed.rows),
+            stage: Some(stage),
+            report: Some(report),
+        });
     }
 
-    let mut sort_stage = None;
-    let mut sort = None;
-    if let Some(spec) = &resolved.sort {
-        let started = std::time::Instant::now();
-        let keys = key_column(dataset, spec.column)?;
-        // The sort is handed the rows the join produced, when there is a
-        // join, and the filter's survivors when there is not. Both are the
-        // dataset's own row numbers, so the sort's key is one lookup.
-        let handed = row_numbers.len();
-        let sorted = operators::sort::sort_rows(
-            std::mem::take(&mut row_numbers),
+    let started = std::time::Instant::now();
+    let source = build.source.as_ref().ok_or_else(|| {
+        EngineError::Parquet("the plan has a join but its build side was not opened".to_owned())
+    })?;
+    require_same_key_type(
+        dataset
+            .chunks
+            .get(spec.probe_key)
+            .map_or(columnar_core::DataType::Int64, columnar_core::ColumnChunk::data_type),
+        build_key_type(source, &spec.spec.build_key),
+    )?;
+    let table = operators::join::build_table(
+        source,
+        &spec.spec,
+        flavor,
+        source.worker_count(options.threads.unwrap_or(1)),
+    )?;
+    let keys = key_column(dataset, spec.probe_key)?;
+    // The probe reads the survivors' rows as it needs them. A selection
+    // that holds every row is the **range**, and the range is handed over
+    // as a range: the probe's own loop then keeps its state where it can
+    // be kept, and there is no list of row numbers to build.
+    let matched = match selection.all_rows() {
+        Some(range) => operators::join::probe_rows(&table, &keys, range),
+        None => operators::join::probe_rows(&table, &keys, selection.iter()),
+    };
+    let stage = StageStats {
+        stage: "join".to_owned(),
+        rows_in: rows(selection.len()),
+        rows_out: rows(matched.len()),
+        // The build side's file was opened before the pipeline ran, and it
+        // is the join's own work.
+        elapsed: started.elapsed() + build.opened,
+    };
+    let report = explain::JoinReport {
+        probe_key: spec.spec.probe_key.clone(),
+        build_key: spec.spec.build_key.clone(),
+        build_file: file_name(&spec.spec.build_path),
+        build_rows: table.rows(),
+        output_rows: matched.len(),
+        probe_in_scan: false,
+    };
+    Ok(JoinOutcome { rows: Some(matched), stage: Some(stage), report: Some(report) })
+}
+
+/// What the sort did, and the rows it kept.
+struct SortOutcome {
+    /// The sort's output rows, when the plan had a sort.
+    rows: Option<Vec<u32>>,
+    /// The sort's stage statistics, when the plan had a sort.
+    stage: Option<StageStats>,
+    /// What the sort did, for the plan output.
+    report: Option<explain::SortReport>,
+}
+
+/// Runs the sort, if the plan has one.
+///
+/// The sort is handed the rows the join produced, when there is a join, and
+/// the filter's survivors when there is not. Both are the dataset's own row
+/// numbers, so the sort's key is one lookup.
+///
+/// The rows are handed over as they are: a sort with a limit keeps the best
+/// `limit` rows and drops the rest, so it never needs more than the heap
+/// and the row it is looking at.
+fn sort_outcome(
+    resolved: &plan::ResolvedPlan,
+    dataset: &Dataset,
+    selection: &columnar_core::SelectionVector,
+    joined: Option<&[u32]>,
+) -> Result<SortOutcome, EngineError> {
+    let Some(spec) = &resolved.sort else {
+        return Ok(SortOutcome { rows: None, stage: None, report: None });
+    };
+
+    let started = std::time::Instant::now();
+    let keys = key_column(dataset, spec.column)?;
+    let handed = joined.map_or(selection.len(), <[u32]>::len);
+    // The sort is handed the rows the join produced, when there is a join,
+    // and the filter's survivors when there is not. Both are the dataset's
+    // own row numbers, so the sort's key is one lookup -- and a selection
+    // that holds every row is the range, handed over as a range.
+    let sorted = match joined {
+        Some(rows) => operators::sort::sort_rows(
+            rows.iter().copied(),
             &keys,
             spec.spec.descending,
             spec.spec.limit,
-        );
-        sort_stage = Some(StageStats {
-            stage: "sort".to_owned(),
-            rows_in: rows(handed),
-            rows_out: rows(sorted.len()),
-            elapsed: started.elapsed(),
-        });
-        sort = Some(explain::SortReport {
-            column: spec.spec.column.clone(),
-            descending: spec.spec.descending,
-            limit: spec.spec.limit,
-            rows: sorted.len(),
-        });
-        row_numbers = sorted;
-    }
-
-    // The rows are already the dataset's own row numbers, which is what the
-    // aggregate's input is gathered from.
-    Ok(Some(Ordered { rows: row_numbers, join_stage, sort_stage, join, sort }))
+        ),
+        None => match selection.all_rows() {
+            Some(range) => {
+                operators::sort::sort_rows(range, &keys, spec.spec.descending, spec.spec.limit)
+            }
+            None => operators::sort::sort_rows(
+                selection.iter(),
+                &keys,
+                spec.spec.descending,
+                spec.spec.limit,
+            ),
+        },
+    };
+    let stage = StageStats {
+        stage: "sort".to_owned(),
+        rows_in: rows(handed),
+        rows_out: rows(sorted.len()),
+        elapsed: started.elapsed(),
+    };
+    let report = explain::SortReport {
+        column: spec.spec.column.clone(),
+        descending: spec.spec.descending,
+        limit: spec.spec.limit,
+        rows: sorted.len(),
+    };
+    Ok(SortOutcome { rows: Some(sorted), stage: Some(stage), report: Some(report) })
 }
 
 /// The column at `index`, read one row at a time.

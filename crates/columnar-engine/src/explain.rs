@@ -63,6 +63,35 @@ pub struct SortReport {
     pub rows: usize,
 }
 
+/// How the query's own time divides up.
+///
+/// The plan output is the engine's own account of its work, so it accounts
+/// for the **whole** query: the time the engine measured around the query,
+/// the time its stages account for, and the time that fell outside them.
+///
+/// The last number is the one that matters. A stage table that adds up to
+/// less than the query is an account with a hole in it, and the hole is
+/// where the engine's work goes to hide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Attribution {
+    /// The whole query's time, as the engine measured it.
+    pub elapsed: std::time::Duration,
+    /// The time the plan output's stages account for.
+    pub accounted: std::time::Duration,
+    /// The time that fell outside the stages.
+    pub outside: std::time::Duration,
+}
+
+impl Attribution {
+    /// The attribution of a query that took `elapsed` and whose stages took
+    /// `stages`.
+    #[must_use]
+    pub fn of(elapsed: std::time::Duration, stages: &[StageStats]) -> Self {
+        let accounted = stages.iter().map(|stage| stage.elapsed).sum();
+        Self { elapsed, accounted, outside: elapsed.saturating_sub(accounted) }
+    }
+}
+
 /// The rendered plan.
 ///
 /// Render it with [`fmt::Display`], or with
@@ -138,6 +167,12 @@ pub struct PlanOutput {
     /// The report names the column the rows were sorted by, the direction,
     /// and the limit the sort was given.
     pub sort: Option<SortReport>,
+    /// How the query's own time divides up.
+    ///
+    /// The stages account for the query's time, and this says so: the
+    /// query's own elapsed time, the time the stages account for, and the
+    /// time that fell outside them.
+    pub attribution: Attribution,
 }
 
 impl fmt::Display for PlanOutput {
@@ -181,6 +216,16 @@ impl fmt::Display for PlanOutput {
         for row in &rows {
             write_row(f, row, &widths)?;
         }
+
+        // The account of the whole query: the stages add up to this, and
+        // whatever is left over is named here rather than hidden.
+        writeln!(
+            f,
+            "accounted: {:.2} ms of the query's {:.2} ms ({:.2} ms outside the stages)",
+            ms(self.attribution.accounted),
+            ms(self.attribution.elapsed),
+            ms(self.attribution.outside),
+        )?;
 
         writeln!(
             f,
@@ -290,8 +335,12 @@ fn write_row(f: &mut fmt::Formatter<'_>, cells: &[String; 4], widths: &[usize; 4
     writeln!(f)
 }
 
-/// Formats a byte count the way a human reads it.
-// Byte counts below 2^53 are exact in an f64, and a byte count above that
+/// A duration, in milliseconds.
+fn ms(duration: std::time::Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
+
+/// Formats a byte count the way a human reads it.// Byte counts below 2^53 are exact in an f64, and a byte count above that
 // is larger than any disk this engine will ever read.
 #[allow(clippy::cast_precision_loss)]
 fn format_bytes(bytes: usize) -> String {

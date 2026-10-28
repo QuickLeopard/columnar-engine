@@ -1175,6 +1175,116 @@ def print_scan_cost(files: list[tuple[str, list[dict]]]) -> None:
     print(line)
 
 
+def _query_cost_figures(
+    files: list[tuple[str, list[dict]]],
+) -> tuple[dict[str, dict[str, list[float]]], dict[str, dict[str, list[list[float]]]]]:
+    """The query probe's figures.
+
+    The probe's report has two parts: the **shapes** -- the dataset's "every
+    row" selection, measured once, because they are a property of the dataset
+    and not of a query -- and the **queries**, per query and per path (the
+    resident one and the cold one).
+
+    This collects them across the campaigns, so a median can be taken over the
+    campaigns rather than over the iterations inside one of them.
+    """
+    shapes: dict[str, list[float]] = {}
+    shape_spreads: dict[str, list[list[float]]] = {}
+    queries: dict[str, dict[str, dict[str, list[float]]]] = {}
+    for _, runs in files:
+        for run in runs:
+            for key, value in run.get("shapes_ms", {}).items():
+                shapes.setdefault(key, []).append(value)
+            for key, value in run.get("spreads_ms", {}).items():
+                shape_spreads.setdefault(key, []).append(value)
+            for path, entries in run.get("queries", {}).items():
+                for query, values in entries.items():
+                    for key, value in values.items():
+                        if key.endswith("_spread_ms"):
+                            continue
+                        queries.setdefault(path, {}).setdefault(query, {}).setdefault(key, []).append(value)
+    return {"shapes": shapes, "queries": queries}, {"shapes": shape_spreads}
+
+
+# The probe's shapes, and what they are called in the table.
+QUERY_COST_SHAPES = (
+    ("selection_rows", "the selection expanded into row numbers"),
+    ("selection_walk", "the same rows, read as they are needed"),
+    ("bitmap_rows", "the same expansion, with the selection a bitmap"),
+    ("bitmap_walk", "the same walk, with the selection a bitmap"),
+    ("plan_resolve", "the plan's resolution"),
+    ("memory_estimate", "the memory estimate"),
+    ("build_open", "the join's build side opened"),
+)
+
+# The queries, in the order the probe measures them.
+QUERY_COST_QUERIES = (
+    "scan",
+    "filter-numeric",
+    "filter-string",
+    "filter-range",
+    "q6",
+    "q6-revenue",
+    "join-orders",
+    "sort-topk",
+)
+
+
+def print_query_cost(
+    after_files: list[tuple[str, list[dict]]],
+    before_files: list[tuple[str, list[dict]]],
+) -> None:
+    """Print the query probe's medians.
+
+    This is spec 024: the whole query, the plan output's own stage table,
+    and the time between them -- the part of the query the plan output does
+    not name. The "before" set is the same probe against the code the
+    increment replaced, measured back to back on the same host.
+    """
+    for label, files in (("the new code", after_files), ("the old code", before_files)):
+        if not files:
+            continue
+        figures, spreads = _query_cost_figures(files)
+        campaigns = min(len(runs) for _, runs in files)
+        print(f"\n=== THE QUERY, AND THE PART OF IT THE PLAN OUTPUT DOES NOT NAME -- {label} "
+              f"({campaigns} campaigns each) ===")
+
+        print("\n-- the shapes, once: the dataset's \"every row\" selection --")
+        print(f"{'the shape':<52}{'median':>12}{'the spread':>20}")
+        for key, shape in QUERY_COST_SHAPES:
+            values = figures["shapes"].get(key, [])
+            if not values:
+                continue
+            line = f"{shape:<52}{statistics.median(values):>12.3f}"
+            bounds = spreads["shapes"].get(key, [])
+            if bounds:
+                low = statistics.median([bound[0] for bound in bounds])
+                high = statistics.median([bound[1] for bound in bounds])
+                line += f"{f'{low:.2f}-{high:.2f}':>20}"
+            else:
+                line += f"{'-':>20}"
+            print(line)
+
+        for path in ("resident", "cold"):
+            entries = figures["queries"].get(path, {})
+            if not entries:
+                continue
+            print(f"\n-- {path} --")
+            print(f"{'the query':<20}{'the query':>12}{'the stages':>12}{'unnamed':>12}")
+            for query in QUERY_COST_QUERIES:
+                values = entries.get(query, {})
+                if not values:
+                    continue
+                line = f"{query:<20}"
+                for key in ("query_ms", "stages_ms", "unnamed_ms"):
+                    figures_for_key = values.get(key, [])
+                    if figures_for_key:
+                        line += f"{statistics.median(figures_for_key):>12.3f}"
+                    else:
+                        line += f"{'-':>12}"
+                print(line)
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -1364,6 +1474,17 @@ def main() -> int:
     scan_paths = sorted(Path("bench-results").glob("scan-cost-run*.json"))
     if scan_paths:
         print_scan_cost([("A", [load(p) for p in scan_paths])])
+
+    # Spec 024's query probe: the whole query, the plan output's stage
+    # table, and the time between them -- measured against the code the
+    # increment replaced, back to back on the same host.
+    query_after = sorted(Path("bench-results").glob("query-cost-run*.json"))
+    query_before = sorted(Path("bench-results").glob("query-cost-before-run*.json"))
+    if query_after:
+        print_query_cost(
+            [("A", [load(p) for p in query_after])],
+            [("A", [load(p) for p in query_before])] if query_before else [],
+        )
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))

@@ -1,0 +1,277 @@
+{
+  "commit": "ef6c10f",
+  "file": "data/lineitem.parquet",
+  "host_load_average": 3.64,
+  "iterations": 5,
+  "probe": "query-cost",
+  "queries": {
+    "cold": {
+      "filter-numeric": {
+        "answer": 3817685.0,
+        "query_ms": 4.842416,
+        "query_spread_ms": [
+          4.700792,
+          4.977375
+        ],
+        "stages_ms": 4.829625,
+        "stages_spread_ms": [
+          4.688084,
+          4.953957999999999
+        ],
+        "unnamed_ms": 0.012790999999999997
+      },
+      "filter-range": {
+        "answer": 55559443.879999444,
+        "query_ms": 16.365875,
+        "query_spread_ms": [
+          16.091708999999998,
+          16.889541
+        ],
+        "stages_ms": 16.350499,
+        "stages_spread_ms": [
+          16.071834,
+          16.871083
+        ],
+        "unnamed_ms": 0.015375999999999834
+      },
+      "filter-string": {
+        "answer": 4265647.0,
+        "query_ms": 9.772875,
+        "query_spread_ms": [
+          9.694125,
+          9.834042
+        ],
+        "stages_ms": 9.75321,
+        "stages_spread_ms": [
+          9.673083,
+          9.810625
+        ],
+        "unnamed_ms": 0.019665000000001598
+      },
+      "join-orders": {
+        "answer": 11472226962.8901,
+        "query_ms": 90.215958,
+        "query_spread_ms": [
+          87.93575,
+          92.183
+        ],
+        "stages_ms": 89.942375,
+        "stages_spread_ms": [
+          87.676376,
+          91.932958
+        ],
+        "unnamed_ms": 0.27358300000000213
+      },
+      "q6": {
+        "answer": 315203.0,
+        "query_ms": 14.8965,
+        "query_spread_ms": [
+          14.681417,
+          15.17925
+        ],
+        "stages_ms": 14.885208,
+        "stages_spread_ms": [
+          14.670709,
+          15.158875
+        ],
+        "unnamed_ms": 0.011291999999999192
+      },
+      "q6-revenue": {
+        "answer": 5526985127.48064,
+        "query_ms": 55.944874999999996,
+        "query_spread_ms": [
+          55.033083,
+          56.938125
+        ],
+        "stages_ms": 55.930665,
+        "stages_spread_ms": [
+          55.020458,
+          56.923334
+        ],
+        "unnamed_ms": 0.014209999999998502
+      },
+      "scan": {
+        "answer": 6000000.0,
+        "query_ms": 0.079917,
+        "query_spread_ms": [
+          0.078084,
+          0.128834
+        ],
+        "stages_ms": 0.063542,
+        "stages_spread_ms": [
+          0.06133400000000001,
+          0.109416
+        ],
+        "unnamed_ms": 0.016375
+      },
+      "sort-topk": {
+        "answer": 1049999.5999999999,
+        "query_ms": 44.528541,
+        "query_spread_ms": [
+          44.045709,
+          45.225165999999994
+        ],
+        "stages_ms": 40.052625,
+        "stages_spread_ms": [
+          39.632583,
+          41.084125
+        ],
+        "unnamed_ms": 4.475915999999998
+      }
+    },
+    "resident": {
+      "filter-numeric": {
+        "answer": 3817685.0,
+        "query_ms": 0.6367499999999999,
+        "query_spread_ms": [
+          0.63075,
+          2.557833
+        ],
+        "stages_ms": 0.635749,
+        "stages_spread_ms": [
+          0.628042,
+          2.554127
+        ],
+        "unnamed_ms": 0.0010009999999999186
+      },
+      "filter-range": {
+        "answer": 55559443.879999444,
+        "query_ms": 3.2254169999999998,
+        "query_spread_ms": [
+          3.065958,
+          4.5610420000000005
+        ],
+        "stages_ms": 3.220124,
+        "stages_spread_ms": [
+          3.0606240000000002,
+          4.555957
+        ],
+        "unnamed_ms": 0.005292999999999548
+      },
+      "filter-string": {
+        "answer": 4265647.0,
+        "query_ms": 2.572708,
+        "query_spread_ms": [
+          2.457834,
+          3.416708
+        ],
+        "stages_ms": 2.570042,
+        "stages_spread_ms": [
+          2.45675,
+          3.411333
+        ],
+        "unnamed_ms": 0.002666000000000057
+      },
+      "join-orders": {
+        "answer": 11472226962.8901,
+        "query_ms": 26.642625,
+        "query_spread_ms": [
+          25.587334,
+          27.682167
+        ],
+        "stages_ms": 21.740168,
+        "stages_spread_ms": [
+          21.312417,
+          22.739084
+        ],
+        "unnamed_ms": 4.902456999999998
+      },
+      "q6": {
+        "answer": 315203.0,
+        "query_ms": 7.548375,
+        "query_spread_ms": [
+          6.966959,
+          7.9360409999999995
+        ],
+        "stages_ms": 7.543458,
+        "stages_spread_ms": [
+          6.963459,
+          7.930667000000001
+        ],
+        "unnamed_ms": 0.004916999999999838
+      },
+      "q6-revenue": {
+        "answer": 5526985127.48064,
+        "query_ms": 9.186333,
+        "query_spread_ms": [
+          9.010917000000001,
+          10.566416
+        ],
+        "stages_ms": 9.179792,
+        "stages_spread_ms": [
+          9.003832,
+          10.559667
+        ],
+        "unnamed_ms": 0.006540999999998576
+      },
+      "scan": {
+        "answer": 6000000.0,
+        "query_ms": 0.020041999999999997,
+        "query_spread_ms": [
+          0.018000000000000002,
+          0.02575
+        ],
+        "stages_ms": 0.000126,
+        "stages_spread_ms": [
+          0.000083,
+          0.002167
+        ],
+        "unnamed_ms": 0.019915999999999996
+      },
+      "sort-topk": {
+        "answer": 1049999.5999999999,
+        "query_ms": 9.33225,
+        "query_spread_ms": [
+          8.9175,
+          9.863917
+        ],
+        "stages_ms": 5.0084159999999995,
+        "stages_spread_ms": [
+          3.997375,
+          5.0211250000000005
+        ],
+        "unnamed_ms": 4.323834000000001
+      }
+    }
+  },
+  "rows": 6000000,
+  "shapes_ms": {
+    "bitmap_rows": 4.1354169999999995,
+    "bitmap_walk": 2.8323329999999998,
+    "build_open": 0.008667,
+    "memory_estimate": 0.000042,
+    "plan_resolve": 0.00020800000000000001,
+    "selection_rows": 3.9820840000000004,
+    "selection_walk": 2.857542
+  },
+  "spreads_ms": {
+    "bitmap_rows": [
+      3.878709,
+      4.214834
+    ],
+    "bitmap_walk": [
+      2.8093749999999997,
+      2.876958
+    ],
+    "build_open": [
+      0.007375,
+      0.06325
+    ],
+    "memory_estimate": [
+      0.0,
+      0.000125
+    ],
+    "plan_resolve": [
+      0.000166,
+      0.010375
+    ],
+    "selection_rows": [
+      3.9213329999999997,
+      4.894166
+    ],
+    "selection_walk": [
+      2.789584,
+      2.905666
+    ]
+  }
+}

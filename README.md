@@ -144,19 +144,19 @@ $ just compare
 cold · read the Parquet file and answer in one go
 query          engine   engine-lazy   duckdb   polars   datafusion
 ------------------------------------------------------------
-scan           554.3           0.1      1.0      1.0      1.2
-filter-numeric 544.2           4.7     22.0     42.7     15.2
-filter-string  546.3           9.6     21.0    161.3     24.2
-filter-range   556.6          16.3     31.0     14.9     20.0
-q6             547.9          15.3     33.0    192.1     36.6
-q6-revenue     571.6          57.3     68.0    193.9    111.9
-join-orders    563.2          91.8     90.0    216.1    163.5
-sort-topk      544.3          45.6     38.0   1301.9     39.4
+scan           555.7           0.1      2.0      1.0      1.2
+filter-numeric 545.7           4.8     21.0     43.7     14.7
+filter-string  536.2           9.2     21.0    157.3     23.3
+filter-range   532.4          16.5     30.0     15.0     19.4
+q6             534.0          14.8     31.0    190.1     35.4
+q6-revenue     546.0          56.1     67.0    193.8    111.2
+join-orders    549.6          89.8     90.0    216.5    159.4
+sort-topk      539.0          40.1     37.0   1316.6     37.7
 ```
 
-**The lazy path is 35.8× faster than the eager one on `q6`**, and it beats Polars on every cold
-query except `filter-range`. It beats DuckDB on `filter-numeric` — 4.7 ms against 22.0 ms, 4.7× — and
-on `filter-string`, and on `scan`, and on `q6-revenue`. On `q6` it is **2.2× ahead**, where it used
+**The lazy path is 36.1× faster than the eager one on `q6`**, and it beats Polars on every cold
+query except `filter-range`. It beats DuckDB on `filter-numeric` — 4.8 ms against 21.0 ms, 4.4× — and
+on `filter-string`, and on `scan`, and on `q6-revenue`. On `q6` it is **2.1× ahead**, where it used
 to be 2.6× behind. The gap was never pruning: DuckDB prunes nothing on this file either (its own
 plan says `Row Groups Scanned: 6 / 6`, and the file has no page index). It was the engine's own
 mask, on its way to the reader as a **list of 2.78 million row ranges**, applied one range at a
@@ -164,13 +164,13 @@ time. Measured and attributed in [`PERF.md`](PERF.md), not glossed.
 
 **And the two queries that were the engine's first work on two tables are now much closer.** The
 engine's cold `join-orders` — `lineitem` joined to `orders` on the order key, with a date range on
-the build side, aggregated over the whole join — is **91.8 ms** (a 91.1–101.2 ms range over the
-three campaigns), against DuckDB's **90.0 ms** and Polars' **216.1 ms**: the engine is **1.02× behind
-DuckDB**, **1.8× ahead of the `DataFusion` peer**, and **2.4× ahead of Polars**. The engine's cold
-`sort-topk` — the ten largest `l_extendedprice` values — is **45.6 ms** (45.4–47.2 ms) against
-DuckDB's **38.0 ms** (38.0–38.0 ms), the peer's **39.4 ms** and Polars' **1301.9 ms**: the engine is
-**1.2× behind DuckDB** and **28× ahead of Polars**. One thread, the same two files, the same SQL
-handed to every system, and the answers cross-checked.
+the build side, aggregated over the whole join — is **89.8 ms** (a 89.7–100.3 ms range over the
+three campaigns), against DuckDB's **90.0 ms** and Polars' **216.5 ms**: the engine is **level with
+DuckDB** — 0.2 ms apart, inside their spreads — **1.8× ahead of the `DataFusion` peer**, and **2.4×
+ahead of Polars**. The engine's cold `sort-topk` — the ten largest `l_extendedprice` values — is
+**40.1 ms** (39.2–42.2 ms) against DuckDB's **37.0 ms** (37.0–39.0 ms), the peer's **37.7 ms** and
+Polars' **1316.6 ms**: the engine is **1.08× behind DuckDB** and **33× ahead of Polars**. One
+thread, the same two files, the same SQL handed to every system, and the answers cross-checked.
 
 **The join's number moved because the code moved, and the code's share is measured, not asserted.**
 The join's probe was taken apart by an instrument committed in the tree —
@@ -178,50 +178,63 @@ The join's probe was taken apart by an instrument committed in the tree —
 against the engine's own output, row for row, before it is timed. It found that the probe was
 copying **96 MB** of rows to look up **216,345** keys in them, and that **96.4%** of what it copied
 was thrown away: the probe now runs **inside the scan**, over the reader's batches, and only the
-rows it matches are ever copied. To separate that from the machine, **the old code was re-measured on
-the same host, back to back, in its own three campaigns**: the join's cold figure is **100.4 ms** in
-the published set, **104.9 ms** for the old code on this host, and **91.8 ms** for the new code —
-while the seven queries the increment did not touch moved by **0% to −10.4%** in the cold lazy path.
-The engine's own plan output reads it a stage at a time: the join's scan stage went from **73.1 ms**
-to **68.6 ms** and the join stage from **23.5 ms** to **22.8 ms** on the same host, while the sort's
-scan stage — Arrow's decode, untouched by this change — moved from **38.2 ms** to **35.7 ms**. The
-decomposition, the control and the negative result are in
-[`PERF.md` §2h](PERF.md#2h-the-hot-paths-taken-apart) and
-[`PERF.md` §3l](PERF.md#3l-the-scan-taken-apart-and-the-scan-that-feeds-the-join).
+rows it matches are ever copied.
+
+**And the newest increment took the plan output's own account apart.** The engine's stage table
+left **4.7 ms** of the join's query and **4.3 ms** of the sort's **outside every stage**, and the
+instrument that found it — `crates/columnar-engine/examples/query_cost_probe.rs` — runs the engine's
+own plans through the engine's own entry point on **every** published query and **both** paths,
+checking each answer against the published one before it times anything. The answer was the filter's selection: the join and the sort asked it for
+its **row numbers** before either stage's clock started, so a plan with no filter built **six
+million** row numbers — **24 MB** — for rows that are read once. A selection that holds every row is
+**the range** now, and the expansion is **gone rather than renamed**.
+
+**To separate both from the machine, the old code was re-measured on the same host, back to back,
+in its own three campaigns.** The join's cold figure is **91.8 ms** in the set this one replaces,
+**94.9 ms** for the old code on this host, and **89.8 ms** for the new code; the sort's is
+**45.6 ms**, **46.0 ms** and **40.1 ms** — while the six queries the increment did not touch moved by
+**0% to −4.0%** in the cold lazy path. The engine's own plan output reads it a stage at a time: the
+sort's stage went from **5.7 ms** to **4.9 ms** on the same host, and the account now closes to
+**0.02 ms** on every query and on both paths, where the old code left **4.7 ms** and **4.3 ms**
+unnamed. The decomposition, the control and the
+negative result are in [`PERF.md` §2h](PERF.md#2h-the-hot-paths-taken-apart),
+[`PERF.md` §3l](PERF.md#3l-the-scan-taken-apart-and-the-scan-that-feeds-the-join) and
+[`PERF.md` §3m](PERF.md#3m-the-time-the-plan-output-does-not-name).
 
 **The join's resident figure is published now, and the asymmetry is named.** In resident mode the
 incumbents hold both tables in memory before the clock starts and the engine's resident path reads
 the build side **inside** it — so the engine does more work inside its own clock than they do
 inside theirs. Spec 020 withheld the figure for that reason; it is published now because the
-asymmetry works **against** the engine and the engine wins anyway: **29.9 ms** against DuckDB's
-**34.0 ms**, the peer's **83.9 ms** and Polars' **79.0 ms**. The reason, and the raw number, are in
+asymmetry works **against** the engine and the engine wins anyway: **23.8 ms** against DuckDB's
+**33.0 ms**, the peer's **80.6 ms** and Polars' **77.9 ms**. The reason, and the raw number, are in
 [`PERF.md` §2a](PERF.md#2a-resident--the-data-is-already-in-memory).
 
 **These figures moved when the campaign was re-run, and the reason is the machine.** The engine's
-cold `q6` was **15.3 ms** and is **15.3 ms**; the real Q6 was **59.8 ms** and is **57.3 ms**;
-`filter-numeric` was **4.9 ms** and is **4.7 ms**; `filter-string` was **9.5 ms** and is **9.6 ms**;
-`filter-range` was **16.4 ms** and is **16.3 ms**; the engine's resident `q6` was **9.6 ms** and is
-**9.9 ms**; the engine's resident `filter-range` was **6.2 ms** and is **6.7 ms**; DuckDB's cold
-`q6` was **32.0 ms** and is **33.0 ms**; DuckDB's cold `q6-revenue` was **67.0 ms** and is
-**68.0 ms**; DuckDB's resident `filter-range` was **19.0 ms** and is **18.0 ms**; Polars' resident
-`filter-range` was **10.3 ms** and is **10.8 ms**; and the `DataFusion` peer's cold `q6-revenue` was
-**115.1 ms** and is **111.9 ms**. The seven queries that were already here did not change their code
-path in this increment: what changed is that the join's probe moved inside the scan, and the
-campaign was re-run on the same shared machine. The eager load was **541.6 ms** and is **554.3 ms**,
-and DuckDB's load moved the other way, **1443.0 ms → 1367.0 ms** — the drift is in both directions
-and in both systems. Every system was measured in the same three campaigns, on the same file, at the
-same thread count, so the comparisons stay like-for-like even where the absolute numbers moved.
+cold `q6` was **15.3 ms** and is **14.8 ms**; the real Q6 was **57.3 ms** and is **56.1 ms**;
+`filter-numeric` was **4.7 ms** and is **4.8 ms**; `filter-string` was **9.6 ms** and is **9.2 ms**;
+`filter-range` was **16.3 ms** and is **16.5 ms**; the engine's resident `q6` was **9.9 ms** and is
+**9.4 ms**; the engine's resident `filter-range` was **6.7 ms** and is **6.8 ms**; DuckDB's cold
+`q6` was **33.0 ms** and is **31.0 ms**; DuckDB's cold `q6-revenue` was **68.0 ms** and is
+**67.0 ms**; DuckDB's resident `filter-range` was **18.0 ms** and is **19.0 ms**; Polars' resident
+`filter-range` was **10.8 ms** and is **11.0 ms**; and the `DataFusion` peer's cold `q6-revenue` was
+**111.9 ms** and is **111.2 ms**. The six queries that were already here did not change their code
+path in this increment: what changed is that the filter's selection is no longer expanded into a
+vector of row numbers, and the campaign was re-run on the same shared machine. The eager load was
+**554.3 ms** and is **555.7 ms**, and DuckDB's load moved the other way, **1367.0 ms → 1355.0 ms** —
+the drift is in both directions and in both systems. Every system was measured in the same three
+campaigns, on the same file, at the same thread count, so the comparisons stay like-for-like even
+where the absolute numbers moved.
 
 **`q6-revenue` is TPC-H Q6 itself** — `sum(l_extendedprice * (1 - l_discount))` — and the engine
-runs it: 57.3 ms cold against DuckDB's 68.0 ms, and 14.9 ms resident against DuckDB's 45.0 ms.
-The arithmetic is **0.1 ms of the 57.3 ms**, because it is evaluated over the 110,915 rows that
+runs it: 56.1 ms cold against DuckDB's 67.0 ms, and 15.4 ms resident against DuckDB's 47.0 ms.
+The arithmetic is **0.1 ms of the 56.1 ms**, because it is evaluated over the 110,915 rows that
 survived the filter and not over the 6,000,000 rows of the file. The query's cost is reading
 `l_extendedprice`, not computing with it. See
 [ADR-0012](docs/adr/0012-arithmetic-expression.md).
 
 **And there is now a Rust peer to compare against.** `DataFusion` 49.0.2 reads the same Parquet
 through the same Arrow stack, answers the same SQL, and is pinned to the same thread count:
-**111.9 ms** against the engine's **57.3 ms** on the real Q6, cold. The engine is **1.95×** faster
+**111.2 ms** against the engine's **56.1 ms** on the real Q6, cold. The engine is **1.98×** faster
 than a Rust engine on its own stack, and the peer is **an instrument, not a dependency** — a
 separate cargo project under `tools/`, with its own committed lock file, so the engine's published
 dependency graph does not move. See
@@ -231,8 +244,8 @@ dependency graph does not move. See
 two-predicate range — was the one loss in the table: 14.6 ms resident against Polars' 11.5 ms in
 the set that found it, because the projection materialised a column that the aggregate only
 streamed over. The aggregate now folds the source **where it lies**, over the filter's selection,
-and the projection materialises nothing at all: **6.7 ms resident against Polars' 10.8 ms and
-DuckDB's 18.0 ms**, and the projection stage is 0.0 ms. See
+and the projection materialises nothing at all: **6.8 ms resident against Polars' 11.0 ms and
+DuckDB's 19.0 ms**, and the projection stage is 0.0 ms. See
 [ADR-0016](docs/adr/0016-the-aggregate-reads-in-place.md).
 
 **And the scan itself got faster, because it was copying rows nobody asked for.** The lazy scan
@@ -242,8 +255,8 @@ writes the survivors straight out of the reader's array into the engine's own co
 the values that are kept. The lazy path's batch size was swept for the lazy shape as well, and it
 was **inherited** rather than measured; spec 016 then found that the right answer was not a number
 at all but the file's own row-group divisor, and the batch size is derived from the file now. The
-whole lazy path moved: `q6` **15.3 ms**, `q6-revenue` **57.3 ms**, `filter-string` **9.6 ms**,
-`filter-range` **16.3 ms** — the figures the current set carries. See
+whole lazy path moved: `q6` **14.8 ms**, `q6-revenue` **56.1 ms**, `filter-string` **9.2 ms**,
+`filter-range` **16.5 ms** — the figures the current set carries. See
 [ADR-0017](docs/adr/0017-the-scan-filters-only-what-it-keeps.md) and
 [ADR-0023](docs/adr/0023-the-per-row-group-cost.md).
 
@@ -595,11 +608,11 @@ The principles that shaped the code most:
 
 | | |
 |---|---|
-| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited · `specs/012-the-scan-does-not-expand-the-predicates-column/` — the scan's own decode and the expansion of its RLE indices, both measured and refused · `specs/013-the-kernel-in-a-browser/` — R1..R6, the third SIMD path, the page that checks it, and the number it reproduces · `specs/014-the-materialised-column-and-a-rust-peer/` — R1..R4, the materialised column taken apart, the curve over the size of the data, and a Rust peer beside the incumbents · `specs/015-the-row-group-count-is-a-knob/` — R1..R4, the row-group count as a knob, the parallelism cap measured on three files, and the per-row-group cost the incumbents do not pay · `specs/016-the-per-row-group-cost/` — R1..R4, that cost's mechanism measured, the reader's batch size derived from the file, and the defect removed · `specs/017-the-repository-goes-public/` — R1..R5, the licence, the contribution guide, three files out of the history, and the x86-64 measurement the public repository made possible · `specs/018-the-page-on-a-static-host/` — the page, published on a static host · `specs/019-the-button-always-answers/` — the button that never disables itself · `specs/020-the-engine-joins-and-sorts/` — R1..R6, the hash join and the sort, the two queries they published, and the defect the increment found · `specs/021-the-hot-paths-taken-apart/` — R1..R6, the join's probe and the sort taken apart by a committed instrument, the hot paths rewritten, the estimates made honest and tested, and the negative result published · `specs/022-the-dictionary-counted/` — R1..R5, the dictionary counted, the alternative closed, and the residual attributed to the crate · `specs/023-the-scan-that-feeds-the-join/` — R1..R5, the join's scan taken apart, the probe moved inside the scan, and the copy of the rows the join discards removed |
+| Specs | `specs/001-columnar-core/` — R1..R5, with the out-of-scope table · `specs/002-lazy-columnar-scan/` — R1..R8, the lazy scan and the pushdown · `specs/003-kernel-pushdown/` — R1..R8, the pushdown running the engine's kernel · `specs/004-performance-gates/` — R1..R8, the regression and budget gates · `specs/005-parallel-decode/` — R1..R10, the parallel read and the thread-count sweep · `specs/006-arithmetic-aggregate/` — R1..R10, the arithmetic aggregate and the real Q6 · `specs/007-parallel-operators/` — R1..R6, the parallel filter and projection · `specs/008-parallel-eager-decode/` — R1..R6, the parallel eager decode and the batch size it inherited · `specs/009-the-engine-keeps-the-mask/` — R1..R8, the lazy scan's decomposition and the mask the engine keeps · `specs/010-fuse-the-projection-into-the-aggregate/` — R1..R9, the global aggregate reading the source in place · `specs/011-the-scan-filters-only-what-it-keeps/` — R1..R6, the scan compacting the survivors once, and the batch size it inherited · `specs/012-the-scan-does-not-expand-the-predicates-column/` — the scan's own decode and the expansion of its RLE indices, both measured and refused · `specs/013-the-kernel-in-a-browser/` — R1..R6, the third SIMD path, the page that checks it, and the number it reproduces · `specs/014-the-materialised-column-and-a-rust-peer/` — R1..R4, the materialised column taken apart, the curve over the size of the data, and a Rust peer beside the incumbents · `specs/015-the-row-group-count-is-a-knob/` — R1..R4, the row-group count as a knob, the parallelism cap measured on three files, and the per-row-group cost the incumbents do not pay · `specs/016-the-per-row-group-cost/` — R1..R4, that cost's mechanism measured, the reader's batch size derived from the file, and the defect removed · `specs/017-the-repository-goes-public/` — R1..R5, the licence, the contribution guide, three files out of the history, and the x86-64 measurement the public repository made possible · `specs/018-the-page-on-a-static-host/` — the page, published on a static host · `specs/019-the-button-always-answers/` — the button that never disables itself · `specs/020-the-engine-joins-and-sorts/` — R1..R6, the hash join and the sort, the two queries they published, and the defect the increment found · `specs/021-the-hot-paths-taken-apart/` — R1..R6, the join's probe and the sort taken apart by a committed instrument, the hot paths rewritten, the estimates made honest and tested, and the negative result published · `specs/022-the-dictionary-counted/` — R1..R5, the dictionary counted, the alternative closed, and the residual attributed to the crate · `specs/023-the-scan-that-feeds-the-join/` — R1..R5, the join's scan taken apart, the probe moved inside the scan, and the copy of the rows the join discards removed · `specs/024-the-time-the-plan-output-does-not-name/` — R1..R5, the plan output's own account of the query, the selection's expansion measured and refused, and the rows handed to the join and the sort as the range they are |
 | Increment | storage → filter → project → evaluate → aggregate (the TPC-H Q6 path), with two ways to read a file: eager and lazy — and now a **hash join** and a **sort**, with the pipeline `scan → filter → project → [join] → [sort] → aggregate`, and a join whose probe runs **inside** the scan |
 | Licence | Apache-2.0. The C++ baseline in `crates/columnar-kernels/src/` is this repository's own work and carries the same licence, and there is no vendored third-party source in the tree. [`CONTRIBUTING.md`](CONTRIBUTING.md) is the method, written for a stranger. |
-| Tests | 342, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite, the browser's column suite, the RLE decoder's suite, the memory-estimate property tests and the x86-64 cross-check |
+| Tests | 351, all green, including the differential kernel suite, the lazy-scan differential suite, the expression suite, the parallel-operator suite, the parallel-eager suite, the fused-aggregate suite, the performance-gate suite, the browser's column suite, the RLE decoder's suite, the memory-estimate property tests, the attribution suite and the x86-64 cross-check |
 | Lint | `clippy --workspace --all-targets` with `all` + `pedantic` as errors; zero warnings |
 | CI | fmt, clippy (ubuntu + macos), test, the differential job, an x86-64 cross-compile check, `cargo deny`, a no-committed-dataset check, the published-figures check, and the two benchmark runners. **The repository is public**, so the runners are free — but the account's own Actions spending limit still applies to every job, and when it is exhausted *every* job fails at once with a billing message rather than a test failure. `just check` covers all of it locally and does not. |
 | Gate | `just perf-gate` — a Mann-Whitney test against a stored baseline, with a measured practical threshold. It can also say *inconclusive*, which is not a pass. |
-| Next | **The next question is the sort's gap, which is now 7.6 ms.** The engine's cold `sort-topk` is **45.6 ms** against DuckDB's **38.0 ms** and the peer's **39.4 ms**, and the plan output says where the time is: the scan is **35.7 ms** and the sort stage **6.0 ms**. The scan is Arrow's decode of the one column the query reads — the decode that was measured **three** times and **every time it was refused** — so the sort is where what is left is. In resident mode there is no scan at all: the sort stage is **5.8 ms** of the engine's **11.1 ms** against DuckDB's **3.0 ms** for the whole query, while the sort *operator* alone is **3.7 ms** against a **3.6 ms** plain-read floor. The operator is at its floor, and the **stage is 2.1 ms more than the operator** — **the sort has never been taken apart**, and that difference has never been separated from the machine. It is written down as the next question rather than guessed at. **The two questions that were here before are answered.** The **dictionary** is counted: the crate hands back a **new** dictionary array for every batch — **0 of 23** consecutive batches share one, checked by pointer identity — so "compare the distinct values once a row group" is impossible with this reader, and the kept shape is **18.3× slower** than the expansion it replaces; the **0.14 ms a row group** left on the three-predicate shape is therefore the **crate's** read, at **0.07 ms a row group**, and the engine's own comparison is **flat** at −0.01 ms a row group. And the **join's gap to DuckDB** was 7 ms and is now **1.8 ms**: the scan feeds the join, the probe runs inside the scan over the reader's batches before anything is copied, and **96.4%** of the copy the join used to make was thrown away. What is left of the cold path's one other gap is `filter-range`, and it is now **1.4 ms** — the lazy path is 16.3 ms against Polars' 14.9 ms, and the two spreads do not overlap (16.1–17.3 ms against 14.8–15.5 ms). The scan that holds it is **Parquet decode**, and the decode was measured **three** times and **every time it was refused**: owning the decode buys nothing (the two shapes came out equal to a tenth of a millisecond), and neither does **not expanding the predicate's column**. The file's columns *are* dictionary-encoded, and the expansion of six million RLE indices into six million values was measured at **1.79 ms** — 46% of the decode of the predicate's column, and **4.1% of the query**. The mask the hypothesis would build instead costs **1.73 ms**, which is **0.42 ms** more than the vectorised predicate costs today once the two are netted off, and the parquet crate does not expose the indices at all, so capturing the expansion means owning the Parquet reading: **the net is 1.37 ms.** And the **materialised** column — the query's real cost, **61%** of it — was taken apart too: it is **bytes**, Arrow decodes it in 34.26 ms and the parquet crate in 36.76 ms, so there is nothing there to win either. After that: the morsel driver (still worth ~0 ms in the cold path, because the pushdown leaves the operators nothing to do), and the **x86-64 absolute figures**, which need a **pinned** x86-64 runner — the `avx2-self-hosted` job is already wired for one, and it is the only job whose absolute figures would be worth publishing |
+| Next | **The next question is the sort's gap, which is now 3.1 ms.** The engine's cold `sort-topk` is **40.1 ms** against DuckDB's **37.0 ms** and the peer's **37.7 ms**, and the plan output says where the time is: the scan is **35.2 ms** and the sort stage **4.9 ms**, with **0.01 ms** outside the stages — the account is complete for the first time, so what is left is what the plan output names. The scan is Arrow's decode of the one column the query reads — the decode that was measured **three** times and **every time it was refused** — and the sort's own operator is at its floor: **3.7 ms** against a **3.6 ms** plain-read floor, measured by the probe in spec 021. In resident mode there is no scan at all: the sort stage is **5.3 ms** of the engine's **5.7 ms** against DuckDB's **3.0 ms** for the whole query, and the **stage is 1.6 ms more than the operator** — **the sort has never been taken apart**, and that difference has never been separated from the machine. It is written down as the next question rather than guessed at. **The three questions that were here before are answered.** The **plan output** now accounts for the whole query: the instrument committed in the tree (`query_cost_probe.rs`) found that the join and the sort asked the filter's selection for **six million row numbers** — **24 MB** — before either stage's clock started, so the stage table left **4.7 ms** of the join's query and **4.3 ms** of the sort's **outside every stage**. A selection that holds every row is **the range** now, the expansion is **gone rather than renamed**, and the account closes to **0.02 ms** on every query and on both paths. The **dictionary** is counted: the crate hands back a **new** dictionary array for every batch — **0 of 23** consecutive batches share one, checked by pointer identity — so "compare the distinct values once a row group" is impossible with this reader, and the kept shape is **18.3× slower** than the expansion it replaces; the **0.14 ms a row group** left on the three-predicate shape is therefore the **crate's** read, at **0.07 ms a row group**, and the engine's own comparison is **flat** at −0.01 ms a row group. And the **join's gap to DuckDB** was 7 ms and is now **level** — **89.8 ms** against **90.0 ms**, inside their spreads — because the scan feeds the join, the probe runs inside the scan over the reader's batches before anything is copied, and **96.4%** of the copy the join used to make was thrown away. What is left of the cold path's one other gap is `filter-range`, and it is now **1.5 ms** — the lazy path is 16.5 ms against Polars' 15.0 ms, and the two spreads do not overlap (16.0–16.6 ms against 14.3–15.8 ms). The scan that holds it is **Parquet decode**, and the decode was measured **three** times and **every time it was refused**: owning the decode buys nothing (the two shapes came out equal to a tenth of a millisecond), and neither does **not expanding the predicate's column**. The file's columns *are* dictionary-encoded, and the expansion of six million RLE indices into six million values was measured at **1.79 ms** — 46% of the decode of the predicate's column, and **4.1% of the query**. The mask the hypothesis would build instead costs **1.73 ms**, which is **0.42 ms** more than the vectorised predicate costs today once the two are netted off, and the parquet crate does not expose the indices at all, so capturing the expansion means owning the Parquet reading: **the net is 1.37 ms.** And the **materialised** column — the query's real cost, **61%** of it — was taken apart too: it is **bytes**, Arrow decodes it in 34.26 ms and the parquet crate in 36.76 ms, so there is nothing there to win either. After that: the morsel driver (still worth ~0 ms in the cold path, because the pushdown leaves the operators nothing to do), and the **x86-64 absolute figures**, which need a **pinned** x86-64 runner — the `avx2-self-hosted` job is already wired for one, and it is the only job whose absolute figures would be worth publishing |

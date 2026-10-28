@@ -1,12 +1,15 @@
 //! Selection vectors.
 //!
 //! A selection vector is the set of rows that survived the previous operator.
-//! It has two representations, and the engine picks between them at runtime:
+//! It has three representations, and the engine picks between them at runtime:
 //!
 //! - **Index** -- the list of surviving row numbers, `u32` each. Compact when
 //!   few rows survive.
 //! - **Bitmap** -- one bit per row of the source batch. Compact when many
 //!   rows survive, and O(1) to test membership.
+//! - **All** -- every row of the batch. A batch of a million rows is 128 KiB
+//!   as a bitmap and nothing at all as a range, and the range is what the
+//!   rows actually are.
 //!
 //! The switch happens at [`BITMAP_DISPATCH_DENSITY`]. This is not an
 //! arbitrary constant: the two representations cost 4 bytes per surviving
@@ -21,6 +24,14 @@
 //!
 //! The dispatch is measured, not asserted: `docs/architecture.md` records the
 //! crossover this repository observed.
+//!
+//! ## The rows are read, not copied
+//!
+//! A selection that holds every row of a batch is **the range**, and reading
+//! its rows costs nothing at all: there is no bitmap to walk and no vector of
+//! row numbers to build. A selection that holds some of them is read through
+//! [`SelectionVector::iter`], which walks the index list or the bitmap
+//! directly -- a row at a time, and never as a vector of them.
 
 // Row identifiers in a selection vector are `u32`: a batch is 2048 rows, so
 // a `u32` is not a limit but a format decision that keeps the index
@@ -43,12 +54,16 @@ pub enum SelectionKind {
     Index,
     /// One bit per source row.
     Bitmap,
+    /// Every row of the source batch.
+    All,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Repr {
     Index(Vec<u32>),
     Bitmap(Vec<u64>),
+    /// Every row of a batch of `usize` rows.
+    All(usize),
 }
 
 /// The set of rows that survived a filter.
@@ -71,13 +86,14 @@ impl SelectionVector {
     }
 
     /// A selection containing every row of a `total`-row batch.
+    ///
+    /// The rows are the range `0..total`, and the selection says so: there
+    /// is no bitmap to walk and no vector of row numbers to build. A
+    /// selection that holds every row is the cheapest one there is, and it
+    /// is the one a plan with no predicate is handed.
     #[must_use]
     pub fn all(total: usize) -> Self {
-        Self {
-            repr: Repr::Bitmap(vec![u64::MAX; NullBitmapWords::for_len(total)]),
-            count: total,
-            total,
-        }
+        Self { repr: Repr::All(total), count: total, total }
     }
 
     /// Builds a selection from a filter's output bitmap, choosing the
@@ -163,6 +179,7 @@ impl SelectionVector {
         match self.repr {
             Repr::Index(_) => SelectionKind::Index,
             Repr::Bitmap(_) => SelectionKind::Bitmap,
+            Repr::All(_) => SelectionKind::All,
         }
     }
 
@@ -170,13 +187,55 @@ impl SelectionVector {
     ///
     /// For a bitmap-backed selection this walks the words; for an index-backed
     /// one it clones the row list. Callers on the hot path should prefer
-    /// [`SelectionVector::for_each`] or [`SelectionVector::contains`], which
-    /// do not allocate.
+    /// [`SelectionVector::iter`] or [`SelectionVector::for_each`], which do
+    /// not allocate.
     #[must_use]
     pub fn rows(&self) -> Vec<u32> {
         match &self.repr {
             Repr::Index(rows) => rows.clone(),
             Repr::Bitmap(words) => Self::rows_from_words(words, self.total),
+            Repr::All(total) => (0..u32::try_from(*total).unwrap_or(u32::MAX)).collect(),
+        }
+    }
+
+    /// The rows, as a range, when the selection holds every row.
+    ///
+    /// This is the selection that holds them all, and its rows are the
+    /// range -- there is nothing to walk and nothing to build. A consumer
+    /// that reads the rows in a hot loop takes the range rather than an
+    /// iterator, so that the loop's own state stays where it can be kept.
+    #[must_use]
+    pub fn all_rows(&self) -> Option<std::ops::Range<u32>> {
+        match self.repr {
+            Repr::All(total) => Some(0..u32::try_from(total).unwrap_or(u32::MAX)),
+            _ => None,
+        }
+    }
+
+    /// The surviving rows, one at a time.
+    ///
+    /// This is how a selection's rows are read when they are read once: the
+    /// index list is walked directly, the bitmap is walked a set bit at a
+    /// time, and the selection that holds every row is the range. Nothing is
+    /// allocated, and no vector of row numbers is built.
+    ///
+    /// The rows come in ascending order, as everywhere else.
+    #[must_use]
+    pub fn iter(&self) -> SelectionIter<'_> {
+        match &self.repr {
+            Repr::Index(rows) => SelectionIter { inner: SelectionIterInner::Index(rows.iter()) },
+            Repr::Bitmap(words) => SelectionIter {
+                inner: SelectionIterInner::Bitmap(BitmapWalk {
+                    words,
+                    next_word: 0,
+                    base: 0,
+                    bits: 0,
+                    total: self.total,
+                }),
+            },
+            Repr::All(total) => SelectionIter {
+                inner: SelectionIterInner::All(0..u32::try_from(*total).unwrap_or(u32::MAX)),
+            },
         }
     }
 
@@ -189,6 +248,7 @@ impl SelectionVector {
                 let idx = row as usize;
                 idx < self.total && words[idx / 64] & (1u64 << (idx % 64)) != 0
             }
+            Repr::All(total) => usize::try_from(row).is_ok_and(|row| row < *total),
         }
     }
 
@@ -206,6 +266,7 @@ impl SelectionVector {
                     }
                 }
             }
+            Repr::All(total) => (0..u32::try_from(*total).unwrap_or(u32::MAX)).for_each(f),
         }
     }
 
@@ -262,6 +323,13 @@ impl SelectionVector {
                     }
                 }
             }
+            Repr::All(total) => {
+                let end = end.min(*total);
+                let start = start.min(end);
+                for row in start..end {
+                    f(row as u32);
+                }
+            }
         }
     }
 
@@ -300,9 +368,134 @@ impl NullBitmapWords {
     }
 }
 
+/// An iterator over the rows of a [`SelectionVector`].
+///
+/// The rows are read as the selection holds them: an index list is walked
+/// directly, a bitmap is walked a set bit at a time, and the selection that
+/// holds every row is the range. Nothing is allocated along the way, and no
+/// vector of row numbers is built.
+#[derive(Debug, Clone)]
+pub struct SelectionIter<'a> {
+    /// Which representation the walk is over.
+    inner: SelectionIterInner<'a>,
+}
+
+/// The representation a [`SelectionIter`] walks.
+#[derive(Debug, Clone)]
+enum SelectionIterInner<'a> {
+    /// The index list, walked directly.
+    Index(std::slice::Iter<'a, u32>),
+    /// The bitmap, walked a set bit at a time.
+    Bitmap(BitmapWalk<'a>),
+    /// Every row of the batch.
+    All(std::ops::Range<u32>),
+}
+
+/// A walk over a bitmap's set bits.
+#[derive(Debug, Clone)]
+struct BitmapWalk<'a> {
+    /// The bitmap's words.
+    words: &'a [u64],
+    /// The word the walk reads next.
+    next_word: usize,
+    /// The row number of the word being walked.
+    base: usize,
+    /// The bits of that word that are still to come.
+    bits: u64,
+    /// The number of rows in the batch.
+    total: usize,
+}
+
+impl BitmapWalk<'_> {
+    /// The next set row, if there is one.
+    fn next_row(&mut self) -> Option<u32> {
+        loop {
+            if self.bits == 0 {
+                let index = self.next_word;
+                let word = self.words.get(index)?;
+                self.next_word = index + 1;
+                self.base = index * 64;
+                self.bits = *word;
+                continue;
+            }
+            let bit = self.bits.trailing_zeros() as usize;
+            self.bits &= self.bits - 1;
+            let row = self.base + bit;
+            if row >= self.total {
+                // The padding bits of the last word are not rows.
+                self.bits = 0;
+                return None;
+            }
+            return Some(row as u32);
+        }
+    }
+}
+
+impl Iterator for SelectionIter<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.inner {
+            SelectionIterInner::Index(rows) => rows.next().copied(),
+            SelectionIterInner::Bitmap(walk) => walk.next_row(),
+            SelectionIterInner::All(range) => range.next(),
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a SelectionVector {
+    type Item = u32;
+    type IntoIter = SelectionIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SelectionKind, SelectionVector};
+
+    #[test]
+    fn the_selection_that_holds_every_row_is_the_range() {
+        let selection = SelectionVector::all(100);
+        assert_eq!(selection.kind(), SelectionKind::All);
+        assert_eq!(selection.len(), 100);
+        assert!((selection.density() - 1.0).abs() < 1e-12, "density was {}", selection.density());
+        assert_eq!(selection.iter().collect::<Vec<u32>>(), (0..100).collect::<Vec<u32>>());
+        assert_eq!(selection.rows(), (0..100).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn the_iterator_agrees_with_the_rows() {
+        // The index representation: a list of the surviving rows.
+        let mut words = vec![0u64; 2];
+        for row in [3usize, 17, 22, 41, 96] {
+            words[row / 64] |= 1u64 << (row % 64);
+        }
+        let index = SelectionVector::from_filter(&words, 5, 100);
+        assert_eq!(index.kind(), SelectionKind::Index);
+        assert_eq!(index.iter().collect::<Vec<u32>>(), index.rows());
+
+        // The bitmap representation: one bit per row.
+        let mut words = vec![0u64; 2];
+        for row in 0..60usize {
+            words[row / 64] |= 1u64 << (row % 64);
+        }
+        let bitmap = SelectionVector::from_filter(&words, 60, 100);
+        assert_eq!(bitmap.kind(), SelectionKind::Bitmap);
+        assert_eq!(bitmap.iter().collect::<Vec<u32>>(), bitmap.rows());
+    }
+
+    #[test]
+    fn the_iterator_stops_at_the_end_of_the_batch() {
+        // The padding bits of the last word are set, and they are not rows.
+        let words = vec![u64::MAX; 2];
+        let selection = SelectionVector::from_filter(&words, 100, 100);
+        let rows = selection.iter().collect::<Vec<u32>>();
+        assert_eq!(rows.len(), 100);
+        assert_eq!(rows[99], 99);
+    }
 
     #[test]
     fn sparse_filter_selects_the_index_representation() {

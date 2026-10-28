@@ -27,8 +27,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = sorted((ROOT / "bench-results").glob("compare-run*.json"))
 BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("compare-before-run*.json"))
-SPEC020_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec020-run*.json"))
 SPEC021_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec021-run*.json"))
+SPEC023_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec023-run*.json"))
+QUERY_COST_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-run*.json"))
+QUERY_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-before-run*.json"))
 PROBE_REPORTS = sorted((ROOT / "bench-results").glob("operator-probe-*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
@@ -107,11 +109,10 @@ BEFORE_CHECKS = [
 
 # (document, label, system, mode, metric, query, places)
 #
-# The set **before** the one this file publishes now -- spec 020's set, taken
-# on a busier host. Its figures are published beside the new ones, so they
-# are derived from the reports they came from rather than typed into the
-# prose.
-SPEC020_CHECKS = [
+# The set **before** the one this file publishes now -- spec 021's set. Its
+# figures are published beside the new ones, so they are derived from the
+# reports they came from rather than typed into the prose.
+SPEC021_CHECKS = [
     ("PERF.md", "the last set's lazy join-orders cold", "engine", "lazy", "cold", "join-orders", 1),
     ("PERF.md", "the last set's lazy sort-topk cold", "engine", "lazy", "cold", "sort-topk", 1),
     ("PERF.md", "the last set's sort-topk resident", "engine", "eager", "resident", "sort-topk", 1),
@@ -127,12 +128,12 @@ SPEC020_CHECKS = [
 
 # (document, label, system, mode, metric, query, places)
 #
-# The set **this one replaces** -- spec 021's set, the one that was published
+# The set **this one replaces** -- spec 023's set, the one that was published
 # before it. Its figures are published beside the new ones, old against new,
 # so they are derived from the reports they came from rather than typed into
 # the prose. The reports are kept under their own name so that every figure
 # this file quotes stays derivable from a committed report.
-SPEC021_CHECKS = [
+SPEC023_CHECKS = [
     ("PERF.md", "the replaced set's lazy join-orders cold", "engine", "lazy", "cold", "join-orders", 1),
     ("PERF.md", "the replaced set's lazy sort-topk cold", "engine", "lazy", "cold", "sort-topk", 1),
     ("PERF.md", "the replaced set's lazy q6-revenue cold", "engine", "lazy", "cold", "q6-revenue", 1),
@@ -147,6 +148,48 @@ SPEC021_CHECKS = [
     ("PERF.md", "the replaced set's polars join-orders cold", "polars", "-", "cold", "join-orders", 1),
     ("PERF.md", "the replaced set's datafusion join-orders cold", "datafusion-peer", "-", "cold", "join-orders", 1),
     ("PERF.md", "the replaced set's datafusion sort-topk cold", "datafusion-peer", "-", "cold", "sort-topk", 1),
+]
+
+# (document, label, which, shape, places)
+#
+# Spec 024's instrument, first part: the shapes of the dataset's "every row"
+# selection -- the one the old code expanded into row numbers, and the bitmap
+# that is the control.
+QUERY_COST_SHAPE_CHECKS = [
+    ("PERF.md", "the old code's selection expanded", "before", "selection_rows", 2),
+    ("PERF.md", "the new code's selection expanded", "after", "selection_rows", 2),
+    ("PERF.md", "the old code's rows read as they are needed", "before", "selection_walk", 2),
+    ("PERF.md", "the new code's rows read as they are needed", "after", "selection_walk", 2),
+    ("PERF.md", "the old code's expansion, with the selection a bitmap", "before", "bitmap_rows", 2),
+    ("PERF.md", "the new code's expansion, with the selection a bitmap", "after", "bitmap_rows", 2),
+    ("PERF.md", "the old code's walk, with the selection a bitmap", "before", "bitmap_walk", 2),
+    ("PERF.md", "the new code's walk, with the selection a bitmap", "after", "bitmap_walk", 2),
+]
+
+# (document, label, which, path, query, key, places)
+#
+# Spec 024's instrument, second part: the whole query, the plan output's own
+# stage table, and the time between them -- the part of the query the plan
+# output does not name -- for **every** published query, on **both** paths.
+QUERY_COST_CHECKS = [
+    ("PERF.md", "the old code's whole query, the join", "before", "resident", "join-orders", "query_ms", 2),
+    ("PERF.md", "the new code's whole query, the join", "after", "resident", "join-orders", "query_ms", 2),
+    ("PERF.md", "the old code's stage table, the join", "before", "resident", "join-orders", "stages_ms", 2),
+    ("PERF.md", "the new code's stage table, the join", "after", "resident", "join-orders", "stages_ms", 2),
+    ("PERF.md", "the old code's unnamed time, the join", "before", "resident", "join-orders", "unnamed_ms", 3),
+    ("PERF.md", "the new code's unnamed time, the join", "after", "resident", "join-orders", "unnamed_ms", 3),
+    ("PERF.md", "the old code's whole query, the sort", "before", "resident", "sort-topk", "query_ms", 2),
+    ("PERF.md", "the new code's whole query, the sort", "after", "resident", "sort-topk", "query_ms", 2),
+    ("PERF.md", "the old code's stage table, the sort", "before", "resident", "sort-topk", "stages_ms", 2),
+    ("PERF.md", "the new code's stage table, the sort", "after", "resident", "sort-topk", "stages_ms", 2),
+    ("PERF.md", "the old code's unnamed time, the sort", "before", "resident", "sort-topk", "unnamed_ms", 3),
+    ("PERF.md", "the new code's unnamed time, the sort", "after", "resident", "sort-topk", "unnamed_ms", 3),
+    ("PERF.md", "the old code's unnamed time, the join, cold", "before", "cold", "join-orders", "unnamed_ms", 3),
+    ("PERF.md", "the new code's unnamed time, the join, cold", "after", "cold", "join-orders", "unnamed_ms", 3),
+    ("PERF.md", "the old code's unnamed time, the sort, cold", "before", "cold", "sort-topk", "unnamed_ms", 3),
+    ("PERF.md", "the new code's unnamed time, the sort, cold", "after", "cold", "sort-topk", "unnamed_ms", 3),
+    ("PERF.md", "the old code's unnamed time, the revenue query, cold", "before", "cold", "q6-revenue", "unnamed_ms", 3),
+    ("PERF.md", "the new code's unnamed time, the revenue query, cold", "after", "cold", "q6-revenue", "unnamed_ms", 3),
 ]
 
 # (document, label, report, measurement, places)
@@ -307,6 +350,39 @@ def collect_stages(runs: list[dict]) -> dict[tuple[str, str, str], list[float]]:
                     continue
                 key = (entry["query"], entry["mode"], match.group(1))
                 out.setdefault(key, []).append(float(match.group(4)))
+    return out
+
+
+def _query_cost_shapes(paths: list[Path]) -> dict[str, list[float]]:
+    """The query probe's shapes, from the committed reports.
+
+    The shapes are the dataset's "every row" selection, measured once: they
+    are a property of the dataset and not of a query.
+    """
+    out: dict[str, list[float]] = {}
+    for path in paths:
+        run = json.loads(path.read_text())
+        for key, value in run.get("shapes_ms", {}).items():
+            out.setdefault(key, []).append(value)
+    return out
+
+
+def _query_cost_queries(paths: list[Path]) -> dict[str, dict[str, dict[str, list[float]]]]:
+    """The query probe's per-query figures, from the committed reports.
+
+    The key is `(path, query, key)`: the path is the resident one or the
+    cold one, and each query keeps its own whole-query time, its own stage
+    table and its own time outside the stages.
+    """
+    out: dict[str, dict[str, dict[str, list[float]]]] = {}
+    for path in paths:
+        run = json.loads(path.read_text())
+        for which, entries in run.get("queries", {}).items():
+            for query, values in entries.items():
+                for key, value in values.items():
+                    if key.endswith("_spread_ms"):
+                        continue
+                    out.setdefault(which, {}).setdefault(query, {}).setdefault(key, []).append(value)
     return out
 
 
@@ -846,10 +922,10 @@ def main() -> int:
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
 
-    if SPEC020_REPORTS:
-        spec020_runs = [json.loads(path.read_text()) for path in SPEC020_REPORTS]
-        last = collect(spec020_runs)
-        for doc, label, system, mode, metric, query, places in SPEC020_CHECKS:
+    if SPEC021_REPORTS:
+        spec021_runs = [json.loads(path.read_text()) for path in SPEC021_REPORTS]
+        last = collect(spec021_runs)
+        for doc, label, system, mode, metric, query, places in SPEC021_CHECKS:
             values = last.get((system, mode, metric, query))
             if not values:
                 failures.append(f"{doc}: no figure for {label} in the last set's reports")
@@ -864,15 +940,51 @@ def main() -> int:
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
 
-    if SPEC021_REPORTS:
-        spec021_runs = [json.loads(path.read_text()) for path in SPEC021_REPORTS]
-        replaced = collect(spec021_runs)
-        for doc, label, system, mode, metric, query, places in SPEC021_CHECKS:
+    if SPEC023_REPORTS:
+        spec023_runs = [json.loads(path.read_text()) for path in SPEC023_REPORTS]
+        replaced = collect(spec023_runs)
+        for doc, label, system, mode, metric, query, places in SPEC023_CHECKS:
             values = replaced.get((system, mode, metric, query))
             if not values:
+                failures.append(f"{doc}: no figure for {label} in the replaced set's reports")
+                continue
+            figure = statistics.median(values)
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
                 failures.append(
-                    f"{doc}: no figure for {label} in the replaced set's reports"
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
                 )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+    if QUERY_COST_REPORTS or QUERY_COST_BEFORE_REPORTS:
+        query_cost_shapes = {
+            "after": _query_cost_shapes(QUERY_COST_REPORTS),
+            "before": _query_cost_shapes(QUERY_COST_BEFORE_REPORTS),
+        }
+        query_cost_queries = {
+            "after": _query_cost_queries(QUERY_COST_REPORTS),
+            "before": _query_cost_queries(QUERY_COST_BEFORE_REPORTS),
+        }
+        for doc, label, which, shape, places in QUERY_COST_SHAPE_CHECKS:
+            values = query_cost_shapes[which].get(shape, [])
+            if not values:
+                failures.append(f"{doc}: no figure for {label} in the query probe's reports")
+                continue
+            figure = statistics.median(values)
+            rendered = f"{figure:.{places}f}"
+            if rendered not in texts[doc]:
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<28} {rendered}")
+        for doc, label, which, path, query, key, places in QUERY_COST_CHECKS:
+            values = query_cost_queries[which].get(path, {}).get(query, {}).get(key, [])
+            if not values:
+                failures.append(f"{doc}: no figure for {label} in the query probe's reports")
                 continue
             figure = statistics.median(values)
             rendered = f"{figure:.{places}f}"
@@ -889,10 +1001,10 @@ def main() -> int:
         stage_sets["new"] = collect_stages(runs)
     if BEFORE_REPORTS:
         stage_sets["before"] = collect_stages(before_runs)
-    if SPEC020_REPORTS:
-        stage_sets["last"] = collect_stages(spec020_runs)
     if SPEC021_REPORTS:
-        stage_sets["replaced"] = collect_stages(spec021_runs)
+        stage_sets["last"] = collect_stages(spec021_runs)
+    if SPEC023_REPORTS:
+        stage_sets["replaced"] = collect_stages(spec023_runs)
 
     for doc, label, which, query, stage, places in STAGE_CHECKS:
         values = stage_sets.get(which, {}).get((query, "lazy", stage))
@@ -1489,9 +1601,10 @@ def main() -> int:
     print(
         f"\nall published figures agree with the committed reports: "
         f"{len(REPORTS)} campaigns, {len(BEFORE_REPORTS)} before, "
-        f"{len(SPEC020_REPORTS)} of the last set, "
-        f"{len(SPEC021_REPORTS)} of the replaced set, {len(PROBE_REPORTS)} probe, "
-        f"{len(STAGE_CHECKS)} of the plan output"
+        f"{len(SPEC023_REPORTS)} of the replaced set, "
+        f"{len(SPEC021_REPORTS)} of the last set, {len(PROBE_REPORTS)} probe, "
+        f"{len(STAGE_CHECKS)} of the plan output, "
+        f"{len(QUERY_COST_CHECKS) + len(QUERY_COST_SHAPE_CHECKS)} of the query probe"
     )
     return 0
 

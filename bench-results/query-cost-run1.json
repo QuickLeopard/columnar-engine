@@ -1,0 +1,277 @@
+{
+  "commit": "ef6c10f",
+  "file": "data/lineitem.parquet",
+  "host_load_average": 3.69,
+  "iterations": 5,
+  "probe": "query-cost",
+  "queries": {
+    "cold": {
+      "filter-numeric": {
+        "answer": 3817685.0,
+        "query_ms": 5.093042,
+        "query_spread_ms": [
+          4.893375,
+          5.2045829999999995
+        ],
+        "stages_ms": 5.058001,
+        "stages_spread_ms": [
+          4.883084,
+          5.198708
+        ],
+        "unnamed_ms": 0.035040999999999656
+      },
+      "filter-range": {
+        "answer": 55559443.879999444,
+        "query_ms": 16.365000000000002,
+        "query_spread_ms": [
+          15.758833,
+          16.952292
+        ],
+        "stages_ms": 16.352124999999997,
+        "stages_spread_ms": [
+          15.746832999999999,
+          16.939125
+        ],
+        "unnamed_ms": 0.012875000000004633
+      },
+      "filter-string": {
+        "answer": 4265647.0,
+        "query_ms": 9.687334,
+        "query_spread_ms": [
+          9.564124999999999,
+          9.730667
+        ],
+        "stages_ms": 9.680042,
+        "stages_spread_ms": [
+          9.558208,
+          9.724542
+        ],
+        "unnamed_ms": 0.007291999999999632
+      },
+      "join-orders": {
+        "answer": 11472226962.8901,
+        "query_ms": 94.42366700000001,
+        "query_spread_ms": [
+          93.869708,
+          96.86512499999999
+        ],
+        "stages_ms": 94.409457,
+        "stages_spread_ms": [
+          93.85312499999999,
+          96.84533400000001
+        ],
+        "unnamed_ms": 0.014210000000005607
+      },
+      "q6": {
+        "answer": 315203.0,
+        "query_ms": 15.683042,
+        "query_spread_ms": [
+          15.302625,
+          15.792750000000002
+        ],
+        "stages_ms": 15.673043000000002,
+        "stages_spread_ms": [
+          15.292417,
+          15.77875
+        ],
+        "unnamed_ms": 0.009998999999998759
+      },
+      "q6-revenue": {
+        "answer": 5526985127.48064,
+        "query_ms": 55.700083,
+        "query_spread_ms": [
+          54.888959,
+          60.5985
+        ],
+        "stages_ms": 55.677125000000004,
+        "stages_spread_ms": [
+          54.874416000000004,
+          60.576044
+        ],
+        "unnamed_ms": 0.022957999999995593
+      },
+      "scan": {
+        "answer": 6000000.0,
+        "query_ms": 0.07370800000000001,
+        "query_spread_ms": [
+          0.066625,
+          0.111917
+        ],
+        "stages_ms": 0.07091499999999999,
+        "stages_spread_ms": [
+          0.065875,
+          0.109499
+        ],
+        "unnamed_ms": 0.0027930000000000177
+      },
+      "sort-topk": {
+        "answer": 1049999.5999999999,
+        "query_ms": 40.105416999999996,
+        "query_spread_ms": [
+          39.627250000000004,
+          40.53125
+        ],
+        "stages_ms": 40.096333,
+        "stages_spread_ms": [
+          39.618583,
+          40.522498999999996
+        ],
+        "unnamed_ms": 0.009083999999994319
+      }
+    },
+    "resident": {
+      "filter-numeric": {
+        "answer": 3817685.0,
+        "query_ms": 0.6579170000000001,
+        "query_spread_ms": [
+          0.644916,
+          2.815125
+        ],
+        "stages_ms": 0.656875,
+        "stages_spread_ms": [
+          0.642708,
+          2.811082
+        ],
+        "unnamed_ms": 0.0010420000000000984
+      },
+      "filter-range": {
+        "answer": 55559443.879999444,
+        "query_ms": 3.11275,
+        "query_spread_ms": [
+          3.083625,
+          4.648459
+        ],
+        "stages_ms": 3.109167,
+        "stages_spread_ms": [
+          3.0798750000000004,
+          4.643167
+        ],
+        "unnamed_ms": 0.003583000000000336
+      },
+      "filter-string": {
+        "answer": 4265647.0,
+        "query_ms": 2.322,
+        "query_spread_ms": [
+          2.2534579999999997,
+          3.162583
+        ],
+        "stages_ms": 2.32,
+        "stages_spread_ms": [
+          2.25125,
+          3.159583
+        ],
+        "unnamed_ms": 0.002000000000000224
+      },
+      "join-orders": {
+        "answer": 11472226962.8901,
+        "query_ms": 22.608249999999998,
+        "query_spread_ms": [
+          21.167375,
+          23.273625
+        ],
+        "stages_ms": 22.594,
+        "stages_spread_ms": [
+          21.150624,
+          23.254793
+        ],
+        "unnamed_ms": 0.014249999999996987
+      },
+      "q6": {
+        "answer": 315203.0,
+        "query_ms": 6.573207999999999,
+        "query_spread_ms": [
+          6.351624999999999,
+          6.764333
+        ],
+        "stages_ms": 6.569083,
+        "stages_spread_ms": [
+          6.347208,
+          6.7590829999999995
+        ],
+        "unnamed_ms": 0.004124999999999268
+      },
+      "q6-revenue": {
+        "answer": 5526985127.48064,
+        "query_ms": 8.700417,
+        "query_spread_ms": [
+          8.296584,
+          9.739083
+        ],
+        "stages_ms": 8.692833,
+        "stages_spread_ms": [
+          8.282582999999999,
+          9.715501
+        ],
+        "unnamed_ms": 0.007583999999999591
+      },
+      "scan": {
+        "answer": 6000000.0,
+        "query_ms": 0.0005,
+        "query_spread_ms": [
+          0.0005,
+          0.038958
+        ],
+        "stages_ms": 0.000084,
+        "stages_spread_ms": [
+          0.000083,
+          0.000583
+        ],
+        "unnamed_ms": 0.00041600000000000003
+      },
+      "sort-topk": {
+        "answer": 1049999.5999999999,
+        "query_ms": 3.897291,
+        "query_spread_ms": [
+          3.816833,
+          4.708667
+        ],
+        "stages_ms": 3.893167,
+        "stages_spread_ms": [
+          3.812542,
+          4.703749
+        ],
+        "unnamed_ms": 0.0041240000000000165
+      }
+    }
+  },
+  "rows": 6000000,
+  "shapes_ms": {
+    "bitmap_rows": 4.201,
+    "bitmap_walk": 2.862333,
+    "build_open": 0.008417,
+    "memory_estimate": 0.000041,
+    "plan_resolve": 0.000209,
+    "selection_rows": 0.214167,
+    "selection_walk": 0.5689580000000001
+  },
+  "spreads_ms": {
+    "bitmap_rows": [
+      4.06975,
+      4.4190000000000005
+    ],
+    "bitmap_walk": [
+      2.802292,
+      3.0242080000000002
+    ],
+    "build_open": [
+      0.007125,
+      0.071125
+    ],
+    "memory_estimate": [
+      0.0,
+      0.000125
+    ],
+    "plan_resolve": [
+      0.00020800000000000001,
+      0.031792
+    ],
+    "selection_rows": [
+      0.18104199999999998,
+      1.2316250000000002
+    ],
+    "selection_walk": [
+      0.521,
+      0.625166
+    ]
+  }
+}

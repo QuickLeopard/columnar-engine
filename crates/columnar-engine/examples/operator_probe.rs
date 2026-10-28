@@ -737,7 +737,7 @@ fn measure_sort(dataset: &columnar_engine::Dataset, rows: &[u32]) -> SortMeasure
 
     // The engine's own sort is the reference: the hand-written one is checked
     // against it, row for row, before either of them is timed.
-    let expected = sort::sort_rows(positions.clone(), &keys, true, Some(LIMIT));
+    let expected = sort::sort_rows(positions.iter().copied(), &keys, true, Some(LIMIT));
     check_candidate("bounded-plain", &expected, &rows_bounded_plain(&plain, &positions));
 
     for _ in 0..PASSES {

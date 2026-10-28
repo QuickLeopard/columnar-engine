@@ -35,11 +35,16 @@ use std::collections::BinaryHeap;
 
 use crate::operators::key::{KeyColumn, KeyValue};
 
-/// Sorts `rows` by their key.
+/// Sorts the rows `source` names, by their key.
 ///
 /// `key_at` gives the key of a row, or `None` when the row holds no value.
 /// The rows are the positions of the rows to sort, and the result holds the
 /// same positions in the sorted order.
+///
+/// The rows are a **source**, not a list: a sort with a limit keeps the best
+/// `limit` rows and drops the rest, so it never needs more than the heap and
+/// the row it is looking at. A list of a million row numbers is a megabyte of
+/// memory the allocator has to hand out for rows the sort reads once.
 ///
 /// With a `limit` the sort keeps the best `limit` rows and drops the rest;
 /// without one it sorts every row.
@@ -47,12 +52,15 @@ use crate::operators::key::{KeyColumn, KeyValue};
 /// The order is deterministic: equal keys are broken by the row's own
 /// position, so the same input always produces the same output.
 #[must_use]
-pub fn sort_rows(
-    rows: Vec<u32>,
+pub fn sort_rows<I>(
+    rows: I,
     keys: &KeyColumn<'_>,
     descending: bool,
     limit: Option<usize>,
-) -> Vec<u32> {
+) -> Vec<u32>
+where
+    I: IntoIterator<Item = u32>,
+{
     // The **fast path**: a plain number column with no NULLs. The key is
     // read as the column's own value -- a number, compared as a number --
     // with no enum built for it and no `Option` wrapped around it. The
@@ -131,12 +139,15 @@ impl Ord for TotalOrd {
 /// The key is read once a row and compared as the number it is. The
 /// direction and the tie-break are the sort's own, so the order is the same
 /// the general path produces.
-fn sort_values<K: Copy + Ord>(
-    rows: Vec<u32>,
+fn sort_values<K: Copy + Ord, I>(
+    rows: I,
     key_at: impl Fn(u32) -> K,
     descending: bool,
     limit: Option<usize>,
-) -> Vec<u32> {
+) -> Vec<u32>
+where
+    I: IntoIterator<Item = u32>,
+{
     match limit {
         None => {
             let mut entries: Vec<ValueEntry<K>> = rows
@@ -228,11 +239,14 @@ fn order_keys(ordering: Ordering, descending: bool, left_row: u32, right_row: u3
 /// to read both keys of every comparison, and a comparison is made
 /// `O(n log n)` times -- so a row's key was read `O(log n)` times over, and
 /// the key read was the sort's only super-linear term.
-fn full_sort<'a>(
-    rows: Vec<u32>,
+fn full_sort<'a, I>(
+    rows: I,
     key_at: &mut impl FnMut(u32) -> Option<KeyValue<'a>>,
     descending: bool,
-) -> Vec<u32> {
+) -> Vec<u32>
+where
+    I: IntoIterator<Item = u32>,
+{
     let mut entries: Vec<Entry<'a>> =
         rows.into_iter().map(|row| Entry { key: key_at(row), row, descending }).collect();
     entries.sort_unstable_by(|left, right| {
@@ -246,12 +260,15 @@ fn full_sort<'a>(
 /// The heap holds the best rows seen so far, and its top is the worst of
 /// them: the row that would be dropped first. A row that is not better than
 /// the top is dropped on the spot.
-fn bounded_sort<'a>(
-    rows: Vec<u32>,
+fn bounded_sort<'a, I>(
+    rows: I,
     key_at: &mut impl FnMut(u32) -> Option<KeyValue<'a>>,
     descending: bool,
     limit: usize,
-) -> Vec<u32> {
+) -> Vec<u32>
+where
+    I: IntoIterator<Item = u32>,
+{
     let mut heap: BinaryHeap<Entry<'a>> = BinaryHeap::with_capacity(limit + 1);
     for row in rows {
         let key = key_at(row);
