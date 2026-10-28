@@ -1,6 +1,6 @@
 # Spec 027 — The plan, decomposed — tasks
 
-**Status**: in progress
+**Status**: done
 **Spec**: [spec.md](spec.md)
 
 ## The steps

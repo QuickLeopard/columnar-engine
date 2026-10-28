@@ -1,6 +1,6 @@
 # Spec 025 — The sort, taken apart — tasks
 
-**Status**: in progress
+**Status**: done
 **Spec**: [spec.md](spec.md)
 
 ## The instrument
