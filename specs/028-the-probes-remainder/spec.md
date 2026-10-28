@@ -166,8 +166,15 @@ different table from the new one:
 | [`PERF.md`](../../PERF.md) §3o | the stage, the probe, the remainder | the table's own "the old code" column |
 | [`README.md`](../../README.md) | the status table's row, the prose, and the next question | the row's previous values |
 
-**The resident figures are added to the guard.** The guard checks the cold `join-orders`'s stage today
-and **not** the resident one, and this spec moves both.
+**The figures the guard does not yet check are checked now.** The guard checks the cold path's stages
+and §3o's own resident stage, but **not** the published comparison campaigns' **resident** join stage —
+**21.3 ms** — which this change moves. It is added to the guard, with the set it is measured from.
+
+**And the resident _query_ figure is not added to the guard, and that is not an oversight.** The
+engine's resident path reads the build side **inside** its clock and the incumbents read it before the
+clock starts, so the two numbers are not the same measurement: that is spec 020's rule, and the figure is
+named in the prose rather than published beside a number measured differently. What moves is the
+engine's own resident **stage**, and that one is checked.
 
 **The reports are kept, and the guard follows them.** The repository's convention is that **every
 superseded set is preserved under its own name**, so that every figure published old-against-new stays

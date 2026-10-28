@@ -49,8 +49,11 @@
 - [ ] `scripts/medians.py` derives the tables from all three sets; `scripts/check-published-figures.py`
       checks every published figure, **the old set's and the new set's**, against the reports, in the
       section that publishes it.
-- [ ] The **resident** `join-orders` figures are added to the guard, which today checks the cold one
-      only.
+- [ ] The published comparison campaigns' **resident** join stage — **21.3 ms** — is added to the guard,
+      which today checks the cold path's stages and §3o's own resident stage.
+- [ ] The resident **query** figure is **not** added to the guard: the engine's resident path reads the
+      build side inside its clock and the incumbents do not, so the two are not the same measurement —
+      spec 020's rule, and the figure stays in the prose.
 - [ ] `PERF.md` §2a, §2b, §2h, §3l and §3o: every figure that moved is published old-and-new with the
       reason, and each table carries the old value it replaces.
 - [ ] `README.md`: the status table's row, the prose, and the next question.
