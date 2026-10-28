@@ -2429,7 +2429,8 @@ memory.
 **And the stage now says what it does.** The two paths report the same work: `6000000 → 216783`,
 both of them. Before spec 026 the cold path said `216783 → 216783` — the rows that *survived* the
 probe — and the resident path said `6000000 → 216783`, so the two stages described different things.
-The **times** did not move: the change is in what the stage says, not in what it does.
+The **times** did not move **in that increment**: the change was in what the stage says, not in what it
+does.
 
 **And the published campaigns' difference is the same sign and a different size.** The comparison set
 publishes the cold stage at **26.4 ms** and the resident one at **23.6 ms** — **2.8 ms** apart — and
@@ -2459,7 +2460,7 @@ comparison is derived from those. See
 
 ## 4. The defects the increments found
 
-Twenty-seven, all found by measurement, all recorded with their before-and-after numbers in the ADRs
+Twenty-eight, all found by measurement, all recorded with their before-and-after numbers in the ADRs
 and in the commit history.
 
 | | before | after | where |
@@ -2491,6 +2492,7 @@ and in the commit history.
 | **The plan output said `project 6000000 6000000`** for a projection that gathered 216,783 rows | the project stage: **6,000,000** | the project stage: **216,783** | `columnar-engine/src/lib.rs` |
 | **The probe's own direct-addressed table answered for a key below its base.** The index wrapped round to zero, so a key smaller than the smallest build key was answered with the base key's count. The instrument had a defect, and its own row-for-row check found it | the probe's direct table: **2 extra rows** on 216,783 | the probe's direct table: **0 extra rows** | `crates/columnar-engine/examples/operator_probe.rs` |
 | **The plan output left time outside every stage.** The join and the sort asked the filter's selection for its **row numbers** before either stage's clock started, so a plan with no filter built **six million** row numbers — **24 MB** — and the stage table did not account for it | the plan output's hole: **4.2 ms** of the join's query and **4.2 ms** of the sort's | the plan output's hole: **0.016 ms** — the account closes | `crates/columnar-engine/src/lib.rs` |
+| The join's lookup consulted the **overflow map** once a probe row, for a case that does not happen: the map holds **nothing** for this data, because every key's count fits in its byte, and the lookup paid for it on every one of six million rows. The map's share was measured for the first time in spec 028, and it is **at or below the noise** | the map's share: **0.183 ms** of a **4.417 ms** remainder | no map to consult — **the map is not allocated at all** when nothing overflows | `columnar-engine/src/operators/join.rs` |
 | **The sort compared every key a row at a time, in Rust.** The comparison — one per key, six million of them — was a scalar loop, and it was **2.2 ms** of the operator's **3.2 ms**: the read was never the cost, the counting was. The same column, compared in blocks against the heap's own worst key, costs **0.96 ms** | the engine's bounded sort **3.23 ms** · the sort's stage **4.18 ms** | the engine's bounded sort **1.02 ms** · the sort's stage **1.10 ms** | `columnar-engine/src/operators/sort.rs` |
 
 The global aggregate is the one worth calling out from the first increment: the module

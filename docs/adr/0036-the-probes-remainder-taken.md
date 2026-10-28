@@ -130,9 +130,9 @@ reproducibly, in a same-moment A/B — while the **cold** stage (**26.0 ms** to 
 **scan's** stage, the control, did not move. **The parts cannot account for the resident movement, and
 this ADR does not claim what it is.** It is the next question.
 
-**The prize is a measurement, not a promise.** The cold `join-orders` is **96.7 ms** against DuckDB's
-**95.0 ms** — level, **1.7 ms** apart, inside both spreads — and the remainder is **3.095 ms** of the
-probe. The prize in the query is **at most** the remainder, and the figure that moves it is the stage's
+**The prize is a measurement, not a promise.** At the time of the decision the cold `join-orders` was
+**96.7 ms** against DuckDB's **95.0 ms** — level, **1.7 ms** apart, inside both spreads — and the
+remainder was **3.095 ms** of the probe. The prize in the query is **at most** the remainder, and the figure that moves it is the stage's
 own probe, which is smaller than the standalone one. If the map's consult is not the remainder's bulk,
 the finding says so, and the next question is somewhere else.
 
