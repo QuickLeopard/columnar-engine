@@ -31,6 +31,7 @@
 //! What is left here is the scan's **own** rule: whether the scan can feed
 //! the join, which is a question about the join and not about the read.
 
+use crate::operators::key::ArrowKeys;
 use crate::plan::ResolvedPlan;
 use crate::pushdown::{Pushdown, PushdownMetrics};
 use crate::source::{scan_projection, ParquetSource, ReadDecision};
@@ -92,7 +93,10 @@ pub(crate) fn streamed_join(
         return None;
     }
     let column = source.columns().get(join.probe_key)?;
-    if !crate::pushdown::supports(&column.arrow_type) {
+    // The **probe's** own list of the types it can read. The pushdown has a
+    // list of its own -- what the reader can evaluate exactly -- and the two
+    // are not the same question.
+    if !ArrowKeys::supports(&column.arrow_type) {
         return None;
     }
     let projection = scan_projection(&decision.read, &decision.pushdown);

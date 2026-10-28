@@ -63,9 +63,10 @@ the stage **after** them — so the published numbers are the numbers of the cod
       keys the join collects, and the filter's own mask — and it is **tested**, the way the other
       estimates are. The estimate asks the reader the same question the join asks, so the two cannot
       drift apart.
-- [ ] **Step 7 — the probe's type support is published by the key module.** The scan asks
+- [x] **Step 7 — the probe's type support is published by the key module.** The scan asks
       `ArrowKeys` what the probe can read, instead of borrowing the pushdown's list, so a wrong "yes"
-      is refused at planning time rather than failing mid-read.
+      is refused at planning time rather than failing mid-read. A test holds the probe's list to what
+      the probe can actually read, type by type.
 - [x] **Step 8 — the mapping is the plan's.** The join's copy of "the file's column is the dataset's
       column" went with the read decision: the decision carries the plan's `ColumnMapping`, and the
       silent `unwrap_or` fallback that spec 027 removed from the plan's copy is gone for good.

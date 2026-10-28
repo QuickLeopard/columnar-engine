@@ -14,7 +14,7 @@
 use arrow::array::{
     Array, DictionaryArray, Float64Array, Int32Array, Int64Array, LargeStringArray, StringArray,
 };
-use arrow::datatypes::Int32Type;
+use arrow::datatypes::{DataType as ArrowType, Int32Type};
 use columnar_core::{BatchColumn, BatchData, ColumnChunk, Encoding, NullBitmap};
 
 /// Where a probe's keys come from.
@@ -161,6 +161,28 @@ impl<'a> ArrowKeys<'a> {
         }
         let values = values.as_any().downcast_ref::<LargeStringArray>()?;
         Some(Self::LargeDictionary { keys: dictionary.keys(), values })
+    }
+
+    /// Whether the probe can read a column of this Arrow type.
+    ///
+    /// **The list is the probe's own.** It says what [`ArrowKeys::new`] can
+    /// read, and the scan asks it **before** the read: a type the probe
+    /// cannot read is not a plan the scan can feed the join with, and the
+    /// answer is known up front rather than half way through a read.
+    ///
+    /// The pushdown has a list of its own -- it says what the *reader* can
+    /// evaluate exactly -- and the two are not the same question. Borrowing
+    /// the pushdown's list would promise the probe a type it cannot read.
+    #[must_use]
+    pub(crate) fn supports(arrow_type: &ArrowType) -> bool {
+        match arrow_type {
+            ArrowType::Int64 | ArrowType::Float64 | ArrowType::Utf8 | ArrowType::LargeUtf8 => true,
+            ArrowType::Dictionary(key, value) => {
+                matches!(key.as_ref(), ArrowType::Int32)
+                    && matches!(value.as_ref(), ArrowType::Utf8 | ArrowType::LargeUtf8)
+            }
+            _ => false,
+        }
     }
 }
 
@@ -494,4 +516,90 @@ impl<'a> KeyColumn<'a> {
 fn dictionary(indices: &[i32], row: usize) -> usize {
     let index = indices[row];
     usize::try_from(index).expect("a dictionary index is not negative")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use arrow::array::{
+        Array, BooleanArray, DictionaryArray, Float32Array, Float64Array, Int32Array, Int64Array,
+        LargeStringArray, StringArray,
+    };
+    use arrow::datatypes::{DataType as ArrowType, Int32Type};
+
+    use super::ArrowKeys;
+
+    /// A dictionary of two strings.
+    fn utf8_dictionary() -> DictionaryArray<Int32Type> {
+        DictionaryArray::try_new(
+            Int32Array::from(vec![0_i32, 1, 0]),
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        )
+        .expect("the dictionary is built")
+    }
+
+    /// The probe's list of the types it can read is what the probe can read.
+    ///
+    /// A "yes" the probe cannot keep fails **half way through a read**, and a
+    /// "no" the probe could keep sends the scan down the slow path for no
+    /// reason. The list and the reader are held to each other here, type by
+    /// type.
+    #[test]
+    fn the_probes_list_is_what_the_probe_can_read() {
+        let readable: Vec<(ArrowType, Arc<dyn Array>)> = vec![
+            (ArrowType::Int64, Arc::new(Int64Array::from(vec![1_i64, 2]))),
+            (ArrowType::Float64, Arc::new(Float64Array::from(vec![1.0_f64, 2.0]))),
+            (ArrowType::Utf8, Arc::new(StringArray::from(vec!["a", "b"]))),
+            (ArrowType::LargeUtf8, Arc::new(LargeStringArray::from(vec!["a", "b"]))),
+            (
+                ArrowType::Dictionary(Box::new(ArrowType::Int32), Box::new(ArrowType::Utf8)),
+                Arc::new(utf8_dictionary()),
+            ),
+            (
+                ArrowType::Dictionary(Box::new(ArrowType::Int32), Box::new(ArrowType::LargeUtf8)),
+                Arc::new(
+                    DictionaryArray::try_new(
+                        Int32Array::from(vec![0_i32, 1, 0]),
+                        Arc::new(LargeStringArray::from(vec!["a", "b"])),
+                    )
+                    .expect("the dictionary is built"),
+                ),
+            ),
+        ];
+        for (arrow_type, array) in readable {
+            assert!(ArrowKeys::supports(&arrow_type), "{arrow_type:?} is on the probe's list");
+            assert!(ArrowKeys::new(array.as_ref()).is_some(), "{arrow_type:?} is read");
+        }
+
+        let refused: Vec<(ArrowType, Arc<dyn Array>)> = vec![
+            (ArrowType::Boolean, Arc::new(BooleanArray::from(vec![true, false]))),
+            (ArrowType::Int32, Arc::new(Int32Array::from(vec![1_i32, 2]))),
+            (ArrowType::Float32, Arc::new(Float32Array::from(vec![1.0_f32, 2.0]))),
+            (
+                ArrowType::Dictionary(Box::new(ArrowType::Int32), Box::new(ArrowType::Int32)),
+                Arc::new(
+                    DictionaryArray::try_new(
+                        Int32Array::from(vec![0_i32, 1]),
+                        Arc::new(Int32Array::from(vec![7_i32, 8])),
+                    )
+                    .expect("the dictionary is built"),
+                ),
+            ),
+            (
+                ArrowType::Dictionary(Box::new(ArrowType::Int64), Box::new(ArrowType::Utf8)),
+                Arc::new(
+                    DictionaryArray::try_new(
+                        Int64Array::from(vec![0_i64, 1]),
+                        Arc::new(StringArray::from(vec!["a", "b"])),
+                    )
+                    .expect("the dictionary is built"),
+                ),
+            ),
+        ];
+        for (arrow_type, array) in refused {
+            assert!(!ArrowKeys::supports(&arrow_type), "{arrow_type:?} is not on the probe's list");
+            assert!(ArrowKeys::new(array.as_ref()).is_none(), "{arrow_type:?} is not read");
+        }
+    }
 }
