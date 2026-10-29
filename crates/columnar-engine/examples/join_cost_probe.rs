@@ -385,13 +385,49 @@ struct StageParts {
 /// when the engine does not report them — which is the case for the code this
 /// spec replaces, and the reason the ladder is computed from what the engine
 /// reports and never from what it does not.
+///
+/// **They are read by name, and not by field.** The A/B's two codes are
+/// measured with a **byte-identical** instrument, and a field the older code
+/// does not have cannot be named in a source file that has to compile against
+/// both. So the parts are read out of the plan output's own `Debug`
+/// rendering, and a code that does not report them simply has no such name in
+/// it: the ladder is then absent, and the report says so.
 fn parts_of(result: &columnar_engine::AggregateResult) -> Option<StageParts> {
     let join = result.plan_output.join.as_ref()?;
+    let rendering = format!("{join:?}");
     Some(StageParts {
-        build: join.build_elapsed,
-        probe: join.probe_elapsed,
-        open: join.open_elapsed,
+        build: duration_in(&rendering, "build_elapsed")?,
+        probe: duration_in(&rendering, "probe_elapsed")?,
+        open: duration_in(&rendering, "open_elapsed")?,
     })
+}
+
+/// A duration, by name, out of a `Debug` rendering.
+///
+/// The standard renders a duration the way a person reads it — `13.512042ms`,
+/// `93.084µs`, `500ns` — and the parts are read by that shape. A name that is
+/// not in the rendering is not a duration this engine reported, so the parts
+/// are **absent** rather than wrong; and a misread would show up in the
+/// ladder's reconciliation, which is published and is zero.
+fn duration_in(rendering: &str, name: &str) -> Option<Duration> {
+    let at = rendering.find(name)? + name.len();
+    let rest = &rendering[at..];
+    let colon = rest.find(':')? + 1;
+    let value = rest[colon..].trim_start();
+    let end = value
+        .find(|character: char| character == ',' || character == '}' || character.is_whitespace())
+        .unwrap_or(value.len());
+    let text = &value[..end];
+    let unit_at = text.find(|character: char| !character.is_ascii_digit() && character != '.')?;
+    let magnitude: f64 = text[..unit_at].parse().ok()?;
+    let scale = match text[unit_at..].chars().next()? {
+        'n' => 1.0,
+        '\u{b5}' | '\u{3bc}' => 1_000.0,
+        'm' => 1_000_000.0,
+        's' => 1_000_000_000.0,
+        _ => return None,
+    };
+    Some(Duration::from_secs_f64(magnitude * scale / 1_000_000_000.0))
 }
 
 /// One path's own measurements: the stage and its parts, **per iteration**.
