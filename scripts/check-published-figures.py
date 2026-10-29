@@ -35,6 +35,10 @@ SORT_COST_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-run*.json"))
 SORT_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-before-run*.json"))
 JOIN_COST_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-run*.json"))
 JOIN_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-before-run*.json"))
+JOIN_COST_SPEC029_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec029-run*.json"))
+JOIN_COST_SPEC029_BEFORE_REPORTS = sorted(
+    (ROOT / "bench-results").glob("join-cost-spec029-before-run*.json")
+)
 JOIN_COST_SPEC028_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec028-run*.json"))
 JOIN_COST_SPEC028_BEFORE_REPORTS = sorted(
     (ROOT / "bench-results").glob("join-cost-spec028-before-run*.json")
@@ -310,7 +314,92 @@ JOIN_COST_OLD_PARTS = (
     ("read_small", "the read, the small control", 3),
 )
 
-# The four sets the join probe's figures come from.
+# The four parts the instrument measured for this increment, on top of the
+# twenty the code spec 029 measured.
+JOIN_COST_NEW_PARTS = (
+    ("build_whole_cold", "the build side, whole, over a cold file", 3),
+    ("probe_batches_no_offset", "the probe, in the batches, without the offset", 3),
+    ("probe_held", "the probe, over a held column", 3),
+    ("clock_cost", "the cost of one clock read", 6),
+)
+
+# The ladder's figures: the gaps, the leaves, the checks and the controls.
+#
+# They exist only in the set whose engine reported the join stage's parts, and
+# they are published inside the section that publishes the rest of the probe's
+# figures -- under no new heading, because the guard's section lookup ends at
+# the next one.
+#
+# (figure, the label the section publishes it under, places)
+JOIN_COST_LADDER = (
+    ("the_build_gap_cold", "the build side's gap, cold", 3),
+    ("the_open_gap_cold", "the open's gap, cold", 3),
+    ("the_probe_gap_cold", "the probe's gap, cold", 3),
+    ("the_build_residual_cold", "the build side's own remainder, cold", 3),
+    ("the_probe_residual_cold", "the probe's own remainder, cold", 3),
+    ("the_host_remainder_cold", "the part in no gap, cold", 3),
+    ("the_reconciliation_cold", "the reconciliation, cold", 3),
+    ("the_gaps_sum_cold", "the three gaps, cold", 3),
+    ("the_reduction_s_noise_cold", "the reduction's own noise, cold", 3),
+    ("the_build_gap_resident", "the build side's gap, resident", 3),
+    ("the_open_gap_resident", "the open's gap, resident", 3),
+    ("the_probe_gap_resident", "the probe's gap, resident", 3),
+    ("the_build_residual_resident", "the build side's own remainder, resident", 3),
+    ("the_probe_residual_resident", "the probe's own remainder, resident", 3),
+    ("the_host_remainder_resident", "the part in no gap, resident", 3),
+    ("the_reconciliation_resident", "the reconciliation, resident", 3),
+    ("the_gaps_sum_resident", "the three gaps, resident", 3),
+    ("the_reduction_s_noise_resident", "the reduction's own noise, resident", 3),
+    ("the_build_file_state", "the build side's file state", 3),
+    ("the_probe_row_offset", "the probe's row-number offset", 3),
+    ("the_probe_file_state", "the probe's file state", 3),
+    ("the_added_clock_cost", "the added clock's cost", 6),
+)
+
+# The spreads the section publishes beside the ladder's figures. The report
+# carries no spread for the derived figures, so the spread is computed across
+# the campaigns -- the range of the per-campaign values -- and both this script
+# and scripts/medians.py derive it the same way.
+#
+# (figure, the label the section publishes its spread under, places)
+JOIN_COST_LADDER_SPREADS = (
+    ("the_context_cold", "the context's spread, cold", 3),
+    ("the_context_resident", "the context's spread, resident", 3),
+    ("the_build_gap_cold", "the build side's gap's spread, cold", 3),
+    ("the_open_gap_cold", "the open's gap's spread, cold", 3),
+    ("the_probe_gap_cold", "the probe's gap's spread, cold", 3),
+    ("the_probe_residual_cold", "the probe's own remainder's spread, cold", 3),
+    ("the_build_gap_resident", "the build side's gap's spread, resident", 3),
+    ("the_open_gap_resident", "the open's gap's spread, resident", 3),
+    ("the_probe_gap_resident", "the probe's gap's spread, resident", 3),
+    ("the_probe_residual_resident", "the probe's own remainder's spread, resident", 3),
+    ("the_probe_row_offset", "the probe's row-number offset's spread", 3),
+    ("the_probe_file_state", "the probe's file state's spread", 3),
+    ("the_build_file_state", "the build side's file state's spread", 3),
+)
+
+# The ladder's parts, per path: the figure, the word it carries. The band is
+# the context's own spread, a part whose own spread is wider than the band is
+# inconclusive and is not counted, and the verdict is the word of the largest
+# part that counts.
+JOIN_COST_VERDICT_PARTS = {
+    "cold": (
+        ("the_build_gap_cold", "the build side's"),
+        ("the_open_gap_cold", "the clock's"),
+        ("the_probe_row_offset", "the clock's"),
+        ("the_probe_residual_cold", "the probe's"),
+        ("the_host_remainder_cold", "the host's"),
+    ),
+    "resident": (
+        ("the_build_gap_resident", "the build side's"),
+        ("the_open_gap_resident", "the clock's"),
+        ("the_probe_file_state", "the memory's"),
+        ("the_probe_residual_resident", "the probe's"),
+        ("the_host_remainder_resident", "the host's"),
+    ),
+}
+
+# The sets the join probe's figures come from.
 #
 # "after" is the code this increment ships and "before" is the code it
 # replaces -- the code spec 028 replaced -- measured **back to back** with it
@@ -324,9 +413,26 @@ JOIN_COST_OLD_PARTS = (
 JOIN_COST_SETS = (
     ("after", "the new code's", JOIN_COST_PARTS),
     ("before", "the old code's", JOIN_COST_PARTS),
+    ("spec029", "spec 029's set's", JOIN_COST_PARTS),
+    ("spec029before", "spec 029's before set's", JOIN_COST_PARTS),
     ("spec028", "spec 028's set's", JOIN_COST_OLD_PARTS),
     ("spec028before", "spec 028's before set's", JOIN_COST_OLD_PARTS),
 )
+
+# The sets that must be present, and the campaigns each one must have. A set
+# that is missing, or that has fewer campaigns than the method says, is a
+# failure -- a family is never skipped silently.
+JOIN_COST_FAMILIES = (
+    ("the new code's", JOIN_COST_REPORTS),
+    ("the old code's", JOIN_COST_BEFORE_REPORTS),
+    ("spec 029's set's", JOIN_COST_SPEC029_REPORTS),
+    ("spec 029's before set's", JOIN_COST_SPEC029_BEFORE_REPORTS),
+    ("spec 028's set's", JOIN_COST_SPEC028_REPORTS),
+    ("spec 028's before set's", JOIN_COST_SPEC028_BEFORE_REPORTS),
+)
+
+# The campaigns the method calls for.
+JOIN_COST_CAMPAIGNS = 3
 
 JOIN_COST_CHECKS = [
     ("PERF.md", f"{prefix} {label}", which, part, places)
@@ -760,7 +866,12 @@ def rendered_figure(figure: float, places: int) -> str:
     look for the character the document has, or a figure that is negative could
     never be found.
     """
-    return f"{figure:.{places}f}"
+    # A negative zero is a zero: the difference of two equal numbers is a
+    # rounding error of the last bit, and the document writes a zero.
+    rounded = round(figure, places)
+    if rounded == 0:
+        rounded = 0.0
+    return f"{rounded:.{places}f}"
 
 
 def figure_in(text: str, rendered: str) -> bool:
@@ -1469,12 +1580,28 @@ def main() -> int:
 
     # Spec 026's join probe: the join's stage, taken apart -- the new code and
     # the old one, measured back to back on the same host.
+    #
+    # A family that is missing, or that has fewer campaigns than the method
+    # says, is a **failure**: a set that is not there is not a set of zero
+    # figures, it is the absence of the evidence, and the evidence is what the
+    # figures are derived from.
+    for label, paths in JOIN_COST_FAMILIES:
+        if not paths:
+            failures.append(f"the join probe's {label} set is missing")
+        elif len(paths) < JOIN_COST_CAMPAIGNS:
+            failures.append(
+                f"the join probe's {label} set has {len(paths)} campaigns, and the "
+                f"method says {JOIN_COST_CAMPAIGNS}"
+            )
+
     if JOIN_COST_REPORTS or JOIN_COST_BEFORE_REPORTS:
         join_parts: dict[str, dict[str, list[float]]] = {}
         join_derived: dict[str, dict[str, list[float]]] = {}
         for which, paths in (
             ("after", JOIN_COST_REPORTS),
             ("before", JOIN_COST_BEFORE_REPORTS),
+            ("spec029", JOIN_COST_SPEC029_REPORTS),
+            ("spec029before", JOIN_COST_SPEC029_BEFORE_REPORTS),
             ("spec028", JOIN_COST_SPEC028_REPORTS),
             ("spec028before", JOIN_COST_SPEC028_BEFORE_REPORTS),
         ):
@@ -1524,6 +1651,91 @@ def main() -> int:
                     )
                 else:
                     print(f"ok  {doc:<10} {label:<40} {rendered}")
+
+            # The four parts the instrument measured for this increment. They
+            # are in both sets the instrument measured -- the new code's and
+            # the old one's -- because they are the instrument's own.
+            for part, label, places in JOIN_COST_NEW_PARTS:
+                for which in ("after", "before"):
+                    values = join_parts[which].get(part, [])
+                    if not values:
+                        failures.append(
+                            f"PERF.md: no figure for {label} in the join probe's reports"
+                        )
+                        continue
+                    figure = statistics.median(values)
+                    rendered = rendered_figure(figure, places)
+                    if not figure_in(published, rendered):
+                        failures.append(
+                            f"PERF.md: {label} is {rendered} in the reports but that "
+                            f"figure does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
+
+            # The ladder: its figures and the spread beside each of them. They
+            # exist only in the set whose engine reported the join stage's
+            # parts.
+            after_derived = join_derived["after"]
+            for figure, label, places in JOIN_COST_LADDER:
+                values = [v for v in after_derived.get(figure, []) if v is not None]
+                if not values:
+                    failures.append(
+                        f"PERF.md: no figure for {label} in the join probe's reports"
+                    )
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
+            for figure, label, places in JOIN_COST_LADDER_SPREADS:
+                values = [v for v in after_derived.get(figure, []) if v is not None]
+                if not values:
+                    failures.append(
+                        f"PERF.md: no spread for {label} in the join probe's reports"
+                    )
+                    continue
+                rendered = rendered_figure(max(values) - min(values), places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
+
+            # The verdict, in one of the six words, and the band it is judged
+            # against. The band is the context's own spread; a part whose own
+            # spread is wider than the band is inconclusive and is not counted;
+            # the verdict is the word of the largest part that counts.
+            for path in ("cold", "resident"):
+                context = [v for v in after_derived.get(f"the_context_{path}", []) if v is not None]
+                if not context:
+                    continue
+                band = max(context) - min(context)
+                counted: list[tuple[float, str]] = []
+                for figure, word in JOIN_COST_VERDICT_PARTS[path]:
+                    values = [v for v in after_derived.get(figure, []) if v is not None]
+                    if not values:
+                        continue
+                    value = statistics.median(values)
+                    if max(values) - min(values) > band:
+                        continue
+                    if abs(value) > band:
+                        counted.append((abs(value), word))
+                verdict = max(counted)[1] if counted else "unattributed"
+                phrase = f"the verdict, on the {path} path, is **{verdict}**"
+                if phrase not in published:
+                    failures.append(
+                        f"PERF.md: the {path} path's verdict is {verdict!r} by the "
+                        f"reports, and the section does not say so"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'the {path} path\'s verdict':<40} {verdict}")
 
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
@@ -2106,6 +2318,39 @@ def main() -> int:
                     (
                         "the Next row's three-predicate residual",
                         f"{(last - first) / 18.0:.2f} ms a row group",
+                    )
+                )
+        # The **context**'s figures, from the join probe's own set. The Next
+        # row names the context, and the row is the one place where a figure
+        # goes stale without a table noticing it.
+        join_after = [
+            json.loads(path.read_text()) for path in JOIN_COST_REPORTS
+        ]
+        if join_after:
+            for path, label in (
+                ("cold", "the Next row's cold context"),
+                ("resident", "the Next row's resident context"),
+            ):
+                key = f"the_context_{path}"
+                values = [
+                    run.get("derived_ms", {}).get(key)
+                    for run in join_after
+                    if run.get("derived_ms", {}).get(key) is not None
+                ]
+                if not values:
+                    continue
+                spread = max(values) - min(values)
+                wanted.append(
+                    (
+                        label,
+                        f"the context on the {path} path is "
+                        f"**{statistics.median(values):.3f} ms**",
+                    )
+                )
+                wanted.append(
+                    (
+                        f"the Next row's {path} path's spread",
+                        f"the {path} path's spread is **{spread:.3f} ms**",
                     )
                 )
         for label, phrase in wanted:

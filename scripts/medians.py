@@ -1528,6 +1528,18 @@ def join_cost_verdict(derived: dict[str, list[float]], path: str) -> dict[str, o
     return {"band": band, "parts": parts, "verdict": verdict}
 
 
+def _rendered(figure: float, places: int) -> str:
+    """A figure as the document writes it.
+
+    A negative zero is a zero: the difference of two equal numbers is a
+    rounding error of the last bit, and the document writes a zero.
+    """
+    rounded = round(figure, places)
+    if rounded == 0:
+        rounded = 0.0
+    return f"{rounded:.{places}f}"
+
+
 def _join_cost_figures(
     files: list[tuple[str, list[dict]]],
 ) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
@@ -1605,7 +1617,7 @@ def print_join_cost(sets: list[tuple[str, list[tuple[str, list[dict]]]]]) -> Non
                 if not values:
                     continue
                 spread = max(values) - min(values)
-                print(f"{label:<44}{statistics.median(values):>{places}.{places}f}{spread:>12.3f}")
+                print(f"{label:<44}{_rendered(statistics.median(values), places):>12}{spread:>12.3f}")
             for path in ("cold", "resident"):
                 verdict = join_cost_verdict(derived, path)
                 if not verdict:
