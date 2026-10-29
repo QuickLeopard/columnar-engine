@@ -28,8 +28,10 @@ python3 scripts/medians.py
 | `query-cost-before-run1.json` … `query-cost-before-run3.json` | the same probe against the code spec 025 replaced, measured back to back on the same host |
 | `sort-cost-run1.json` … `sort-cost-run3.json` | the **sort probe** against the code spec 025 wrote — the sort's stage on both paths, the sort's own call over the same rows and the same key column, the reads that are the floor, the comparison in blocks, and the candidate that is the cross-check |
 | `sort-cost-before-run1.json` … `sort-cost-before-run3.json` | the same probe against the code spec 025 replaced, measured back to back on the same host |
-| `join-cost-run1.json` … `join-cost-run3.json` | the **join probe** against the code spec 028 wrote -- the join's stage on both paths, the build side's open, read, keys and table, the probe measured both ways, the floor the probe cannot go under, the candidate that is the cross-check, the candidate with the overflow map's consult in it, and the cold candidate inside the reader's own batch loop |
-| `join-cost-before-run1.json` … `join-cost-before-run3.json` | the same probe against the code spec 028 replaced, measured back to back on the same host and with the same instrument |
+| `join-cost-run1.json` … `join-cost-run3.json` | the **join probe** against the code spec 029 writes -- the join's stage on both paths, the build side's open, read, keys and table, the probe measured both ways, the floor the probe cannot go under, the candidate that is the cross-check, the candidate with the overflow map's consult in it, the cold candidate inside the reader's own batch loop, and **the ladder**: five rungs that each add exactly one thing to the plain candidate, so that the remainder's parts are measured. Every rung that touches the column materialises it afresh, the way the query's does. |
+| `join-cost-before-run1.json` … `join-cost-before-run3.json` | the same probe against the code spec 028 replaced, measured back to back on the same host and with the same instrument, **three campaigns each, interleaved** with the campaigns above -- so that the floor, the machine's own measure, sits beside the stage in the same minutes |
+| `join-cost-spec028-run1.json` … `join-cost-spec028-run3.json` | the probe as it stood at spec 028's close -- against the code spec 028 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
+| `join-cost-spec028-before-run1.json` … `join-cost-spec028-before-run3.json` | the set spec 028 measured against the code it replaced, with the instrument of that day. Kept under its own name, for the same reason. |
 | `join-cost-spec025-run1.json` … `join-cost-spec025-run3.json` | the probe as it stood before spec 026 -- against the code spec 026's ten fixes replaced, with the instrument of that day |
 | `join-cost-spec026-run1.json` … `join-cost-spec026-run3.json` | the probe as it stood at spec 026's close -- against the code spec 026 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
 | `operator-probe-before.json` | the **operator probe** against the code spec 021 replaced — the join's probe and the sort, taken apart |
@@ -148,7 +150,7 @@ questions.
 | §3l | *what is the join's scan made of* | `scan-cost-run*.json` |
 | §3m | *where does the time the plan output does not name go* | `query-cost-run*.json`, `query-cost-before-run*.json` |
 | §3n | *what is in the sort's stage that is not the sort's own work* | `sort-cost-run*.json`, `sort-cost-before-run*.json` |
-| §3o | *what is in the join's stage, and what the two paths do not agree about* | `join-cost-run*.json`, `join-cost-before-run*.json`, `join-cost-spec026-run*.json`, `join-cost-spec025-run*.json` |
+| §3o | *what is in the join's stage, what the remainder's parts are, and what moved the resident stage* | `join-cost-run*.json`, `join-cost-before-run*.json`, `join-cost-spec028-run*.json`, `join-cost-spec028-before-run*.json` |
 | §2h | *the same-moment A/B, and the resident movement it cannot explain* | `compare-ab-old-run1.json`, `compare-ab-new-run1.json` |
 
 The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and

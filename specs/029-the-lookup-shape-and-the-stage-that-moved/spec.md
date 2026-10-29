@@ -481,6 +481,49 @@ leaves after the build side, the probe on both paths, the **ladder** and the **r
 the candidates, and the comparison campaigns' query times, with every figure that moved published
 old-and-new.
 
+### What the campaigns said
+
+**The campaigns were taken on the code that ships and on the code spec 028 replaced, three each,
+interleaved, in one session, with the same instrument.** The join probe's campaigns ran at a load average
+of **3.61–5.05** — **lower** than the **8.09–8.81** of the campaigns whose movement this spec explains.
+
+**And the remainder is 0.109 ms, with a spread of 1.083 ms.** The engine's own probe costs **8.395 ms**
+and the hand-written candidate **8.315 ms**: over the same six million rows, the same table, and a column
+**materialised the same way**, the engine's own lookup is as fast as the hand-written one.
+
+**And the parts are inside the noise.** The chain's cost is **−0.036 ms**, the width's **+0.956 ms**,
+the state's **−0.840 ms**, the map's option's **−0.108 ms**, the engine's loop's **−0.142 ms** and the
+key source's **+0.121 ms**: the width and the state cancel, and every one of them is inside the
+remainder's own spread. The ladder's sum is the remainder and **what is left unexplained is 0.000 ms**.
+
+**And two things that are not differences of the code were in the remainder spec 028 published.** The
+**crate boundary** is **+1.332 ms** — measured in the old code's ladder, where the engine's loop over the
+hand-written one costs that much, because the engine's lookup is a private method and the instrument is
+another crate. The **buffer** is **1.158 ms** — the candidate's figure moved from **7.157 ms** to
+**8.315 ms** when every rung began materialising its column afresh, the way the query's does.
+
+**And the movement was the host's.** The two codes' resident stages, measured in the same minutes, are
+**19.108 ms** and **18.976 ms** — **0.132 ms** apart, against a spread of **0.568 ms** — and the
+**floor** is **5.754 ms** against **5.690 ms**. In spec 028's session the stage moved **2.309 ms** and the
+floor **1.514 ms**, in the same direction and the same order; here **neither moves**.
+
+**And the context is named.** The stage's residual — the stage less the build side's whole and its open
+— is **7.259 ms** resident and **10.160 ms** cold, and it is **not** the standalone probe: the gap
+between them, the **context**, is **−1.069 ms** here and **−2.409 ms** on the old code.
+
+> **R2 is answered, and the reason recorded.** The requirement asks for a change to the lookup only
+> when the measured saving is **outside the remainder's own spread**, and the remainder's spread is
+> **1.083 ms**. Every part of the shape is inside it, and the engine's own probe is already as fast as
+> the hand-written candidate. **The lookup does not change**, and that is the finding. The one change
+> the increment carries is the `#[inline]` on the lookup, which changes nothing the query does and makes
+> the instrument's measurement the query's cost — R1's requirement that a candidate differ in **exactly
+> one thing**.
+
+> **R4 is answered, and the verdict is one of the three words.** The movement was **the host's**: in
+> the same minutes, the stage and the floor do not move, and the code that moved in spec 028's session
+> is the code that ships. The parts cannot account for it and neither can the host's state, between two
+> campaigns minutes apart, that the floor does see.
+
 ## The references
 
 | | |

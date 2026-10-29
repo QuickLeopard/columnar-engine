@@ -2311,166 +2311,161 @@ this increment: the candidate **with the overflow map's consult** in it, and the
 same hand-written lookup inside the reader's own batch loop — so that the map's share and the cold
 path's remainder are **measured** rather than assumed.
 
-**And this increment's own comparison — the code it replaces, measured back to back with the code it
-ships, on the same host and with the same instrument:**
+**And this increment's own comparison — the code that ships against the code spec 028 replaced, three
+campaigns each, interleaved, on the same host and with the same instrument:**
 
-| part | the old code | the new code | what it is |
+| part | the code that ships | the code it replaces | what it is |
 |---|---|---|---|
-| the stage, cold | 25.271 ms | 26.550 ms | the engine's own join stage, the cold path |
-| the stage, resident | 19.797 ms | 22.106 ms | the engine's own join stage, the resident path |
-| the build side's open | 0.030 ms | 0.029 ms | opening `orders.parquet`: its metadata, its schema |
-| the build side's read | 11.890 ms | 11.615 ms | reading the build side's columns through the engine's own reader |
-| the build side's keys | 0.344 ms | 0.327 ms | the per-row walk that collects the build side's keys |
-| the build side, whole | 12.289 ms | 11.903 ms | the read, the keys and the table together |
-| the table, on its own | 0.218 ms | 0.204 ms | one byte a count, over the key's own range |
-| the probe, over the column | 11.373 ms | 10.423 ms | the resident path's probe: the engine's own column, in memory |
-| the probe, in the batches | 14.826 ms | 13.921 ms | the cold path's probe: inside the reader's own batch loop |
-| the floor the probe cannot go under | 4.753 ms | 6.267 ms | the table's own load, one a probe row |
-| the candidate, written out | 7.159 ms | 7.157 ms | the same lookup, written out by hand over the same rows |
-| the candidate with the overflow consult | 7.342 ms | 7.106 ms | the candidate **with the map's consult** in it, and nothing else different |
-| the cold candidate | 11.168 ms | 10.520 ms | the same lookup, inside the reader's own batch loop |
-| the read, plain | 0.559 ms | 0.563 ms | the plain read of the probe key column: the floor a read cannot go under |
-| the read, the small control | 0.041 ms | 0.041 ms | the same read over 512K values |
+| the stage, cold | 21.731 ms | 21.355 ms | the engine's own join stage, the cold path |
+| the stage, resident | 19.108 ms | 18.976 ms | the engine's own join stage, the resident path |
+| the build side's open | 0.028 ms | 0.029 ms | opening `orders.parquet`: its metadata, its schema |
+| the build side's read | 11.418 ms | 11.220 ms | reading the build side's columns through the engine's own reader |
+| the build side's keys | 0.340 ms | 0.329 ms | the per-row walk that collects the build side's keys |
+| the build side, whole | 11.716 ms | 11.472 ms | the read, the keys and the table together |
+| the table, on its own | 0.198 ms | 0.198 ms | one byte a count, over the key's own range |
+| the probe, over the column | 8.395 ms | 9.884 ms | the resident path's probe: the engine's own column, in memory |
+| the probe, in the batches | 9.661 ms | 10.555 ms | the cold path's probe: inside the reader's own batch loop |
+| the floor the probe cannot go under | 5.754 ms | 5.690 ms | the table's own load, one a probe row |
+| the candidate, written out | 8.315 ms | 8.215 ms | the same lookup, written out by hand over the same rows |
+| the candidate with the overflow consult | 8.386 ms | 8.212 ms | the candidate **with the map's consult** in it, and nothing else different |
+| the cold candidate | 9.017 ms | 8.827 ms | the same lookup, inside the reader's own batch loop |
+| the candidate, the chain | 8.381 ms | 8.301 ms | the plain candidate, with the byte read folded through `map_or` |
+| the candidate, the width | 9.392 ms | 8.605 ms | the plain candidate, with the byte widened to `u32` |
+| the candidate, the state through `self` | 8.524 ms | 8.759 ms | the plain candidate, read through a method over `&self` |
+| the candidate, the map's option | 8.477 ms | 8.413 ms | the plain candidate, with the overflow map's `Option` read and branched on |
+| the engine's lookup, over a plain slice | 8.434 ms | 9.745 ms | the engine's **own** lookup, over the instrument's own key source |
+| the read, plain | 0.549 ms | 0.542 ms | the plain read of the probe key column: the floor a read cannot go under |
+| the read, the small control | 0.038 ms | 0.040 ms | the same read over 512K values |
 
-**And the differences the instrument computes from its own parts:**
-
-| difference | the old code | the new code | what it is |
+| difference | the code that ships | the code it replaces | what it is |
 |---|---|---|---|
-| the table, as the difference | 0.065 ms | −0.038 ms | the whole over the read and the keys: the table's own cost, and it is **below the noise** |
-| the output rows | 2.392 ms | 0.987 ms | the candidate over the floor: what the 216,783 output rows cost |
-| the probe's remainder | 4.417 ms | 3.337 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
-| the map's share | 0.183 ms | 0.020 ms | the candidate with the consult over the candidate without it: **what the map costs** |
-| the cold remainder | 3.670 ms | 3.311 ms | the engine's probe in the batches over the cold candidate's |
-| the two paths | 5.473 ms | 4.343 ms | the cold stage over the resident stage |
-| the two probes | 3.496 ms | 3.408 ms | the batched probe over the column's |
+| the table, as the difference | 0.069 ms | −0.066 ms | the whole over the read and the keys: the table's own cost |
+| the output rows | 2.745 ms | 2.524 ms | the candidate over the floor: what the 216,783 output rows cost |
+| the probe's remainder | 0.109 ms | 1.669 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
+| the map's share | 0.022 ms | −0.003 ms | the candidate with the consult over the candidate without it: **what the map costs** |
+| the cold remainder | 0.075 ms | 1.899 ms | the engine's probe in the batches over the cold candidate's |
+| the two paths | 2.923 ms | 2.379 ms | the cold stage over the resident stage |
+| the two probes | 1.106 ms | 0.671 ms | the batched probe over the column's |
+| the chain's cost | −0.036 ms | 0.086 ms | the **chain's** share of the remainder: the fold against `unwrap_or` |
+| the width's cost | 0.956 ms | 0.083 ms | the **width's** share: the byte widened to `u32` |
+| the state's cost | −0.840 ms | 0.226 ms | the **state's** share: the table reached through `&self` |
+| the map's option's cost | −0.108 ms | −0.346 ms | the **map's discriminant's** share: the `Option` read and branched on |
+| the engine's loop's cost | −0.142 ms | 1.332 ms | the **engine's loop's** share: `probe_direct` against the hand-written loop |
+| the key source's cost | 0.121 ms | 0.230 ms | the **key source's** share: the engine's own column against a plain slice |
+| the ladder's sum | 0.109 ms | 1.669 ms | the six increments together: the remainder, by construction |
+| what is left unexplained | 0.000 ms | 0.000 ms | the remainder less the ladder's sum: the noise the decomposition carries |
+| the stage's residual, cold | 10.160 ms | 9.854 ms | the stage less the build side's whole and its open: the stage's own probe |
+| the stage's residual, resident | 7.259 ms | 7.372 ms | the same, on the resident path |
+| the context, cold | 0.494 ms | −1.440 ms | the residual less the standalone probe: the price of running inside a query |
+| the context, resident | −1.069 ms | −2.409 ms | the same, on the resident path |
 
-**And spec 026's comparison, preserved — the code before it against the code it shipped, from the set
+**And spec 028's comparison, preserved — the code before it against the code it shipped, from the set
 that is kept under its own name:**
 
-| part | the code before spec 026 | the code spec 026 shipped | what it is |
+
+| part | spec 028's code | the code it replaced | what it is |
 |---|---|---|---|
-| the stage, cold | 20.582 ms | 20.735 ms | the engine's own join stage, the cold path |
-| the stage, resident | 19.283 ms | 19.216 ms | the engine's own join stage, the resident path |
-| the build side's open | 0.029 ms | 0.028 ms | opening `orders.parquet`: its metadata, its schema |
-| the build side's read | 11.602 ms | 11.542 ms | reading the build side's columns through the engine's own reader |
-| the build side's keys | 0.333 ms | 0.339 ms | the per-row walk that collects the build side's keys |
-| the build side, whole | 11.809 ms | 11.831 ms | the read, the keys and the table together |
-| the table, on its own | 0.209 ms | 0.212 ms | one byte a count, over the key's own range |
-| the probe, over the column | 10.270 ms | 10.051 ms | the resident path's probe: the engine's own column, in memory |
-| the probe, in the batches | 10.550 ms | 10.221 ms | the cold path's probe: inside the reader's own batch loop |
-| the floor the probe cannot go under | 4.421 ms | 4.418 ms | the table's own load, one a probe row |
-| the candidate, written out | 6.905 ms | 6.959 ms | the same lookup, written out by hand over the same rows |
-| the read, plain | 0.506 ms | 0.509 ms | the plain read of the probe key column: the floor a read cannot go under |
-| the read, the small control | 0.038 ms | 0.039 ms | the same read over 512K values |
+| the stage, cold | 26.550 ms | 25.271 ms | the engine's own join stage, the cold path |
+| the stage, resident | 22.106 ms | 19.797 ms | the engine's own join stage, the resident path |
+| the build side's open | 0.029 ms | 0.030 ms | opening `orders.parquet`: its metadata, its schema |
+| the build side's read | 11.615 ms | 11.890 ms | reading the build side's columns through the engine's own reader |
+| the build side's keys | 0.327 ms | 0.344 ms | the per-row walk that collects the build side's keys |
+| the build side, whole | 11.903 ms | 12.289 ms | the read, the keys and the table together |
+| the table, on its own | 0.204 ms | 0.218 ms | one byte a count, over the key's own range |
+| the probe, over the column | 10.423 ms | 11.373 ms | the resident path's probe: the engine's own column, in memory |
+| the probe, in the batches | 13.921 ms | 14.826 ms | the cold path's probe: inside the reader's own batch loop |
+| the floor the probe cannot go under | 6.267 ms | 4.753 ms | the table's own load, one a probe row |
+| the candidate, written out | 7.157 ms | 7.159 ms | the same lookup, written out by hand over the same rows |
+| the candidate with the overflow consult | 7.106 ms | 7.342 ms | the candidate **with the map's consult** in it, and nothing else different |
+| the cold candidate | 10.520 ms | 11.168 ms | the same lookup, inside the reader's own batch loop |
+| the read, plain | 0.563 ms | 0.559 ms | the plain read of the probe key column: the floor a read cannot go under |
+| the read, the small control | 0.041 ms | 0.041 ms | the same read over 512K values |
 
-| difference | the code before spec 026 | the code spec 026 shipped | what it is |
+| difference | spec 028's code | the code it replaced | what it is |
 |---|---|---|---|
-| the table, as the difference | −0.101 ms | −0.039 ms | the whole over the read and the keys: the table's own cost, and it is **below the noise** |
-| the output rows | 2.527 ms | 2.549 ms | the candidate over the floor: what the 216,783 output rows cost |
-| the probe's remainder | 3.346 ms | 3.095 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
-| the two paths | 1.344 ms | 1.519 ms | the cold stage over the resident stage |
-| the two probes | 0.280 ms | 0.170 ms | the batched probe over the column's |
+| the table, as the difference | −0.038 ms | 0.065 ms | the whole over the read and the keys: the table's own cost |
+| the output rows | 0.987 ms | 2.392 ms | the candidate over the floor: what the 216,783 output rows cost |
+| the probe's remainder | 3.337 ms | 4.417 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
+| the map's share | 0.020 ms | 0.183 ms | the candidate with the consult over the candidate without it: **what the map costs** |
+| the cold remainder | 3.311 ms | 3.670 ms | the engine's probe in the batches over the cold candidate's |
+| the two paths | 4.343 ms | 5.473 ms | the cold stage over the resident stage |
+| the two probes | 3.408 ms | 3.496 ms | the batched probe over the column's |
 
-**Three findings, and the third is this increment's.**
+**And the remainder is not what it was published as.** The probe's remainder — the engine's own probe over
+the hand-written candidate, over the same six million rows, the same table, and a column **materialised
+the same way** — is **0.109 ms**, with a spread of **1.083 ms**. The engine's probe costs **8.395 ms**
+and the candidate **8.315 ms**: the engine's own lookup is as fast as the hand-written one, and what is
+left over is the noise.
 
-**The build side's read is more than half the stage.** The build side's whole is **11.903 ms** of the
-cold stage's **26.550 ms** — **45%** — and the read itself is **11.615 ms**. That read is Arrow's decode
-of the build side's columns out of `orders.parquet`: **1,500,000** rows, of which the pushed-down date
-predicate leaves **216,345** keys. It has been measured three times and **refused every time**, and this
-section does not touch it. The keys are **0.327 ms** and the open is **0.029 ms**; the table's own
-construction is **below the noise** — the whole over the read and the keys is **−0.038 ms** — and the
-table measured on its own is **0.204 ms**.
+**And two artefacts were in the remainder spec 028 published.** Neither is a difference of the code:
 
-**The probe is not at the floor, and the map is not why.** The engine's probe over its own column costs
-**10.423 ms**; the same lookup, written out by hand over the same six million rows and the same table,
-costs **7.157 ms**. The difference is **3.337 ms** — the probe's remainder — and spec 026 named a
-candidate for it: the engine's per-row lookup consults the **overflow map**, and the map is **empty**
-for this data, because every key's count fits in its byte.
+- **The crate boundary.** The instrument is another crate, and the engine's lookup is a **private**
+  method: across the boundary it was not inlined, so the instrument paid a **call a probe row** that the
+  engine's own query does not pay — the query's lookup is in the same crate as its caller, and it is
+  inlined there. The old code's ladder puts the engine's loop at **+1.332 ms** over the hand-written one;
+  the new code's is **−0.142 ms**. The lookup is now marked `#[inline]`, which changes nothing the query
+  does and makes the instrument's measurement the query's cost.
+- **The buffer.** The engine's query materialises the probe column and then probes it, so the column it
+  probes is one the reader has **just written**; the candidate read a buffer kept warm across the
+  iterations, which is a **cheaper** column than the engine pays for. Every rung now materialises the
+  column afresh, and the candidate's figure moved from **7.157 ms** to **8.315 ms**.
 
-**The map's share is now measured, and it is nothing.** The candidate **with the consult** costs
-**7.106 ms** against the candidate without it at **7.157 ms**: the map's share is **0.020 ms** of a
-**3.337 ms** remainder. In the code it replaces it was **0.183 ms**. Each set's own three campaigns are
-judged against **its own** candidate spread: in the old set the share runs **−0.221 ms … 0.406 ms** against
-a spread of **0.709 ms**, and in the new set **−0.278 ms … 0.071 ms** against a spread of **0.168 ms** — so
-the share is **at or below the noise** in both, and the map was **never** the remainder.
-**The remainder is the lookup's shape**, and the shape is **named, not measured**: the method over `&self`,
-the byte's `Option` chain, the `u32` width, and — on the fast path of the code that ships — the **map's
-`Option` discriminant**. The **saturating add** is **not** on that path: the lookup returns the byte before
-it, so it is the **overflow** path that adds, and the map's consult — the **0.020 ms** above — is off the
-fast path too. The map's consult was a fixed cost on every probe row for a case that does not happen, and
-it was a cost of **nothing**; what the fast path still pays is the map's **`Option`** and the branch on it,
-and **that has never been measured**. See
-[spec 029](specs/029-the-lookup-shape-and-the-stage-that-moved/spec.md).
+**And the ladder's parts are inside the noise.** The chain's cost is **−0.036 ms**, the width's
+**+0.956 ms**, the state's **−0.840 ms**, the map's option's **−0.108 ms**, the engine's loop's
+**−0.142 ms** and the key source's **+0.121 ms**: the width and the state cancel, and every one of them
+is inside the remainder's own spread of **1.083 ms**. The ladder's sum is the remainder, and **what is
+left unexplained is 0.000 ms**. **The lookup's shape is free**, and the engine's own probe is already as
+fast as the hand-written lookup — so **the lookup does not change**: the requirement asks for a change
+only when the measured saving is outside the remainder's own spread, and there is none.
 
-**The change is taken anyway, and it is a simplification, not a win.** The table's overflow map is an
-`Option` now, so when nothing overflows **the map is not allocated at all** and the lookup does not call
-it — no `get`, no hash of the key, and no read of any field of the map, because there is no map to
-read. The fact is captured **after** the build loop, because the map fills during it. The semantics do
-not change, and the **estimate does not move**.
+**And the resident stage's movement was the host's.** Spec 028 published that the resident stage moved
+**22.106 ms** against **19.797 ms** while its own parts got faster, and it did not say why. Measured **in
+the same minutes** — three campaigns each, interleaved — the two codes' resident stages are
+**19.108 ms** and **18.976 ms**, **0.132 ms** apart against a spread of **0.568 ms**, and the **floor**,
+the instrument's own measure of what a memory-bound loop costs on this host, is **5.754 ms** against
+**5.690 ms**. In spec 028's session the stage moved **2.309 ms** and the floor **1.514 ms**, in the same
+direction and the same order; here **neither moves**. **The movement was the host's**, and not the
+code's.
 
-**And the change bought nothing the query can see.** The probe's own measurement moved **0.950 ms**
-faster, and the ranges do not overlap — but the parts are **bounds**, not a decomposition: the **floor**,
-which this change cannot touch, moved **1.514 ms slower** in the same two sessions, and the output rows'
-cost — the candidate over that floor — moved **1.405 ms** the other way with it. The **stage** is the
-engine's own account and the authority, and the stage moved the other way: **26.550 ms** against
-**25.271 ms** cold and **22.106 ms** against **19.797 ms** resident.
-[§2h](#2h-the-hot-paths-taken-apart) divides the host's share out of the query-level figures: the
-**cold** query moved **97.3 ms** to **97.6 ms**, inside the untouched queries' own drift, and the
-**resident** one moved **25.1 ms** to **26.6 ms** against a control that moved **0.3 ms** the other way.
-**This increment does not claim what the resident movement is**, and the movement is written down as the
-next question: [spec 029](specs/029-the-lookup-shape-and-the-stage-that-moved/spec.md) measures the
-shape's parts, one at a time, and takes the movement with the **floor** beside it — the same-moment A/B
-that puts the two codes in the same minutes carries the plan output's stages and **no floor**, and the
-campaigns that carry the floor are minutes apart. That is the gap the next spec closes.
-
-**The two paths differ by the probe, and the probe's own measurement does not agree with the stage.**
-The stages differ by **4.343 ms**. The build side's read is **the same call on both paths** — the same
-`build_table`, over the same file — so the difference is in the probe: the cold path's probe runs
-inside the reader, over the reader's own batches, against the caches the decode is using. Measured on
-its own, the two probes differ by **3.408 ms**: **13.921 ms** in the batches against **10.423 ms** over
-the column. The **cold remainder** is **3.311 ms** — what the engine's probe in the batches pays over
-the same lookup written out inside the reader's own loop — and it is the cold path's own remainder,
-named.
-
-**And the read is counting, not waiting for memory.** The probe key column's plain read is **0.563 ms**
-over 48 MB and **0.041 ms** over 512K values: the same per byte, so the read is not waiting for
-memory.
-
-**And the stage now says what it does.** The two paths report the same work: `6000000 → 216783`,
-both of them. Before spec 026 the cold path said `216783 → 216783` — the rows that *survived* the
-probe — and the resident path said `6000000 → 216783`, so the two stages described different things.
-The **times** did not move **in that increment**: the change was in what the stage says, not in what it
-does.
-
-**And the published campaigns' difference is the same sign and a different size.** The comparison set
-publishes the cold stage at **26.4 ms** and the resident one at **23.6 ms** — **2.8 ms** apart — and
-those campaigns ran at a load average of **7.58–8.97**, where this section's ran at **8.09–8.81**.
-The difference between the paths is **4.343 ms** here and **2.8 ms** there: the same sign, and both are
-published rather than one being quietly dropped.
+**And the context is named.** The stage's residual — the stage less the build side's whole and its open,
+which is the stage's own probe — is **7.259 ms** on the resident path and **10.160 ms** on the cold one,
+and it is **not** the standalone probe: the gap between them, the **context**, is the price of running
+inside a query rather than in a quiet process, and it is **−1.069 ms** here against **−2.409 ms** on the
+old code — the crate boundary again, inside the context.
 
 **What this did not do.** The **scan's decode** is untouched: it is the scan's business, and it has been
 measured three times and refused every time. The **build side's reader** is untouched — the build side
 is read through the engine's own `ParquetSource`, so the same reader settings apply to it as to any
 other file. The **table's shape** is untouched — the direct-addressed table was chosen by measurement in
-spec 021 and beat every candidate in that campaign — and so is the **probe's hash**. The **eager path's
-load** is untouched, and so is the **plan**. And the **map** was not measured away: it is still there,
-for the keys that overflow their byte, and it is still counted exactly.
+spec 021 and beat every candidate in that campaign — and so is the **probe's hash**. The **lookup's
+shape** is untouched: it is measured, and it is free. The **eager path's load** is untouched, and so is
+the **plan**. And the **map** was not measured away: it is still there, for the keys that overflow their
+byte, and it is still counted exactly.
 
-All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **8.09–8.81** while
-the campaigns ran — the reports carry it. The raw reports are
+**And the comparison campaigns were not taken again.** This increment's change does not touch the query's
+path — the lookup was already inlined there, and `#[inline]` changes nothing the query does — so **no
+query figure moves**, and the comparison set that [§2h](#2h-the-hot-paths-taken-apart) publishes is the
+one spec 028 measured, unchanged.
+
+All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **3.61–5.05** while
+the campaigns ran — the reports carry it, and it is **lower** than the **8.09–8.81** of the campaigns
+whose movement this section explains. The raw reports are
 `bench-results/join-cost-run{1,2,3}.json` and `bench-results/join-cost-before-run{1,2,3}.json`, and
-`python3 scripts/medians.py` derives the tables above from them. The two sets spec 026 published are
-kept under their own names — `bench-results/join-cost-spec026-run{1,2,3}.json` and
-`bench-results/join-cost-spec025-run{1,2,3}.json` — and the table above that preserves spec 026's
-comparison is derived from those. See
-[ADR-0035](docs/adr/0035-the-join-stage-taken-apart.md) and
-[ADR-0036](docs/adr/0036-the-probes-remainder-taken.md).
+`python3 scripts/medians.py` derives the tables above from them. The sets spec 028 and spec 026
+published are kept under their own names — `bench-results/join-cost-spec028-run{1,2,3}.json`,
+`bench-results/join-cost-spec028-before-run{1,2,3}.json`,
+`bench-results/join-cost-spec026-run{1,2,3}.json` and
+`bench-results/join-cost-spec025-run{1,2,3}.json` — and the table above that preserves spec 028's
+comparison is derived from the first two. See
+[ADR-0035](docs/adr/0035-the-join-stage-taken-apart.md),
+[ADR-0036](docs/adr/0036-the-probes-remainder-taken.md) and
+[ADR-0037](docs/adr/0037-the-lookups-shape-and-the-stage-that-moved.md).
 
 ---
 
 ## 4. The defects the increments found
 
-Twenty-eight, all found by measurement, all recorded with their before-and-after numbers in the ADRs
+Twenty-nine, all found by measurement, all recorded with their before-and-after numbers in the ADRs
 and in the commit history.
 
 | | before | after | where |
@@ -2503,6 +2498,7 @@ and in the commit history.
 | **The probe's own direct-addressed table answered for a key below its base.** The index wrapped round to zero, so a key smaller than the smallest build key was answered with the base key's count. The instrument had a defect, and its own row-for-row check found it | the probe's direct table: **2 extra rows** on 216,783 | the probe's direct table: **0 extra rows** | `crates/columnar-engine/examples/operator_probe.rs` |
 | **The plan output left time outside every stage.** The join and the sort asked the filter's selection for its **row numbers** before either stage's clock started, so a plan with no filter built **six million** row numbers — **24 MB** — and the stage table did not account for it | the plan output's hole: **4.2 ms** of the join's query and **4.2 ms** of the sort's | the plan output's hole: **0.016 ms** — the account closes | `crates/columnar-engine/src/lib.rs` |
 | The join's lookup consulted the **overflow map** once a probe row, for a case that does not happen: the map holds **nothing** for this data, because every key's count fits in its byte, and the lookup paid for it on every one of six million rows. The map's share was measured for the first time in spec 028, and it is **at or below the noise** | the map's share: **0.183 ms** of a **4.417 ms** remainder | no map to consult — **the map is not allocated at all** when nothing overflows | `columnar-engine/src/operators/join.rs` |
+| **The instrument measured two things that are not differences of the code.** The engine's lookup is a **private** method and the instrument is another crate, so across the boundary it was not inlined and the instrument paid a **call a probe row** that the engine's own query does not pay; and the candidate read a **warm** buffer while the engine's probe read one the reader had **just written**. Both were inside the remainder spec 028 published as the engine's cost | the remainder: **3.337 ms**, of which the crate boundary is **+1.332 ms** and the buffer **1.158 ms** | the remainder: **0.109 ms** — the engine's probe **8.395 ms** against the hand-written candidate's **8.315 ms** | `crates/columnar-engine/examples/join_cost_probe.rs` |
 | **The sort compared every key a row at a time, in Rust.** The comparison — one per key, six million of them — was a scalar loop, and it was **2.2 ms** of the operator's **3.2 ms**: the read was never the cost, the counting was. The same column, compared in blocks against the heap's own worst key, costs **0.96 ms** | the engine's bounded sort **3.23 ms** · the sort's stage **4.18 ms** | the engine's bounded sort **1.02 ms** · the sort's stage **1.10 ms** | `columnar-engine/src/operators/sort.rs` |
 
 The global aggregate is the one worth calling out from the first increment: the module

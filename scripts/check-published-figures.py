@@ -35,8 +35,10 @@ SORT_COST_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-run*.json"))
 SORT_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-before-run*.json"))
 JOIN_COST_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-run*.json"))
 JOIN_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-before-run*.json"))
-JOIN_COST_SPEC026_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec026-run*.json"))
-JOIN_COST_SPEC025_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec025-run*.json"))
+JOIN_COST_SPEC028_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec028-run*.json"))
+JOIN_COST_SPEC028_BEFORE_REPORTS = sorted(
+    (ROOT / "bench-results").glob("join-cost-spec028-before-run*.json")
+)
 PROBE_REPORTS = sorted((ROOT / "bench-results").glob("operator-probe-*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
@@ -274,6 +276,11 @@ JOIN_COST_PARTS = (
     ("candidate_probe", "the candidate, written out", 3),
     ("candidate_with_map", "the candidate with the overflow consult", 3),
     ("cold_candidate", "the cold candidate", 3),
+    ("candidate_chain", "the candidate, the chain", 3),
+    ("candidate_width", "the candidate, the width", 3),
+    ("candidate_state", "the candidate, the state through `self`", 3),
+    ("candidate_map_option", "the candidate, the map's option", 3),
+    ("engine_lookup_plain", "the engine's lookup, over a plain slice", 3),
     ("read_plain", "the read, plain", 3),
     ("read_small", "the read, the small control", 3),
 )
@@ -297,21 +304,20 @@ JOIN_COST_OLD_PARTS = (
 
 # The four sets the join probe's figures come from.
 #
-# "after" is the code this increment wrote and "before" is the code it
-# replaced, measured **back to back** with it on the same host and with the
-# same instrument. "spec026" is the set spec 026 published -- the same code as
-# "before", measured with the instrument as it stood then -- and "spec025" is
-# the code before spec 026's ten fixes. The last two are preserved under their
-# own names, so that every figure this section publishes stays derivable from
-# a committed report.
+# "after" is the code this increment ships and "before" is the code it
+# replaces -- the code spec 028 replaced -- measured **back to back** with it
+# on the same host and with the same instrument, three campaigns each,
+# interleaved. "spec028" is the set spec 028 published and "spec028before" is
+# the set it measured against, both preserved under their own names, so that
+# every figure this section published stays derivable from a committed report.
 #
-# The instrument grew two parts in this increment, so the two sets it measured
-# carry two more figures than the two it did not.
+# The instrument grew five parts in this increment, so the two sets it measured
+# carry five more figures than the two it did not.
 JOIN_COST_SETS = (
     ("after", "the new code's", JOIN_COST_PARTS),
     ("before", "the old code's", JOIN_COST_PARTS),
-    ("spec026", "spec 026's set's", JOIN_COST_OLD_PARTS),
-    ("spec025", "the code before spec 026's", JOIN_COST_OLD_PARTS),
+    ("spec028", "spec 028's set's", JOIN_COST_OLD_PARTS),
+    ("spec028before", "spec 028's before set's", JOIN_COST_OLD_PARTS),
 )
 
 JOIN_COST_CHECKS = [
@@ -332,6 +338,18 @@ JOIN_COST_DERIVED = (
     ("the_cold_remainder", "the cold remainder", 3),
     ("the_two_paths", "the two paths", 3),
     ("the_two_probes", "the two probes", 3),
+    ("the_chain_s_cost", "the chain's cost", 3),
+    ("the_width_s_cost", "the width's cost", 3),
+    ("the_state_s_cost", "the state's cost", 3),
+    ("the_map_option_s_cost", "the map's option's cost", 3),
+    ("the_loop_s_cost", "the engine's loop's cost", 3),
+    ("the_key_source_s_cost", "the key source's cost", 3),
+    ("the_ladder_s_sum", "the ladder's sum", 3),
+    ("the_unexplained", "what is left unexplained", 3),
+    ("the_residual_cold", "the stage's residual, cold", 3),
+    ("the_residual_resident", "the stage's residual, resident", 3),
+    ("the_context_cold", "the context, cold", 3),
+    ("the_context_resident", "the context, resident", 3),
 )
 
 # The five differences the instrument computed before this increment.
@@ -1284,8 +1302,8 @@ def main() -> int:
         for which, paths in (
             ("after", JOIN_COST_REPORTS),
             ("before", JOIN_COST_BEFORE_REPORTS),
-            ("spec026", JOIN_COST_SPEC026_REPORTS),
-            ("spec025", JOIN_COST_SPEC025_REPORTS),
+            ("spec028", JOIN_COST_SPEC028_REPORTS),
+            ("spec028before", JOIN_COST_SPEC028_BEFORE_REPORTS),
         ):
             parts, derived = _join_cost_figures(paths)
             join_parts[which] = parts

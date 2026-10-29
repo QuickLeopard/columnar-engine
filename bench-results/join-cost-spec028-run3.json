@@ -1,0 +1,110 @@
+{
+  "build_key": "o_orderkey",
+  "commit": "725c091",
+  "derived_ms": {
+    "build_table": -0.11770799999999992,
+    "output_rows": 0.9873749999999992,
+    "the_cold_remainder": -0.8606669999999994,
+    "the_map_s_share": 0.07095800000000096,
+    "the_probe_s_remainder": 3.167041,
+    "the_two_paths": 7.533748999999997,
+    "the_two_probes": 4.984005000000002
+  },
+  "engine_rows": 216783,
+  "file": "data/lineitem.parquet",
+  "host_load_average": 8.67,
+  "iterations": 5,
+  "parts_ms": {
+    "build_keys": 0.35508300000000004,
+    "build_open": 0.028291,
+    "build_read": 11.878207999999999,
+    "build_whole": 12.115582999999999,
+    "candidate_probe": 7.254499999999999,
+    "candidate_with_map": 7.325458,
+    "cold_candidate": 16.266213,
+    "floor_probe": 6.267125,
+    "probe_batches": 15.405546000000001,
+    "probe_column": 10.421541,
+    "read_plain": 0.57075,
+    "read_small": 0.041375,
+    "stage_cold": 29.639789999999998,
+    "stage_resident": 22.106041,
+    "table_own": 0.202125
+  },
+  "probe": "join-cost",
+  "probe_key": "l_orderkey",
+  "rows": 6000000,
+  "spreads_ms": {
+    "build_keys": [
+      0.338458,
+      0.38475
+    ],
+    "build_open": [
+      0.027250000000000003,
+      0.037333000000000005
+    ],
+    "build_read": [
+      11.765459,
+      12.528834000000002
+    ],
+    "build_whole": [
+      11.857167,
+      12.715292
+    ],
+    "candidate_probe": [
+      7.064875,
+      11.888083
+    ],
+    "candidate_with_map": [
+      7.050792,
+      9.681875
+    ],
+    "cold_candidate": [
+      11.314292,
+      17.748501
+    ],
+    "floor_probe": [
+      5.0108749999999995,
+      6.590167
+    ],
+    "probe_batches": [
+      13.949296,
+      20.852539999999998
+    ],
+    "probe_column": [
+      9.346416999999999,
+      11.125375
+    ],
+    "read_plain": [
+      0.558791,
+      0.598292
+    ],
+    "read_small": [
+      0.040917,
+      0.051708
+    ],
+    "stage_cold": [
+      26.119836,
+      34.377255000000005
+    ],
+    "stage_resident": [
+      21.569083,
+      24.763917
+    ],
+    "table_own": [
+      0.200208,
+      0.224584
+    ]
+  },
+  "stage_rows": {
+    "cold": [
+      6000000,
+      216783
+    ],
+    "resident": [
+      6000000,
+      216783
+    ]
+  },
+  "table_rows": 216345
+}

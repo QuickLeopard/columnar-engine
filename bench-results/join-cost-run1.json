@@ -1,99 +1,136 @@
 {
   "build_key": "o_orderkey",
-  "commit": "725c091",
+  "commit": "b8b2ede",
   "derived_ms": {
-    "build_table": 0.035333000000000614,
-    "output_rows": 2.5198329999999993,
-    "the_cold_remainder": 3.3112060000000003,
-    "the_map_s_share": 0.01950000000000074,
-    "the_probe_s_remainder": 3.3365,
-    "the_two_paths": 4.343419000000001,
-    "the_two_probes": 3.408499000000001
+    "build_table": 0.0692909999999996,
+    "output_rows": 2.5603749999999996,
+    "the_chain_s_cost": 0.35408299999999926,
+    "the_cold_remainder": -0.2898789999999991,
+    "the_context_cold": 0.4992529999999995,
+    "the_context_resident": -1.3177489999999992,
+    "the_key_source_s_cost": 0.12083200000000005,
+    "the_ladder_s_sum": 0.240749000000001,
+    "the_loop_s_cost": -0.23262500000000053,
+    "the_map_option_s_cost": 0.14320900000000059,
+    "the_map_s_share": 0.12537500000000001,
+    "the_probe_s_remainder": 0.240749000000001,
+    "the_residual_cold": 10.160124,
+    "the_residual_resident": 7.237542000000001,
+    "the_state_s_cost": -0.8678749999999997,
+    "the_two_paths": 2.9225819999999985,
+    "the_two_probes": 1.1055799999999998,
+    "the_unexplained": 0.0,
+    "the_width_s_cost": 0.7231250000000014
   },
   "engine_rows": 216783,
   "file": "data/lineitem.parquet",
-  "host_load_average": 8.81,
+  "host_load_average": 4.07,
   "iterations": 5,
   "parts_ms": {
-    "build_keys": 0.324167,
-    "build_open": 0.029416,
-    "build_read": 11.4735,
-    "build_whole": 11.833,
-    "candidate_probe": 7.086374999999999,
-    "candidate_with_map": 7.105875,
-    "cold_candidate": 10.520168,
-    "floor_probe": 4.566542,
-    "probe_batches": 13.831374,
-    "probe_column": 10.422875,
-    "read_plain": 0.535667,
-    "read_small": 0.043458000000000004,
-    "stage_cold": 26.549585,
-    "stage_resident": 22.206166,
-    "table_own": 0.20358400000000001
+    "build_keys": 0.32570899999999997,
+    "build_open": 0.0265,
+    "build_read": 11.149042,
+    "build_whole": 11.544042,
+    "candidate_chain": 8.668624999999999,
+    "candidate_map_option": 8.667084000000001,
+    "candidate_probe": 8.314542,
+    "candidate_state": 8.523875,
+    "candidate_width": 9.39175,
+    "candidate_with_map": 8.439917,
+    "cold_candidate": 9.95075,
+    "engine_lookup_plain": 8.434459,
+    "floor_probe": 5.754167,
+    "probe_batches": 9.660871,
+    "probe_column": 8.555291,
+    "read_plain": 0.549,
+    "read_small": 0.04625,
+    "stage_cold": 21.730666,
+    "stage_resident": 18.808084,
+    "table_own": 0.185
   },
   "probe": "join-cost",
   "probe_key": "l_orderkey",
   "rows": 6000000,
   "spreads_ms": {
     "build_keys": [
-      0.323958,
-      0.326125
+      0.321708,
+      0.39087500000000003
     ],
     "build_open": [
-      0.028083,
-      0.039834
+      0.024833,
+      0.036917
     ],
     "build_read": [
-      11.404582999999999,
-      11.944292
+      10.98225,
+      11.712874999999999
     ],
     "build_whole": [
-      11.662958,
-      11.992458
+      11.434666,
+      11.775917
+    ],
+    "candidate_chain": [
+      8.471791,
+      8.735708
+    ],
+    "candidate_map_option": [
+      8.570124999999999,
+      9.135375
     ],
     "candidate_probe": [
-      6.992541,
-      7.227957999999999
+      8.162958,
+      8.484583
+    ],
+    "candidate_state": [
+      8.481584,
+      8.778917
+    ],
+    "candidate_width": [
+      9.273541999999999,
+      9.622459
     ],
     "candidate_with_map": [
-      6.903916000000001,
-      7.17875
+      8.135958,
+      8.530958
     ],
     "cold_candidate": [
-      10.094878,
-      10.69033
+      8.876501,
+      10.363496
+    ],
+    "engine_lookup_plain": [
+      8.277125,
+      8.909916
     ],
     "floor_probe": [
-      4.306916,
-      5.26825
+      5.439875000000001,
+      5.927833000000001
     ],
     "probe_batches": [
-      12.988913,
-      17.595372
+      9.559504,
+      9.855166
     ],
     "probe_column": [
-      9.206083,
-      11.203917
+      7.374167,
+      9.167166
     ],
     "read_plain": [
-      0.503042,
-      0.7274579999999999
+      0.5148750000000001,
+      0.683708
     ],
     "read_small": [
-      0.034958,
-      0.052833
+      0.038541000000000006,
+      0.047416999999999994
     ],
     "stage_cold": [
-      26.449164,
-      27.950124
+      21.245378,
+      28.193208000000002
     ],
     "stage_resident": [
-      20.857083,
-      33.022666
+      18.500666,
+      20.115792
     ],
     "table_own": [
-      0.185458,
-      0.205792
+      0.17962499999999998,
+      0.203208
     ]
   },
   "stage_rows": {

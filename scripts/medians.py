@@ -1406,6 +1406,11 @@ JOIN_COST_PARTS = (
     ("candidate_probe", "the candidate, written out"),
     ("candidate_with_map", "the candidate with the overflow consult"),
     ("cold_candidate", "the cold candidate"),
+    ("candidate_chain", "the candidate, the chain"),
+    ("candidate_width", "the candidate, the width"),
+    ("candidate_state", "the candidate, the state through `self`"),
+    ("candidate_map_option", "the candidate, the map's option"),
+    ("engine_lookup_plain", "the engine's lookup, over a plain slice"),
     ("read_plain", "the read, plain"),
     ("read_small", "the read, the small control"),
 )
@@ -1425,6 +1430,18 @@ JOIN_COST_DERIVED = (
     ("the_cold_remainder", "the cold remainder"),
     ("the_two_paths", "the two paths"),
     ("the_two_probes", "the two probes"),
+    ("the_chain_s_cost", "the chain's cost"),
+    ("the_width_s_cost", "the width's cost"),
+    ("the_state_s_cost", "the state's cost"),
+    ("the_map_option_s_cost", "the map's option's cost"),
+    ("the_loop_s_cost", "the engine's loop's cost"),
+    ("the_key_source_s_cost", "the key source's cost"),
+    ("the_ladder_s_sum", "the ladder's sum"),
+    ("the_unexplained", "what is left unexplained"),
+    ("the_residual_cold", "the stage's residual, cold"),
+    ("the_residual_resident", "the stage's residual, resident"),
+    ("the_context_cold", "the context, cold"),
+    ("the_context_resident", "the context, resident"),
 )
 
 
@@ -1463,9 +1480,13 @@ def print_join_cost(sets: list[tuple[str, list[tuple[str, list[dict]]]]]) -> Non
 
     Spec 028 measures the probe's remainder, so the instrument gained two
     parts -- the candidate with the overflow map's consult in it, and the
-    candidate inside the reader's own batch loop -- and the section publishes
-    four sets: the two this increment measured, and the two that spec 026
-    measured and that are preserved under their own names.
+    candidate inside the reader's own batch loop.
+
+    Spec 029 measures the remainder's **parts**, so the instrument gained five
+    more -- the chain, the width, the state through `self`, the map's option,
+    and the engine's own lookup over a plain slice -- and the section publishes
+    the two sets this increment measured, the two that spec 028 measured, and
+    the two that spec 026 measured. Every set is preserved under its own name.
     """
     for label, files in sets:
         if not files:
@@ -1709,6 +1730,8 @@ def main() -> int:
     join_sets = [
         ("the code this increment ships", "join-cost-run*.json"),
         ("the code this increment replaces", "join-cost-before-run*.json"),
+        ("spec 028's set, as spec 028 measured it", "join-cost-spec028-run*.json"),
+        ("spec 028's before set", "join-cost-spec028-before-run*.json"),
         ("spec 026's set, as spec 026 measured it", "join-cost-spec026-run*.json"),
         ("the code before spec 026", "join-cost-spec025-run*.json"),
     ]

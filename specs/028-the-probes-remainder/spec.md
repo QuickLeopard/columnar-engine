@@ -337,6 +337,14 @@ and the saturating add, none of which the hand-written candidate has.
 > is at or below the noise. Both corrections are made in the documents that publish them, and the next
 > question — the shape's parts, one at a time — is
 > [spec 029](../029-the-lookup-shape-and-the-stage-that-moved/spec.md).
+>
+> **And the remainder itself was measured with two things in it that are not differences of the code.**
+> The **3.337 ms** is what the instrument measured then, and the report sets are preserved under their
+> own names, but the instrument paid the **crate boundary** — the engine's lookup is a private method and
+> the instrument is another crate, so it was not inlined there — and it compared the engine's probe over a
+> **freshly materialised** column against a candidate over a **warm** one. Measured like with like, the
+> remainder is **0.109 ms**, and **the lookup's shape is free**. The figures, the reason and the
+> preserved sets are in [ADR-0037](../../docs/adr/0037-the-lookups-shape-and-the-stage-that-moved.md).
 
 **The change is taken, and it bought nothing the query can see.** The probe's own measurement is
 **0.950 ms** faster (the two sets' ranges do not overlap), but the **floor** — the table's own load,

@@ -150,6 +150,21 @@ what it is.** It is the next question, and it is written down:
 > each. The sentence now says which measurement each pair came from. It also said the **scan's** stage
 > "did not move": it moved **0.3 ms** the other way, **70.5 ms** to **70.2 ms**.
 
+**And the remainder is not what this ADR published.** This ADR published the remainder as **3.337 ms**
+— the engine's own probe over the hand-written candidate — and it was measured with two things in it
+that are **not** differences of the code: the **crate boundary** (the instrument is another crate, and
+the engine's lookup is a private method, so it was not inlined there and the instrument paid a call a
+probe row the query does not pay) and the **buffer** (the candidate read a column kept warm across the
+iterations, while the engine's probe read one the reader had just written). Measured like with like, the
+remainder is **0.109 ms**, and **the lookup's shape is free**. See
+[ADR-0037](0037-the-lookups-shape-and-the-stage-that-moved.md).
+
+> **The wording is amended, and the reason recorded.** The **3.337 ms** is what the instrument measured
+> then, and it is kept — the report sets are preserved under their own names — but it is not the
+> engine's cost: the two artefacts above are **1.332 ms** and **1.158 ms** of it, and they are measured
+> and named in [ADR-0037](0037-the-lookups-shape-and-the-stage-that-moved.md). The reader who wants the
+> engine's cost wants the **0.109 ms**.
+
 **The prize is a measurement, not a promise.** At the time of the decision the cold `join-orders` was
 **96.7 ms** against DuckDB's **95.0 ms** — level, **1.7 ms** apart, inside both spreads — and the
 remainder was **3.095 ms** of the probe. The prize in the query is **at most** the remainder, and the figure that moves it is the stage's
