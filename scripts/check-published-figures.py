@@ -423,12 +423,12 @@ JOIN_COST_SETS = (
 # that is missing, or that has fewer campaigns than the method says, is a
 # failure -- a family is never skipped silently.
 JOIN_COST_FAMILIES = (
-    ("the new code's", JOIN_COST_REPORTS),
-    ("the old code's", JOIN_COST_BEFORE_REPORTS),
-    ("spec 029's set's", JOIN_COST_SPEC029_REPORTS),
-    ("spec 029's before set's", JOIN_COST_SPEC029_BEFORE_REPORTS),
-    ("spec 028's set's", JOIN_COST_SPEC028_REPORTS),
-    ("spec 028's before set's", JOIN_COST_SPEC028_BEFORE_REPORTS),
+    ("the code that ships", JOIN_COST_REPORTS),
+    ("the code that replaces it", JOIN_COST_BEFORE_REPORTS),
+    ("spec 029's code", JOIN_COST_SPEC029_REPORTS),
+    ("spec 029's before set", JOIN_COST_SPEC029_BEFORE_REPORTS),
+    ("spec 028's code", JOIN_COST_SPEC028_REPORTS),
+    ("spec 028's before set", JOIN_COST_SPEC028_BEFORE_REPORTS),
 )
 
 # The campaigns the method calls for.
@@ -1587,11 +1587,11 @@ def main() -> int:
     # figures are derived from.
     for label, paths in JOIN_COST_FAMILIES:
         if not paths:
-            failures.append(f"the join probe's {label} set is missing")
+            failures.append(f"the join probe's set for {label} is missing")
         elif len(paths) < JOIN_COST_CAMPAIGNS:
             failures.append(
-                f"the join probe's {label} set has {len(paths)} campaigns, and the "
-                f"method says {JOIN_COST_CAMPAIGNS}"
+                f"the join probe's set for {label} has {len(paths)} campaigns, "
+                f"and the method says {JOIN_COST_CAMPAIGNS}"
             )
 
     if JOIN_COST_REPORTS or JOIN_COST_BEFORE_REPORTS:
