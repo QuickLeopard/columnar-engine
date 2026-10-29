@@ -6,6 +6,11 @@
 the band it named is a **difference of two drifting series**, and on the resident path it came out
 **narrower than the machine's own movement**. The reason is recorded in R2 and R3, and in
 [spec 030's own header](../030-the-context-taken-apart/spec.md).
+**Amended**: 2026-10-29 — the plan's **functional decomposition** and its **dependency graph**:
+the rename's place in the order, the two thresholds that named a yardstick that did not exist yet,
+the quantity R5 asked for and R4 abolishes, the derivation's two passes, the guard's place in the
+publication, the edge the guard's own state derivation was missing from, and the families the
+spec's own tables left out — with the reasons recorded in **The plan's shape**.
 **Predecessor**: [030-the-context-taken-apart](../030-the-context-taken-apart/spec.md)
 
 ## The problem
@@ -46,8 +51,9 @@ difference moves by **0.418 ms** and comes back — it ends **0.289 ms** from wh
 **A band that is the difference of two drifting series can be narrow — or zero — while the machine
 is drifting a millisecond.** It is not a yardstick, and it was never going to be one.
 
-**And this is not the code's shape, it is the method's.** The same comparison, over the sets this
-repository keeps:
+**And this is not the code's shape, it is the method's.** The same comparison, over **every set the
+repository keeps that carries a context** — the two spec 028 sets predate the context and carry
+none:
 
 | the set | the path | **the band** (the context's own spread) | **the floor's drift** | the standalone probe's drift |
 |---|---|---|---|---|
@@ -57,8 +63,10 @@ repository keeps:
 | the code it replaces (spec 030's before) | resident | 0.846 ms | 0.242 ms | 0.644 ms |
 | spec 029's set | **cold** | **0.050 ms** | **0.623 ms** | 2.070 ms |
 | spec 029's set | **resident** | **0.282 ms** | **0.623 ms** | 0.227 ms |
+| the code spec 029 replaced | cold | 0.793 ms | 0.722 ms | 3.193 ms |
+| the code spec 029 replaced | resident | 0.964 ms | 0.722 ms | 1.455 ms |
 
-**And in three of the six cells the band is narrower than the machine's own movement.** The two
+**And in three of the eight cells the band is narrower than the machine's own movement.** The two
 that matter most: on the **resident path of the code that ships** — the path where the context was
 **outside** its band — the band is **0.418 ms** against the machine's **0.936 ms**; and in **spec
 029's set**, on **both** paths, the band is **0.050 ms** and **0.282 ms** against a floor that moved
@@ -179,7 +187,7 @@ carry no engine drift.
 **And so the ladder, the yardsticks, the verdict and the state are published for those two sets
 only.** The guard derives the ladder today from the set that measures the code that ships; **under
 this spec it derives it for both**, so that spec 030's ladder is **checked against the yardstick**
-as well and not only quoted. The other four families publish their parts and the floor's drift,
+as well and not only quoted. The other **five** families publish their parts and the floor's drift,
 and no ladder — **a missing measurement is published as missing, not as a zero.**
 
 **And the two sides are named, because a difference of two measurements carries the drift of both.**
@@ -233,7 +241,8 @@ published figure and the computed one agree.
 
 **And the rule is published with the number it gives, from the committed reports, before the
 campaign.** On the resident path of the code that ships, the yardstick for the **probe's file state**
-is **0.936 ms** — the floor's drift, the larger of its two sides' — against the leaf's own spread of
+is **0.936 ms** — the floor's drift, which is **larger than either of its two sides'** (**0.781 ms**
+and **0.901 ms**) — against the leaf's own spread of
 **1.398 ms**, so the leaf is **inconclusive**; and its value, **−1.178 ms**, is **outside** the
 yardstick, so if the leaf's own spread were narrower than the machine's drift, it would be a part of
 the context. **On the same reports and the same rule**, the **build side's gap** (−0.343 ms, spread
@@ -338,8 +347,16 @@ spread.
 The order is not neutral: a machine that drifts while an iteration runs gives the first
 measurement a different price from the second. So **even iterations take the query first and odd
 iterations take it last**, the two orders' difference is published as its own figure — **the
-order's own cost** — and it is compared with the yardstick, so that the reader can see whether the
-order could have made any of the parts.
+order's own cost** — and it is compared with **the floor's own spread**, so that the reader can see
+whether the order could have made any of the parts. **The floor's own spread is the one number
+every cost is compared with**, because the yardstick is per leaf and a cost is not a leaf.
+
+**And nothing is compared with the new set's yardstick before it exists.** The **yardsticks** that
+fix the rule before the campaign are the **pre-registration** — computed from the committed
+reports, and published before the campaign is taken. The **costs** — the order's own cost and the
+interleaving's added work — are compared with **the floor's own spread**, which is the machine's
+own number and is in hand before the campaign. **The new set's yardstick does not exist until after
+the campaign, and nothing is compared with it before it does.**
 
 **And the instrument's own cost is measured, not assumed.** The interleaving costs the campaign
 time, and the per-iteration values the report now carries are written rather than timed — but the
@@ -365,7 +382,11 @@ So the report gains, for every part **measured and derived**, the **per-iteratio
 
 - the ladder's reduction — the median of a sum against the sum of medians — is checkable;
 - the leaves' correlation is checkable;
-- the **drift between the two blocks** is measurable, and is published.
+- the **separation between the two sides of one difference** is measurable, and is published.
+  **There is no drift between two blocks to publish after R4, because there are no blocks left** —
+  the two sides are measured in the same iteration — and what the reader needs instead is **how far
+  apart the machine's own two measurements of one difference were taken**, which is the distance the
+  machine drifts across a single pair, and which the yardstick has to cover.
 
 **And the raw reports stay committed**, under their own names, as every set in this repository has.
 
@@ -426,7 +447,10 @@ replaced**, and the last increment's own set is added beside it:
 | the code this increment ships | `join-cost-run*.json` | this increment's set |
 | the code the last increment shipped | `join-cost-spec030-run*.json` | spec 030's set |
 | the code that one replaces | `join-cost-spec030-before-run*.json` | the code spec 030 replaced |
-| the set before that | the spec 029 families, as they stand | spec 029's sets |
+| the set before that | `join-cost-spec029-run*.json` | spec 029's set |
+| and the code that one replaces | `join-cost-spec029-before-run*.json` | the code spec 029 replaced |
+| the set before that | `join-cost-spec028-run*.json` | spec 028's set |
+| and the code that one replaces | `join-cost-spec028-before-run*.json` | the code spec 028 replaced |
 
 **And the family is kept, not dropped** — the guard checks every family's parts against `PERF.md`
 §3o, and the set it names is published in that document's "the code it replaces" columns, so a
@@ -471,6 +495,137 @@ not.**
 [`STATUS.md`](../../STATUS.md)'s last section — and it is written down **either way**. A leaf that
 separates is an answer; a leaf that does not separate is also an answer, and it is published with
 the numbers that show it, together with **the resolution that would be needed**.
+
+## The plan's shape
+
+**A plan is a set of functions and the order they can be done in.** This one is decomposed here,
+function by function, and the decomposition is checked against the phases below — because a phase
+list that disagrees with the dependencies is how work gets done in the wrong order.
+
+| the function | what it touches | what it produces | **the phase** |
+|---|---|---|---|
+| **A1** the interleaved iteration | the instrument | the two sides of a difference, measured in one iteration | 3 |
+| **A2** the alternated order | the instrument | the order's own cost | 3 |
+| **A3** the file state's bracket | the instrument | the build side's gap, measured what it measures today | 3 |
+| **A4** the report's series | the instrument | every part's per-iteration values, and each block's time | 3 |
+| **B1** the drift | `scripts/medians.py` | the range across a set's three campaigns, for every measurement | 1, 2 and 7 |
+| **B2** the yardstick | `scripts/medians.py` | each leaf's yardstick, by R2's rule | 2 and 7 |
+| **B3** the states | `scripts/medians.py` | each leaf's state, and the verdict's state | 7 |
+| **C1** the recompute | `scripts/check-published-figures.py` | the yardstick the guard derived, checked against the published one | 7 |
+| **C2** the verdict | `scripts/check-published-figures.py` | one word and one state per path | 7 |
+| **C3** the phrases | `scripts/check-published-figures.py` | the published sentences, checked as literals | 7 |
+| **C4** the set list | `scripts/check-published-figures.py` | the families and their globs | 4 and 7 |
+| **C5** the ladder, twice | `scripts/check-published-figures.py` | the ladder of both sets whose engine reports the parts | 7 |
+| **D1** the renames | the reports on disk | spec 030's sets, under their own names | 4 |
+| **D2** §3o | `PERF.md` | the ladder, the yardsticks, the states, the parts | 7 |
+| **D3** the Next row | `README.md` | the context, the spread, the verdict, the state, the conclusion | 7 |
+| **D4** the status | `STATUS.md` | the probe row, the open question, the counts | 7 |
+| **D5** the conclusion | all three | the claim, restated on a yardstick that can measure | 7 |
+| **D6** the reports' index | `bench-results/README.md` | a row per set, and the globs | 7 |
+| **E1** the supersession | spec 030's header | the reason, recorded in the spec that is amended | **done** |
+| **E2** the ADR | `docs/adr/` | the decision | 7 |
+| **E3** the next question | `README.md`, `STATUS.md` | the question this one leaves | 7 |
+| **M1** the campaign | the instrument | three campaigns, five iterations each | 5 |
+| **M2** the answer | the engine, the tests | the rows, the tests, the query's cost | 6 |
+
+**And every function carries the phase it is done in.** The column is the phases' own numbering, so
+the check is not a claim about the plan — it is the plan, read against the phases. A function with
+no phase would be work with no place, and a phase with no function would be work with no
+description.
+
+**And a function's phase is the phase its work is *finished* in**, so that an edge never runs
+backwards. **B1** and **B2** run twice on purpose — once over the **committed** reports, to fix the
+rule before the campaign, and once over the **new** set, to publish it — and **C4** is re-pointed at
+the renamed files in phase 4 and gains the guard's new checks in phase 7. **A function's work is
+finished in its last phase, and every edge names a function that is finished no later than the one
+it feeds.**
+
+**And the dependencies that constrain the order** — the load-bearing edges, and why each one is
+there:
+
+| from | to | why |
+|---|---|---|
+| **A3** | **A1** | the interleaving must not move the file state |
+| **A1**, **A2**, **A4** | **M1** | the campaign measures the interleaved instrument |
+| **M1** | **B1** | a drift is a range over a set's three campaigns |
+| **B1** | **B2** | the yardstick is the larger of drifts |
+| **B2** | **B3** | the states follow from the yardsticks |
+| **B1**, **B2** | **C1**, **C2** | the guard derives them the same way, or the check is not a check |
+| **B3** | **C2** | the guard derives the verdict's state too, by the same rule |
+| **C1** | **C2** | the verdict is judged against the recomputed yardstick |
+| **C4** | **C1**, **C2**, **C5** | the guard reads the sets by glob |
+| **D1** | **C4** | the glob must match the files on disk |
+| **D1** | **M1** | **the new set takes spec 030's file names, so the rename comes first** |
+| **M1** | **D2**, **D5** | the figures come from the campaign |
+| **B2**, **B3** | **D2** | the yardsticks and the states are published |
+| **B1** | **D5** | the conclusion rests on the machine's drift |
+| **C3** | **D2**, **D3**, **D4** | the guard's phrases **are** the documents' sentences |
+| **D2** | **D3**, **D4** | `PERF.md`, then the README, then `STATUS.md` |
+| **D1** | **D2**, **D6** | the tables name the sets |
+| **M1** | **E3** | the next question depends on what the campaign found |
+| **D2** | **E2** | the ADR records the decision |
+| **E2** | **D4** | the ADR's arrival moves `STATUS.md`'s ADR count |
+| **M2**, **C1**…**C5**, **D2**…**D6** | the gate | the gate checks the published figures |
+
+**And the graph is acyclic.** No edge runs backwards, so the work can be done in this order and
+every step has what it needs — and the places where the order is not obvious are the places below,
+where the plan was wrong.
+
+> **The plan is amended, and the reason is recorded.** The decomposition and the dependency graph
+> above are the review's findings, bottom-up and top-down. The requirements, the phases and the
+> tasks are corrected to agree with them, and the corrections are these.
+
+**1. The sets' rename was not in the plan, and the campaign depends on it.** The new set takes
+`join-cost-run{1,2,3}.json` — and those are **spec 030's set's names**. A campaign taken before the
+rename **overwrites spec 030's committed reports**, and the "before" that R7 publishes old-and-new
+against is gone. **The rename is a phase of its own, before the campaign**, and it moves with the
+guard's set list **and with the campaign** in the same commit — because a glob that matches nothing
+fails the guard, and an intermediate commit would leave `join-cost-run*.json` **empty**.
+
+**2. Two comparisons named a yardstick that does not exist yet.** The order's own cost and the
+interleaving's added work are measured **before** the campaign, and the **new** set's yardstick does
+not exist until after it. **The comparisons are now against the floor's own spread** — one number,
+the machine's own measure — because the yardstick is per leaf and a cost is not a leaf. **And the
+yardsticks that fix the rule before the campaign are the pre-registration**: the ones computed from
+the committed reports, published before the campaign is taken.
+
+**3. The phases contradicted R4.** Phase 3 compared the added work's cost with "the yardstick";
+R4 compared it with the floor's own spread. **The phases were wrong and are corrected to the
+requirement**, and the order's own cost now uses the same threshold as the added work's cost.
+
+**4. R5 asked for a quantity that R4 abolishes.** "The drift between the two blocks" cannot be
+published after the interleaving, because there are no blocks left to drift apart — the two sides
+are in the same iteration. **What is published instead is the separation between the two sides of
+one difference**, and the block times that show it.
+
+**5. The derivation runs twice, and the phases described one of the passes.** The drifts, the
+yardsticks and the states are derived from the **committed** reports to fix the rule before the
+campaign, and again from the **new** set to publish it. **The phases say so now.**
+
+**6. The guard's changes were not a phase, and the publication cannot pass without them.** The
+guard's phrases are the documents' sentences, so the guard's changes and the publication are **one
+phase**, and the guard's changes come **first** — the documents are written to the phrases the guard
+checks.
+
+**7. The ADR's arrival moves a checked figure.** `STATUS.md` publishes the number of ADRs and the
+guard checks it, so the ADR lands in the same change as the publication that names it.
+
+**8. The graph was missing an edge the guard actually has.** The guard does not only re-derive the
+drifts and the yardsticks — it re-derives the **leaf's states** and the **verdict's state** too, by
+the same rule `scripts/medians.py` uses, or the check is not a check. **B3 → C2** was not in the
+graph, and the phases named the states' phrases without saying where the state came from. **The
+edge is now in the graph, and the phases say that the guard derives the states the same way.**
+
+**9. The spec's own tables named fewer families than the guard reads.** The guard reads **six**
+join-cost families today — the code that ships, the code it replaces, spec 029's set and its
+before, spec 028's set and its before — and this spec's table of the band against the floor's drift
+showed **three** of them: **spec 029's before was missing**, and spec 028's two sets were missing
+without saying why. **Spec 029's before carries a context** — a band of **0.793 ms** cold and
+**0.964 ms** resident against a floor that moved **0.722 ms** — so it is in the table now, and the
+count is **three of the eight** cells, not three of six. **Spec 028's two sets predate the context
+and carry none**, and the table says so rather than leaving them out silently. **And R1's "the
+other four families" was "the other five"**, and R7's family table listed four families where the
+guard reads seven.
 
 ## The scope
 
@@ -563,15 +718,28 @@ the aggregate's value is checked against the published one — the same rule spe
    sides' drifts, and the floor's — and the drifts and the yardsticks are computed from the
    **committed** reports first. **The rule is not chosen by looking at any verdict.**
 3. **The interleaving.** The instrument measures the two sides in the same iteration, the order is
-   alternated, the order's own cost is measured, and the added work's cost is compared with the
-   yardstick. **A route that costs more than the yardstick is refused, with the reason published.**
-4. **The campaign.** Three campaigns, five iterations each, with the floor in every campaign, the
+   alternated, the order's own cost is measured, and the added work's cost is compared with
+   **the floor's own spread** — the threshold R6 uses, and the one number every cost is compared
+   with. **A route that costs more than the floor's own spread is refused, with the reason
+   published.**
+4. **The sets' rename.** Spec 030's sets become `join-cost-spec030-run*.json` and
+   `join-cost-spec030-before-run*.json`, the guard's set list is re-pointed at them, and **only
+   then** is the campaign taken. **The new set takes the names spec 030's set has today, so the
+   rename comes first — a campaign taken before it would overwrite spec 030's committed reports.**
+   **The rename and the campaign land in the same commit**, because a glob that matches nothing
+   fails the guard, and an intermediate commit would leave `join-cost-run*.json` empty.
+5. **The campaign.** Three campaigns, five iterations each, with the floor in every campaign, the
    reconciliation published, and the per-iteration values in the report.
-5. **The answer does not change.** The named tests are run, the unit test is **read again**, and
+6. **The answer does not change.** The named tests are run, the unit test is **read again**, and
    the query's cost is measured against the threshold.
-6. **The publication.** Every figure that moved, old-and-new, with the reason; the verdict in one
-   of the words and in one of the states; the resolution published either way; the next question
-   written down where this one was.
+7. **The publication.** **The guard's changes come first** — the yardstick's recompute, the verdict's
+   re-derivation, **the states' derivation and their phrases**, and the set list — **and then the
+   documents**, written to the phrases the guard checks. Every figure that moved, old-and-new, with
+   the reason; the verdict in one of the words and in one of the states; the conclusion restated on a
+   yardstick that can measure; the resolution published either way; the next question written down
+   where this one was.
+   **The derivation runs again here, on the new set**, and the ADR lands with the publication that
+   names it.
 
 ## The references
 
