@@ -209,6 +209,14 @@ pub(crate) struct StreamedJoin {
     rows: Vec<u32>,
     /// The build table's construction, and the probe's cost.
     elapsed: std::time::Duration,
+    /// The build table's construction on its own.
+    ///
+    /// The two are measured apart already -- the table's construction has its
+    /// own clock, and the probe's is the time inside the reader -- so
+    /// reporting them apart costs **no** new clock.
+    build_elapsed: std::time::Duration,
+    /// The probe's cost on its own.
+    probe_elapsed: std::time::Duration,
     /// How many build rows the table holds.
     build_rows: usize,
     /// How many rows the probe examined.
@@ -225,14 +233,18 @@ impl StreamedJoin {
     ///
     /// The rows are the scan's own output, the elapsed time is the build
     /// table's construction plus the probe's cost, and the build rows are how
-    /// many rows the table holds.
+    /// many rows the table holds. The two parts of the elapsed are kept
+    /// beside it, because the stage's total cannot say which of them was
+    /// spent on what.
     pub(crate) fn new(
         rows: Vec<u32>,
         elapsed: std::time::Duration,
+        build_elapsed: std::time::Duration,
+        probe_elapsed: std::time::Duration,
         build_rows: usize,
         examined: usize,
     ) -> Self {
-        Self { rows, elapsed, build_rows, examined }
+        Self { rows, elapsed, build_elapsed, probe_elapsed, build_rows, examined }
     }
 }
 
@@ -500,6 +512,9 @@ pub(crate) fn join_outcome(
             build_rows: streamed.build_rows,
             output_rows: streamed.rows.len(),
             probe_in_scan: true,
+            build_elapsed: streamed.build_elapsed,
+            probe_elapsed: streamed.probe_elapsed,
+            open_elapsed: pipeline.build.opened,
         };
         return Ok(JoinOutcome { rows: Some(streamed.rows), stage, report: Some(report) });
     }
@@ -508,12 +523,18 @@ pub(crate) fn join_outcome(
     let source = pipeline.build.source.as_ref().ok_or_else(|| {
         EngineError::Parquet("the plan has a join but its build side was not opened".to_owned())
     })?;
+    // The build table's construction gets its own clock, so the stage's parts
+    // can be reported apart: the stage's total cannot say which part was
+    // spent on what. The clock is two reads and one subtraction, and what it
+    // costs is measured against the floor.
+    let build_started = std::time::Instant::now();
     let table = operators::join::build_table(
         source,
         &spec.spec,
         pipeline.flavor,
         source.worker_count(pipeline.options.threads.unwrap_or(1)),
     )?;
+    let build_elapsed = build_started.elapsed();
     let keys = key_column(pipeline.dataset, spec.probe_key)?;
     // The probe reads the survivors' rows as it needs them. A selection
     // that holds every row is the **range**, and the range is handed over
@@ -523,12 +544,13 @@ pub(crate) fn join_outcome(
         Some(range) => operators::join::probe_rows(&table, &keys, range),
         None => operators::join::probe_rows(&table, &keys, selection.iter()),
     };
+    let elapsed = started.elapsed();
     let stage = stage(
         "join",
         Some((rows(selection.len()), rows(matched.len()))),
         // The build side's file was opened before the pipeline ran, and it
         // is the join's own work.
-        started.elapsed() + pipeline.build.opened,
+        elapsed + pipeline.build.opened,
     );
     let report = explain::JoinReport {
         probe_key: spec.spec.probe_key.clone(),
@@ -537,6 +559,11 @@ pub(crate) fn join_outcome(
         build_rows: table.rows(),
         output_rows: matched.len(),
         probe_in_scan: false,
+        build_elapsed,
+        // Everything the stage's own clock covers that the table's
+        // construction did not: the probe, and the key column's borrow.
+        probe_elapsed: elapsed.saturating_sub(build_elapsed),
+        open_elapsed: pipeline.build.opened,
     };
     Ok(JoinOutcome { rows: Some(matched), stage, report: Some(report) })
 }

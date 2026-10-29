@@ -371,8 +371,16 @@ pub fn execute_on(
 
     let build_elapsed = table.as_ref().map_or(std::time::Duration::ZERO, |table| table.elapsed);
     let build_rows = table.as_ref().map_or(0, |table| table.table.rows());
-    let streamed = joined
-        .map(|rows| StreamedJoin::new(rows, build_elapsed + filter_elapsed, build_rows, examined));
+    let streamed = joined.map(|rows| {
+        StreamedJoin::new(
+            rows,
+            build_elapsed + filter_elapsed,
+            build_elapsed,
+            filter_elapsed,
+            build_rows,
+            examined,
+        )
+    });
 
     Pipeline {
         resolved: &effective,

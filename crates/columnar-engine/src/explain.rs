@@ -62,6 +62,25 @@ pub struct JoinReport {
     /// join's stage reports the build table's construction and the probe
     /// together.
     pub probe_in_scan: bool,
+    /// The build table's construction.
+    ///
+    /// The join's stage is this, the probe, and the build side's file open,
+    /// together. They are reported apart because **the stage's cost and the
+    /// probe's cost are different questions**: a win on one is not a win on
+    /// the other, and the stage's total cannot say which one was won.
+    pub build_elapsed: std::time::Duration,
+    /// The probe.
+    ///
+    /// On the cold path this is the probe inside the reader, and on the
+    /// resident path it is the probe over the dataset's own column. The two
+    /// are the same work over the same rows, measured over the same rows, so
+    /// they are comparable.
+    pub probe_elapsed: std::time::Duration,
+    /// The build side's file open.
+    ///
+    /// The build side's file is opened before the pipeline runs, and the open
+    /// is the join's own work, so the stage carries it.
+    pub open_elapsed: std::time::Duration,
 }
 
 /// What the sort did, for the plan output.

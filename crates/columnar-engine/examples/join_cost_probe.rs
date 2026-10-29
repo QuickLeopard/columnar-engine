@@ -126,6 +126,10 @@
 //! as the median with the spread beside it. The report carries the host's load
 //! average, so a figure that drifted can be read against it.
 
+// The report carries a figure for every part of the ladder, and `serde_json`'s
+// `json!` macro counts its own expansion against the recursion limit.
+#![recursion_limit = "512"]
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -140,6 +144,9 @@ use columnar_engine::queries::BuiltinQuery;
 use columnar_engine::{Dataset, ExecOptions, JoinSpec, ParquetSource, MAX_READER_BATCH_ROWS};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
+
+/// The report's own map of figures.
+type Figures = serde_json::Map<String, serde_json::Value>;
 
 /// The probe side's key column.
 const PROBE_KEY: &str = "l_orderkey";
@@ -202,11 +209,47 @@ fn ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
 }
 
+/// The median of a series of milliseconds.
+///
+/// The ladder's series are differences, not durations, so they are already in
+/// milliseconds and they are reduced the same way the durations are.
+fn median_ms(values: &[f64]) -> f64 {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let middle = sorted.len() / 2;
+    sorted.get(middle).copied().unwrap_or_default()
+}
+
 /// Repeats a measurement, and returns its median and its spread.
 fn repeat(iterations: usize, mut measure: impl FnMut() -> Duration) -> Timing {
     let mut samples = Vec::with_capacity(iterations);
     for _ in 0..iterations {
         samples.push(measure());
+    }
+    Timing::of(&samples)
+}
+
+/// How many clock reads one sample of the clock's own cost takes.
+const CLOCK_READS: u32 = 1_000;
+
+/// The cost of one clock read.
+///
+/// The engine's resident path reads the clock twice more than it used to, and
+/// the route that reports the stage's parts is only taken if what those reads
+/// cost is inside the threshold. So the cost is **measured**: a thousand reads
+/// are taken between two clocks, and the outer clock's own cost is amortised
+/// over all of them and is not what is being measured.
+fn clock_cost() -> Timing {
+    let mut samples = Vec::with_capacity(ITERATIONS);
+    for _ in 0..ITERATIONS {
+        let started = Instant::now();
+        let mut last = Instant::now();
+        for _ in 0..CLOCK_READS {
+            last = Instant::now();
+        }
+        let elapsed = started.elapsed();
+        std::hint::black_box(last);
+        samples.push(elapsed / CLOCK_READS);
     }
     Timing::of(&samples)
 }
@@ -221,6 +264,30 @@ fn commit() -> String {
     output.map_or_else(
         || "unknown".to_owned(),
         |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+    )
+}
+
+/// The tree's state, for the report.
+///
+/// The commit alone does not distinguish two codes: spec 029's before-set and
+/// its after-set carry **the same commit**, because the before-set's tree was
+/// dirty. So the tree's state is carried beside the commit, and the campaign
+/// names the code it measured.
+fn tree_state() -> String {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success());
+    output.map_or_else(
+        || "unknown".to_owned(),
+        |output| {
+            if String::from_utf8_lossy(&output.stdout).trim().is_empty() {
+                "clean".to_owned()
+            } else {
+                "dirty".to_owned()
+            }
+        },
     )
 }
 
@@ -301,6 +368,74 @@ fn check(result: &columnar_engine::AggregateResult) {
     );
 }
 
+/// The join stage's own parts, as the engine's plan output reports them.
+#[derive(Clone, Copy)]
+struct StageParts {
+    /// The build table's construction.
+    build: Duration,
+    /// The probe.
+    probe: Duration,
+    /// The build side's file open.
+    open: Duration,
+}
+
+/// The join stage's parts, from the plan output.
+///
+/// The parts are the engine's own account of the stage, and they are **absent**
+/// when the engine does not report them — which is the case for the code this
+/// spec replaces, and the reason the ladder is computed from what the engine
+/// reports and never from what it does not.
+fn parts_of(result: &columnar_engine::AggregateResult) -> Option<StageParts> {
+    let join = result.plan_output.join.as_ref()?;
+    Some(StageParts {
+        build: join.build_elapsed,
+        probe: join.probe_elapsed,
+        open: join.open_elapsed,
+    })
+}
+
+/// One path's own measurements: the stage and its parts, **per iteration**.
+///
+/// The parts are kept per iteration because the ladder is built from them per
+/// iteration: the stage's elapsed is the three parts **added together** in
+/// every one of them, and a median of a sum is not the sum of the medians.
+/// The per-iteration series is what makes the ladder close.
+struct PathMeasurements {
+    /// The stage's elapsed, one per iteration.
+    stage: Vec<Duration>,
+    /// The build table's construction, one per iteration.
+    build: Vec<Duration>,
+    /// The probe, one per iteration.
+    probe: Vec<Duration>,
+    /// The build side's file open, one per iteration.
+    open: Vec<Duration>,
+}
+
+impl PathMeasurements {
+    /// The stage's elapsed, as a timing.
+    fn stage_timing(&self) -> Timing {
+        Timing::of(&self.stage)
+    }
+
+    /// The stage's parts, as a timing, when the engine reports them.
+    fn parts(&self) -> Option<(Timing, Timing, Timing)> {
+        (!self.build.is_empty())
+            .then(|| (Timing::of(&self.build), Timing::of(&self.probe), Timing::of(&self.open)))
+    }
+}
+
+/// What the engine's own plan output says the join stage did.
+struct EngineStages {
+    /// The cold path's own measurements.
+    cold: PathMeasurements,
+    /// The resident path's own measurements.
+    resident: PathMeasurements,
+    /// The rows the join's stage reports, cold.
+    cold_rows: (u64, u64),
+    /// The rows the join's stage reports, resident.
+    resident_rows: (u64, u64),
+}
+
 /// The engine's own join stage, on both paths.
 ///
 /// The cold path is the one where the scan feeds the join, and the resident
@@ -310,9 +445,15 @@ fn engine_stages(
     source: &ParquetSource,
     dataset: &Dataset,
     options: &ExecOptions,
-) -> (Timing, Timing, (u64, u64), (u64, u64)) {
+) -> EngineStages {
     let mut cold = Vec::with_capacity(ITERATIONS);
     let mut resident = Vec::with_capacity(ITERATIONS);
+    let mut cold_build = Vec::with_capacity(ITERATIONS);
+    let mut cold_probe = Vec::with_capacity(ITERATIONS);
+    let mut cold_open = Vec::with_capacity(ITERATIONS);
+    let mut resident_build = Vec::with_capacity(ITERATIONS);
+    let mut resident_probe = Vec::with_capacity(ITERATIONS);
+    let mut resident_open = Vec::with_capacity(ITERATIONS);
     let mut cold_rows = (0, 0);
     let mut resident_rows = (0, 0);
     for _ in 0..ITERATIONS {
@@ -320,13 +461,38 @@ fn engine_stages(
         check(&over_file);
         cold.push(stage_of(&over_file));
         cold_rows = stage_rows_of(&over_file);
+        if let Some(parts) = parts_of(&over_file) {
+            cold_build.push(parts.build);
+            cold_probe.push(parts.probe);
+            cold_open.push(parts.open);
+        }
 
         let over_memory = columnar_engine::execute(plan, dataset, options).expect("the query runs");
         check(&over_memory);
         resident.push(stage_of(&over_memory));
         resident_rows = stage_rows_of(&over_memory);
+        if let Some(parts) = parts_of(&over_memory) {
+            resident_build.push(parts.build);
+            resident_probe.push(parts.probe);
+            resident_open.push(parts.open);
+        }
     }
-    (Timing::of(&cold), Timing::of(&resident), cold_rows, resident_rows)
+    EngineStages {
+        cold: PathMeasurements {
+            stage: cold,
+            build: cold_build,
+            probe: cold_probe,
+            open: cold_open,
+        },
+        resident: PathMeasurements {
+            stage: resident,
+            build: resident_build,
+            probe: resident_probe,
+            open: resident_open,
+        },
+        cold_rows,
+        resident_rows,
+    }
 }
 
 /// The build side's own predicates, pushed into its reader.
@@ -416,6 +582,25 @@ fn build_whole(
     Ok(Timing::of(&samples))
 }
 
+/// The build side's whole, over a file the process has not read yet.
+///
+/// It is **one** read, and it is the process's first: the file's state is
+/// worth what the cold read costs over the warm one, and the cold read can
+/// only be taken once. It is measured **before** anything else reads the
+/// build side's data -- the engine's own executions included -- so that it is
+/// the cold one it claims to be.
+fn build_cold_whole(
+    spec: &JoinSpec,
+    flavor: columnar_kernels::Flavor,
+) -> Result<Duration, Box<dyn std::error::Error>> {
+    let source = ParquetSource::open(&spec.build_path)?;
+    let started = Instant::now();
+    let table = build_table(&source, spec, flavor, 1)?;
+    let elapsed = started.elapsed();
+    std::hint::black_box(&table);
+    Ok(elapsed)
+}
+
 /// The probe over the engine's own column, in memory.
 ///
 /// This is the **resident** path's probe: the column is the engine's own, and
@@ -442,16 +627,62 @@ fn probe_over_column(
     Ok((Timing::of(&samples), last))
 }
 
+/// The probe over a column that was loaded once and then disturbed.
+///
+/// The query's resident probe reads the dataset's own column: it was decoded
+/// when the dataset was loaded, and by the time the probe runs the build
+/// side's read has been over the caches. This is the same probe over the same
+/// column in that state — the column is loaded **once**, and the build side's
+/// read stands between the load and the probe, exactly as it stands between
+/// the dataset's load and the query's probe. The build side's read is outside
+/// the clock: it is the disturbance, not the probe.
+fn probe_over_held_column(
+    table: &columnar_engine::operators::join::BuildTable,
+    source: &ParquetSource,
+    key_index: usize,
+    flavor: columnar_kernels::Flavor,
+    build_path: &Path,
+) -> Result<(Timing, Vec<u32>), Box<dyn std::error::Error>> {
+    let materialised = source.read(&[key_index], &PushdownPlan::default(), flavor, 1)?;
+    let chunk = materialised.chunk(PROBE_KEY).ok_or("the probe key is there")?;
+    let keys = KeyColumn::from_chunk(chunk);
+    let rows = 0..u32::try_from(materialised.len()).unwrap_or(u32::MAX);
+
+    let build_source = ParquetSource::open(build_path)?;
+    let build_key_index =
+        build_source.column_index(BUILD_KEY).ok_or_else(|| format!("no {BUILD_KEY} column"))?;
+    let pushdown = build_pushdown(&build_source);
+
+    let mut samples = Vec::with_capacity(ITERATIONS);
+    let mut last = Vec::new();
+    for _ in 0..ITERATIONS {
+        let disturbed = build_source.read(&[build_key_index], &pushdown, flavor, 1)?;
+        std::hint::black_box(&disturbed);
+        let started = Instant::now();
+        let matched = probe_rows(table, &keys, rows.clone());
+        let elapsed = started.elapsed();
+        samples.push(elapsed);
+        last = matched;
+    }
+    Ok((Timing::of(&samples), last))
+}
+
 /// The probe inside the reader's own batch loop.
 ///
 /// This is the **cold** path's probe: the reader's own Arrow arrays, over the
 /// reader's own batches, against the caches the decode is using. The decode
 /// is the scan's own work, so only the probe is timed.
+///
+/// `offset` says whether the batch's own row numbers are made into the
+/// dataset's row numbers, which is the work the engine's own cold path does
+/// **outside** its probe's clock. The two differ by exactly that, and the
+/// difference is what the offset costs.
 fn probe_in_batches(
     path: &Path,
     columns: &[usize],
     batch_rows: usize,
     table: &columnar_engine::operators::join::BuildTable,
+    offset: bool,
 ) -> Result<(Timing, Vec<u32>), Box<dyn std::error::Error>> {
     let mut samples = Vec::with_capacity(ITERATIONS);
     let mut last = Vec::new();
@@ -476,9 +707,16 @@ fn probe_in_batches(
             // reader's mask is over the batch, and the batch's rows are
             // numbered from zero. The engine's own output rows are the
             // dataset's row numbers, so the offset is added here -- and it is
-            // inside the clock, because the engine's cold path pays it too.
+            // inside the clock, because this measurement is the one that has
+            // to carry it. The engine adds it in `keep_matching_rows`,
+            // **outside** its own probe's clock, and the difference between
+            // the two measurements is what the offset costs.
             let found = probe_rows(table, &keys, 0..rows);
-            matched.extend(found.iter().map(|row| row.saturating_add(base)));
+            if offset {
+                matched.extend(found.iter().map(|row| row.saturating_add(base)));
+            } else {
+                matched.extend(found.iter().copied());
+            }
             elapsed += started.elapsed();
             base = base.saturating_add(rows);
         }
@@ -850,16 +1088,20 @@ fn build_path_for(path: &Path) -> PathBuf {
 }
 
 /// The probe's arguments: the file and where the report goes.
-fn arguments() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+fn arguments() -> Result<(PathBuf, PathBuf, String), Box<dyn std::error::Error>> {
     let mut path: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
+    let mut code: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--data" => path = args.next().map(PathBuf::from),
             "--out" => out = args.next().map(PathBuf::from),
+            "--code" => code = args.next(),
             "--help" | "-h" => {
-                println!("usage: join_cost_probe --data <parquet> [--out <report.json>]");
+                println!(
+                    "usage: join_cost_probe --data <parquet> [--out <report.json>] [--code <name>]"
+                );
                 std::process::exit(0);
             }
             // The path may also be given on its own, the way the other probes
@@ -870,7 +1112,10 @@ fn arguments() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
     }
     let path = path.ok_or("--data is required")?;
     let out = out.unwrap_or_else(|| PathBuf::from("join-cost.json"));
-    Ok((path, out))
+    // The code the campaign measured. The commit and the tree's state are the
+    // fallback, and they are carried in the report beside it either way.
+    let code = code.unwrap_or_else(|| format!("{} ({})", commit(), tree_state()));
+    Ok((path, out, code))
 }
 
 /// The build side's own parts.
@@ -899,6 +1144,10 @@ struct ProbeParts {
     column: Timing,
     /// The probe inside the reader's batch loop: the cold path's probe.
     batches: Timing,
+    /// The same probe without the row-number offset.
+    batches_no_offset: Timing,
+    /// The probe over a column that was loaded once and then disturbed.
+    held: Timing,
     /// The floor the probe cannot go below.
     floor: Timing,
     /// The probe's own candidate.
@@ -925,8 +1174,14 @@ struct ProbeParts {
 
 /// Everything the probe measured.
 struct Measured {
+    /// The name of the code this campaign measured.
+    code: String,
     /// The timings, in the order the report carries them.
     parts: Vec<(&'static str, Timing)>,
+    /// The cold path's own measurements, per iteration.
+    cold: PathMeasurements,
+    /// The resident path's own measurements, per iteration.
+    resident: PathMeasurements,
     /// The rows the join's stage reports, on the cold path.
     cold_rows: (u64, u64),
     /// The rows the join's stage reports, on the resident path.
@@ -956,6 +1211,10 @@ fn build_parts(
         std::hint::black_box(&opened);
         elapsed
     });
+    // The build side's whole, measured **after** the file has been read: this
+    // is over a file the process has already read, and the one the query's
+    // build side is measured against. The one over a file it has not read is
+    // `build_cold_whole`, and it is taken before anything else reads it.
     let (read, dataset) = build_read(&build_source, build_key_index, &pushdown, flavor)?;
     let chunk = dataset.chunk(BUILD_KEY).ok_or("the build side's key is there")?;
     let (keys, collected) = build_keys(chunk);
@@ -976,6 +1235,7 @@ fn probe_parts(
     source: &ParquetSource,
     table: &columnar_engine::operators::join::BuildTable,
     build: &BuildParts,
+    spec: &JoinSpec,
     flavor: columnar_kernels::Flavor,
 ) -> Result<ProbeParts, Box<dyn std::error::Error>> {
     let probe_index =
@@ -984,7 +1244,18 @@ fn probe_parts(
     let batch_rows = source.batch_rows_under(MAX_READER_BATCH_ROWS);
     let value_index = source.column_index("l_extendedprice").unwrap_or(probe_index);
     let (batches, batched_rows) =
-        probe_in_batches(path, &[probe_index, value_index], batch_rows, table)?;
+        probe_in_batches(path, &[probe_index, value_index], batch_rows, table, true)?;
+    // The same probe without the row-number offset: the batch's own row
+    // numbers are not made into the dataset's. The engine's own cold path does
+    // that arithmetic **outside** its probe's clock, so the difference between
+    // these two is what the offset costs.
+    let (batches_no_offset, _) =
+        probe_in_batches(path, &[probe_index, value_index], batch_rows, table, false)?;
+    // The same probe over a column that was loaded once and then disturbed by
+    // the build side's read: the state the query's resident probe is in.
+    let (held, held_rows) =
+        probe_over_held_column(table, source, probe_index, flavor, &spec.build_path)?;
+    assert_eq!(held_rows, engine_rows, "the held column probes differently");
 
     let values = probe_values(source, probe_index, flavor)?;
     let counts = candidate_counts(&build.collected, build.base, build.width);
@@ -1046,6 +1317,8 @@ fn probe_parts(
     Ok(ProbeParts {
         column,
         batches,
+        batches_no_offset,
+        held,
         floor,
         candidate,
         with_map,
@@ -1221,7 +1494,7 @@ fn probe_values(
 }
 
 /// Measures everything the probe measures.
-fn measure(path: &Path) -> Result<Measured, Box<dyn std::error::Error>> {
+fn measure(path: &Path, code: &str) -> Result<Measured, Box<dyn std::error::Error>> {
     let flavor = columnar_kernels::best();
     let options = ExecOptions::default();
     let source = ParquetSource::open(path)?;
@@ -1229,13 +1502,21 @@ fn measure(path: &Path) -> Result<Measured, Box<dyn std::error::Error>> {
 
     let plan = (definition().plan)(&build_path_for(path));
     let dataset = Dataset::read_parquet(path)?;
-    let (stage_cold, stage_resident, cold_rows, resident_rows) =
-        engine_stages(&plan, &source, &dataset, &options);
-
     let spec = plan.join.as_ref().ok_or("the plan has a join")?;
+
+    // The build side's file state is measured **first**: it is the process's
+    // first read of the build side's data, and every later read is over a
+    // file the process has already read. It is taken before the engine's own
+    // executions, so that the query's build side and the standalone's are
+    // measured over the **same** state of the file -- a warm one -- and the
+    // file's state does not enter the build side's gap.
+    let build_cold = build_cold_whole(spec, flavor)?;
+
+    let stages = engine_stages(&plan, &source, &dataset, &options);
+
     let build = build_parts(spec, flavor)?;
     let table = build_table(&ParquetSource::open(&spec.build_path)?, spec, flavor, 1)?;
-    let probe = probe_parts(path, &source, &table, &build, flavor)?;
+    let probe = probe_parts(path, &source, &table, &build, spec, flavor)?;
 
     // The controls: the plain read of the probe key column, and the same read
     // over a buffer small enough to be in the caches.
@@ -1256,16 +1537,19 @@ fn measure(path: &Path) -> Result<Measured, Box<dyn std::error::Error>> {
         elapsed
     });
 
-    let parts = vec![
-        ("stage_cold", stage_cold),
-        ("stage_resident", stage_resident),
+    let mut parts = vec![
+        ("stage_cold", stages.cold.stage_timing()),
+        ("stage_resident", stages.resident.stage_timing()),
         ("build_open", build.open),
         ("build_read", build.read),
         ("build_keys", build.keys),
         ("build_whole", build.whole),
+        ("build_whole_cold", Timing::of(&[build_cold])),
         ("table_own", build.table),
         ("probe_column", probe.column),
         ("probe_batches", probe.batches),
+        ("probe_batches_no_offset", probe.batches_no_offset),
+        ("probe_held", probe.held),
         ("floor_probe", probe.floor),
         ("candidate_probe", probe.candidate),
         ("candidate_with_map", probe.with_map),
@@ -1277,33 +1561,247 @@ fn measure(path: &Path) -> Result<Measured, Box<dyn std::error::Error>> {
         ("engine_lookup_plain", probe.engine_plain),
         ("read_plain", read_plain_timing),
         ("read_small", read_small),
+        ("clock_cost", clock_cost()),
     ];
+    // The engine's own account of the stage, when the engine gives one.
+    if let Some((build, probe, open)) = stages.cold.parts() {
+        parts.push(("engine_build_cold", build));
+        parts.push(("engine_probe_cold", probe));
+        parts.push(("engine_open_cold", open));
+    }
+    if let Some((build, probe, open)) = stages.resident.parts() {
+        parts.push(("engine_build_resident", build));
+        parts.push(("engine_probe_resident", probe));
+        parts.push(("engine_open_resident", open));
+    }
     Ok(Measured {
+        code: code.to_owned(),
         parts,
-        cold_rows,
-        resident_rows,
+        cold: stages.cold,
+        resident: stages.resident,
+        cold_rows: stages.cold_rows,
+        resident_rows: stages.resident_rows,
         engine_rows: probe.engine_rows.len(),
         table_rows: table.rows(),
         rows,
     })
 }
 
-/// The report, and the printout that goes with it.
-fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn std::error::Error>> {
-    let mut parts_ms = serde_json::Map::new();
-    let mut spreads_ms = serde_json::Map::new();
-    for (name, timing) in &measured.parts {
-        parts_ms.insert((*name).to_owned(), serde_json::json!(timing.median));
-        spreads_ms.insert((*name).to_owned(), serde_json::json!(timing.spread()));
-    }
-    let part = |name: &str| -> f64 {
-        measured
-            .parts
-            .iter()
-            .find(|(part, _)| *part == name)
-            .map_or(f64::NAN, |(_, timing)| timing.median)
-    };
+/// The context's decomposition: the gaps the engine's own account of the
+/// stage makes, and the leaf each gap is attributed to.
+#[derive(Default)]
+struct Context {
+    /// The build side's gap: the query's build side against the standalone one.
+    build: Option<f64>,
+    /// The open's gap: the query's open against the standalone one.
+    open: Option<f64>,
+    /// The probe's gap: the query's probe against the standalone one.
+    probe: Option<f64>,
+    /// The three gaps together: the context, by another route.
+    sum: Option<f64>,
+    /// The context: the residual less the standalone probe of the same work.
+    ///
+    /// It is the total the parts sum to.
+    total: Option<f64>,
+    /// The stage's own residual: what the stage leaves after the build side's
+    /// whole and its open.
+    residual: Option<f64>,
+    /// The build side's file state: the first read against a later one.
+    build_file_state: f64,
+    /// The build side's gap, less its file state: the build side's own.
+    build_residual: Option<f64>,
+    /// The probe's file state: the held column against the fresh one.
+    probe_file_state: Option<f64>,
+    /// The probe's row-number offset: the work the standalone carries and the
+    /// query's clock does not.
+    ///
+    /// It is the offset's **cost**, and it enters the probe's gap **against**
+    /// it: the standalone's clock carries the offset and the query's does not.
+    probe_row_offset: Option<f64>,
+    /// The part of the context that lies in no gap.
+    ///
+    /// It is zero when the ladder closes, and it is published so that the
+    /// claim is checked rather than asserted.
+    host: Option<f64>,
+    /// The probe's gap, less its file state and its offset: the probe's own.
+    probe_residual: Option<f64>,
+    /// The ladder's own reconciliation: the context less the parts, taken over
+    /// the iterations.
+    ///
+    /// It is zero by construction -- the parts are the gaps, and the gaps are
+    /// the stage's own parts less the standalone's -- and it is published so
+    /// that the claim is checked rather than asserted.
+    reconciliation: Option<f64>,
+    /// The published parts against the published context.
+    ///
+    /// A median of a sum is not the sum of the medians, so the parts' medians
+    /// do not add up to the context's median. The difference is **the
+    /// reduction's own noise**, and it is published rather than folded away.
+    reduction_noise: Option<f64>,
+    /// The engine's own parts against the stage's elapsed, per iteration.
+    stage_parts_gap: Option<f64>,
+}
 
+/// What one path's context is measured over.
+struct ContextInput<'a> {
+    /// The engine's own measurements, per iteration.
+    path: &'a PathMeasurements,
+    /// The build side's whole, measured outside the query.
+    build_whole: f64,
+    /// The build side's open, measured outside the query.
+    build_open: f64,
+    /// The probe, measured outside the query.
+    standalone_probe: f64,
+    /// The build side's file state: the first read against a later one.
+    build_file_state: f64,
+    /// The probe's file state, on the paths that have one.
+    probe_file_state: Option<f64>,
+    /// The probe's row-number offset, on the paths that have one.
+    probe_row_offset: Option<f64>,
+}
+
+/// The context's decomposition, for one path.
+///
+/// The gaps come from the engine's **own** account of the stage, so they are
+/// not inferred by subtracting a measurement taken in another context, and the
+/// three of them are the context by another route.
+///
+/// The ladder is built **per iteration**, because the stage's elapsed is the
+/// three parts **added together** in every iteration and a median of a sum is
+/// not the sum of the medians. Every iteration's parts sum to that
+/// iteration's context exactly, and the reconciliation -- published — is the
+/// median of the difference over the iterations, which is zero.
+///
+/// Each gap is then attributed to the leaf that can explain it, and the gap's
+/// **residual** is what is left of it unexplained. The leaves are **bounds**:
+/// the build side's file state is the most the file's state can explain of the
+/// build side's gap, because the query reads the build side's file once per
+/// execution and the published figure is the median of five of them — so the
+/// file's state at the time of the measurement is somewhere between a cold read
+/// and a warm one, and the bound is what the cold one costs over the warm one.
+fn context_ladder(input: &ContextInput<'_>) -> Context {
+    if input.path.build.is_empty() {
+        return Context::default();
+    }
+    let file_state = input.probe_file_state.unwrap_or(0.0);
+    let offset = input.probe_row_offset.unwrap_or(0.0);
+    let mut build_gaps = Vec::new();
+    let mut open_gaps = Vec::new();
+    let mut probe_gaps = Vec::new();
+    let mut probe_residuals = Vec::new();
+    let mut contexts = Vec::new();
+    let mut reconciliations = Vec::new();
+    let mut host_remainders = Vec::new();
+    let mut stage_gaps = Vec::new();
+    let iterations =
+        input.path.stage.iter().zip(&input.path.build).zip(&input.path.probe).zip(&input.path.open);
+    for (((stage, build), probe), open) in iterations {
+        let stage = ms(*stage);
+        let build = ms(*build);
+        let probe = ms(*probe);
+        let open = ms(*open);
+        let build_gap = build - input.build_whole;
+        let open_gap = open - input.build_open;
+        let probe_gap = probe - input.standalone_probe;
+        let context = stage - input.build_whole - input.build_open - input.standalone_probe;
+        // The offset is in the standalone's clock and not in the query's, so
+        // it is **against** the probe's gap; the file's state is the query's
+        // own, so it is **with** it.
+        let probe_residual = probe_gap - file_state + offset;
+        // The leaves: the build side's gap is the build side's own -- both
+        // sides read the build side's file warm, so the file's state does not
+        // enter it -- and the probe's gap is its file's state, its row-number
+        // offset and what is left of it.
+        let leaves = build_gap + open_gap + (file_state - offset) + probe_residual;
+        build_gaps.push(build_gap);
+        open_gaps.push(open_gap);
+        probe_gaps.push(probe_gap);
+        probe_residuals.push(probe_residual);
+        contexts.push(context);
+        reconciliations.push(context - leaves);
+        host_remainders.push(context - (build_gap + open_gap + probe_gap));
+        stage_gaps.push(stage - (build + probe + open));
+    }
+    let build = median_ms(&build_gaps);
+    let open = median_ms(&open_gaps);
+    let probe = median_ms(&probe_gaps);
+    let sum = build + open + probe;
+    let total = median_ms(&contexts);
+    Context {
+        build: Some(build),
+        open: Some(open),
+        probe: Some(probe),
+        sum: Some(sum),
+        total: Some(total),
+        residual: Some(Timing::of(&input.path.stage).median - input.build_whole - input.build_open),
+        build_file_state: input.build_file_state,
+        build_residual: Some(build),
+        probe_file_state: input.probe_file_state,
+        probe_row_offset: input.probe_row_offset,
+        probe_residual: Some(median_ms(&probe_residuals)),
+        reconciliation: Some(median_ms(&reconciliations)),
+        reduction_noise: Some(sum - total),
+        host: Some(median_ms(&host_remainders)),
+        stage_parts_gap: Some(median_ms(&stage_gaps)),
+    }
+}
+
+/// One of the report's parts, by name.
+fn part_of(measured: &Measured, name: &str) -> f64 {
+    measured
+        .parts
+        .iter()
+        .find(|(part, _)| *part == name)
+        .map_or(f64::NAN, |(_, timing)| timing.median)
+}
+
+/// The two paths' contexts, and their decomposition.
+///
+/// The context is the stage's **own** residual less the standalone probe of
+/// the same work, and it is decomposed into the three gaps the engine's own
+/// account of the stage makes -- which sum to it, and whose leaves say which
+/// mechanism can explain each of them.
+fn contexts(measured: &Measured) -> (Context, Context) {
+    let part = |name: &str| part_of(measured, name);
+    // The build side's file state is a property of the file and not of the
+    // path, so both paths carry the same one.
+    let build_file_state = part("build_whole_cold") - part("build_whole");
+    let cold = context_ladder(&ContextInput {
+        path: &measured.cold,
+        build_whole: part("build_whole"),
+        build_open: part("build_open"),
+        standalone_probe: part("probe_batches"),
+        build_file_state,
+        // The cold path's probe reads the file inside the reader on **both**
+        // sides, so the file's state is the same by construction and there is
+        // no file-state leaf: the row-number offset is the bracket that
+        // differs.
+        probe_file_state: None,
+        probe_row_offset: Some(part("probe_batches") - part("probe_batches_no_offset")),
+    });
+    let resident = context_ladder(&ContextInput {
+        path: &measured.resident,
+        build_whole: part("build_whole"),
+        build_open: part("build_open"),
+        standalone_probe: part("probe_column"),
+        build_file_state,
+        // The resident path's probe reads a column the dataset has held since
+        // it was loaded, with the build side's read in between, and the
+        // standalone reads its column afresh: the file's state is the leaf.
+        probe_file_state: Some(part("probe_held") - part("probe_column")),
+        // The resident path's probe carries no row-number offset: it probes
+        // the dataset's own rows.
+        probe_row_offset: None,
+    });
+    (cold, resident)
+}
+
+/// The report's derived figures: every difference it publishes.
+fn derived_ms(measured: &Measured, cold: &Context, resident: &Context) -> Figures {
+    let part = |name: &str| part_of(measured, name);
+    let number = |value: Option<f64>| -> serde_json::Value {
+        value.map_or(serde_json::Value::Null, serde_json::Value::from)
+    };
     // The ladder's six increments. They add up to the remainder by
     // construction, so what they say is **where** the remainder is, and the
     // difference between their sum and the remainder is the noise the
@@ -1318,46 +1816,119 @@ fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn st
         chain_cost + width_cost + state_cost + map_option_cost + loop_cost + key_source_cost;
     let remainder = part("probe_column") - part("candidate_probe");
 
-    // The stage's own residual -- what the stage leaves after the build side's
-    // whole and its open -- and the context: the gap between that residual and
-    // the standalone probe of the same work.
-    let residual_cold = part("stage_cold") - part("build_whole") - part("build_open");
-    let residual_resident = part("stage_resident") - part("build_whole") - part("build_open");
-    let context_cold = residual_cold - part("probe_batches");
-    let context_resident = residual_resident - part("probe_column");
+    let mut derived = serde_json::Map::new();
+    let mut put = |name: &str, value: serde_json::Value| {
+        derived.insert(name.to_owned(), value);
+    };
+    put(
+        "build_table",
+        serde_json::json!(part("build_whole") - part("build_read") - part("build_keys")),
+    );
+    put("output_rows", serde_json::json!(part("candidate_probe") - part("floor_probe")));
+    put("the_probe_s_remainder", serde_json::json!(remainder));
+    put("the_map_s_share", serde_json::json!(part("candidate_with_map") - part("candidate_probe")));
+    put("the_cold_remainder", serde_json::json!(part("probe_batches") - part("cold_candidate")));
+    put("the_two_paths", serde_json::json!(part("stage_cold") - part("stage_resident")));
+    put("the_two_probes", serde_json::json!(part("probe_batches") - part("probe_column")));
+    put("the_chain_s_cost", serde_json::json!(chain_cost));
+    put("the_width_s_cost", serde_json::json!(width_cost));
+    put("the_state_s_cost", serde_json::json!(state_cost));
+    put("the_map_option_s_cost", serde_json::json!(map_option_cost));
+    put("the_loop_s_cost", serde_json::json!(loop_cost));
+    put("the_key_source_s_cost", serde_json::json!(key_source_cost));
+    put("the_ladder_s_sum", serde_json::json!(ladder_sum));
+    put("the_unexplained", serde_json::json!(remainder - ladder_sum));
+    put("the_residual_cold", serde_json::json!(cold.residual));
+    put("the_residual_resident", serde_json::json!(resident.residual));
+    put("the_context_cold", serde_json::json!(cold.total));
+    put("the_context_resident", serde_json::json!(resident.total));
+    put("the_build_gap_cold", number(cold.build));
+    put("the_open_gap_cold", number(cold.open));
+    put("the_probe_gap_cold", number(cold.probe));
+    put("the_gaps_sum_cold", number(cold.sum));
+    put("the_host_remainder_cold", number(cold.host));
+    put("the_build_residual_cold", number(cold.build_residual));
+    put("the_probe_residual_cold", number(cold.probe_residual));
+    put("the_stage_parts_gap_cold", number(cold.stage_parts_gap));
+    put("the_reconciliation_cold", number(cold.reconciliation));
+    put("the_reduction_s_noise_cold", number(cold.reduction_noise));
+    put("the_build_gap_resident", number(resident.build));
+    put("the_open_gap_resident", number(resident.open));
+    put("the_probe_gap_resident", number(resident.probe));
+    put("the_gaps_sum_resident", number(resident.sum));
+    put("the_host_remainder_resident", number(resident.host));
+    put("the_build_residual_resident", number(resident.build_residual));
+    put("the_probe_residual_resident", number(resident.probe_residual));
+    put("the_stage_parts_gap_resident", number(resident.stage_parts_gap));
+    put("the_reconciliation_resident", number(resident.reconciliation));
+    put("the_reduction_s_noise_resident", number(resident.reduction_noise));
+    put("the_build_file_state", serde_json::json!(cold.build_file_state));
+    put("the_probe_row_offset", number(cold.probe_row_offset.map(|cost| -cost)));
+    put("the_probe_file_state", number(resident.probe_file_state));
+    // The resident path's added clock: two reads and one subtraction.
+    put("the_added_clock_cost", serde_json::json!(part("clock_cost") * 2.0));
+    derived
+}
 
+/// What each clock brackets, and what it does not include.
+///
+/// A figure without a stated bracket is not a measurement, and the ladder's
+/// parts are only comparable once the two sides' brackets are published side
+/// by side.
+fn brackets() -> Figures {
+    let rows = [
+        ("stage_cold", "two disjoint intervals -- the build table's construction, and then the probe inside the reader -- and the build side's file open. Not the reader's decode, and not the gap between the two intervals."),
+        ("stage_resident", "one interval -- the build table's construction, the probe key column's borrow, and the probe -- and the build side's file open. Not the dataset's own read, which happened before the query."),
+        ("build_whole", "the build table's construction alone. Not the build side's file open, which the stage's own clock carries."),
+        ("build_whole_cold", "the build table's construction over a file the process has not read yet: one read, and the process's first."),
+        ("build_open", "the build side's file open, on its own."),
+        ("probe_batches", "the probe inside the reader's own batch loop, plus the per-batch key column's construction, plus the row-number offset arithmetic. Not the reader's decode, which is the scan's own work."),
+        ("probe_batches_no_offset", "the same probe without the row-number offset arithmetic, which the engine's own cold path does outside its probe's clock."),
+        ("probe_column", "the probe over a column read from the file for that iteration. Not the column's read, which it has just done."),
+        ("probe_held", "the probe over a column loaded once and disturbed by the build side's read: the state the query's resident probe is in."),
+        ("engine_build_cold", "the build table's construction, in the query's process, on the cold path."),
+        ("engine_probe_cold", "the probe inside the reader, in the query's process, on the cold path."),
+        ("engine_open_cold", "the build side's file open, in the query's process, on the cold path."),
+        ("engine_build_resident", "the build table's construction, in the query's process, on the resident path."),
+        ("engine_probe_resident", "the probe over the dataset's own column, in the query's process, on the resident path."),
+        ("engine_open_resident", "the build side's file open, in the query's process, on the resident path."),
+    ];
+    let mut map = serde_json::Map::new();
+    for (name, bracket) in rows {
+        map.insert(name.to_owned(), serde_json::json!(bracket));
+    }
+    map
+}
+
+/// The report, and the printout that goes with it.
+fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn std::error::Error>> {
+    let mut parts_ms = serde_json::Map::new();
+    let mut spreads_ms = serde_json::Map::new();
+    for (name, timing) in &measured.parts {
+        parts_ms.insert((*name).to_owned(), serde_json::json!(timing.median));
+        spreads_ms.insert((*name).to_owned(), serde_json::json!(timing.spread()));
+    }
+    let (cold, resident) = contexts(measured);
     let report = serde_json::json!({
         "probe": "join-cost",
         "file": path.display().to_string(),
         "iterations": ITERATIONS,
         "commit": commit(),
+        "tree": tree_state(),
+        "code": measured.code,
+        // Whether the engine's own plan output reported the join stage's
+        // parts. It is a structural fact about the code the campaign
+        // measured, and it tells the two sets apart when the commit and the
+        // tree's state do not.
+        "engine_reports_parts": !measured.cold.build.is_empty(),
         "host_load_average": load_average(),
         "rows": measured.rows,
         "probe_key": PROBE_KEY,
         "build_key": BUILD_KEY,
         "parts_ms": parts_ms,
         "spreads_ms": spreads_ms,
-        "derived_ms": {
-            "build_table": part("build_whole") - part("build_read") - part("build_keys"),
-            "output_rows": part("candidate_probe") - part("floor_probe"),
-            "the_probe_s_remainder": remainder,
-            "the_map_s_share": part("candidate_with_map") - part("candidate_probe"),
-            "the_cold_remainder": part("probe_batches") - part("cold_candidate"),
-            "the_two_paths": part("stage_cold") - part("stage_resident"),
-            "the_two_probes": part("probe_batches") - part("probe_column"),
-            "the_chain_s_cost": chain_cost,
-            "the_width_s_cost": width_cost,
-            "the_state_s_cost": state_cost,
-            "the_map_option_s_cost": map_option_cost,
-            "the_loop_s_cost": loop_cost,
-            "the_key_source_s_cost": key_source_cost,
-            "the_ladder_s_sum": ladder_sum,
-            "the_unexplained": remainder - ladder_sum,
-            "the_residual_cold": residual_cold,
-            "the_residual_resident": residual_resident,
-            "the_context_cold": context_cold,
-            "the_context_resident": context_resident,
-        },
+        "brackets": brackets(),
+        "derived_ms": derived_ms(measured, &cold, &resident),
         "engine_rows": measured.engine_rows,
         "table_rows": measured.table_rows,
         "stage_rows": {
@@ -1377,7 +1948,7 @@ fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn st
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (path, out) = arguments()?;
-    let measured = measure(&path)?;
+    let (path, out, code) = arguments()?;
+    let measured = measure(&path, &code)?;
     report(&out, &path, &measured)
 }
