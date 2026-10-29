@@ -1,10 +1,12 @@
 # Spec 030 — The context, taken apart
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-29
+**Finished**: 2026-10-29
 **Amended**: 2026-10-29 — the bottom-up and top-down review's findings, with the reasons recorded below.
 **Amended**: 2026-10-29 — the first and second phases' findings: the brackets as the code has them, R3's
 route, and the ladder's shape, with the reasons recorded below.
+**ADR**: [ADR-0038](../../docs/adr/0038-the-context-taken-apart.md) — the context, taken apart
 **Predecessor**: [029-the-lookup-shape-and-the-stage-that-moved](../029-the-lookup-shape-and-the-stage-that-moved/spec.md)
 
 ## The problem
