@@ -1445,6 +1445,89 @@ JOIN_COST_DERIVED = (
 )
 
 
+# The ladder's parts, per path: the figure, the label the section publishes it
+# under, the decimal places, and the word it carries.
+#
+# The parts are the **leaves**: the build side's gap is the build side's own --
+# both sides read the build side's file warm, so the file's state does not enter
+# it -- and the probe's gap is its file's state, its row-number offset and what
+# is left of it.
+JOIN_COST_LADDER = {
+    "cold": (
+        ("the_build_gap_cold", "the build side's gap, cold", 3, "the build side's"),
+        ("the_open_gap_cold", "the open's gap, cold", 3, "the clock's"),
+        ("the_probe_row_offset", "the probe's row-number offset, cold", 3, "the clock's"),
+        ("the_probe_residual_cold", "the probe's own remainder, cold", 3, "the probe's"),
+        ("the_host_remainder_cold", "the part in no gap, cold", 3, "the host's"),
+    ),
+    "resident": (
+        ("the_build_gap_resident", "the build side's gap, resident", 3, "the build side's"),
+        ("the_open_gap_resident", "the open's gap, resident", 3, "the clock's"),
+        ("the_probe_file_state", "the probe's file state, resident", 3, "the memory's"),
+        ("the_probe_residual_resident", "the probe's own remainder, resident", 3, "the probe's"),
+        ("the_host_remainder_resident", "the part in no gap, resident", 3, "the host's"),
+    ),
+}
+
+# The ladder's own figures: the containers, the checks, and the controls. The
+# controls are reported beside every set and are never summed.
+JOIN_COST_LADDER_FIGURES = (
+    ("the_probe_gap_cold", "the probe's gap, cold", 3),
+    ("the_gaps_sum_cold", "the three gaps, cold", 3),
+    ("the_reconciliation_cold", "the reconciliation, cold", 3),
+    ("the_reduction_s_noise_cold", "the reduction's own noise, cold", 3),
+    ("the_probe_gap_resident", "the probe's gap, resident", 3),
+    ("the_gaps_sum_resident", "the three gaps, resident", 3),
+    ("the_reconciliation_resident", "the reconciliation, resident", 3),
+    ("the_reduction_s_noise_resident", "the reduction's own noise, resident", 3),
+    ("the_build_file_state", "the build side's file state", 3),
+    ("the_added_clock_cost", "the added clock's cost", 6),
+)
+
+
+def join_cost_verdict(derived: dict[str, list[float]], path: str) -> dict[str, object]:
+    """The context's verdict, in one of the six words, and the band it is judged against.
+
+    The **band** is the context's own spread -- the range of its per-campaign
+    values -- in the set that measures it. A part whose own spread is wider
+    than the band is **inconclusive** and is not counted; a part whose value is
+    outside the band is a part of the context; anything else is at the noise.
+    The verdict is the word of the largest part that counts, and **unattributed**
+    when no part does.
+    """
+    context = derived.get(f"the_context_{path}", [])
+    if not context:
+        return {}
+    band = max(context) - min(context)
+    parts: list[tuple[str, str, float, float, str]] = []
+    for key, label, _, word in JOIN_COST_LADDER[path]:
+        values = [value for value in derived.get(key, []) if value is not None]
+        if not values:
+            continue
+        value = statistics.median(values)
+        spread = max(values) - min(values)
+        if spread > band:
+            state = "inconclusive"
+        elif abs(value) > band:
+            state = "a part of the context"
+        else:
+            state = "at the noise"
+        parts.append((label, word, value, spread, state))
+    if not parts:
+        # No parts: the code does not report the join stage's parts, so there
+        # is no ladder to judge and no verdict to publish.
+        return {}
+    counted = [abs(value) for _, _, value, _, state in parts if state == "a part of the context"]
+    verdict = "unattributed"
+    if counted:
+        largest = max(counted)
+        verdict = next(
+            word for _, word, value, _, state in parts
+            if state == "a part of the context" and abs(value) == largest
+        )
+    return {"band": band, "parts": parts, "verdict": verdict}
+
+
 def _join_cost_figures(
     files: list[tuple[str, list[dict]]],
 ) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
@@ -1510,6 +1593,28 @@ def print_join_cost(sets: list[tuple[str, list[tuple[str, list[dict]]]]]) -> Non
             if not values:
                 continue
             print(f"{difference:<52}{statistics.median(values):>12.3f}")
+
+        # The ladder: the context's parts, each with its own spread, and the
+        # verdict they give. The spread is the **range** of the per-campaign
+        # values, and the band is the context's own spread.
+        if any(key in derived for key, _, _ in JOIN_COST_LADDER_FIGURES):
+            print("\n-- the context's ladder --")
+            print(f"{'the part':<44}{'median':>12}{'spread':>12}")
+            for key, label, places in JOIN_COST_LADDER_FIGURES:
+                values = [value for value in derived.get(key, []) if value is not None]
+                if not values:
+                    continue
+                spread = max(values) - min(values)
+                print(f"{label:<44}{statistics.median(values):>{places}.{places}f}{spread:>12.3f}")
+            for path in ("cold", "resident"):
+                verdict = join_cost_verdict(derived, path)
+                if not verdict:
+                    continue
+                print(f"\n-- the {path} path: the band is {verdict['band']:.3f} ms --")
+                print(f"{'the part':<44}{'value':>12}{'spread':>12}  the state")
+                for label, word, value, spread, state in verdict["parts"]:
+                    print(f"{label:<44}{value:>12.3f}{spread:>12.3f}  {state} ({word})")
+                print(f"the verdict: {verdict['verdict']}")
 
 
 def main() -> int:
@@ -1730,6 +1835,8 @@ def main() -> int:
     join_sets = [
         ("the code this increment ships", "join-cost-run*.json"),
         ("the code this increment replaces", "join-cost-before-run*.json"),
+        ("spec 029's set, as spec 029 measured it", "join-cost-spec029-run*.json"),
+        ("spec 029's before set", "join-cost-spec029-before-run*.json"),
         ("spec 028's set, as spec 028 measured it", "join-cost-spec028-run*.json"),
         ("spec 028's before set", "join-cost-spec028-before-run*.json"),
         ("spec 026's set, as spec 026 measured it", "join-cost-spec026-run*.json"),

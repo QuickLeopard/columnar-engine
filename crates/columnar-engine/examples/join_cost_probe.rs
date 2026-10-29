@@ -1642,8 +1642,6 @@ struct Context {
     /// The stage's own residual: what the stage leaves after the build side's
     /// whole and its open.
     residual: Option<f64>,
-    /// The build side's file state: the first read against a later one.
-    build_file_state: f64,
     /// The build side's gap, less its file state: the build side's own.
     build_residual: Option<f64>,
     /// The probe's file state: the held column against the fresh one.
@@ -1688,8 +1686,6 @@ struct ContextInput<'a> {
     build_open: f64,
     /// The probe, measured outside the query.
     standalone_probe: f64,
-    /// The build side's file state: the first read against a later one.
-    build_file_state: f64,
     /// The probe's file state, on the paths that have one.
     probe_file_state: Option<f64>,
     /// The probe's row-number offset, on the paths that have one.
@@ -1777,7 +1773,6 @@ fn context_ladder(input: &ContextInput<'_>) -> Context {
         sum: Some(sum),
         total: Some(total),
         residual: Some(Timing::of(&input.path.stage).median - input.build_whole - input.build_open),
-        build_file_state: input.build_file_state,
         build_residual: Some(build),
         probe_file_state: input.probe_file_state,
         probe_row_offset: input.probe_row_offset,
@@ -1806,15 +1801,11 @@ fn part_of(measured: &Measured, name: &str) -> f64 {
 /// mechanism can explain each of them.
 fn contexts(measured: &Measured) -> (Context, Context) {
     let part = |name: &str| part_of(measured, name);
-    // The build side's file state is a property of the file and not of the
-    // path, so both paths carry the same one.
-    let build_file_state = part("build_whole_cold") - part("build_whole");
     let cold = context_ladder(&ContextInput {
         path: &measured.cold,
         build_whole: part("build_whole"),
         build_open: part("build_open"),
         standalone_probe: part("probe_batches"),
-        build_file_state,
         // The cold path's probe reads the file inside the reader on **both**
         // sides, so the file's state is the same by construction and there is
         // no file-state leaf: the row-number offset is the bracket that
@@ -1827,7 +1818,6 @@ fn contexts(measured: &Measured) -> (Context, Context) {
         build_whole: part("build_whole"),
         build_open: part("build_open"),
         standalone_probe: part("probe_column"),
-        build_file_state,
         // The resident path's probe reads a column the dataset has held since
         // it was loaded, with the build side's read in between, and the
         // standalone reads its column afresh: the file's state is the leaf.
@@ -1842,6 +1832,11 @@ fn contexts(measured: &Measured) -> (Context, Context) {
 /// The report's derived figures: every difference it publishes.
 fn derived_ms(measured: &Measured, cold: &Context, resident: &Context) -> Figures {
     let part = |name: &str| part_of(measured, name);
+    // The build side's file state: the first read of the build side's data
+    // against a later one. It is the instrument's own figure, so it is
+    // published for both codes -- and it does **not** enter the build side's
+    // gap, because both sides read the file warm.
+    let build_file_state = part("build_whole_cold") - part("build_whole");
     let number = |value: Option<f64>| -> serde_json::Value {
         value.map_or(serde_json::Value::Null, serde_json::Value::from)
     };
@@ -1905,7 +1900,7 @@ fn derived_ms(measured: &Measured, cold: &Context, resident: &Context) -> Figure
     put("the_stage_parts_gap_resident", number(resident.stage_parts_gap));
     put("the_reconciliation_resident", number(resident.reconciliation));
     put("the_reduction_s_noise_resident", number(resident.reduction_noise));
-    put("the_build_file_state", serde_json::json!(cold.build_file_state));
+    put("the_build_file_state", serde_json::json!(build_file_state));
     put("the_probe_row_offset", number(cold.probe_row_offset.map(|cost| -cost)));
     put("the_probe_file_state", number(resident.probe_file_state));
     // The resident path's added clock: two reads and one subtraction.
