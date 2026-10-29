@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **30 specs**, **38 ADRs** and **29 defects** so far, and every
+[`constitution.md`](constitution.md). **31 specs**, **38 ADRs** and **29 defects** so far, and every
 one of the specs but the last is closed.
 
 ---
@@ -180,7 +180,12 @@ so it is at the noise there too. The parts are measured, they close, and the ban
 **What would answer it:** a resolution at which the parts are not dominated by the machine's — not a
 new mechanism, a quieter measurement. It is written down as
 [`spec 030`](specs/030-the-context-taken-apart/spec.md), which is closed, and in
-[ADR-0038](docs/adr/0038-the-context-taken-apart.md).
+[ADR-0038](docs/adr/0038-the-context-taken-apart.md). **And the reason the parts are dominated is
+named**: the band they are judged against is the **context's own spread**, which is a **difference
+of two drifting series** and can be narrower than the machine's own movement. The **drift** — the
+machine's variation, measured beside every set — is written down as
+[`spec 033`](specs/033-the-drift-taken-apart/spec.md), which is **written down and not implemented
+yet**.
 
 **2. `filter-range`, cold: Polars is ahead.** The engine's lazy path is 16.3 ms against Polars'
 15.2 ms, and the two spreads do not overlap. The scan that holds it is the Parquet decode, and the
@@ -213,11 +218,13 @@ for a pinned x86-64 runner; it has not run on one.
 
 ### The work the project has not done
 
-- **No spec for what is left.** Spec 030 is written down and closed, and it leaves one question: the
-  context's parts are measured and they close, and every part's own spread is wider than the context's
-  own spread, so the next question is the **resolution** at which they separate. It is written down
-  here and in the README's Next row, but it is not yet a spec with requirements and tasks, and
-  nothing has been measured for it beyond what spec 030 published.
+- **The next question is a spec now, and nothing has been measured for it.** Spec 030 is written down
+  and closed, and it leaves one question: the
+  context's parts are measured and they close, and **no part could be counted**, so the next
+  question is the **resolution** at which the parts separate. It is written down
+  here and in the README's Next row, and it **is** a spec with requirements and tasks —
+  [`spec 033`](specs/033-the-drift-taken-apart/spec.md) — but **nothing has been measured for it
+  yet** beyond what spec 030 published, and its instrument has not been changed.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a

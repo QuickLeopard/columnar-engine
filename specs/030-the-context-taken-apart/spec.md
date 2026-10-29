@@ -6,6 +6,11 @@
 **Amended**: 2026-10-29 — the bottom-up and top-down review's findings, with the reasons recorded below.
 **Amended**: 2026-10-29 — the first and second phases' findings: the brackets as the code has them, R3's
 route, and the ladder's shape, with the reasons recorded below.
+**Amended**: 2026-10-29 — **R4's yardstick** is superseded by
+[spec 033](../033-the-drift-taken-apart/spec.md): the band this spec named is a **difference of two
+drifting series**, and on the resident path it came out **narrower than the machine's own movement**.
+The reason is recorded in spec 033's R2 and R3, and the restatement of this spec's published verdict
+is in that spec's R7.
 **ADR**: [ADR-0038](../../docs/adr/0038-the-context-taken-apart.md) — the context, taken apart
 **Predecessor**: [029-the-lookup-shape-and-the-stage-that-moved](../029-the-lookup-shape-and-the-stage-that-moved/spec.md)
 
