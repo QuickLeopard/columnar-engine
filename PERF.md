@@ -2389,12 +2389,18 @@ for this data, because every key's count fits in its byte.
 
 **The map's share is now measured, and it is nothing.** The candidate **with the consult** costs
 **7.106 ms** against the candidate without it at **7.157 ms**: the map's share is **0.020 ms** of a
-**3.337 ms** remainder. In the code it replaces it was **0.183 ms**. Across the six campaigns the share
-ranges from **−0.278 ms** to **0.406 ms**, and the candidate's own spread across three campaigns is
-**0.709 ms** — so the share is **at or below the noise**, and the map was **never** the remainder.
-**The remainder is the lookup's shape**: the method over `&self`, the `Option` chain, the `u32` width
-and the saturating add — none of which the hand-written candidate has. The map's consult was a fixed
-cost on every probe row for a case that does not happen, and it was a cost of **nothing**.
+**3.337 ms** remainder. In the code it replaces it was **0.183 ms**. Each set's own three campaigns are
+judged against **its own** candidate spread: in the old set the share runs **−0.221 ms … 0.406 ms** against
+a spread of **0.709 ms**, and in the new set **−0.278 ms … 0.071 ms** against a spread of **0.168 ms** — so
+the share is **at or below the noise** in both, and the map was **never** the remainder.
+**The remainder is the lookup's shape**, and the shape is **named, not measured**: the method over `&self`,
+the byte's `Option` chain, the `u32` width, and — on the fast path of the code that ships — the **map's
+`Option` discriminant**. The **saturating add** is **not** on that path: the lookup returns the byte before
+it, so it is the **overflow** path that adds, and the map's consult — the **0.020 ms** above — is off the
+fast path too. The map's consult was a fixed cost on every probe row for a case that does not happen, and
+it was a cost of **nothing**; what the fast path still pays is the map's **`Option`** and the branch on it,
+and **that has never been measured**. See
+[spec 029](specs/029-the-lookup-shape-and-the-stage-that-moved/spec.md).
 
 **The change is taken anyway, and it is a simplification, not a win.** The table's overflow map is an
 `Option` now, so when nothing overflows **the map is not allocated at all** and the lookup does not call
@@ -2411,7 +2417,11 @@ engine's own account and the authority, and the stage moved the other way: **26.
 [§2h](#2h-the-hot-paths-taken-apart) divides the host's share out of the query-level figures: the
 **cold** query moved **97.3 ms** to **97.6 ms**, inside the untouched queries' own drift, and the
 **resident** one moved **25.1 ms** to **26.6 ms** against a control that moved **0.3 ms** the other way.
-**This increment does not claim what the resident movement is.**
+**This increment does not claim what the resident movement is**, and the movement is written down as the
+next question: [spec 029](specs/029-the-lookup-shape-and-the-stage-that-moved/spec.md) measures the
+shape's parts, one at a time, and takes the movement with the **floor** beside it — the same-moment A/B
+that puts the two codes in the same minutes carries the plan output's stages and **no floor**, and the
+campaigns that carry the floor are minutes apart. That is the gap the next spec closes.
 
 **The two paths differ by the probe, and the probe's own measurement does not agree with the stage.**
 The stages differ by **4.343 ms**. The build side's read is **the same call on both paths** — the same

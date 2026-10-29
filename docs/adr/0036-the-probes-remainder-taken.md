@@ -115,20 +115,40 @@ documents that state it — `PERF.md` §3o, ADR-0035 and the README — say what
 
 **And the measurement says what the prize was: nothing.** The candidate **with** the map's consult in
 it costs **7.106 ms** against the candidate without it at **7.157 ms** — the map's share is
-**0.020 ms** of a **3.337 ms** remainder. In the code it replaces the share was **0.183 ms**. Across
-the six campaigns the share ranges from **−0.278 ms** to **0.406 ms**, and the candidate's own spread
-across three campaigns is **0.709 ms**: the share is **at or below the noise**. **The map was never the
-remainder.** What is left is the lookup's **shape** — the method over `&self`, the `Option` chain, the
-`u32` width and the saturating add — and none of it is the map's consult.
+**0.020 ms** of a **3.337 ms** remainder. In the code it replaces the share was **0.183 ms**. Each set's
+own three campaigns are judged against **its own** candidate spread: **−0.221 ms … 0.406 ms** against
+**0.709 ms** in the old set, **−0.278 ms … 0.071 ms** against **0.168 ms** in the new one — the share is
+**at or below the noise** in both. **The map was never the remainder.** What is left is the lookup's
+**shape**, and the shape is **named, not measured**: the method over `&self`, the byte's `Option` chain,
+the `u32` width, and — on the fast path of the code that ships — the **map's `Option` discriminant**.
+
+> **The wording is amended, and the reason recorded.** It said the remainder's shape is "the method over
+> `&self`, the `Option` chain, the `u32` width and the saturating add". **Two of those four are not on the
+> fast path** in the code this ADR ships: the lookup returns the byte before the saturating add, and the
+> map's consult — the **0.020 ms** measured above — is behind the same return. What the fast path still
+> pays is the map's **`Option`** and the branch on it, and that had never been measured. The amendment
+> names what the code pays, and it says the shape is **named, not measured**.
+>
+> It also said the share's range spans "six campaigns" against "the candidate's own spread across three
+> campaigns" — the **0.709 ms** is the **old** set's spread, and it was judging a range that spans both
+> sets. Each set is now judged against its own spread, and the conclusion holds in both.
 
 **The change is taken, and it is a simplification rather than a win.** The table's overflow map is an
 `Option` now: when nothing overflows, **the map is not allocated at all**, and the lookup does not call
 it. The semantics do not change, the estimate does not move, and the probe's own measurement is
 **0.950 ms** faster — but the **floor**, which this change cannot touch, moved **1.514 ms** slower in
-the same two sessions, and the **resident** join stage moved **23.6 ms** against **22.2 ms** —
-reproducibly, in a same-moment A/B — while the **cold** stage (**26.0 ms** to **26.4 ms**) and the
-**scan's** stage, the control, did not move. **The parts cannot account for the resident movement, and
-this ADR does not claim what it is.** It is the next question.
+the same two sessions, and the **resident** join stage moved **23.6 ms** against **22.2 ms** in the
+comparison campaigns and **23.2 ms** against **21.7 ms** in the same-moment A/B, while the **cold** stage
+(**26.0 ms** to **26.4 ms**) and the **scan's** stage, the control — which moved **0.3 ms** the other way
+— did not move with it. **The parts cannot account for the resident movement, and this ADR does not claim
+what it is.** It is the next question, and it is written down:
+[spec 029](../../specs/029-the-lookup-shape-and-the-stage-that-moved/spec.md).
+
+> **The wording is amended, and the reason recorded.** It said the resident stage moved "**23.6 ms**
+> against **22.2 ms** — reproducibly, in a same-moment A/B". Those two figures are the **comparison
+> campaigns'** medians; the A/B's own figures are **23.2 ms** and **21.7 ms**, and the A/B is one campaign
+> each. The sentence now says which measurement each pair came from. It also said the **scan's** stage
+> "did not move": it moved **0.3 ms** the other way, **70.5 ms** to **70.2 ms**.
 
 **The prize is a measurement, not a promise.** At the time of the decision the cold `join-orders` was
 **96.7 ms** against DuckDB's **95.0 ms** — level, **1.7 ms** apart, inside both spreads — and the

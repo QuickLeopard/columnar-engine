@@ -328,6 +328,16 @@ candidate's own spread across three campaigns is **0.709 ms** — so the share i
 **The remainder is the lookup's shape**: the method over `&self`, the `Option` chain, the `u32` width
 and the saturating add, none of which the hand-written candidate has.
 
+> **The wording is amended, and the reason recorded.** The shape's four names were written for the code
+> this spec **replaces**, and the code it ships has two of them **off the fast path**: the lookup returns
+> the byte before the saturating add, and the map's consult — the **0.020 ms** measured above — is behind
+> the same return. What the fast path pays is the map's **`Option`** and the branch on it, and that was
+> never measured. The **0.709 ms** is the **old** set's candidate spread, and it was judging a range that
+> spans both sets: the new set's own spread is **0.168 ms**, and each set's share against its own spread
+> is at or below the noise. Both corrections are made in the documents that publish them, and the next
+> question — the shape's parts, one at a time — is
+> [spec 029](../029-the-lookup-shape-and-the-stage-that-moved/spec.md).
+
 **The change is taken, and it bought nothing the query can see.** The probe's own measurement is
 **0.950 ms** faster (the two sets' ranges do not overlap), but the **floor** — the table's own load,
 which this change cannot touch — moved **1.514 ms** slower in the same two sessions, and the
@@ -341,6 +351,13 @@ new code's at **23.2 ms**. So the movement is real and it is not the machine's d
 cannot account for it**: the probe's own measurement is faster and the build side's read is **0.275 ms**
 faster. **This spec does not claim what the resident movement is**; it is published as it is, and it is
 the next question.
+
+> **The wording is amended, and the reason recorded.** The **scan's** stage did not move **at all**: it
+> moved **0.3 ms** the other way, **70.5 ms** to **70.2 ms** — the figures were in the sentence already.
+> The two stage figures are the **comparison campaigns'** medians and the A/B's own figures are named
+> separately above, so no correction is needed there; what the A/B cannot carry is the **floor**, and the
+> measurement that will separate the machine from the code is written down as
+> [spec 029](../029-the-lookup-shape-and-the-stage-that-moved/spec.md).
 
 **The estimate did not move, and the semantics did not change.** The unit test in
 `crates/columnar-engine/src/operators/join.rs` holds both: the direct table's answer is the hash

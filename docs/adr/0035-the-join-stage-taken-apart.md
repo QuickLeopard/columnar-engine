@@ -99,15 +99,20 @@ a different spec with its own measurement to earn its place.
 
 > **The candidate has been measured, and it was not the reason.** [ADR-0036](0036-the-probes-remainder-taken.md)
 > took the remainder apart: the same hand-written lookup **with** the map's consult in it costs
-> **0.020 ms** more than the one without it, over six campaigns that range from **−0.278 ms** to
-> **0.406 ms** — **at or below the noise**, against a candidate whose own spread is **0.709 ms**. The
-> remainder is the lookup's **shape**, not the map. The map's consult is **gone** — the table's map is
-> an `Option` now, so when nothing overflows it is not allocated at all — and the change bought
-> **nothing measurable**: the probe's own measurement is **0.950 ms** faster, but the floor, which the
-> change cannot touch, moved **1.514 ms** slower in the same two sessions, and the **resident** join
-> stage moved **23.6 ms** against **22.2 ms**, reproducibly, in a same-moment A/B, while the **cold**
-> stage and the **scan's** stage did not move. **That movement is not this ADR's business, and it is
-> not explained away here.**
+> **0.020 ms** more than the one without it, and each set's own three campaigns are judged against **its
+> own** candidate spread — **−0.221 ms … 0.406 ms** against **0.709 ms** in the old set, **−0.278 ms …
+> 0.071 ms** against **0.168 ms** in the new one — so the share is **at or below the noise** in both. The
+> remainder is the lookup's **shape**, not the map — and the shape is **named, not measured**: the method
+> over `&self`, the byte's `Option` chain, the `u32` width, and the map's **`Option` discriminant**, which
+> is on the fast path of the code that ships; the **saturating add** and the map's consult are **off** it.
+> The map's consult is **gone** — the table's map is an `Option` now, so when nothing overflows it is not
+> allocated at all — and the change bought **nothing measurable**: the probe's own measurement is
+> **0.950 ms** faster, but the floor, which the change cannot touch, moved **1.514 ms** slower in the same
+> two sessions, and the **resident** join stage moved **23.6 ms** against **22.2 ms** in the comparison
+> campaigns and **23.2 ms** against **21.7 ms** in the same-moment A/B, while the **cold** stage and the
+> **scan's** stage — which moved **0.3 ms** the other way — did not move with it. **That movement is not
+> this ADR's business, and it is not explained away here.** It is written down as
+> [spec 029](../../specs/029-the-lookup-shape-and-the-stage-that-moved/spec.md).
 
 **The two paths differ by the probe, and the remainder is named.** The stages differ by **1.519 ms**,
 and the build side's read is the same call on both paths, so the difference is the probe. The probe,
