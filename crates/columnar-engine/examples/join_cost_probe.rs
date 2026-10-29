@@ -1716,8 +1716,15 @@ struct ContextInput<'a> {
 /// file's state at the time of the measurement is somewhere between a cold read
 /// and a warm one, and the bound is what the cold one costs over the warm one.
 fn context_ladder(input: &ContextInput<'_>) -> Context {
+    // The stage's own residual and the context do **not** depend on the engine
+    // reporting its parts: they are the stage's elapsed and the standalone
+    // measurements alone. So they are published for the code that reports the
+    // parts and for the code that does not, and only the ladder's **gaps** are
+    // absent without them.
+    let residual = Timing::of(&input.path.stage).median - input.build_whole - input.build_open;
+    let total = residual - input.standalone_probe;
     if input.path.build.is_empty() {
-        return Context::default();
+        return Context { residual: Some(residual), total: Some(total), ..Context::default() };
     }
     let file_state = input.probe_file_state.unwrap_or(0.0);
     let offset = input.probe_row_offset.unwrap_or(0.0);
