@@ -98,7 +98,7 @@ lookup can go under — and against the same lookup written out by hand over the
 | the join's stage, cold | 21.731 |
 | the join's stage, resident | 19.108 |
 | the build side's whole — the read, the keys and the table | 11.716 |
-| the stage's residual — what the stage spends on the probe | 7.259 |
+| the stage's residual — the stage's own probe plus the build side's own gap | 7.259 |
 | the context — the residual against the standalone probe | −1.069 |
 
 **The remainder this table publishes was 3.337 ms before spec 029, and it held two artefacts of the
@@ -164,7 +164,9 @@ refusals with the numbers that refused them, published as the finding.
 **1. The context — the probe inside a query, against the same probe outside it.** The join's stage's
 residual is 7.259 ms on the resident path, and the standalone probe of the same work is 8.395 ms. The
 gap is **−1.069 ms**: inside the query, the probe accounts for *less* than it does in a quiet
-process. On the cold path the same gap is **+0.494 ms** — positive where the resident one is negative
+process. The residual is the stage's own probe **plus the build side's own in-query gap**, because
+the build side's whole is measured outside the query and the two have never been separated. On the
+cold path the same gap is **+0.494 ms** — positive where the resident one is negative
 — and **the cold gap flips sign** between the two code sets measured in the same session: **−1.440
 ms** on the old code. A cost that flips sign across three consistent campaigns each is not a fixed
 overhead, so the context is not yet explained. It may be the standalone probe paying costs the query

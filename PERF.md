@@ -2358,7 +2358,7 @@ campaigns each, interleaved, on the same host and with the same instrument:**
 | the key source's cost | 0.121 ms | 0.230 ms | the **key source's** share: the engine's own column against a plain slice |
 | the ladder's sum | 0.109 ms | 1.669 ms | the six increments together: the remainder, by construction |
 | what is left unexplained | 0.000 ms | 0.000 ms | the remainder less the ladder's sum: the noise the decomposition carries |
-| the stage's residual, cold | 10.160 ms | 9.854 ms | the stage less the build side's whole and its open: the stage's own probe |
+| the stage's residual, cold | 10.160 ms | 9.854 ms | the stage less the build side's whole and its open: the stage's own probe, **plus the build side's own gap**, which has never been separated |
 | the stage's residual, resident | 7.259 ms | 7.372 ms | the same, on the resident path |
 | the context, cold | 0.494 ms | −1.440 ms | the residual less the standalone probe: the price of running inside a query |
 | the context, resident | −1.069 ms | −2.409 ms | the same, on the resident path |
@@ -2432,7 +2432,9 @@ direction and the same order; here **neither moves**. **The movement was the hos
 code's.
 
 **And the context is named.** The stage's residual — the stage less the build side's whole and its open,
-which is the stage's own probe — is **7.259 ms** on the resident path and **10.160 ms** on the cold one,
+which is the stage's own probe **plus the build side's own in-query-minus-outside gap**, because the
+build side's whole is measured **outside** the query and the two have never been separated — is
+**7.259 ms** on the resident path and **10.160 ms** on the cold one,
 and it is **not** the standalone probe: the gap between them, the **context**, is the price of running
 inside a query rather than in a quiet process, and it is **−1.069 ms** here against **−2.409 ms** on the
 old code — the crate boundary again, inside the context. **And the cold context changes sign between
