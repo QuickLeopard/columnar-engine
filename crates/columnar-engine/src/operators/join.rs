@@ -363,6 +363,7 @@ impl DirectTable {
     /// The overflow map is consulted **only when it holds something**. When
     /// it holds nothing, the lookup does not call it at all: the count is
     /// the byte, and the byte is the whole answer.
+    #[inline]
     fn count(&self, key: i64) -> u32 {
         let index = usize::try_from(key.saturating_sub(self.base)).unwrap_or(usize::MAX);
         let byte = self.counts.get(index).copied().map_or(0, u32::from);

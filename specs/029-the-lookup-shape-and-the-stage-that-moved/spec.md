@@ -214,6 +214,26 @@ rounded away. A part that measures at or below the noise is published as such.
 **And the candidates are checked before anything is timed.** Every rung's rows are compared against the
 engine's rows, **in order**, and the aggregate's value is checked against the published one.
 
+> **The requirement is amended, and the reason recorded.** The ladder was written, and the first reading
+> said something the requirement did not allow: the rung that holds the engine's **own** lookup cost
+> **1.5 ms** more than the hand-written one, and the engine's probe cost **1.2 ms** more than the
+> hand-written candidate **over the same numbers**. Two differences that are **not** differences of the
+> code:
+>
+> - **The crate boundary.** The instrument is another crate, and the engine's lookup is a **private**
+>   method: across the boundary it is not inlined, so the instrument paid a **call a probe row** that the
+>   engine's own query does not pay — the query's lookup is in the same crate as its caller. The lookup
+>   is now marked `#[inline]`, which changes nothing the query does and makes the instrument's
+>   measurement the query's cost.
+> - **The buffer.** The engine's query materialises the probe column and then probes it, so the column it
+>   probes is one the reader has just written; the candidate read a buffer kept warm across the
+>   iterations, which is a **cheaper** column than the engine pays for. Every rung now reads a column
+>   **materialised afresh**, the way the query's does.
+>
+> Neither is a difference of the lookup, and R1 asks for candidates that differ in **exactly one thing**.
+> With both removed, the remainder is measured against the same numbers over the same buffer, and the
+> parts are the parts.
+
 > **The requirement is rewritten, and the reason recorded.** It was written as a list of five candidates,
 > each a thing the engine's lookup has that the plain one does not — the method over `&self`, the `Option`
 > chain, the `u32` width, the saturating add, the engine's own lookup. Two of those five are **not on the
