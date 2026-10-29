@@ -122,11 +122,12 @@ corrected in the instrument.
   The code says otherwise: the campaign runs the query **five times**, and every execution reads the build
   side's file, so the **published figure — the median of five — is over a warm file**, and the standalone's
   measurement is over a warmer one still. The two sides read the file in the **same state**, so the file's
-  state **cannot** explain any of the build side's gap; and it is worth a great deal — the instrument
-  measures it, by taking one read of the build side's file before anything else reads it, and it comes to
-  **6.8 ms**. It is therefore published as the **bound** on what the file's state could explain of the
-  build side's gap, and not subtracted from it: a subtracted leaf would say the gap is explained by a file
-  state that both sides share.
+  state **cannot** explain any of the build side's gap. The instrument measures it, by taking one read of
+  the build side's file before anything else reads it, and it comes to **0.205 ms** with a spread of
+  **0.323 ms** — that is the **process's own** state, and it is worth **6.8 ms** more when the page cache
+  did not have the file at all. It is therefore published as the **bound** on what the file's state could
+  explain of the build side's gap, and not subtracted from it: a subtracted leaf would say the gap is
+  explained by a file state that both sides share.
 - **The published parts do not add up to the published context, and the reason is the reduction.** The
   stage's elapsed is the three parts **added together** in every iteration, and a **median of a sum is not
   the sum of the medians**. So the ladder is built **per iteration**, where the parts tile exactly, and the
@@ -152,9 +153,11 @@ is **0.000026 ms** against a floor's spread of hundreds of milliseconds: the rou
 threshold, and it is taken.
 
 **The marginal route is refused, and the reason is published.** It needs the build side's in-query cost to
-be **shown** to be the same in both queries, and the build side's **file state is worth 6.8 ms** — so the two
-queries cannot be shown to have the same build side, and the fixed cost they share would have to be
-**measured**, not assumed. The route that assumes it is not the route that measures it.
+be **shown** to be the same in both queries, and the build side's **file state moves inside a process** — it
+is worth **0.205 ms** between a process's first read of the build side's data and a later one, and
+**6.8 ms** when the page cache did not have the file at all — which is the same order as the build side's
+own gap, **0.343 ms**. So the two queries cannot be shown to have the same build side, and the fixed cost
+they share would have to be **measured**, not assumed. The route that assumes it is not the route that measures it.
 
 **And the plan output's public shape changes, because the route is taken.** `explain::JoinReport` is a
 public struct with public fields, and the parts are added to it. The **rendered** plan output does not

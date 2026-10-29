@@ -73,8 +73,7 @@ pub struct JoinReport {
     ///
     /// On the cold path this is the probe inside the reader, and on the
     /// resident path it is the probe over the dataset's own column. The two
-    /// are the same work over the same rows, measured over the same rows, so
-    /// they are comparable.
+    /// are the same work over the same rows, so they are comparable.
     pub probe_elapsed: std::time::Duration,
     /// The build side's file open.
     ///

@@ -36,7 +36,8 @@ and every execution reads that file, so the published figure — the median of f
 file, and the standalone's measurement is over a warmer one still. The two sides read the file in the
 **same state**, so the file's state **cannot** explain any of the build side's gap. And it is worth a
 great deal: the instrument measures it, by taking one read of the build side's file before anything
-else reads it, and it comes to **6.8 ms**.
+else reads it, and it comes to **0.205 ms** with a spread of **0.323 ms** — that is the **process's own**
+state, and it is worth **6.8 ms** more when the page cache did not have the file at all.
 
 ## Decision
 
@@ -56,8 +57,10 @@ each — against a threshold of **the floor's own spread** across the campaigns 
 ### 2. The marginal query route is refused, and the reason is published
 
 It needs the build side's in-query cost to be **shown** to be the same in both queries, and the build
-side's **file state is worth 6.8 ms** — so the two queries cannot be shown to have the same build
-side, and the fixed cost they share would have to be **measured**, not assumed. **The route that
+side's **file state moves inside a process** — worth **0.205 ms** between a process's first read of the
+build side's data and a later one, and **6.8 ms** when the page cache did not have the file at all — which
+is the same order as the build side's own gap, **0.343 ms**. So the two queries cannot be shown to have
+the same build side, and the fixed cost they share would have to be **measured**, not assumed. **The route that
 assumes it is not the route that measures it.**
 
 ### 3. The ladder is built per iteration
