@@ -15,9 +15,9 @@
 - [ ] **R3's route** is chosen on the evidence — the plan output's parts, or the marginal query — and
       the choice is recorded with the reason. If neither can be taken **without changing the query's
       cost**, that is published with the numbers that show it, and the rest is named.
-- [ ] The instrument gains the **ladder**: the build side's gap, the probe's gap, the clock's bracket,
-      the memory's state, and the host's floor. Each rung differs from the one before it by
-      **exactly one** thing.
+- [ ] The instrument gains the **ladder**: the build side's gap, the **build side's file state**, the
+      probe's gap, the **probe's file state**, the clock's bracket, the memory's state, and the host's
+      floor. Each rung differs from the one before it by **exactly one** thing.
 - [ ] Every rung's rows are checked against the engine's rows — the **216,783** the join produced and
       the six million the probe examined — **in order**, before anything is timed, and the aggregate's
       value against the published one.

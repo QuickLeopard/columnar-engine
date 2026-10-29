@@ -67,6 +67,16 @@ in-query ones run in the query's process, which holds the dataset, the selection
 batches and the build side's own decode. **What is in memory around the probe is different in the
 two measurements, and that difference has never been measured either.**
 
+**And two of the differences are already visible in the instrument's own order of operations.** The
+instrument reads the build side's file **twice** before it measures the build side's whole —
+`build_read` and `build_keys` come first — so the standalone build side is measured over a **warm**
+file, while the query reads it once, cold. And the standalone probe reads its column **from the
+file, for that iteration**, and probes it warm; the query's resident probe probes a chunk the
+dataset has held since it was loaded, with the build side's read in between. **Spec 029 measured the
+same kind of artefact once already** — the candidate's warm buffer, worth **1.158 ms** — and that
+one was an artefact of the instrument. **These two are candidates, not conclusions**: they are named
+as rungs to be measured, and neither is claimed.
+
 ## The requirements
 
 ### R1 — The context is decomposed into named gaps, and each is measured by a candidate that differs in exactly one thing
@@ -81,7 +91,9 @@ before it by **exactly one thing**, the way spec 029's ladder did:
 |---|---|
 | **the context** | the gap itself, and the yardstick every other rung is judged against |
 | **the build side's gap** | the build side's in-query cost − its standalone cost |
+| **the build side's file state** | the instrument reads the build side's file **twice** before it measures the build side's whole — `build_read` and `build_keys` come first — so its measurement is over a **warm** file, while the query reads it once, cold |
 | **the probe's gap** | the probe's in-query cost − its standalone cost |
+| **the probe's file state** | the standalone probe reads its column **from the file, for that iteration**, and probes it warm; the query's resident probe probes a chunk the dataset has held since it was loaded, with the build side's read in between |
 | **the clock's bracket** | each part the two clocks bracket differently, named one part at a time |
 | **the memory's state** | the same probe, over the same rows, in a process that holds what the query holds |
 | **the host's** | what the floor says about the machine under both measurements |
