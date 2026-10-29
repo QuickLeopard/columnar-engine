@@ -131,8 +131,10 @@ corrected in the instrument.
   stage's elapsed is the three parts **added together** in every iteration, and a **median of a sum is not
   the sum of the medians**. So the ladder is built **per iteration**, where the parts tile exactly, and the
   reconciliation — published — is the median of the difference over the iterations, which is **zero**. The
-  difference between the published parts' sum and the published context is **the reduction's own noise**,
-  and it is published under that name rather than folded away.
+  difference between the parts' sum and the context, **taken per campaign**, is **the reduction's own
+  noise**, and it is published under that name rather than folded away. **The closure is per campaign,
+  and the published medians do not reproduce it**: the parts' medians do not add up to their per-campaign
+  sum, because the parts move against each other and a median of a sum is not the sum of the medians.
 
 ### R3's route, and why
 
@@ -212,8 +214,8 @@ where they tile the context exactly, and the reconciliation is the median of the
 iterations. It is **zero**, and it is published so that the claim is checked rather than asserted.
 
 **And the reduction's own noise is published.** The published parts' medians do not add up to the
-published context's median, because a median of a sum is not the sum of the medians. The difference is
-published under that name.
+published context's median, because a median of a sum is not the sum of the medians. The difference,
+**taken per campaign**, is published under that name, and the published medians do not reproduce it.
 
 ### R2 — Every clock's bracket is written down, and no two measurements are compared until it is
 

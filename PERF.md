@@ -2384,7 +2384,8 @@ what they cost is **measured**: the cost of one clock read is **0.000013 ms**, s
 every one of them, and a median of a sum is not the sum of the medians.** The parts tile the context
 exactly in every iteration, so **the reconciliation is 0.000 ms** on both paths — published, so the claim
 is checked rather than asserted. The difference between the published parts' sum and the published
-context is **the reduction's own noise**, and it is published under that name.
+context — **taken per campaign** — is **the reduction's own noise**, and it is published under that name.
+The published medians do not reproduce it, because a median of a sum is not the sum of the medians.
 
 | the part | the cold path | its spread | the resident path | its spread |
 |---|---|---|---|---|

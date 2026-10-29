@@ -65,8 +65,11 @@ assumes it is not the route that measures it.**
 The stage's elapsed is the three parts **added together** in every iteration, and a **median of a sum
 is not the sum of the medians**. So the parts tile the context exactly, the **reconciliation** is
 published, and it is **zero** on both paths. The difference between the published parts' sum and the
-published context is **the reduction's own noise**, and it is published under that name rather than
-folded away.
+published context — **taken per campaign** — is **the reduction's own noise**, and it is published under
+that name rather than folded away. **The closure is per campaign, and the published medians do not
+reproduce it**: the three gaps' published medians add up to **−0.048 ms** on the cold path and their
+**per-campaign** sum is **0.329 ms**, because the gaps move against each other, and a median of a sum is
+not the sum of the medians.
 
 ### 4. The context is decomposed into three gaps, and each gap is attributed to leaves
 
