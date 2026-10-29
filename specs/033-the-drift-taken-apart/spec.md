@@ -1,7 +1,8 @@
 # Spec 033 — The drift, taken apart
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-29
+**Finished**: 2026-10-29
 **Amended**: 2026-10-29 — **spec 030's R4**, the yardstick, is superseded by this spec's R2 and R3:
 the band it named is a **difference of two drifting series**, and on the resident path it came out
 **narrower than the machine's own movement**. The reason is recorded in R2 and R3, and in

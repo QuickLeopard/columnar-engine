@@ -15,7 +15,7 @@ Every increment is a **spec** under [`specs/`](specs/), with its requirements (R
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
 [`constitution.md`](constitution.md). **31 specs**, **39 ADRs** and **29 defects** so far, and every
-one of the specs but the last is closed.
+one of the specs is closed.
 
 ---
 
