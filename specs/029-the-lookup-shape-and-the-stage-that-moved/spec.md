@@ -1,8 +1,10 @@
 # Spec 029 — The lookup's shape, and the stage that moved
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-10-29
+**Finished**: 2026-10-29
 **Amended**: 2026-10-29 — the functional decomposition's findings, bottom-up and top-down, with the reasons recorded below.
+**ADR**: [ADR-0037](../../docs/adr/0037-the-lookups-shape-and-the-stage-that-moved.md) — the lookup's shape, and the stage that moved
 **Predecessor**: [028-the-probes-remainder](../028-the-probes-remainder/spec.md)
 
 ## The problem
