@@ -380,13 +380,19 @@ iteration, the reconciliation is still **0.000 ms**, and it is published so that
 checked rather than asserted — **and what is left unexplained is named** and published with its
 spread.
 
-**And the order is alternated between the iterations, and the order's own effect is published.**
-The order is not neutral: a machine that drifts while an iteration runs gives the first
+**And the order is alternated between the iterations, and the order's own effect is published.**The order is not neutral: a machine that drifts while an iteration runs gives the first
 measurement a different price from the second. So **even iterations take the query first and odd
 iterations take it last**, the two orders' difference is published as its own figure — **the
 order's own cost** — and it is compared with **the floor's own spread**, so that the reader can see
 whether the order could have made any of the parts. **The floor's own spread is the one number
 every cost is compared with**, because the yardstick is per leaf and a cost is not a leaf.
+
+**And the iteration count is even, and it has to be.** The alternation is what takes the order's
+price out of the figure that is published, and **an odd count would not take it out**: the two
+orders' groups would differ in size, and the median would inherit the difference. **The
+instrument's iteration count is six**, where it was five. The reason is recorded here, because it
+is a change to the instrument that the requirement makes necessary and not a choice made by
+looking at any figure.
 
 **And nothing is compared with the new set's yardstick before it exists.** The **yardsticks** that
 fix the rule before the campaign are the **pre-registration** — computed from the committed

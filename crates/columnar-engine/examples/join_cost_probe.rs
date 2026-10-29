@@ -166,7 +166,17 @@ const EXPECTED: f64 = 11_472_226_962.890_1;
 const EXPECTED_ROWS: usize = 216_783;
 
 /// How many times each part is measured.
-const ITERATIONS: usize = 5;
+///
+/// **The count is even, and it has to be.** The two sides of every difference
+/// are measured in one iteration, and the order between them is alternated: the
+/// even iterations take the query first and the odd ones take it last. A machine
+/// that drifts while an iteration runs gives the first measurement a different
+/// price from the second, and the alternation is what takes that price out of
+/// the figure that is published. **An odd count would not take it out**: the two
+/// orders' groups would differ in size, and the median would inherit the
+/// difference. With an even count the groups are the same size and the median
+/// does not.
+const ITERATIONS: usize = 6;
 
 /// How many keys the small control holds.
 ///
@@ -2487,6 +2497,27 @@ fn separation_ms(
     serde_json::json!({ "cold": path(cold), "resident": path(resident) })
 }
 
+/// The ladder's leaves' per-iteration values, per path.
+///
+/// They are published so that the leaves' own spread, the two orders and the
+/// yardstick they are judged against are checkable from the committed report,
+/// and not only from the figures that are derived from it.
+fn ladder_series_ms(cold: &Leaves, resident: &Leaves) -> serde_json::Value {
+    let path = |leaves: &Leaves| {
+        serde_json::json!({
+            "the build side's gap": leaves.build,
+            "the open's gap": leaves.open,
+            "the probe's gap": leaves.probe_gap,
+            "the probe's file state": leaves.file_state,
+            "the probe's row-number offset": leaves.offset,
+            "the probe's own remainder": leaves.probe_residual,
+            "the part in no gap": leaves.host,
+            "the context": leaves.context,
+        })
+    };
+    serde_json::json!({ "cold": path(cold), "resident": path(resident) })
+}
+
 /// The report, and the printout that goes with it.
 fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn std::error::Error>> {
     let mut parts_ms = serde_json::Map::new();
@@ -2524,6 +2555,7 @@ fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn st
         "blocks_ms": blocks_ms(&measured.blocks),
         "orders_ms": orders_ms(&cold.series, &resident.series),
         "separation_ms": separation_ms(&cold_separations, &resident_separations),
+        "ladder_series_ms": ladder_series_ms(&cold.series, &resident.series),
         "brackets": brackets(),
         "derived_ms": derived_ms(
             measured,

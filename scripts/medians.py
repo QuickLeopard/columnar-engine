@@ -1445,8 +1445,13 @@ JOIN_COST_DERIVED = (
 )
 
 
-# The ladder's parts, per path: the figure, the label the section publishes it
-# under, the decimal places, and the word it carries.
+# The floor: the machine's own measure of a memory-bound loop. Its drift is the
+# yardstick's floor.
+JOIN_COST_FLOOR = "floor_probe"
+
+# The ladder's leaves, per path: the figure, the label the section publishes it
+# under, the decimal places, the word it carries, and **the sides the leaf
+# stands on** -- the measurements whose drifts the yardstick takes.
 #
 # The parts are the **leaves**: the build side's gap is the build side's own --
 # both sides read the build side's file warm, so the file's state does not enter
@@ -1454,18 +1459,78 @@ JOIN_COST_DERIVED = (
 # is left of it.
 JOIN_COST_LADDER = {
     "cold": (
-        ("the_build_gap_cold", "the build side's gap, cold", 3, "the build side's"),
-        ("the_open_gap_cold", "the open's gap, cold", 3, "the clock's"),
-        ("the_probe_row_offset", "the probe's row-number offset, cold", 3, "the clock's"),
-        ("the_probe_residual_cold", "the probe's own remainder, cold", 3, "the probe's"),
-        ("the_host_remainder_cold", "the part in no gap, cold", 3, "the host's"),
+        (
+            "the_build_gap_cold",
+            "the build side's gap, cold",
+            3,
+            "the build side's",
+            ("engine_build_cold", "build_whole"),
+        ),
+        (
+            "the_open_gap_cold",
+            "the open's gap, cold",
+            3,
+            "the clock's",
+            ("engine_open_cold", "build_open"),
+        ),
+        (
+            "the_probe_row_offset",
+            "the probe's row-number offset, cold",
+            3,
+            "the clock's",
+            ("probe_batches", "probe_batches_no_offset"),
+        ),
+        (
+            "the_probe_residual_cold",
+            "the probe's own remainder, cold",
+            3,
+            "the probe's",
+            ("engine_probe_cold", "probe_batches_no_offset"),
+        ),
+        (
+            "the_host_remainder_cold",
+            "the part in no gap, cold",
+            3,
+            "the host's",
+            ("stage_cold",),
+        ),
     ),
     "resident": (
-        ("the_build_gap_resident", "the build side's gap, resident", 3, "the build side's"),
-        ("the_open_gap_resident", "the open's gap, resident", 3, "the clock's"),
-        ("the_probe_file_state", "the probe's file state, resident", 3, "the memory's"),
-        ("the_probe_residual_resident", "the probe's own remainder, resident", 3, "the probe's"),
-        ("the_host_remainder_resident", "the part in no gap, resident", 3, "the host's"),
+        (
+            "the_build_gap_resident",
+            "the build side's gap, resident",
+            3,
+            "the build side's",
+            ("engine_build_resident", "build_whole"),
+        ),
+        (
+            "the_open_gap_resident",
+            "the open's gap, resident",
+            3,
+            "the clock's",
+            ("engine_open_resident", "build_open"),
+        ),
+        (
+            "the_probe_file_state",
+            "the probe's file state, resident",
+            3,
+            "the memory's",
+            ("probe_held", "probe_column"),
+        ),
+        (
+            "the_probe_residual_resident",
+            "the probe's own remainder, resident",
+            3,
+            "the probe's",
+            ("engine_probe_resident", "probe_held"),
+        ),
+        (
+            "the_host_remainder_resident",
+            "the part in no gap, resident",
+            3,
+            "the host's",
+            ("stage_resident",),
+        ),
     ),
 }
 
@@ -1482,50 +1547,107 @@ JOIN_COST_LADDER_FIGURES = (
     ("the_reduction_s_noise_resident", "the reduction's own noise, resident", 3),
     ("the_build_file_state", "the build side's file state", 3),
     ("the_added_clock_cost", "the added clock's cost", 6),
+    ("the_order_s_cost_cold", "the order's own cost, cold", 3),
+    ("the_order_s_cost_resident", "the order's own cost, resident", 3),
+    ("the_separation_cold", "the separation, cold", 3),
+    ("the_separation_resident", "the separation, resident", 3),
+    ("the_added_work_cost", "the interleaving's added work", 6),
 )
 
 
-def join_cost_verdict(derived: dict[str, list[float]], path: str) -> dict[str, object]:
-    """The context's verdict, in one of the six words, and the band it is judged against.
+def join_cost_drift(parts: dict[str, list[float]]) -> dict[str, float]:
+    """Every measurement's drift: the range across a set's campaigns.
 
-    The **band** is the context's own spread -- the range of its per-campaign
-    values -- in the set that measures it. A part whose own spread is wider
-    than the band is **inconclusive** and is not counted; a part whose value is
-    outside the band is a part of the context; anything else is at the noise.
-    The verdict is the word of the largest part that counts, and **unattributed**
-    when no part does.
+    The drift is the machine's own run-to-run movement over the set's three
+    campaigns, and it is the yardstick's only input.
+    """
+    return {key: max(values) - min(values) for key, values in parts.items() if values}
+
+
+def join_cost_yardstick(parts: dict[str, list[float]], path: str) -> dict[str, float]:
+    """Each leaf's yardstick, by the rule.
+
+    The yardstick for a leaf is the **larger** of the drifts of the
+    measurements that leaf stands on and of the **floor's** drift, the machine's
+    own measure of a memory-bound loop. The larger is the conservative choice: a
+    narrower yardstick would count leaves the machine could have produced on its
+    own.
+    """
+    drifts = join_cost_drift(parts)
+    floor = drifts.get(JOIN_COST_FLOOR, 0.0)
+    yardsticks: dict[str, float] = {}
+    for key, _, _, _, sides in JOIN_COST_LADDER[path]:
+        sides_drifts = [drifts[side] for side in sides if side in drifts]
+        yardsticks[key] = max([*sides_drifts, floor])
+    return yardsticks
+
+
+def join_cost_verdict(
+    parts: dict[str, list[float]],
+    derived: dict[str, list[float]],
+    path: str,
+) -> dict[str, object]:
+    """The context's verdict, in one of the six words, the yardstick it was judged
+    against, and the state of that test.
+
+    The **yardstick** is the machine's own drift, by the rule: the larger of the
+    drifts of the measurements the leaf stands on and of the floor's drift. A
+    leaf whose own spread is wider than the yardstick is **inconclusive** and is
+    not counted; a leaf whose value is outside the yardstick is a part of the
+    context; anything else is at the noise. The verdict is the word of the
+    largest leaf that counts, and **unattributed** when no leaf does.
+
+    The verdict's own **state** says whether the test could tell: **sound** when
+    the yardstick could measure what it judged and at least one leaf could be
+    judged, **not sound** when the yardstick was narrower than the machine's own
+    movement, and **inconclusive** when no leaf could be judged at all.
     """
     context = derived.get(f"the_context_{path}", [])
     if not context:
         return {}
-    band = max(context) - min(context)
-    parts: list[tuple[str, str, float, float, str]] = []
-    for key, label, _, word in JOIN_COST_LADDER[path]:
+    yardsticks = join_cost_yardstick(parts, path)
+    leaves: list[tuple[str, str, float, float, float, str]] = []
+    for key, label, _, word, _sides in JOIN_COST_LADDER[path]:
         values = [value for value in derived.get(key, []) if value is not None]
         if not values:
             continue
         value = statistics.median(values)
         spread = max(values) - min(values)
-        if spread > band:
+        yardstick = yardsticks[key]
+        if spread > yardstick:
             state = "inconclusive"
-        elif abs(value) > band:
+        elif abs(value) > yardstick:
             state = "a part of the context"
         else:
             state = "at the noise"
-        parts.append((label, word, value, spread, state))
-    if not parts:
-        # No parts: the code does not report the join stage's parts, so there
+        leaves.append((label, word, value, spread, yardstick, state))
+    if not leaves:
+        # No leaves: the code does not report the join stage's parts, so there
         # is no ladder to judge and no verdict to publish.
         return {}
-    counted = [abs(value) for _, _, value, _, state in parts if state == "a part of the context"]
+    counted = [abs(value) for _, _, value, _, _, state in leaves if state == "a part of the context"]
     verdict = "unattributed"
     if counted:
         largest = max(counted)
         verdict = next(
-            word for _, word, value, _, state in parts
+            word for _, word, value, _, _, state in leaves
             if state == "a part of the context" and abs(value) == largest
         )
-    return {"band": band, "parts": parts, "verdict": verdict}
+    floor = join_cost_drift(parts).get(JOIN_COST_FLOOR, 0.0)
+    if all(state == "inconclusive" for _, _, _, _, _, state in leaves):
+        verdict_state = "inconclusive"
+    elif yardsticks and min(yardsticks.values()) < floor:
+        # The rule takes the floor's drift as its floor, so a yardstick narrower
+        # than it means a later change made the rule narrower.
+        verdict_state = "not sound"
+    else:
+        verdict_state = "sound"
+    return {
+        "yardsticks": yardsticks,
+        "parts": leaves,
+        "verdict": verdict,
+        "state": verdict_state,
+    }
 
 
 def _rendered(figure: float, places: int) -> str:
@@ -1608,7 +1730,7 @@ def print_join_cost(sets: list[tuple[str, list[tuple[str, list[dict]]]]]) -> Non
 
         # The ladder: the context's parts, each with its own spread, and the
         # verdict they give. The spread is the **range** of the per-campaign
-        # values, and the band is the context's own spread.
+        # values, and the yardstick is the machine's own drift.
         if any(key in derived for key, _, _ in JOIN_COST_LADDER_FIGURES):
             print("\n-- the context's ladder --")
             print(f"{'the part':<44}{'median':>12}{'spread':>12}")
@@ -1618,15 +1740,23 @@ def print_join_cost(sets: list[tuple[str, list[tuple[str, list[dict]]]]]) -> Non
                     continue
                 spread = max(values) - min(values)
                 print(f"{label:<44}{_rendered(statistics.median(values), places):>12}{spread:>12.3f}")
+
+            # The drifts: the machine's own movement over the set's campaigns.
+            # They are the yardstick's only input.
+            print("\n-- the drifts --")
+            print(f"{'the measurement':<44}{'drift':>12}")
+            for key, drift in sorted(join_cost_drift(parts).items()):
+                print(f"{key:<44}{drift:>12.3f}")
+
             for path in ("cold", "resident"):
-                verdict = join_cost_verdict(derived, path)
+                verdict = join_cost_verdict(parts, derived, path)
                 if not verdict:
                     continue
-                print(f"\n-- the {path} path: the band is {verdict['band']:.3f} ms --")
-                print(f"{'the part':<44}{'value':>12}{'spread':>12}  the state")
-                for label, word, value, spread, state in verdict["parts"]:
-                    print(f"{label:<44}{value:>12.3f}{spread:>12.3f}  {state} ({word})")
-                print(f"the verdict: {verdict['verdict']}")
+                print(f"\n-- the {path} path: the yardstick is the machine's own drift --")
+                print(f"{'the part':<44}{'value':>12}{'spread':>12}{'yardstick':>12}  the state")
+                for label, word, value, spread, yardstick, state in verdict["parts"]:
+                    print(f"{label:<44}{value:>12.3f}{spread:>12.3f}{yardstick:>12.3f}  {state} ({word})")
+                print(f"the verdict: {verdict['verdict']} ({verdict['state']})")
 
 
 def main() -> int:
@@ -1846,7 +1976,8 @@ def main() -> int:
     # sets spec 026 published are preserved under their own names.
     join_sets = [
         ("the code this increment ships", "join-cost-run*.json"),
-        ("the code this increment replaces", "join-cost-before-run*.json"),
+        ("the code the last increment shipped", "join-cost-spec030-run*.json"),
+        ("the code that one replaces", "join-cost-spec030-before-run*.json"),
         ("spec 029's set, as spec 029 measured it", "join-cost-spec029-run*.json"),
         ("spec 029's before set", "join-cost-spec029-before-run*.json"),
         ("spec 028's set, as spec 028 measured it", "join-cost-spec028-run*.json"),
