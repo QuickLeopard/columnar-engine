@@ -5,46 +5,46 @@
 
 ## The measurement comes first
 
-- [ ] The **brackets and the reduction** are read out of the instrument's own code and written down:
+- [x] The **brackets and the reduction** are read out of the instrument's own code and written down:
       the **order of the blocks** — the query's first, the standalone's after it — what `Timing`
       **keeps** and what it **throws away**, and how the **context** and the **parts** are each
       reduced. The spec's tables are a **hypothesis**; they are confirmed against the code as it
       ships, and corrected if the code says otherwise.
-- [ ] The **drifts** of every control and of the **engine's own parts** — the **floor**, the
+- [x] The **drifts** of every control and of the **engine's own parts** — the **floor**, the
       **plain read**, the **standalone probe**, the **build side's whole**, and the engine's own
       **probe**, **build** and **open** — are computed from the **committed** reports and published,
       **before** anything is measured, **for every family the guard reads**. **This is the first of
       the two passes the derivation makes.**
-- [ ] The **yardstick's rule** is fixed **before** the new campaign is taken: for each **leaf**, the
+- [x] The **yardstick's rule** is fixed **before** the new campaign is taken: for each **leaf**, the
       **larger** of the drifts of the sides it stands on, and of the **floor's**. The yardsticks are
       computed from the **committed** reports first, and published with the leaf they judge.
       **The rule is not chosen by looking at any verdict.** **This is the pre-registration** — the
       yardsticks that fix the rule before the campaign are these, and **nothing is compared with the
       new set's yardstick before it exists**. The **costs** — the order's own cost and the
       interleaving's added work — are compared with **the floor's own spread**.
-- [ ] The **band** — the context's own spread — is published as what it is: **a difference of two
+- [x] The **band** — the context's own spread — is published as what it is: **a difference of two
       drifting series**, beside the drift it is compared against.
-- [ ] The **soundness check** is written down: a yardstick narrower than the machine's own movement
+- [x] The **soundness check** is written down: a yardstick narrower than the machine's own movement
       is **not sound**, and a verdict published when **no leaf could be judged at all** is
       **`inconclusive`**. **Under R2's rule the yardstick is sound by construction**, so the state
       annotates the legacy band-based verdict and catches a yardstick a later change made narrower.
-- [ ] The instrument measures the **two sides in the same iteration, back to back**, and the **order
+- [x] The instrument measures the **two sides in the same iteration, back to back**, and the **order
       is alternated** between the iterations. The **order's own cost** is measured and published, and
       it is compared with **the floor's own spread** — the one number every cost is compared with,
       because the yardstick is per leaf and a cost is not a leaf.
 - [ ] The **added work's cost** — the interleaving's — is measured the way spec 030 measured the
       added clock, published, and compared with **the floor's own spread**. **A route that costs
       more than the floor's own spread is refused, with the reason published.**
-- [ ] The **build side's file state is measured first, and stays measured first**: the query's build
+- [x] The **build side's file state is measured first, and stays measured first**: the query's build
       side and the standalone's still read the same warm file, and the build side's gap still
       measures what it measures today. **A route that would change the file state's bracket is
       refused, with the reason published.**
-- [ ] The report carries **every part's per-iteration values** and **the time each block took**, so
+- [x] The report carries **every part's per-iteration values** and **the time each block took**, so
       that the ladder's reduction and the parts' correlation are checkable by a reader from the
       committed report, and **the separation between the two sides of one difference** is measurable
       and published. **There is no drift between two blocks to publish, because R4 leaves no blocks
       to drift apart.**
-- [ ] The **controls** are reported beside every set and are **never summed**. **The floor is not
+- [x] The **controls** are reported beside every set and are **never summed**. **The floor is not
       made quieter to make the yardstick tighter.**
 - [ ] The **drifts, the yardsticks and the states are derived, not carried**: a report is one
       campaign and a drift is a range over three, so `scripts/medians.py` derives them from the

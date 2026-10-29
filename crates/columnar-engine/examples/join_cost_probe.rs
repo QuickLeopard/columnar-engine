@@ -174,8 +174,13 @@ const ITERATIONS: usize = 5;
 /// costs the same over it as over the whole column is not waiting for memory.
 const SMALL_KEYS: usize = 512 * 1024;
 
-/// A timing, and the spread it was taken over.
-#[derive(Clone, Copy)]
+/// A timing, the spread it was taken over, and the samples it was taken from.
+///
+/// The samples are kept because the report carries **every part's per-iteration
+/// values**: the ladder's reduction, the leaves' correlation and the distance
+/// between the two sides of one difference are checkable by a reader from the
+/// committed report, or they are not published.
+#[derive(Clone)]
 struct Timing {
     /// The median of the samples, in milliseconds.
     median: f64,
@@ -183,6 +188,8 @@ struct Timing {
     min: f64,
     /// The slowest sample, in milliseconds.
     max: f64,
+    /// The samples themselves, in the order they were taken.
+    samples: Vec<Duration>,
 }
 
 impl Timing {
@@ -195,12 +202,44 @@ impl Timing {
             median: ms(sorted.get(middle).copied().unwrap_or_default()),
             min: ms(sorted.first().copied().unwrap_or_default()),
             max: ms(sorted.last().copied().unwrap_or_default()),
+            samples: samples.to_vec(),
         }
     }
 
     /// The timing's spread, as the report carries it.
-    fn spread(self) -> [f64; 2] {
+    fn spread(&self) -> [f64; 2] {
         [self.min, self.max]
+    }
+
+    /// The samples, as the report carries them.
+    fn series(&self) -> Vec<f64> {
+        self.samples.iter().map(|sample| ms(*sample)).collect()
+    }
+}
+
+/// A measurement, and the instant it was taken.
+///
+/// The instant is the **middle** of the measurement, which is when the machine's
+/// state the measurement saw is closest to. It is what the distance between the
+/// two sides of one difference is measured against: the reader needs to know how
+/// far apart the machine's own two measurements of one difference were taken.
+#[derive(Clone, Copy)]
+struct Sample {
+    /// How long the measurement took.
+    elapsed: Duration,
+    /// When it was taken.
+    at: Instant,
+}
+
+impl Sample {
+    /// A measurement that ran from `started` for `elapsed`.
+    fn of(started: Instant, elapsed: Duration) -> Self {
+        Self { elapsed, at: started + elapsed / 2 }
+    }
+
+    /// The measurement's duration.
+    fn duration(self) -> Duration {
+        self.elapsed
     }
 }
 
@@ -436,6 +475,10 @@ fn duration_in(rendering: &str, name: &str) -> Option<Duration> {
 /// iteration: the stage's elapsed is the three parts **added together** in
 /// every one of them, and a median of a sum is not the sum of the medians.
 /// The per-iteration series is what makes the ladder close.
+///
+/// The **instant** each iteration was taken at is kept beside them, because the
+/// reader needs to know how far apart the machine's own two measurements of one
+/// difference were taken.
 struct PathMeasurements {
     /// The stage's elapsed, one per iteration.
     stage: Vec<Duration>,
@@ -445,9 +488,33 @@ struct PathMeasurements {
     probe: Vec<Duration>,
     /// The build side's file open, one per iteration.
     open: Vec<Duration>,
+    /// When each iteration's execution was taken.
+    at: Vec<Instant>,
 }
 
 impl PathMeasurements {
+    /// The measurements, with nothing taken yet.
+    fn new() -> Self {
+        Self {
+            stage: Vec::with_capacity(ITERATIONS),
+            build: Vec::with_capacity(ITERATIONS),
+            probe: Vec::with_capacity(ITERATIONS),
+            open: Vec::with_capacity(ITERATIONS),
+            at: Vec::with_capacity(ITERATIONS),
+        }
+    }
+
+    /// One iteration's own measurements.
+    fn push(&mut self, result: &columnar_engine::AggregateResult, at: Instant) {
+        self.stage.push(stage_of(result));
+        self.at.push(at);
+        if let Some(parts) = parts_of(result) {
+            self.build.push(parts.build);
+            self.probe.push(parts.probe);
+            self.open.push(parts.open);
+        }
+    }
+
     /// The stage's elapsed, as a timing.
     fn stage_timing(&self) -> Timing {
         Timing::of(&self.stage)
@@ -472,63 +539,264 @@ struct EngineStages {
     resident_rows: (u64, u64),
 }
 
-/// The engine's own join stage, on both paths.
+impl EngineStages {
+    /// The stages, with nothing measured yet.
+    fn new() -> Self {
+        Self {
+            cold: PathMeasurements::new(),
+            resident: PathMeasurements::new(),
+            cold_rows: (0, 0),
+            resident_rows: (0, 0),
+        }
+    }
+
+    /// One iteration of the cold path.
+    fn push_cold(&mut self, result: &columnar_engine::AggregateResult, at: Instant) {
+        self.cold.push(result, at);
+        self.cold_rows = stage_rows_of(result);
+    }
+
+    /// One iteration of the resident path.
+    fn push_resident(&mut self, result: &columnar_engine::AggregateResult, at: Instant) {
+        self.resident.push(result, at);
+        self.resident_rows = stage_rows_of(result);
+    }
+}
+
+/// The standalone's own measurements: the **other sides** of the ladder's
+/// differences, one per iteration.
+///
+/// They are taken **in the same iteration** as the query's own measurements,
+/// back to back, so that the two sides of a difference are one iteration apart
+/// rather than one campaign apart.
+struct Sides {
+    /// The build side's whole.
+    build_whole: Vec<Sample>,
+    /// The build side's open.
+    build_open: Vec<Sample>,
+    /// The probe over a fresh column: the resident path's side.
+    probe_column: Vec<Sample>,
+    /// The probe over the held column: the file state's other side.
+    probe_held: Vec<Sample>,
+    /// The probe inside the reader's batches: the cold path's side.
+    probe_batches: Vec<Sample>,
+    /// The same probe without the row-number offset.
+    probe_batches_no_offset: Vec<Sample>,
+    /// The rows the fresh probe produced, from the last iteration.
+    rows: Vec<u32>,
+    /// The rows the held probe produced, from the last iteration.
+    held_rows: Vec<u32>,
+    /// The rows the batched probe produced, from the last iteration.
+    batched_rows: Vec<u32>,
+}
+
+impl Sides {
+    /// The sides, with nothing measured yet.
+    fn new() -> Self {
+        Self {
+            build_whole: Vec::with_capacity(ITERATIONS),
+            build_open: Vec::with_capacity(ITERATIONS),
+            probe_column: Vec::with_capacity(ITERATIONS),
+            probe_held: Vec::with_capacity(ITERATIONS),
+            probe_batches: Vec::with_capacity(ITERATIONS),
+            probe_batches_no_offset: Vec::with_capacity(ITERATIONS),
+            rows: Vec::new(),
+            held_rows: Vec::new(),
+            batched_rows: Vec::new(),
+        }
+    }
+
+    /// The sides' samples, as the report carries them.
+    fn samples(&self, which: &str) -> Vec<Duration> {
+        let series = match which {
+            "build_whole" => &self.build_whole,
+            "build_open" => &self.build_open,
+            "probe_column" => &self.probe_column,
+            "probe_held" => &self.probe_held,
+            "probe_batches" => &self.probe_batches,
+            _ => &self.probe_batches_no_offset,
+        };
+        series.iter().map(|sample| sample.duration()).collect()
+    }
+
+    /// The sides' values, as the ladder needs them: milliseconds, per iteration.
+    fn milliseconds(&self, which: &str) -> Vec<f64> {
+        self.samples(which).iter().map(|sample| ms(*sample)).collect()
+    }
+
+    /// The instants the sides' measurements were taken at.
+    fn instants(&self, which: &str) -> Vec<Instant> {
+        let series = match which {
+            "build_whole" => &self.build_whole,
+            "build_open" => &self.build_open,
+            "probe_column" => &self.probe_column,
+            "probe_held" => &self.probe_held,
+            "probe_batches" => &self.probe_batches,
+            _ => &self.probe_batches_no_offset,
+        };
+        series.iter().map(|sample| sample.at).collect()
+    }
+}
+
+/// The time each block took.
+struct Blocks {
+    /// The build side's file state, taken before the iterations.
+    file_state: Duration,
+    /// The query's own block, one per iteration.
+    query: Vec<Duration>,
+    /// The standalone's own block, one per iteration.
+    standalone: Vec<Duration>,
+    /// The build side's own block.
+    build: Duration,
+    /// The probe's own block.
+    probe: Duration,
+    /// The controls' own block.
+    controls: Duration,
+    /// The whole campaign.
+    campaign: Duration,
+}
+
+/// What the interleaved loop measures, gathered so that the loop's own
+/// signature stays small.
+struct Interleaved<'a> {
+    /// The query the engine runs.
+    plan: &'a columnar_engine::QueryPlan,
+    /// The probe side's source.
+    source: &'a ParquetSource,
+    /// The dataset the resident path probes.
+    dataset: &'a Dataset,
+    /// The execution options.
+    options: &'a ExecOptions,
+    /// The join the plan carries.
+    spec: &'a JoinSpec,
+    /// The kernel flavour.
+    flavor: columnar_kernels::Flavor,
+    /// The probe side's file: the batch loop reads it.
+    path: &'a Path,
+    /// The build side's source, opened once.
+    build_source: &'a ParquetSource,
+    /// The build side's key column.
+    build_key_index: usize,
+    /// The build side's own predicates.
+    pushdown: &'a PushdownPlan,
+    /// The table the probe uses.
+    table: &'a columnar_engine::operators::join::BuildTable,
+    /// The held column's keys, loaded once before the loop.
+    held_keys: KeyColumn<'a>,
+    /// The held column's rows.
+    held_rows: std::ops::Range<u32>,
+    /// The probe key's column index.
+    probe_index: usize,
+    /// The value column's index, for the batch loop.
+    value_index: usize,
+    /// The reader's own batch size.
+    batch_rows: usize,
+}
+
+/// The two sides, measured in the same iteration, back to back.
+///
+/// **Even iterations take the query first and odd iterations take it last.** The
+/// order is not neutral: a machine that drifts while an iteration runs gives
+/// the first measurement a different price from the second, so the two orders'
+/// difference is published as its own figure and the reader can see whether the
+/// order could have made any of the parts.
+fn interleaved(
+    input: &Interleaved<'_>,
+) -> Result<(EngineStages, Sides, Blocks), Box<dyn std::error::Error>> {
+    let mut stages = EngineStages::new();
+    let mut sides = Sides::new();
+    let mut blocks = Blocks {
+        file_state: Duration::ZERO,
+        query: Vec::with_capacity(ITERATIONS),
+        standalone: Vec::with_capacity(ITERATIONS),
+        build: Duration::ZERO,
+        probe: Duration::ZERO,
+        controls: Duration::ZERO,
+        campaign: Duration::ZERO,
+    };
+    for iteration in 0..ITERATIONS {
+        if iteration % 2 == 0 {
+            let query = query_side(input, &mut stages);
+            let standalone = standalone_side(input, &mut sides)?;
+            blocks.query.push(query);
+            blocks.standalone.push(standalone);
+        } else {
+            let standalone = standalone_side(input, &mut sides)?;
+            let query = query_side(input, &mut stages);
+            blocks.standalone.push(standalone);
+            blocks.query.push(query);
+        }
+    }
+    Ok((stages, sides, blocks))
+}
+
+/// One iteration's worth of the engine's own measurements.
 ///
 /// The cold path is the one where the scan feeds the join, and the resident
 /// path is the one where the join probes the dataset itself.
-fn engine_stages(
-    plan: &columnar_engine::QueryPlan,
-    source: &ParquetSource,
-    dataset: &Dataset,
-    options: &ExecOptions,
-) -> EngineStages {
-    let mut cold = Vec::with_capacity(ITERATIONS);
-    let mut resident = Vec::with_capacity(ITERATIONS);
-    let mut cold_build = Vec::with_capacity(ITERATIONS);
-    let mut cold_probe = Vec::with_capacity(ITERATIONS);
-    let mut cold_open = Vec::with_capacity(ITERATIONS);
-    let mut resident_build = Vec::with_capacity(ITERATIONS);
-    let mut resident_probe = Vec::with_capacity(ITERATIONS);
-    let mut resident_open = Vec::with_capacity(ITERATIONS);
-    let mut cold_rows = (0, 0);
-    let mut resident_rows = (0, 0);
-    for _ in 0..ITERATIONS {
-        let over_file = columnar_engine::execute_on(plan, source, options).expect("the query runs");
-        check(&over_file);
-        cold.push(stage_of(&over_file));
-        cold_rows = stage_rows_of(&over_file);
-        if let Some(parts) = parts_of(&over_file) {
-            cold_build.push(parts.build);
-            cold_probe.push(parts.probe);
-            cold_open.push(parts.open);
-        }
+///
+/// The engine's own parts are the engine's account of its stage, so the instant
+/// the execution was taken at stands for all of them: they were measured inside
+/// one execution, and the instrument cannot see inside it.
+fn query_side(input: &Interleaved<'_>, stages: &mut EngineStages) -> Duration {
+    let block = Instant::now();
+    let started = Instant::now();
+    let over_file = columnar_engine::execute_on(input.plan, input.source, input.options)
+        .expect("the query runs");
+    let elapsed = started.elapsed();
+    check(&over_file);
+    stages.push_cold(&over_file, Sample::of(started, elapsed).at);
 
-        let over_memory = columnar_engine::execute(plan, dataset, options).expect("the query runs");
-        check(&over_memory);
-        resident.push(stage_of(&over_memory));
-        resident_rows = stage_rows_of(&over_memory);
-        if let Some(parts) = parts_of(&over_memory) {
-            resident_build.push(parts.build);
-            resident_probe.push(parts.probe);
-            resident_open.push(parts.open);
-        }
-    }
-    EngineStages {
-        cold: PathMeasurements {
-            stage: cold,
-            build: cold_build,
-            probe: cold_probe,
-            open: cold_open,
-        },
-        resident: PathMeasurements {
-            stage: resident,
-            build: resident_build,
-            probe: resident_probe,
-            open: resident_open,
-        },
-        cold_rows,
-        resident_rows,
-    }
+    let started = Instant::now();
+    let over_memory =
+        columnar_engine::execute(input.plan, input.dataset, input.options).expect("the query runs");
+    let elapsed = started.elapsed();
+    check(&over_memory);
+    stages.push_resident(&over_memory, Sample::of(started, elapsed).at);
+    block.elapsed()
+}
+
+/// One iteration's worth of the standalone's own measurements.
+///
+/// These are the **other sides** of the ladder's differences, and they are the
+/// ones the query's own measurements are compared against: the build side's
+/// whole, the build side's open, the probe over a fresh column, the probe over
+/// the held column, the probe inside the reader's batches, and the same probe
+/// without the row-number offset.
+///
+/// They are taken in this order, so that the report says which of them stood
+/// closest to the query's own execution and which stood furthest from it.
+fn standalone_side(
+    input: &Interleaved<'_>,
+    sides: &mut Sides,
+) -> Result<Duration, Box<dyn std::error::Error>> {
+    let block = Instant::now();
+    sides.build_whole.push(build_whole_sample(input.build_source, input.spec, input.flavor)?);
+    sides.build_open.push(build_open_sample(input.spec));
+    let (sample, rows) =
+        probe_over_column_sample(input.table, input.source, input.probe_index, input.flavor)?;
+    sides.probe_column.push(sample);
+    sides.rows = rows;
+    let (sample, held) = probe_over_held_sample(
+        input.table,
+        &input.held_keys,
+        input.held_rows.clone(),
+        input.build_source,
+        input.build_key_index,
+        input.pushdown,
+        input.flavor,
+    )?;
+    sides.probe_held.push(sample);
+    sides.held_rows = held;
+    let columns = [input.probe_index, input.value_index];
+    let (sample, batched) =
+        probe_in_batches_sample(input.path, &columns, input.batch_rows, input.table, true)?;
+    sides.probe_batches.push(sample);
+    sides.batched_rows = batched;
+    let (sample, _) =
+        probe_in_batches_sample(input.path, &columns, input.batch_rows, input.table, false)?;
+    sides.probe_batches_no_offset.push(sample);
+    Ok(block.elapsed())
 }
 
 /// The build side's own predicates, pushed into its reader.
@@ -602,20 +870,35 @@ fn build_keys(chunk: &ColumnChunk) -> (Timing, Vec<i64>) {
 ///
 /// The table's own cost is the difference between this and the read and the
 /// keys -- the same way the sort's probe was measured.
-fn build_whole(
+/// The build side's whole, in one iteration.
+///
+/// The table's own cost is the difference between this and the read and the
+/// keys -- the same way the sort's probe was measured.
+///
+/// It is one sample, and it is taken **in the same iteration** as the query's
+/// own build side, because the two are the two sides of the build side's gap.
+fn build_whole_sample(
     source: &ParquetSource,
     spec: &JoinSpec,
     flavor: columnar_kernels::Flavor,
-) -> Result<Timing, Box<dyn std::error::Error>> {
-    let mut samples = Vec::with_capacity(ITERATIONS);
-    for _ in 0..ITERATIONS {
-        let started = Instant::now();
-        let table = build_table(source, spec, flavor, 1)?;
-        let elapsed = started.elapsed();
-        std::hint::black_box(&table);
-        samples.push(elapsed);
-    }
-    Ok(Timing::of(&samples))
+) -> Result<Sample, Box<dyn std::error::Error>> {
+    let started = Instant::now();
+    let table = build_table(source, spec, flavor, 1)?;
+    let elapsed = started.elapsed();
+    std::hint::black_box(&table);
+    Ok(Sample::of(started, elapsed))
+}
+
+/// The build side's file open, in one iteration.
+///
+/// It is the standalone's side of the open's gap, so it is taken in the same
+/// iteration as the query's own open.
+fn build_open_sample(spec: &JoinSpec) -> Sample {
+    let started = Instant::now();
+    let opened = ParquetSource::open(&spec.build_path).expect("the build side opens");
+    let elapsed = started.elapsed();
+    std::hint::black_box(&opened);
+    Sample::of(started, elapsed)
 }
 
 /// The build side's whole, over a file the process has not read yet.
@@ -641,66 +924,58 @@ fn build_cold_whole(
 ///
 /// This is the **resident** path's probe: the column is the engine's own, and
 /// the rows are the dataset's own row numbers.
-fn probe_over_column(
-    table: &columnar_engine::operators::join::BuildTable,
-    source: &ParquetSource,
-    key_index: usize,
-    flavor: columnar_kernels::Flavor,
-) -> Result<(Timing, Vec<u32>), Box<dyn std::error::Error>> {
-    let mut samples = Vec::with_capacity(ITERATIONS);
-    let mut last = Vec::new();
-    for _ in 0..ITERATIONS {
-        let materialised = source.read(&[key_index], &PushdownPlan::default(), flavor, 1)?;
-        let chunk = materialised.chunk(PROBE_KEY).ok_or("the probe key is there")?;
-        let keys = KeyColumn::from_chunk(chunk);
-        let rows = 0..u32::try_from(materialised.len()).unwrap_or(u32::MAX);
-        let started = Instant::now();
-        let matched = probe_rows(table, &keys, rows);
-        let elapsed = started.elapsed();
-        samples.push(elapsed);
-        last = matched;
-    }
-    Ok((Timing::of(&samples), last))
-}
-
-/// The probe over a column that was loaded once and then disturbed.
 ///
-/// The query's resident probe reads the dataset's own column: it was decoded
-/// when the dataset was loaded, and by the time the probe runs the build
-/// side's read has been over the caches. This is the same probe over the same
-/// column in that state — the column is loaded **once**, and the build side's
-/// read stands between the load and the probe, exactly as it stands between
-/// the dataset's load and the query's probe. The build side's read is outside
-/// the clock: it is the disturbance, not the probe.
-fn probe_over_held_column(
+/// It is one sample, and it is taken **in the same iteration** as the query's
+/// own resident probe, because the two are the two sides of the probe's gap.
+fn probe_over_column_sample(
     table: &columnar_engine::operators::join::BuildTable,
     source: &ParquetSource,
     key_index: usize,
     flavor: columnar_kernels::Flavor,
-    build_path: &Path,
-) -> Result<(Timing, Vec<u32>), Box<dyn std::error::Error>> {
+) -> Result<(Sample, Vec<u32>), Box<dyn std::error::Error>> {
     let materialised = source.read(&[key_index], &PushdownPlan::default(), flavor, 1)?;
     let chunk = materialised.chunk(PROBE_KEY).ok_or("the probe key is there")?;
     let keys = KeyColumn::from_chunk(chunk);
     let rows = 0..u32::try_from(materialised.len()).unwrap_or(u32::MAX);
+    let started = Instant::now();
+    let matched = probe_rows(table, &keys, rows);
+    let elapsed = started.elapsed();
+    Ok((Sample::of(started, elapsed), matched))
+}
 
-    let build_source = ParquetSource::open(build_path)?;
-    let build_key_index =
-        build_source.column_index(BUILD_KEY).ok_or_else(|| format!("no {BUILD_KEY} column"))?;
-    let pushdown = build_pushdown(&build_source);
+/// The held column's keys, from a materialised dataset.
+///
+/// The column is loaded **once**, before the iterations, and disturbed in them:
+/// the two sides of the file state's difference are then taken in the same
+/// iteration, which is what the difference is about.
+fn held_column(
+    materialised: &Dataset,
+) -> Result<(KeyColumn<'_>, std::ops::Range<u32>), Box<dyn std::error::Error>> {
+    let chunk = materialised.chunk(PROBE_KEY).ok_or("the probe key is there")?;
+    let keys = KeyColumn::from_chunk(chunk);
+    let rows = 0..u32::try_from(materialised.len()).unwrap_or(u32::MAX);
+    Ok((keys, rows))
+}
 
-    let mut samples = Vec::with_capacity(ITERATIONS);
-    let mut last = Vec::new();
-    for _ in 0..ITERATIONS {
-        let disturbed = build_source.read(&[build_key_index], &pushdown, flavor, 1)?;
-        std::hint::black_box(&disturbed);
-        let started = Instant::now();
-        let matched = probe_rows(table, &keys, rows.clone());
-        let elapsed = started.elapsed();
-        samples.push(elapsed);
-        last = matched;
-    }
-    Ok((Timing::of(&samples), last))
+/// One iteration's sample of the probe over the held column.
+///
+/// The disturbance is the build side's read, and it is outside the clock: it is
+/// what the column's state is, not what the probe costs.
+fn probe_over_held_sample(
+    table: &columnar_engine::operators::join::BuildTable,
+    keys: &KeyColumn<'_>,
+    rows: std::ops::Range<u32>,
+    build_source: &ParquetSource,
+    build_key_index: usize,
+    pushdown: &PushdownPlan,
+    flavor: columnar_kernels::Flavor,
+) -> Result<(Sample, Vec<u32>), Box<dyn std::error::Error>> {
+    let disturbed = build_source.read(&[build_key_index], pushdown, flavor, 1)?;
+    std::hint::black_box(&disturbed);
+    let started = Instant::now();
+    let matched = probe_rows(table, keys, rows);
+    let elapsed = started.elapsed();
+    Ok((Sample::of(started, elapsed), matched))
 }
 
 /// The probe inside the reader's own batch loop.
@@ -713,53 +988,51 @@ fn probe_over_held_column(
 /// dataset's row numbers, which is the work the engine's own cold path does
 /// **outside** its probe's clock. The two differ by exactly that, and the
 /// difference is what the offset costs.
-fn probe_in_batches(
+///
+/// It is one sample, and it is taken **in the same iteration** as the query's
+/// own cold probe.
+fn probe_in_batches_sample(
     path: &Path,
     columns: &[usize],
     batch_rows: usize,
     table: &columnar_engine::operators::join::BuildTable,
     offset: bool,
-) -> Result<(Timing, Vec<u32>), Box<dyn std::error::Error>> {
-    let mut samples = Vec::with_capacity(ITERATIONS);
-    let mut last = Vec::new();
-    for _ in 0..ITERATIONS {
-        let file = File::open(path)?;
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-        let mask = ProjectionMask::roots(builder.parquet_schema(), columns.iter().copied());
-        let reader = builder.with_projection(mask).with_batch_size(batch_rows).build()?;
+) -> Result<(Sample, Vec<u32>), Box<dyn std::error::Error>> {
+    let file = File::open(path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let mask = ProjectionMask::roots(builder.parquet_schema(), columns.iter().copied());
+    let reader = builder.with_projection(mask).with_batch_size(batch_rows).build()?;
 
-        let mut matched = Vec::new();
-        let mut base = 0_u32;
-        let mut elapsed = Duration::ZERO;
-        for batch in reader {
-            let batch = batch?;
-            let rows = u32::try_from(batch.num_rows()).unwrap_or(u32::MAX);
-            let started = Instant::now();
-            let array = batch.column(0);
-            let Some(keys) = ArrowKeys::new(array.as_ref()) else {
-                return Err("the probe's key column is a type the probe cannot read".into());
-            };
-            // The rows the probe is handed are the **batch's own**: the
-            // reader's mask is over the batch, and the batch's rows are
-            // numbered from zero. The engine's own output rows are the
-            // dataset's row numbers, so the offset is added here -- and it is
-            // inside the clock, because this measurement is the one that has
-            // to carry it. The engine adds it in `keep_matching_rows`,
-            // **outside** its own probe's clock, and the difference between
-            // the two measurements is what the offset costs.
-            let found = probe_rows(table, &keys, 0..rows);
-            if offset {
-                matched.extend(found.iter().map(|row| row.saturating_add(base)));
-            } else {
-                matched.extend(found.iter().copied());
-            }
-            elapsed += started.elapsed();
-            base = base.saturating_add(rows);
+    let mut matched = Vec::new();
+    let mut base = 0_u32;
+    let mut elapsed = Duration::ZERO;
+    let begun = Instant::now();
+    for batch in reader {
+        let batch = batch?;
+        let rows = u32::try_from(batch.num_rows()).unwrap_or(u32::MAX);
+        let started = Instant::now();
+        let array = batch.column(0);
+        let Some(keys) = ArrowKeys::new(array.as_ref()) else {
+            return Err("the probe's key column is a type the probe cannot read".into());
+        };
+        // The rows the probe is handed are the **batch's own**: the
+        // reader's mask is over the batch, and the batch's rows are
+        // numbered from zero. The engine's own output rows are the
+        // dataset's row numbers, so the offset is added here -- and it is
+        // inside the clock, because this measurement is the one that has
+        // to carry it. The engine adds it in `keep_matching_rows`,
+        // **outside** its own probe's clock, and the difference between
+        // the two measurements is what the offset costs.
+        let found = probe_rows(table, &keys, 0..rows);
+        if offset {
+            matched.extend(found.iter().map(|row| row.saturating_add(base)));
+        } else {
+            matched.extend(found.iter().copied());
         }
-        samples.push(elapsed);
-        last = matched;
+        elapsed += started.elapsed();
+        base = base.saturating_add(rows);
     }
-    Ok((Timing::of(&samples), last))
+    Ok((Sample::of(begun, elapsed), matched))
 }
 
 /// The plain read of a column: the floor as it was published.
@@ -1156,14 +1429,10 @@ fn arguments() -> Result<(PathBuf, PathBuf, String), Box<dyn std::error::Error>>
 
 /// The build side's own parts.
 struct BuildParts {
-    /// Opening the build side's file.
-    open: Timing,
     /// Reading it.
     read: Timing,
     /// The per-row walk that collects its keys.
     keys: Timing,
-    /// The whole of the build side.
-    whole: Timing,
     /// The table's own construction.
     table: Timing,
     /// The keys the build side collected.
@@ -1176,14 +1445,6 @@ struct BuildParts {
 
 /// The probe's own parts.
 struct ProbeParts {
-    /// The probe over the engine's own column: the resident path's probe.
-    column: Timing,
-    /// The probe inside the reader's batch loop: the cold path's probe.
-    batches: Timing,
-    /// The same probe without the row-number offset.
-    batches_no_offset: Timing,
-    /// The probe over a column that was loaded once and then disturbed.
-    held: Timing,
     /// The floor the probe cannot go below.
     floor: Timing,
     /// The probe's own candidate.
@@ -1202,8 +1463,6 @@ struct ProbeParts {
     map_option: Timing,
     /// The engine's own lookup over the instrument's own key source.
     engine_plain: Timing,
-    /// The rows the engine's probe produced.
-    engine_rows: Vec<u32>,
     /// The probe key column's own values.
     values: Vec<i64>,
 }
@@ -1218,6 +1477,10 @@ struct Measured {
     cold: PathMeasurements,
     /// The resident path's own measurements, per iteration.
     resident: PathMeasurements,
+    /// The standalone's own measurements: the other sides of the differences.
+    sides: Sides,
+    /// The time each block took.
+    blocks: Blocks,
     /// The rows the join's stage reports, on the cold path.
     cold_rows: (u64, u64),
     /// The rows the join's stage reports, on the resident path.
@@ -1240,21 +1503,9 @@ fn build_parts(
         build_source.column_index(BUILD_KEY).ok_or_else(|| format!("no {BUILD_KEY} column"))?;
     let pushdown = build_pushdown(&build_source);
 
-    let open = repeat(ITERATIONS, || {
-        let started = Instant::now();
-        let opened = ParquetSource::open(&spec.build_path).expect("the build side opens");
-        let elapsed = started.elapsed();
-        std::hint::black_box(&opened);
-        elapsed
-    });
-    // The build side's whole, measured **after** the file has been read: this
-    // is over a file the process has already read, and the one the query's
-    // build side is measured against. The one over a file it has not read is
-    // `build_cold_whole`, and it is taken before anything else reads it.
     let (read, dataset) = build_read(&build_source, build_key_index, &pushdown, flavor)?;
     let chunk = dataset.chunk(BUILD_KEY).ok_or("the build side's key is there")?;
     let (keys, collected) = build_keys(chunk);
-    let whole = build_whole(&build_source, spec, flavor)?;
     let (base, width) = build_source.column_range(BUILD_KEY).map_or((0_i64, 0_usize), |range| {
         let (ScalarValue::Int64(min), ScalarValue::Int64(max)) = range else {
             return (0_i64, 0_usize);
@@ -1262,7 +1513,7 @@ fn build_parts(
         (min, usize::try_from(max.saturating_sub(min).saturating_add(1)).unwrap_or(0))
     });
     let table = candidate_table(&collected, base, width);
-    Ok(BuildParts { open, read, keys, whole, table, collected, base, width })
+    Ok(BuildParts { read, keys, table, collected, base, width })
 }
 
 /// The probe's parts, measured on their own.
@@ -1271,34 +1522,19 @@ fn probe_parts(
     source: &ParquetSource,
     table: &columnar_engine::operators::join::BuildTable,
     build: &BuildParts,
-    spec: &JoinSpec,
     flavor: columnar_kernels::Flavor,
+    sides: &Sides,
 ) -> Result<ProbeParts, Box<dyn std::error::Error>> {
     let probe_index =
         source.column_index(PROBE_KEY).ok_or_else(|| format!("no {PROBE_KEY} column"))?;
-    let (column, engine_rows) = probe_over_column(table, source, probe_index, flavor)?;
-    let batch_rows = source.batch_rows_under(MAX_READER_BATCH_ROWS);
     let value_index = source.column_index("l_extendedprice").unwrap_or(probe_index);
-    let (batches, batched_rows) =
-        probe_in_batches(path, &[probe_index, value_index], batch_rows, table, true)?;
-    // The same probe without the row-number offset: the batch's own row
-    // numbers are not made into the dataset's. The engine's own cold path does
-    // that arithmetic **outside** its probe's clock, so the difference between
-    // these two is what the offset costs.
-    let (batches_no_offset, _) =
-        probe_in_batches(path, &[probe_index, value_index], batch_rows, table, false)?;
-    // The same probe over a column that was loaded once and then disturbed by
-    // the build side's read: the state the query's resident probe is in.
-    let (held, held_rows) =
-        probe_over_held_column(table, source, probe_index, flavor, &spec.build_path)?;
-    assert_eq!(held_rows, engine_rows, "the held column probes differently");
-
+    let batch_rows = source.batch_rows_under(MAX_READER_BATCH_ROWS);
     let values = probe_values(source, probe_index, flavor)?;
     let counts = candidate_counts(&build.collected, build.base, build.width);
     let all_rows = 0..u32::try_from(source.rows()).unwrap_or(u32::MAX);
     let candidate_rows = candidate_probe(&counts, build.base, &values, all_rows.clone());
-    assert_eq!(candidate_rows, engine_rows, "the candidate probes differently");
-    assert_eq!(candidate_rows, batched_rows, "the two paths probe differently");
+    assert_eq!(candidate_rows, sides.rows, "the candidate probes differently");
+    assert_eq!(candidate_rows, sides.batched_rows, "the two paths probe differently");
 
     let floor = over_fresh_column(source, probe_index, flavor, |values| {
         let started = Instant::now();
@@ -1335,7 +1571,7 @@ fn probe_parts(
     // own batch loop, so that the cold path's remainder is measurable.
     let (cold, cold_rows) =
         cold_candidate(path, &[probe_index, value_index], batch_rows, &counts, build.base)?;
-    assert_eq!(cold_rows, engine_rows, "the cold candidate probes differently");
+    assert_eq!(cold_rows, sides.rows, "the cold candidate probes differently");
 
     // The ladder: the remainder's parts, one at a time.
     let ladder = ladder_parts(&LadderInput {
@@ -1347,14 +1583,10 @@ fn probe_parts(
         values: &values,
         all_rows: all_rows.clone(),
         table,
-        engine_rows: &engine_rows,
+        engine_rows: &sides.rows,
     })?;
 
     Ok(ProbeParts {
-        column,
-        batches,
-        batches_no_offset,
-        held,
         floor,
         candidate,
         with_map,
@@ -1364,7 +1596,6 @@ fn probe_parts(
         state: ladder.state,
         map_option: ladder.map_option,
         engine_plain: ladder.engine_plain,
-        engine_rows,
         values,
     })
 }
@@ -1529,6 +1760,78 @@ fn probe_values(
     }
 }
 
+/// The controls: the plain read of the probe key column, and the same read
+/// over a buffer small enough to be in the caches.
+fn controls(values: &[i64]) -> (Timing, Timing) {
+    let small: Vec<i64> =
+        (0..SMALL_KEYS).map(|index| i64::try_from(index % 97).unwrap_or(0)).collect();
+    let plain = repeat(ITERATIONS, || {
+        let started = Instant::now();
+        let total = read_plain(values);
+        let elapsed = started.elapsed();
+        std::hint::black_box(total);
+        elapsed
+    });
+    let small_read = repeat(ITERATIONS, || {
+        let started = Instant::now();
+        let total = read_plain(&small);
+        let elapsed = started.elapsed();
+        std::hint::black_box(total);
+        elapsed
+    });
+    (plain, small_read)
+}
+
+/// The timings, in the order the report carries them.
+fn timings(
+    stages: &EngineStages,
+    sides: &Sides,
+    build: BuildParts,
+    probe: ProbeParts,
+    build_cold: Duration,
+    read_plain: Timing,
+    read_small: Timing,
+) -> Vec<(&'static str, Timing)> {
+    let mut parts = vec![
+        ("stage_cold", stages.cold.stage_timing()),
+        ("stage_resident", stages.resident.stage_timing()),
+        ("build_open", Timing::of(&sides.samples("build_open"))),
+        ("build_read", build.read),
+        ("build_keys", build.keys),
+        ("build_whole", Timing::of(&sides.samples("build_whole"))),
+        ("build_whole_cold", Timing::of(&[build_cold])),
+        ("table_own", build.table),
+        ("probe_column", Timing::of(&sides.samples("probe_column"))),
+        ("probe_batches", Timing::of(&sides.samples("probe_batches"))),
+        ("probe_batches_no_offset", Timing::of(&sides.samples("probe_batches_no_offset"))),
+        ("probe_held", Timing::of(&sides.samples("probe_held"))),
+        ("floor_probe", probe.floor),
+        ("candidate_probe", probe.candidate),
+        ("candidate_with_map", probe.with_map),
+        ("cold_candidate", probe.cold),
+        ("candidate_chain", probe.chain),
+        ("candidate_width", probe.width),
+        ("candidate_state", probe.state),
+        ("candidate_map_option", probe.map_option),
+        ("engine_lookup_plain", probe.engine_plain),
+        ("read_plain", read_plain),
+        ("read_small", read_small),
+        ("clock_cost", clock_cost()),
+    ];
+    // The engine's own account of the stage, when the engine gives one.
+    if let Some((build, probe, open)) = stages.cold.parts() {
+        parts.push(("engine_build_cold", build));
+        parts.push(("engine_probe_cold", probe));
+        parts.push(("engine_open_cold", open));
+    }
+    if let Some((build, probe, open)) = stages.resident.parts() {
+        parts.push(("engine_build_resident", build));
+        parts.push(("engine_probe_resident", probe));
+        parts.push(("engine_open_resident", open));
+    }
+    parts
+}
+
 /// Measures everything the probe measures.
 fn measure(path: &Path, code: &str) -> Result<Measured, Box<dyn std::error::Error>> {
     let flavor = columnar_kernels::best();
@@ -1546,78 +1849,82 @@ fn measure(path: &Path, code: &str) -> Result<Measured, Box<dyn std::error::Erro
     // executions, so that the query's build side and the standalone's are
     // measured over the **same** state of the file -- a warm one -- and the
     // file's state does not enter the build side's gap.
+    //
+    // **And the interleaving does not move it.** It is still the process's
+    // first read of the build side's data, and the query's build side and the
+    // standalone's are still measured over a warm file: the file state's
+    // bracket is unchanged.
+    let campaign = Instant::now();
     let build_cold = build_cold_whole(spec, flavor)?;
 
-    let stages = engine_stages(&plan, &source, &dataset, &options);
+    // The build side's source, opened once, and the table the probe uses.
+    let build_source = ParquetSource::open(&spec.build_path)?;
+    let build_key_index =
+        build_source.column_index(BUILD_KEY).ok_or_else(|| format!("no {BUILD_KEY} column"))?;
+    let pushdown = build_pushdown(&build_source);
+    let table = build_table(&build_source, spec, flavor, 1)?;
 
+    // The probe side's own columns.
+    let probe_index =
+        source.column_index(PROBE_KEY).ok_or_else(|| format!("no {PROBE_KEY} column"))?;
+    let value_index = source.column_index("l_extendedprice").unwrap_or(probe_index);
+    let batch_rows = source.batch_rows_under(MAX_READER_BATCH_ROWS);
+
+    // The held column is loaded **once**, before the iterations, and disturbed
+    // in them: the two sides of the file state's difference are then taken in
+    // the same iteration, which is what the difference is about.
+    let held_dataset = source.read(&[probe_index], &PushdownPlan::default(), flavor, 1)?;
+    let (held_keys, held_rows) = held_column(&held_dataset)?;
+
+    // The two sides, in the same iteration, back to back, the order alternating.
+    let (stages, sides, mut blocks) = interleaved(&Interleaved {
+        plan: &plan,
+        source: &source,
+        dataset: &dataset,
+        options: &options,
+        spec,
+        flavor,
+        path,
+        build_source: &build_source,
+        build_key_index,
+        pushdown: &pushdown,
+        table: &table,
+        held_keys,
+        held_rows,
+        probe_index,
+        value_index,
+        batch_rows,
+    })?;
+    assert_eq!(sides.held_rows, sides.rows, "the held column probes differently");
+
+    let started = Instant::now();
     let build = build_parts(spec, flavor)?;
-    let table = build_table(&ParquetSource::open(&spec.build_path)?, spec, flavor, 1)?;
-    let probe = probe_parts(path, &source, &table, &build, spec, flavor)?;
+    blocks.build = started.elapsed();
+
+    let started = Instant::now();
+    let probe = probe_parts(path, &source, &table, &build, flavor, &sides)?;
+    blocks.probe = started.elapsed();
 
     // The controls: the plain read of the probe key column, and the same read
     // over a buffer small enough to be in the caches.
-    let small: Vec<i64> =
-        (0..SMALL_KEYS).map(|index| i64::try_from(index % 97).unwrap_or(0)).collect();
-    let read_plain_timing = repeat(ITERATIONS, || {
-        let started = Instant::now();
-        let total = read_plain(&probe.values);
-        let elapsed = started.elapsed();
-        std::hint::black_box(total);
-        elapsed
-    });
-    let read_small = repeat(ITERATIONS, || {
-        let started = Instant::now();
-        let total = read_plain(&small);
-        let elapsed = started.elapsed();
-        std::hint::black_box(total);
-        elapsed
-    });
+    let started = Instant::now();
+    let (read_plain_timing, read_small) = controls(&probe.values);
+    blocks.controls = started.elapsed();
+    blocks.file_state = build_cold;
+    blocks.campaign = campaign.elapsed();
 
-    let mut parts = vec![
-        ("stage_cold", stages.cold.stage_timing()),
-        ("stage_resident", stages.resident.stage_timing()),
-        ("build_open", build.open),
-        ("build_read", build.read),
-        ("build_keys", build.keys),
-        ("build_whole", build.whole),
-        ("build_whole_cold", Timing::of(&[build_cold])),
-        ("table_own", build.table),
-        ("probe_column", probe.column),
-        ("probe_batches", probe.batches),
-        ("probe_batches_no_offset", probe.batches_no_offset),
-        ("probe_held", probe.held),
-        ("floor_probe", probe.floor),
-        ("candidate_probe", probe.candidate),
-        ("candidate_with_map", probe.with_map),
-        ("cold_candidate", probe.cold),
-        ("candidate_chain", probe.chain),
-        ("candidate_width", probe.width),
-        ("candidate_state", probe.state),
-        ("candidate_map_option", probe.map_option),
-        ("engine_lookup_plain", probe.engine_plain),
-        ("read_plain", read_plain_timing),
-        ("read_small", read_small),
-        ("clock_cost", clock_cost()),
-    ];
-    // The engine's own account of the stage, when the engine gives one.
-    if let Some((build, probe, open)) = stages.cold.parts() {
-        parts.push(("engine_build_cold", build));
-        parts.push(("engine_probe_cold", probe));
-        parts.push(("engine_open_cold", open));
-    }
-    if let Some((build, probe, open)) = stages.resident.parts() {
-        parts.push(("engine_build_resident", build));
-        parts.push(("engine_probe_resident", probe));
-        parts.push(("engine_open_resident", open));
-    }
+    let parts = timings(&stages, &sides, build, probe, build_cold, read_plain_timing, read_small);
+    let engine_rows = sides.rows.len();
     Ok(Measured {
         code: code.to_owned(),
         parts,
         cold: stages.cold,
         resident: stages.resident,
+        sides,
+        blocks,
         cold_rows: stages.cold_rows,
         resident_rows: stages.resident_rows,
-        engine_rows: probe.engine_rows.len(),
+        engine_rows,
         table_rows: table.rows(),
         rows,
     })
@@ -1674,22 +1981,57 @@ struct Context {
     reduction_noise: Option<f64>,
     /// The engine's own parts against the stage's elapsed, per iteration.
     stage_parts_gap: Option<f64>,
+    /// The leaves' per-iteration values, so that the two orders and the
+    /// separations can be published from them.
+    series: Leaves,
 }
 
 /// What one path's context is measured over.
+///
+/// The standalone's measurements are **per iteration**, because they are taken
+/// in the same iteration as the query's own measurements: the two sides of a
+/// difference are one iteration apart rather than one campaign apart.
 struct ContextInput<'a> {
     /// The engine's own measurements, per iteration.
     path: &'a PathMeasurements,
-    /// The build side's whole, measured outside the query.
-    build_whole: f64,
-    /// The build side's open, measured outside the query.
-    build_open: f64,
-    /// The probe, measured outside the query.
-    standalone_probe: f64,
-    /// The probe's file state, on the paths that have one.
-    probe_file_state: Option<f64>,
-    /// The probe's row-number offset, on the paths that have one.
-    probe_row_offset: Option<f64>,
+    /// The build side's whole, measured outside the query, per iteration.
+    build_whole: &'a [f64],
+    /// The build side's open, measured outside the query, per iteration.
+    build_open: &'a [f64],
+    /// The probe, measured outside the query, per iteration.
+    standalone_probe: &'a [f64],
+    /// The probe's file state, per iteration: zeros on the paths that have none.
+    file_state: &'a [f64],
+    /// The probe's row-number offset, per iteration: zeros on the paths that have none.
+    offset: &'a [f64],
+    /// Whether the path has a file-state leaf at all.
+    has_file_state: bool,
+    /// Whether the path has a row-number-offset leaf at all.
+    has_offset: bool,
+}
+
+/// The ladder's leaves, per iteration.
+///
+/// They are per iteration because the two sides of a difference are measured in
+/// the same iteration, and every leaf is the difference of two of them.
+#[derive(Default)]
+struct Leaves {
+    /// The build side's gap: the query's build side against the standalone one.
+    build: Vec<f64>,
+    /// The open's gap: the query's open against the standalone one.
+    open: Vec<f64>,
+    /// The probe's gap: the query's probe against the standalone one.
+    probe_gap: Vec<f64>,
+    /// The probe's file state: the held column against the fresh one.
+    file_state: Vec<f64>,
+    /// The probe's row-number offset.
+    offset: Vec<f64>,
+    /// The probe's own remainder.
+    probe_residual: Vec<f64>,
+    /// The part of the context that lies in no gap.
+    host: Vec<f64>,
+    /// The context itself.
+    context: Vec<f64>,
 }
 
 /// The context's decomposition, for one path.
@@ -1717,32 +2059,53 @@ fn context_ladder(input: &ContextInput<'_>) -> Context {
     // measurements alone. So they are published for the code that reports the
     // parts and for the code that does not, and only the ladder's **gaps** are
     // absent without them.
-    let residual = Timing::of(&input.path.stage).median - input.build_whole - input.build_open;
-    let total = residual - input.standalone_probe;
+    //
+    // They are taken **per iteration**, because the standalone's measurements
+    // are per iteration: the residual is the stage's elapsed less the
+    // standalone's whole and open, in each iteration, and the median of those
+    // is what is published.
+    let mut residuals = Vec::new();
+    let mut totals = Vec::new();
+    for (stage, ((build_whole, build_open), standalone_probe)) in input
+        .path
+        .stage
+        .iter()
+        .zip(input.build_whole.iter().zip(input.build_open).zip(input.standalone_probe))
+    {
+        let stage = ms(*stage);
+        residuals.push(stage - build_whole - build_open);
+        totals.push(stage - build_whole - build_open - standalone_probe);
+    }
+    let residual = median_ms(&residuals);
+    let total = median_ms(&totals);
     if input.path.build.is_empty() {
         return Context { residual: Some(residual), total: Some(total), ..Context::default() };
     }
-    let file_state = input.probe_file_state.unwrap_or(0.0);
-    let offset = input.probe_row_offset.unwrap_or(0.0);
-    let mut build_gaps = Vec::new();
-    let mut open_gaps = Vec::new();
-    let mut probe_gaps = Vec::new();
-    let mut probe_residuals = Vec::new();
-    let mut contexts = Vec::new();
+    let mut leaves = Leaves::default();
     let mut reconciliations = Vec::new();
-    let mut host_remainders = Vec::new();
     let mut stage_gaps = Vec::new();
-    let iterations =
+    let path =
         input.path.stage.iter().zip(&input.path.build).zip(&input.path.probe).zip(&input.path.open);
-    for (((stage, build), probe), open) in iterations {
+    let sides = input.build_whole.iter().zip(input.build_open).zip(input.standalone_probe);
+    let states = input.file_state.iter().zip(input.offset);
+    for (
+        ((((stage, build), probe), open), ((build_whole, build_open), standalone_probe)),
+        (file_state, offset),
+    ) in path.zip(sides).zip(states)
+    {
         let stage = ms(*stage);
         let build = ms(*build);
         let probe = ms(*probe);
         let open = ms(*open);
-        let build_gap = build - input.build_whole;
-        let open_gap = open - input.build_open;
-        let probe_gap = probe - input.standalone_probe;
-        let context = stage - input.build_whole - input.build_open - input.standalone_probe;
+        let build_whole = *build_whole;
+        let build_open = *build_open;
+        let standalone_probe = *standalone_probe;
+        let file_state = *file_state;
+        let offset = *offset;
+        let build_gap = build - build_whole;
+        let open_gap = open - build_open;
+        let probe_gap = probe - standalone_probe;
+        let context = stage - build_whole - build_open - standalone_probe;
         // The offset is in the standalone's clock and not in the query's, so
         // it is **against** the probe's gap; the file's state is the query's
         // own, so it is **with** it.
@@ -1751,36 +2114,39 @@ fn context_ladder(input: &ContextInput<'_>) -> Context {
         // sides read the build side's file warm, so the file's state does not
         // enter it -- and the probe's gap is its file's state, its row-number
         // offset and what is left of it.
-        let leaves = build_gap + open_gap + (file_state - offset) + probe_residual;
-        build_gaps.push(build_gap);
-        open_gaps.push(open_gap);
-        probe_gaps.push(probe_gap);
-        probe_residuals.push(probe_residual);
-        contexts.push(context);
-        reconciliations.push(context - leaves);
-        host_remainders.push(context - (build_gap + open_gap + probe_gap));
+        let tiled = build_gap + open_gap + (file_state - offset) + probe_residual;
+        leaves.build.push(build_gap);
+        leaves.open.push(open_gap);
+        leaves.probe_gap.push(probe_gap);
+        leaves.file_state.push(file_state);
+        leaves.offset.push(offset);
+        leaves.probe_residual.push(probe_residual);
+        leaves.host.push(context - (build_gap + open_gap + probe_gap));
+        leaves.context.push(context);
+        reconciliations.push(context - tiled);
         stage_gaps.push(stage - (build + probe + open));
     }
-    let build = median_ms(&build_gaps);
-    let open = median_ms(&open_gaps);
-    let probe = median_ms(&probe_gaps);
+    let build = median_ms(&leaves.build);
+    let open = median_ms(&leaves.open);
+    let probe = median_ms(&leaves.probe_gap);
     let sum = build + open + probe;
-    let total = median_ms(&contexts);
+    let total = median_ms(&leaves.context);
     Context {
         build: Some(build),
         open: Some(open),
         probe: Some(probe),
         sum: Some(sum),
         total: Some(total),
-        residual: Some(Timing::of(&input.path.stage).median - input.build_whole - input.build_open),
+        residual: Some(residual),
         build_residual: Some(build),
-        probe_file_state: input.probe_file_state,
-        probe_row_offset: input.probe_row_offset,
-        probe_residual: Some(median_ms(&probe_residuals)),
+        probe_file_state: input.has_file_state.then(|| median_ms(&leaves.file_state)),
+        probe_row_offset: input.has_offset.then(|| median_ms(&leaves.offset)),
+        probe_residual: Some(median_ms(&leaves.probe_residual)),
         reconciliation: Some(median_ms(&reconciliations)),
         reduction_noise: Some(sum - total),
-        host: Some(median_ms(&host_remainders)),
+        host: Some(median_ms(&leaves.host)),
         stage_parts_gap: Some(median_ms(&stage_gaps)),
+        series: leaves,
     }
 }
 
@@ -1800,37 +2166,142 @@ fn part_of(measured: &Measured, name: &str) -> f64 {
 /// account of the stage makes -- which sum to it, and whose leaves say which
 /// mechanism can explain each of them.
 fn contexts(measured: &Measured) -> (Context, Context) {
-    let part = |name: &str| part_of(measured, name);
+    let sides = &measured.sides;
+    let build_whole = sides.milliseconds("build_whole");
+    let build_open = sides.milliseconds("build_open");
+    let probe_column = sides.milliseconds("probe_column");
+    let probe_batches = sides.milliseconds("probe_batches");
+    let held = sides.milliseconds("probe_held");
+    let batches_no_offset = sides.milliseconds("probe_batches_no_offset");
+    let zeros = vec![0.0; probe_column.len()];
+
+    // The cold path's row-number offset: the standalone carries the offset and
+    // the query's clock does not, so it is the offset's **cost**.
+    let cold_offset: Vec<f64> = probe_batches
+        .iter()
+        .zip(&batches_no_offset)
+        .map(|(batches, none)| batches - none)
+        .collect();
+
+    // The resident path's file state: the query's resident probe reads a column
+    // the dataset has held since it was loaded, with the build side's read in
+    // between, and the standalone reads its column afresh: the file's state is
+    // the leaf.
+    let resident_file_state: Vec<f64> =
+        held.iter().zip(&probe_column).map(|(held, column)| held - column).collect();
+
     let cold = context_ladder(&ContextInput {
         path: &measured.cold,
-        build_whole: part("build_whole"),
-        build_open: part("build_open"),
-        standalone_probe: part("probe_batches"),
+        build_whole: &build_whole,
+        build_open: &build_open,
+        standalone_probe: &probe_batches,
         // The cold path's probe reads the file inside the reader on **both**
         // sides, so the file's state is the same by construction and there is
         // no file-state leaf: the row-number offset is the bracket that
         // differs.
-        probe_file_state: None,
-        probe_row_offset: Some(part("probe_batches") - part("probe_batches_no_offset")),
+        file_state: &zeros,
+        offset: &cold_offset,
+        has_file_state: false,
+        has_offset: true,
     });
     let resident = context_ladder(&ContextInput {
         path: &measured.resident,
-        build_whole: part("build_whole"),
-        build_open: part("build_open"),
-        standalone_probe: part("probe_column"),
-        // The resident path's probe reads a column the dataset has held since
-        // it was loaded, with the build side's read in between, and the
-        // standalone reads its column afresh: the file's state is the leaf.
-        probe_file_state: Some(part("probe_held") - part("probe_column")),
+        build_whole: &build_whole,
+        build_open: &build_open,
+        standalone_probe: &probe_column,
         // The resident path's probe carries no row-number offset: it probes
         // the dataset's own rows.
-        probe_row_offset: None,
+        file_state: &resident_file_state,
+        offset: &zeros,
+        has_file_state: true,
+        has_offset: false,
     });
     (cold, resident)
 }
 
+/// The two orders' medians of a series, and the difference between them.
+///
+/// The **even** iterations took the query first and the **odd** ones took it
+/// last, so the two orders are the two halves of the series.
+fn orders_of(series: &[f64]) -> [f64; 3] {
+    let first: Vec<f64> = series.iter().step_by(2).copied().collect();
+    let last: Vec<f64> = series.iter().skip(1).step_by(2).copied().collect();
+    let first = median_ms(&first);
+    let last = median_ms(&last);
+    [first, last, first - last]
+}
+
+/// The order's own cost: the largest difference between the two orders'
+/// medians, over the leaves and the context.
+///
+/// The order is not neutral: a machine that drifts while an iteration runs
+/// gives the first measurement a different price from the second. **This is the
+/// figure that says whether the order could have made any of the parts.**
+fn order_cost(leaves: &Leaves) -> f64 {
+    [
+        &leaves.build,
+        &leaves.open,
+        &leaves.file_state,
+        &leaves.offset,
+        &leaves.probe_residual,
+        &leaves.host,
+        &leaves.context,
+    ]
+    .iter()
+    .map(|series| orders_of(series)[2].abs())
+    .fold(0.0_f64, f64::max)
+}
+
+/// The median distance between two series of instants, in milliseconds.
+fn distance(one: &[Instant], other: &[Instant]) -> f64 {
+    let distances: Vec<f64> = one
+        .iter()
+        .zip(other)
+        .map(|(a, b)| ms(a.duration_since(*b).max(b.duration_since(*a))))
+        .collect();
+    median_ms(&distances)
+}
+
+/// How far apart the machine's own two measurements of one difference were
+/// taken.
+///
+/// It is the distance between the two sides' instants, in the iteration they
+/// were taken in, and it is published because the yardstick has to cover the
+/// machine's drift across that distance.
+fn separations(
+    path: &PathMeasurements,
+    sides: &Sides,
+    file_state: bool,
+    offset: bool,
+) -> Vec<(&'static str, f64)> {
+    let mut rows = vec![
+        ("the build side's gap", distance(&path.at, &sides.instants("build_whole"))),
+        ("the open's gap", distance(&path.at, &sides.instants("build_open"))),
+        ("the probe's own remainder", distance(&path.at, &sides.instants("probe_held"))),
+    ];
+    if file_state {
+        rows.push((
+            "the probe's file state",
+            distance(&sides.instants("probe_column"), &sides.instants("probe_held")),
+        ));
+    }
+    if offset {
+        rows.push((
+            "the probe's row-number offset",
+            distance(&sides.instants("probe_batches"), &sides.instants("probe_batches_no_offset")),
+        ));
+    }
+    rows
+}
+
 /// The report's derived figures: every difference it publishes.
-fn derived_ms(measured: &Measured, cold: &Context, resident: &Context) -> Figures {
+fn derived_ms(
+    measured: &Measured,
+    cold: &Context,
+    resident: &Context,
+    cold_separations: &[(&'static str, f64)],
+    resident_separations: &[(&'static str, f64)],
+) -> Figures {
     let part = |name: &str| part_of(measured, name);
     // The build side's file state: the first read of the build side's data
     // against a later one. It is the instrument's own figure, so it is
@@ -1905,7 +2376,28 @@ fn derived_ms(measured: &Measured, cold: &Context, resident: &Context) -> Figure
     put("the_probe_file_state", number(resident.probe_file_state));
     // The resident path's added clock: two reads and one subtraction.
     put("the_added_clock_cost", serde_json::json!(part("clock_cost") * 2.0));
+    // The order's own cost: the largest difference between the two orders'
+    // medians, over the leaves and the context.
+    put("the_order_s_cost_cold", serde_json::json!(order_cost(&cold.series)));
+    put("the_order_s_cost_resident", serde_json::json!(order_cost(&resident.series)));
+    // How far apart the two sides of each difference were taken: the largest of
+    // the path's separations.
+    put("the_separation_cold", serde_json::json!(largest(cold_separations)));
+    put("the_separation_resident", serde_json::json!(largest(resident_separations)));
+    // The interleaving's added work. It is priced the way an added clock is
+    // priced -- the added clock reads, at the measured cost of one -- and **it
+    // adds no clock read**: every quantity is still timed by exactly the two
+    // clock reads it was timed by before, and the per-iteration values are
+    // written rather than timed. The clock's own cost is published beside it,
+    // so the reader can see the resolution the figure was measured at.
+    put("the_added_work_cost", serde_json::json!(0.0));
+    put("the_added_work_clocks", serde_json::json!(0));
     derived
+}
+
+/// The largest of a set of separations.
+fn largest(rows: &[(&'static str, f64)]) -> f64 {
+    rows.iter().map(|(_, value)| *value).fold(0.0_f64, f64::max)
 }
 
 /// What each clock brackets, and what it does not include.
@@ -1938,15 +2430,76 @@ fn brackets() -> Figures {
     map
 }
 
+/// The time each block took.
+fn blocks_ms(blocks: &Blocks) -> serde_json::Value {
+    let total = |durations: &[Duration]| durations.iter().map(|d| ms(*d)).sum::<f64>();
+    let series = |durations: &[Duration]| durations.iter().map(|d| ms(*d)).collect::<Vec<f64>>();
+    serde_json::json!({
+        "the file state": { "total_ms": ms(blocks.file_state), "iterations_ms": Vec::<f64>::new() },
+        "the query's block": { "total_ms": total(&blocks.query), "iterations_ms": series(&blocks.query) },
+        "the standalone's block": {
+            "total_ms": total(&blocks.standalone),
+            "iterations_ms": series(&blocks.standalone)
+        },
+        "the build block": { "total_ms": ms(blocks.build), "iterations_ms": Vec::<f64>::new() },
+        "the probe block": { "total_ms": ms(blocks.probe), "iterations_ms": Vec::<f64>::new() },
+        "the controls block": { "total_ms": ms(blocks.controls), "iterations_ms": Vec::<f64>::new() },
+        "the campaign": { "total_ms": ms(blocks.campaign), "iterations_ms": Vec::<f64>::new() },
+    })
+}
+
+/// The two orders' medians of each leaf and of the context.
+fn orders_ms(cold: &Leaves, resident: &Leaves) -> serde_json::Value {
+    let row = |series: &[f64]| {
+        let [first, last, difference] = orders_of(series);
+        serde_json::json!({
+            "query_first": first,
+            "standalone_first": last,
+            "difference": difference,
+        })
+    };
+    let path = |leaves: &Leaves| {
+        serde_json::json!({
+            "the build side's gap": row(&leaves.build),
+            "the open's gap": row(&leaves.open),
+            "the probe's file state": row(&leaves.file_state),
+            "the probe's row-number offset": row(&leaves.offset),
+            "the probe's own remainder": row(&leaves.probe_residual),
+            "the part in no gap": row(&leaves.host),
+            "the context": row(&leaves.context),
+        })
+    };
+    serde_json::json!({ "cold": path(cold), "resident": path(resident) })
+}
+
+/// How far apart the two sides of each difference were taken.
+fn separation_ms(
+    cold: &[(&'static str, f64)],
+    resident: &[(&'static str, f64)],
+) -> serde_json::Value {
+    let path = |rows: &[(&'static str, f64)]| {
+        let mut map = serde_json::Map::new();
+        for (name, value) in rows {
+            map.insert((*name).to_owned(), serde_json::json!(value));
+        }
+        serde_json::Value::Object(map)
+    };
+    serde_json::json!({ "cold": path(cold), "resident": path(resident) })
+}
+
 /// The report, and the printout that goes with it.
 fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn std::error::Error>> {
     let mut parts_ms = serde_json::Map::new();
     let mut spreads_ms = serde_json::Map::new();
+    let mut series_ms = serde_json::Map::new();
     for (name, timing) in &measured.parts {
         parts_ms.insert((*name).to_owned(), serde_json::json!(timing.median));
         spreads_ms.insert((*name).to_owned(), serde_json::json!(timing.spread()));
+        series_ms.insert((*name).to_owned(), serde_json::json!(timing.series()));
     }
     let (cold, resident) = contexts(measured);
+    let cold_separations = separations(&measured.cold, &measured.sides, false, true);
+    let resident_separations = separations(&measured.resident, &measured.sides, true, false);
     let report = serde_json::json!({
         "probe": "join-cost",
         "file": path.display().to_string(),
@@ -1965,8 +2518,20 @@ fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn st
         "build_key": BUILD_KEY,
         "parts_ms": parts_ms,
         "spreads_ms": spreads_ms,
+        // Every part's per-iteration values, so that the ladder's reduction and
+        // the parts' correlation are checkable from the committed report.
+        "series_ms": series_ms,
+        "blocks_ms": blocks_ms(&measured.blocks),
+        "orders_ms": orders_ms(&cold.series, &resident.series),
+        "separation_ms": separation_ms(&cold_separations, &resident_separations),
         "brackets": brackets(),
-        "derived_ms": derived_ms(measured, &cold, &resident),
+        "derived_ms": derived_ms(
+            measured,
+            &cold,
+            &resident,
+            &cold_separations,
+            &resident_separations,
+        ),
         "engine_rows": measured.engine_rows,
         "table_rows": measured.table_rows,
         "stage_rows": {

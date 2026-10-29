@@ -176,6 +176,37 @@ machine's drift are the **controls** and the **engine's own parts**:
 above says where each measurement is taken **today**; after R4 they are taken **in the same
 iteration**, and the drifts are published from the set that R4 measures.
 
+**And the drifts are computed from the committed reports and published, before anything is
+measured.** Here they are, for the set the campaign will be measured against — the code that ships
+— with each measurement's own three campaigns beside it:
+
+| the measurement | campaign 1 | campaign 2 | campaign 3 | **the drift** |
+|---|---|---|---|---|
+| the **floor** | 6.876 ms | 5.941 ms | 6.282 ms | **0.936 ms** |
+| the **plain read** | 0.574 ms | 0.521 ms | 0.555 ms | 0.053 ms |
+| the **small read** | 0.041 ms | 0.047 ms | 0.041 ms | 0.006 ms |
+| the **standalone probe** — cold | 13.622 ms | 12.498 ms | 12.463 ms | 1.159 ms |
+| the **standalone probe** — resident | 8.482 ms | 9.080 ms | 9.384 ms | 0.901 ms |
+| the **build side's whole** | 13.172 ms | 12.605 ms | 12.519 ms | 0.654 ms |
+| the **build side's open** | 0.033 ms | 0.026 ms | 0.030 ms | 0.007 ms |
+| the **engine's own build** — cold | 12.440 ms | 12.155 ms | 12.446 ms | 0.291 ms |
+| the **engine's own build** — resident | 12.829 ms | 12.262 ms | 11.742 ms | 1.088 ms |
+| the **engine's own open** — cold | 0.133 ms | 0.120 ms | 0.125 ms | 0.013 ms |
+| the **engine's own open** — resident | 0.121 ms | 0.108 ms | 0.120 ms | 0.013 ms |
+| the **engine's own probe** — cold | 15.943 ms | 12.649 ms | 12.771 ms | 3.295 ms |
+| the **engine's own probe** — resident | 8.349 ms | 7.704 ms | 7.338 ms | 1.011 ms |
+| the **probe's held column** | 8.683 ms | 7.902 ms | 8.186 ms | 0.781 ms |
+| the **probe's batches, no offset** | 15.759 ms | 12.119 ms | 12.582 ms | 3.640 ms |
+| the **stage's own elapsed** — cold | 28.552 ms | 24.642 ms | 25.446 ms | 3.910 ms |
+| the **stage's own elapsed** — resident | 20.412 ms | 20.017 ms | 20.368 ms | 0.395 ms |
+
+**And the drift is the range across the three campaigns** — the same reduction every other spread in
+this repository uses — **and it is the yardstick's only input.** The floor's **0.936 ms** is the
+floor under every leaf's yardstick: the machine moved that much over three campaigns of the same
+work on the same host. **And the machine moved most of all in the engine's own cold probe**
+(**3.295 ms**) **and in the probe's batches without the offset** (**3.640 ms**) — the two
+measurements the cold path's leaves stand on.
+
 Each is published with its drift, beside the set it belongs to, and **none of them is ever summed**
 — they are controls, and this spec says so where the floor's own section says it.
 
@@ -337,6 +368,12 @@ file state is still taken before any iteration, the query's build side and the s
 read the same warm file, and the build side's gap still measures what it measures today. **If the
 interleaving would change the file state's bracket, the route is refused, with the reason
 published.**
+
+**And the route was checked, and it is not refused.** The standalone's whole is taken after the
+engine's own execution in the even iterations, and after the previous iteration's execution in the
+odd ones, and it is **never** the file's first read: the file state is taken before any iteration
+and it is the process's first read of the build side's data. **The bracket is unchanged**, and the
+file state's own figure is published with the rest.
 
 **And the ladder's reconciliation is published.** The parts still sum to the context in every
 iteration, the reconciliation is still **0.000 ms**, and it is published so that the claim is
