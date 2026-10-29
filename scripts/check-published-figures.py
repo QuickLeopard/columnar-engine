@@ -51,6 +51,14 @@ RESIDENT_SCALING_REPORTS = sorted(
 LOAD_SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-load-run*.json"))
 DOCS = [ROOT / "PERF.md", ROOT / "README.md"]
 
+# The status file is a **summary**, and it is checked like one: its figures
+# are the same ones PERF.md publishes, checked against the same committed
+# reports, so the summary cannot drift away from the evidence. It is not in
+# `DOCS`, because the checks that run over every document -- the browser's
+# match count, the one figure the browser and the native kernel share -- are
+# about the browser's page and not about a status.
+STATUS_DOC = ROOT / "STATUS.md"
+
 # The number of campaigns a machine has to run before its median is published.
 # This is the repository's rule: a single run is an estimate of a number that
 # moves, so a median needs at least three.
@@ -453,6 +461,149 @@ MATERIALISED_CHECKS = [
 ]
 
 
+# The **status file**'s sections. A figure is looked for **in the section that
+# publishes it** -- the same rule PERF.md's own figures follow -- so a figure
+# that happens to equal an unrelated number somewhere else in the file cannot
+# satisfy the check by accident.
+STATUS_SECTIONS = {
+    "recorded": "## Where the work is recorded",
+    "cold": "### Cold",
+    "resident": "### Resident",
+    "load": "### The load",
+    "probe": "### The join's probe",
+    "found": "## What the increments found",
+    "questions": "### The questions the engine has not answered",
+}
+
+# The **status file**'s figures: the headline of each published table and
+# nothing else. Every one of them is a figure PERF.md already publishes, and
+# each is checked here against the same committed report, so the summary
+# cannot say something the tables do not.
+#
+# (label, system, mode, metric, query, places)
+STATUS_COLD_CHECKS = [
+    # The cold path: the file is read and the query answered in one go.
+    ("cold q6, the engine", "engine", "lazy", "cold", "q6", 1),
+    ("cold q6, duckdb", "duckdb", "-", "cold", "q6", 1),
+    ("cold q6, polars", "polars", "-", "cold", "q6", 1),
+    ("cold q6, the peer", "datafusion-peer", "-", "cold", "q6", 1),
+    ("cold q6-revenue, the engine", "engine", "lazy", "cold", "q6-revenue", 1),
+    ("cold q6-revenue, duckdb", "duckdb", "-", "cold", "q6-revenue", 1),
+    ("cold q6-revenue, polars", "polars", "-", "cold", "q6-revenue", 1),
+    ("cold q6-revenue, the peer", "datafusion-peer", "-", "cold", "q6-revenue", 1),
+    ("cold join-orders, the engine", "engine", "lazy", "cold", "join-orders", 1),
+    ("cold join-orders, duckdb", "duckdb", "-", "cold", "join-orders", 1),
+    ("cold join-orders, polars", "polars", "-", "cold", "join-orders", 1),
+    ("cold join-orders, the peer", "datafusion-peer", "-", "cold", "join-orders", 1),
+    ("cold sort-topk, the engine", "engine", "lazy", "cold", "sort-topk", 1),
+    ("cold sort-topk, duckdb", "duckdb", "-", "cold", "sort-topk", 1),
+    ("cold sort-topk, polars", "polars", "-", "cold", "sort-topk", 1),
+    ("cold sort-topk, the peer", "datafusion-peer", "-", "cold", "sort-topk", 1),
+    ("cold filter-range, the engine", "engine", "lazy", "cold", "filter-range", 1),
+    ("cold filter-range, duckdb", "duckdb", "-", "cold", "filter-range", 1),
+    ("cold filter-range, polars", "polars", "-", "cold", "filter-range", 1),
+    ("cold filter-range, the peer", "datafusion-peer", "-", "cold", "filter-range", 1),
+    ("eager q6, the engine", "engine", "eager", "cold", "q6", 1),
+]
+
+# The resident path: the data is already in memory.
+#
+# (label, system, mode, metric, query, places)
+STATUS_RESIDENT_CHECKS = [
+    ("resident q6, the engine", "engine", "eager", "resident", "q6", 1),
+    ("resident q6, duckdb", "duckdb", "-", "resident", "q6", 1),
+    ("resident q6, polars", "polars", "-", "resident", "q6", 1),
+    ("resident q6, the peer", "datafusion-peer", "-", "resident", "q6", 1),
+    ("resident join-orders, the engine", "engine", "eager", "resident", "join-orders", 1),
+    ("resident join-orders, duckdb", "duckdb", "-", "resident", "join-orders", 1),
+    ("resident join-orders, polars", "polars", "-", "resident", "join-orders", 1),
+    ("resident join-orders, the peer", "datafusion-peer", "-", "resident", "join-orders", 1),
+    ("resident sort-topk, the engine", "engine", "eager", "resident", "sort-topk", 1),
+    ("resident sort-topk, duckdb", "duckdb", "-", "resident", "sort-topk", 1),
+    ("resident sort-topk, polars", "polars", "-", "resident", "sort-topk", 1),
+    ("resident sort-topk, the peer", "datafusion-peer", "-", "resident", "sort-topk", 1),
+    ("resident filter-range, the engine", "engine", "eager", "resident", "filter-range", 1),
+    ("resident filter-range, duckdb", "duckdb", "-", "resident", "filter-range", 1),
+    ("resident filter-range, polars", "polars", "-", "resident", "filter-range", 1),
+    ("resident filter-range, the peer", "datafusion-peer", "-", "resident", "filter-range", 1),
+]
+
+# The load sweep: the file into memory, at the thread counts the status
+# file's table carries.
+#
+# (label, thread count, system, places)
+STATUS_LOAD_CHECKS = [
+    ("load at 1 thread, the engine", 1, "engine", 1),
+    ("load at 1 thread, duckdb", 1, "duckdb", 1),
+    ("load at 1 thread, polars", 1, "polars", 1),
+    ("load at 1 thread, the peer", 1, "datafusion", 1),
+    ("load at 6 threads, the engine", 6, "engine", 1),
+    ("load at 6 threads, duckdb", 6, "duckdb", 1),
+    ("load at 6 threads, polars", 6, "polars", 1),
+    ("load at 6 threads, the peer", 6, "datafusion", 1),
+    ("load at 14 threads, the engine", 14, "engine", 1),
+    ("load at 14 threads, duckdb", 14, "duckdb", 1),
+    ("load at 14 threads, polars", 14, "polars", 1),
+    ("load at 14 threads, the peer", 14, "datafusion", 1),
+]
+
+# The join probe's own figures.
+#
+# (label, set, part, places)
+STATUS_JOIN_CHECKS = [
+    ("the probe, over the column", "after", "probe_column", 3),
+    ("the floor the probe", "after", "floor_probe", 3),
+    ("the candidate, written out", "after", "candidate_probe", 3),
+    ("the stage, cold", "after", "stage_cold", 3),
+    ("the stage, resident", "after", "stage_resident", 3),
+    ("the build side, whole", "after", "build_whole", 3),
+]
+
+# The differences the instrument computes from its own parts, as the probe's
+# own table states them.
+#
+# (label, set, difference, places)
+STATUS_PROBE_DERIVED_CHECKS = [
+    ("the probe's remainder", "after", "the_probe_s_remainder", 3),
+    ("the stage's residual, resident", "after", "the_residual_resident", 3),
+    ("the context, resident", "after", "the_context_resident", 3),
+    ("the probe's remainder, as spec 028 published it", "spec028", "the_probe_s_remainder", 3),
+]
+
+# And the ones the **questions** rest on: the context's sign on the cold
+# path, in the code that ships and in the code it replaced.
+#
+# (label, set, difference, places)
+STATUS_QUESTION_DERIVED_CHECKS = [
+    ("the context, cold", "after", "the_context_cold", 3),
+    ("the context, cold, the old code's", "before", "the_context_cold", 3),
+    ("the context, resident", "after", "the_context_resident", 3),
+]
+
+# The figures the questions rest on: the old code's join and the set it
+# replaced, measured on this host, beside the same DuckDB.
+#
+# (label, set, system, mode, metric, query, places)
+STATUS_JOIN_QUESTIONS = [
+    ("the old code's lazy join-orders cold", "before", "engine", "lazy", "cold", "join-orders", 1),
+    ("the old code's duckdb join-orders cold", "before", "duckdb", "-", "cold", "join-orders", 1),
+    ("the replaced set's lazy join-orders cold", "replaced", "engine", "lazy", "cold", "join-orders", 1),
+    ("the replaced set's duckdb join-orders cold", "replaced", "duckdb", "-", "cold", "join-orders", 1),
+]
+
+# The two figures the `filter-range` question rests on: what the expansion of
+# the predicate's column costs, and what the mask built from the indices
+# would cost instead.
+#
+# (label, key, places)
+STATUS_RLE_CHECKS = [
+    ("the expansion", "expansion", 2),
+    ("the mask from the indices", "mask_from_indices", 2),
+]
+
+
+
+
 def materialised_figure(runs: list[dict], key: str) -> float | None:
     """The median of one figure in the materialised reports."""
     if key.startswith("query."):
@@ -641,6 +792,28 @@ def section_of(text: str, heading: str) -> str | None:
             break
     return "\n".join(lines[start:end])
 
+
+def defect_count(text: str) -> int | None:
+    """How many defect rows PERF.md's fourth section publishes.
+
+    The rows are the table's own: the header and the separator are not
+    defects, and the prose after the table is not a row.
+    """
+    section = section_of(text, "## 4.")
+    if section is None:
+        return None
+    rows = [
+        line
+        for line in section.splitlines()
+        if line.startswith("|") and not re.fullmatch(r"\|[\s\-|]+\|", line)
+    ]
+    # the first row is the header and the second the separator
+    return len(rows) - 2
+
+
+def tree_count(pattern: str) -> int:
+    """How many files in the tree match a glob."""
+    return len(sorted(ROOT.glob(pattern)))
 
 def collect(runs: list[dict]) -> dict[tuple[str, str, str, str], list[float]]:
     out: dict[tuple[str, str, str, str], list[float]] = {}
@@ -1943,6 +2116,133 @@ def main() -> int:
             else:
                 print(f"ok  README.md  {label:<40} {phrase}")
 
+    # The **status file**. It is a summary, and it is checked like one: each
+    # figure is the headline of a table PERF.md already publishes, and it is
+    # looked for **in the section that publishes it** -- the same rule the
+    # other documents follow, so a figure that happens to equal an unrelated
+    # number somewhere else in the file cannot satisfy the check by accident.
+    if STATUS_DOC.exists():
+        status_text = STATUS_DOC.read_text().replace("\u2212", "-")
+        status_sections = {
+            key: section_of(status_text, heading)
+            for key, heading in STATUS_SECTIONS.items()
+        }
+
+        def check_status(label: str, section: str, values: list[float], places: int) -> None:
+            """One figure of the status file, in the section that publishes it."""
+            published = status_sections.get(section)
+            if published is None:
+                failures.append(
+                    f"STATUS.md: the section that publishes {label} "
+                    f"({STATUS_SECTIONS.get(section)}) is not in the file"
+                )
+                return
+            if not values:
+                failures.append(f"STATUS.md: no figure for {label} in the reports")
+                return
+            figure = statistics.median(values)
+            rendered = rendered_figure(figure, places)
+            if not figure_in(published, rendered):
+                failures.append(
+                    f"STATUS.md: {label} is {rendered} in the reports but that "
+                    f"figure does not appear in the section that publishes it"
+                )
+            else:
+                print(f"ok  STATUS.md  {label:<40} {rendered}")
+
+        for label, system, mode, metric, query, places in STATUS_COLD_CHECKS:
+            check_status(
+                label, "cold", agg.get((system, mode, metric, query), []), places
+            )
+        for label, system, mode, metric, query, places in STATUS_RESIDENT_CHECKS:
+            check_status(
+                label, "resident", agg.get((system, mode, metric, query), []), places
+            )
+
+        if LOAD_SCALING_REPORTS:
+            load_runs = [json.loads(path.read_text()) for path in LOAD_SCALING_REPORTS]
+            load_sweep = collect_scaling(load_runs)
+            for label, threads, system, places in STATUS_LOAD_CHECKS:
+                check_status(
+                    label,
+                    "load",
+                    load_sweep.get(threads, {}).get(system, []),
+                    places,
+                )
+
+        if JOIN_COST_REPORTS:
+            for label, which, part, places in STATUS_JOIN_CHECKS:
+                check_status(
+                    label, "probe", join_parts.get(which, {}).get(part, []), places
+                )
+            for label, which, difference, places in STATUS_PROBE_DERIVED_CHECKS:
+                check_status(
+                    label,
+                    "probe",
+                    join_derived.get(which, {}).get(difference, []),
+                    places,
+                )
+            for label, which, difference, places in STATUS_QUESTION_DERIVED_CHECKS:
+                check_status(
+                    label,
+                    "questions",
+                    join_derived.get(which, {}).get(difference, []),
+                    places,
+                )
+
+        if BEFORE_REPORTS:
+            old = collect([json.loads(path.read_text()) for path in BEFORE_REPORTS])
+            replaced = (
+                collect([json.loads(path.read_text()) for path in SPEC026_REPORTS])
+                if SPEC026_REPORTS
+                else {}
+            )
+            for label, which, system, mode, metric, query, places in STATUS_JOIN_QUESTIONS:
+                source = old if which == "before" else replaced
+                check_status(
+                    label,
+                    "questions",
+                    source.get((system, mode, metric, query), []),
+                    places,
+                )
+
+        if RLE_EXPANSION_REPORTS:
+            rle_runs = [json.loads(path.read_text()) for path in RLE_EXPANSION_REPORTS]
+            for label, key, places in STATUS_RLE_CHECKS:
+                check_status(
+                    label,
+                    "questions",
+                    [
+                        run["measurements_ms"][key]
+                        for run in rle_runs
+                        if key in run.get("measurements_ms", {})
+                    ],
+                    places,
+                )
+
+        # The counts. They are not performance figures, but they are claims
+        # about the tree, and they are as true or as false as a figure is.
+        defects = defect_count(texts["PERF.md"])
+        for label, section, count, phrase in (
+            ("the specs", "recorded", tree_count("specs/*/spec.md"), "specs"),
+            ("the ADRs", "recorded", tree_count("docs/adr/*.md"), "ADRs"),
+            ("the defects", "found", defects, "defects"),
+        ):
+            published = status_sections.get(section)
+            if published is None or count is None:
+                failures.append(f"STATUS.md: could not check {label}")
+                continue
+            wanted = f"{count} {phrase}"
+            if wanted not in published:
+                failures.append(
+                    f"STATUS.md: the tree holds {count} {phrase}, and the file "
+                    f"does not say so"
+                )
+            else:
+                print(f"ok  STATUS.md  {label:<40} {wanted}")
+    else:
+        failures.append("STATUS.md is not in the tree")
+
     if failures:
         print()
         for failure in failures:
@@ -1962,7 +2262,8 @@ def main() -> int:
         f"{len(STAGE_CHECKS)} of the plan output, "
         f"{len(QUERY_COST_CHECKS) + len(QUERY_COST_SHAPE_CHECKS)} of the query probe, "
         f"{len(SORT_COST_CHECKS)} of the sort probe, "
-        f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe"
+        f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe, "
+        f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
     )
     return 0
 

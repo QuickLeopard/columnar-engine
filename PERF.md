@@ -14,6 +14,10 @@ python3 scripts/medians.py
 All three raw reports are committed, so the published figures can be re-derived by a reader
 without re-running a benchmark. See [`bench-results/README.md`](bench-results/README.md).
 
+**This file owns the figures.** [`STATUS.md`](STATUS.md) is the summary of where the project stands —
+what is built, what is measured, what the increments found, and what is still open — and every
+figure in it is the headline of a table here, checked against the same reports.
+
 ---
 
 ## The conditions
@@ -2431,7 +2435,10 @@ code's.
 which is the stage's own probe — is **7.259 ms** on the resident path and **10.160 ms** on the cold one,
 and it is **not** the standalone probe: the gap between them, the **context**, is the price of running
 inside a query rather than in a quiet process, and it is **−1.069 ms** here against **−2.409 ms** on the
-old code — the crate boundary again, inside the context.
+old code — the crate boundary again, inside the context. **And the cold context changes sign between
+the two code sets: +0.494 ms on the code that ships, against −1.440 ms on the code it replaces.** A
+cost that flips sign across three consistent campaigns each is not a fixed overhead, so the context is
+named and **not yet explained** — it is the next question, and it is not written down as a spec yet.
 
 **What this did not do.** The **scan's decode** is untouched: it is the scan's business, and it has been
 measured three times and refused every time. The **build side's reader** is untouched — the build side
