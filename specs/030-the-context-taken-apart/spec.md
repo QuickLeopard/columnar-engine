@@ -3,6 +3,8 @@
 **Status**: in progress
 **Started**: 2026-10-29
 **Amended**: 2026-10-29 — the bottom-up and top-down review's findings, with the reasons recorded below.
+**Amended**: 2026-10-29 — the first and second phases' findings: the brackets as the code has them, R3's
+route, and the ladder's shape, with the reasons recorded below.
 **Predecessor**: [029-the-lookup-shape-and-the-stage-that-moved](../029-the-lookup-shape-and-the-stage-that-moved/spec.md)
 
 ## The problem
@@ -96,6 +98,66 @@ artefact once already** — the candidate's warm buffer, worth **1.158 ms** — 
 artefact of the instrument. **These two are candidates, not conclusions**: they are named as rungs
 to be measured, and neither is claimed.
 
+### What the code says, confirmed
+
+The first phase read the clocks out of the code as it ships. The table above is the **hypothesis**; this is
+what the code says, and the two differ in three places.
+
+| the clock | it brackets | it does **not** include | the code |
+|---|---|---|---|
+| **the stage, cold** | **two disjoint intervals**: the build table's construction (`build_table`'s own clock), and then **the probe inside the reader** (`filter_elapsed`, the time in `JoinFilter::keep`) — and the build side's file open | the reader's decode and copy of the probe side, **and the gap between the two intervals** | `lib.rs`: `streamed.elapsed = build_elapsed + filter_elapsed`, and the stage is `streamed.elapsed + build.opened` |
+| **the stage, resident** | **one continuous interval**: the build table's construction, the probe key column's borrow (**O(1)**), and the probe — and the build side's file open | the dataset's own read, which happened before the query | `pipeline.rs`: `started.elapsed() + pipeline.build.opened` |
+| **the engine's own cold probe** | the per-batch key column's construction and the probe | **the row-number offset arithmetic**, which `keep_matching_rows` applies **outside** `filter.keep`'s clock | `dataset.rs`: `filter_elapsed` brackets `filter.keep(&batch, mask)` alone |
+| **the standalone probe, cold** | the probe, **plus** the per-batch key column's construction, **plus the row-number offset arithmetic** | the reader's decode, which is the scan's own work | the instrument's `probe_in_batches` |
+| **the standalone build side** | the build table's construction alone | **the build side's file open**, which the stage's own clock carries | the instrument's `build_whole` |
+
+**The hypothesis was right about the cold stage's two disjoint intervals and about the offset**, and the
+instrument's own comment — which says the offset is inside its clock "because the engine's cold path pays
+it too" — is the thing that is wrong: the engine pays it, but **outside** its probe's clock. The comment is
+corrected in the instrument.
+
+**And two things the hypothesis did not have.**
+
+- **The file's state is not in the build side's gap.** The hypothesis said "the query reads it once, cold".
+  The code says otherwise: the campaign runs the query **five times**, and every execution reads the build
+  side's file, so the **published figure — the median of five — is over a warm file**, and the standalone's
+  measurement is over a warmer one still. The two sides read the file in the **same state**, so the file's
+  state **cannot** explain any of the build side's gap; and it is worth a great deal — the instrument
+  measures it, by taking one read of the build side's file before anything else reads it, and it comes to
+  **6.8 ms**. It is therefore published as the **bound** on what the file's state could explain of the
+  build side's gap, and not subtracted from it: a subtracted leaf would say the gap is explained by a file
+  state that both sides share.
+- **The published parts do not add up to the published context, and the reason is the reduction.** The
+  stage's elapsed is the three parts **added together** in every iteration, and a **median of a sum is not
+  the sum of the medians**. So the ladder is built **per iteration**, where the parts tile exactly, and the
+  reconciliation — published — is the median of the difference over the iterations, which is **zero**. The
+  difference between the published parts' sum and the published context is **the reduction's own noise**,
+  and it is published under that name rather than folded away.
+
+### R3's route, and why
+
+**The route taken is the plan output's parts.** The reason is what the two routes cost:
+
+| | the plan output's parts | the marginal query |
+|---|---|---|
+| **the clocks it adds** | **none on the cold path** — the build side's construction and the probe are already timed apart, and the stage's clock only sums them | none |
+| | **two clock reads and one subtraction** on the resident path, around `build_table` | none |
+| **what it assumes** | nothing | that the build side's in-query cost is **the same** in both queries, and that a **marginal** cost is a **total** |
+| **the added clock's own cost** | **0.000026 ms** — two reads at 0.000013 ms each, measured and published as `the_added_clock_cost` | none |
+
+**The threshold** is **the floor's own spread across the campaigns of that set**, and the added clock's cost
+is **0.000026 ms** against a floor's spread of hundreds of milliseconds: the route is **inside** the
+threshold, and it is taken.
+
+**The marginal route is refused, and the reason is published.** It needs the build side's in-query cost to
+be **shown** to be the same in both queries, and the build side's **file state is worth 6.8 ms** — so the two
+queries cannot be shown to have the same build side, and the fixed cost they share would have to be
+**measured**, not assumed. The route that assumes it is not the route that measures it.
+
+**And the plan output's public shape changes, because the route is taken.** `explain::JoinReport` is a
+public struct with public fields, and the parts are added to it. The **rendered** plan output does not
+change: the parts are in the struct, and the text is the text.
+
 **And the two cold probe clocks do not bracket the same work.** The engine's in-query cold probe is
 `JoinFilter::keep`: the per-batch key column's construction and the probe. The instrument's
 standalone cold probe carries **the row-number offset arithmetic as well** — the batch's own row
@@ -126,6 +188,32 @@ against the published one.
 
 **And the ladder reconciles.** The parts sum to the context, **what is left unexplained is named
 and published with its spread**, and a ladder that does not close is not a finding; it is a list.
+
+#### The ladder's parts, and what each one is
+
+**The parts sum to the context, and the controls do not.** The parts are:
+
+| the part | what it is | the word it carries |
+|---|---|---|
+| **the build side's gap** | the query's build side against the standalone's, over the same file state | **the build side's** |
+| **the open's gap** | the query's file open against the standalone's — the stage's clock carries the open and the standalone build side's does not | **the clock's** |
+| **the probe's file state** | the query's resident probe reads a column the dataset has held since it was loaded, with the build side's read in between; the standalone reads its column afresh | **the memory's** |
+| **the probe's row-number offset** | the standalone's cold probe carries the offset and the query's clock does not, so it enters the probe's gap **against** it | **the clock's** |
+| **the probe's own remainder** | what is left of the probe's gap | **the probe's** |
+| **the part of the context in no gap** | zero when the ladder closes | **the host's** |
+
+**And the controls, which are reported beside every set and are never summed:** the **floor** (what a
+memory-bound loop costs on this host), the **scan's stage** (the reader's own work less the probe's), and
+**the build side's file state** — the worth of the file's state, published as the **bound** on what the
+file's state could explain of the build side's gap, and not subtracted from it.
+
+**The ladder reconciles, and the reconciliation is published.** The parts are built **per iteration**,
+where they tile the context exactly, and the reconciliation is the median of the difference over the
+iterations. It is **zero**, and it is published so that the claim is checked rather than asserted.
+
+**And the reduction's own noise is published.** The published parts' medians do not add up to the
+published context's median, because a median of a sum is not the sum of the medians. The difference is
+published under that name.
 
 ### R2 — Every clock's bracket is written down, and no two measurements are compared until it is
 
