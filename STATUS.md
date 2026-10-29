@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **31 specs**, **38 ADRs** and **29 defects** so far, and every
+[`constitution.md`](constitution.md). **31 specs**, **39 ADRs** and **29 defects** so far, and every
 one of the specs but the last is closed.
 
 ---
@@ -91,24 +91,48 @@ lookup can go under — and against the same lookup written out by hand over the
 
 | | ms |
 |---|---|
-| the engine's own probe, over the engine's column | 9.080 |
-| the floor the probe cannot go under | 6.282 |
-| the same lookup, written out by hand | 10.695 |
-| **the remainder** — the engine's probe over the hand-written one | **−1.615** |
-| the join's stage, cold | 25.446 |
-| the join's stage, resident | 20.368 |
-| the build side's whole — the read, the keys and the table | 12.605 |
-| the stage's residual — the stage's own probe plus the build side's own gap | 7.386 |
-| the context — the residual against the standalone probe | −1.565 |
+| the engine's own probe, over the engine's column | 8.860 |
+| the floor the probe cannot go under | 6.147 |
+| the same lookup, written out by hand | 8.953 |
+| **the remainder** — the engine's probe over the hand-written one | **−0.092** |
+| the join's stage, cold | 24.690 |
+| the join's stage, resident | 19.431 |
+| the build side's whole — the read, the keys and the table | 12.347 |
+| the stage's residual — the stage's own probe plus the build side's own gap | 7.187 |
+| the context — the residual against the standalone probe | −1.581 |
 
-**The remainder this table publishes is −1.615 ms, with a spread of 1.669 ms** — inside the noise, on
-a host whose load average was **6.80–7.36** while the campaigns ran, which is why it is **larger** than
-the **0.109 ms** spec 029 published and in the other direction: the engine's own probe is as fast as
-the hand-written one, and **the lookup's shape is free**. The remainder was **3.337 ms** before spec
-029, and it held two artefacts of the instrument rather than the engine's cost — the crate boundary, and
-a warm buffer where the query probes a column the reader has just written. The decomposition, the two
-artefacts and the method are in [`PERF.md` §3o](PERF.md#3o-the-joins-stage-taken-apart), and the
-context's own decomposition is in
+**The remainder this table publishes is −0.092 ms, with a spread of 0.178 ms** — inside the noise, and
+**the lookup's shape is free** still. The figures moved against spec 030's set, and every one of them is
+published old-and-new: the engine's own probe was **9.080 ms** and is **8.860 ms**, the floor was
+**6.282 ms** and is **6.147 ms**, the hand-written lookup was **10.695 ms** and is **8.953 ms**, the stage
+was **25.446 ms** cold and is **24.690 ms**, **20.368 ms** resident and is **19.431 ms**, the build side's
+whole was **12.605 ms** and is **12.347 ms**, the residual was **7.386 ms** and is **7.187 ms**, and the
+context was **−1.565 ms** and is **−1.581 ms**. **The code did not change** — the difference is the
+**instrument's** and the **host's**, and the two sets were not taken in the same session: this one ran on a
+host whose load average was **3.66–4.34**, spec 030's on one at **6.80–7.36**. The remainder was
+**3.337 ms** before spec 029, and it held two artefacts of the instrument rather than the engine's cost —
+the crate boundary, and a warm buffer where the query probes a column the reader has just written.
+
+**And the verdicts, with the yardstick each was made with.** The context's verdict is published in the
+house's own sentences, and the yardstick it was made with is published beside it:
+the verdict, on the cold path, is **unattributed**;
+the verdict's state, on the cold path, is **sound**;
+the cold path's yardstick is **7.860 ms** — the probe's row-number offset's own, the largest leaf on
+that path;
+the verdict, on the resident path, is **the memory's**;
+the verdict's state, on the resident path, is **sound**;
+the resident path's yardstick is **0.487 ms** — the probe's file state's own, the largest leaf on that
+path, and the one that counts.
+**The legacy band verdict is kept beside it, annotated not sound**: a band of **0.418 ms** against the
+machine's own **0.936 ms** was never a yardstick.
+
+**And the instrument itself changed, because the drift was inside the difference.** The two sides of every
+difference are now measured **in the same iteration, back to back**, and the **order** between them is
+**alternated** between the iterations, because a difference of two series measured a campaign apart is a
+difference of two **drifting** series. The decomposition, the drift, the method and the verdicts are in
+[`PERF.md` §3o](PERF.md#3o-the-joins-stage-taken-apart), in
+[`spec 033`](specs/033-the-drift-taken-apart/spec.md) and in
+[ADR-0039](docs/adr/0039-the-drift-taken-apart.md); the context's own decomposition is in
 [ADR-0038](docs/adr/0038-the-context-taken-apart.md).
 
 ---
@@ -164,28 +188,34 @@ refusals with the numbers that refused them, published as the finding.
 
 ### The questions the engine has not answered
 
-**1. The context — it is decomposed, and it cannot be told apart from the host.** The join's stage's
-residual is 7.386 ms on the resident path, and the standalone probe of the same work is 9.080 ms. The
-gap is **−1.565 ms**: inside the query, the probe accounts for *less* than it does in a quiet
-process. On the cold path the same gap is **0.433 ms** — positive where the resident one is negative
+**1. The context — it is decomposed, and on the resident path the memory answers it.** The join's stage's
+residual is 7.187 ms on the resident path, and the standalone probe of the same work is 8.860 ms. The
+gap is **−1.581 ms**: inside the query, the probe accounts for *less* than it does in a quiet
+process. On the cold path the same gap is **0.199 ms** — positive where the resident one is negative
 — and **0.149 ms** on the old code, measured in the same session.
 
-**Spec 030 took it apart, and the answer is that it cannot be attributed.** The join stage's plan
+**Spec 030 took it apart, and the answer was that it cannot be attributed.** The join stage's plan
 output now reports its **parts**, so the build side's in-query cost is the engine's own account of
 itself and not an inference; the decomposition closes **exactly** — the reconciliation is **0.000 ms**
-on both paths — and the verdict is **unattributed** on both. The context is **real** on the resident
-path, outside its own spread of **0.418 ms**, but **every** part's own spread is wider than that band,
-so no mechanism can be claimed; on the cold path the context is inside its own spread of **2.211 ms**,
-so it is at the noise there too. The parts are measured, they close, and the band is the host's.
-**What would answer it:** a resolution at which the parts are not dominated by the machine's — not a
-new mechanism, a quieter measurement. It is written down as
-[`spec 030`](specs/030-the-context-taken-apart/spec.md), which is closed, and in
-[ADR-0038](docs/adr/0038-the-context-taken-apart.md). **And the reason the parts are dominated is
-named**: the band they are judged against is the **context's own spread**, which is a **difference
-of two drifting series** and can be narrower than the machine's own movement. The **drift** — the
-machine's variation, measured beside every set — is written down as
-[`spec 033`](specs/033-the-drift-taken-apart/spec.md), which is **written down and not implemented
-yet**.
+on both paths — and the verdict was **unattributed** on both. The context was **real** on the resident
+path, outside its own spread of **0.418 ms**, but **every** part's own spread was wider than that band,
+so no mechanism could be claimed; on the cold path the context was inside its own spread of **2.211 ms**,
+so it was at the noise there too. The parts were measured, they closed, and the band was the host's.
+
+**Spec 033 took the drift apart, and the answer changed: on the resident path the verdict is the
+memory's.** The band those parts were judged against was the **context's own spread** — a **difference
+of two drifting series** — and it could be narrower than the machine's own movement. So the two sides of
+every difference are now measured **in the same iteration, back to back**, with the **order alternated**
+between the iterations, and the **drift** — the machine's own variation, measured on both sides — is
+published and is the yardstick every part is judged against. The verdict is **unattributed** on the cold
+path and **the memory's** on the resident path, and both yardsticks are **sound**: the resident path's
+file state is **−1.238 ms** against a yardstick of **0.487 ms**, outside its own spread of **0.390 ms**.
+The context's own spread came down with it — **0.418 ms** to **0.356 ms** on the resident path and
+**2.211 ms** to **0.667 ms** on the cold one — and it is published old-and-new with the reason.
+**What would answer it:** whether the file state is the whole of it — the same mechanism measured on the
+cold path, where the verdict is still unattributed. It is written down as
+[`spec 033`](specs/033-the-drift-taken-apart/spec.md), which is closed, and in
+[ADR-0039](docs/adr/0039-the-drift-taken-apart.md).
 
 **2. `filter-range`, cold: Polars is ahead.** The engine's lazy path is 16.3 ms against Polars'
 15.2 ms, and the two spreads do not overlap. The scan that holds it is the Parquet decode, and the
@@ -218,13 +248,17 @@ for a pinned x86-64 runner; it has not run on one.
 
 ### The work the project has not done
 
-- **The next question is a spec now, and nothing has been measured for it.** Spec 030 is written down
-  and closed, and it leaves one question: the
-  context's parts are measured and they close, and **no part could be counted**, so the next
-  question is the **resolution** at which the parts separate. It is written down
-  here and in the README's Next row, and it **is** a spec with requirements and tasks —
-  [`spec 033`](specs/033-the-drift-taken-apart/spec.md) — but **nothing has been measured for it
-  yet** beyond what spec 030 published, and its instrument has not been changed.
+- **The next question is the drift itself, and it is written down here and in the README's Next row.**
+  Spec 033 is written down and closed, and it leaves one question: the **drift** is now the yardstick
+  every part is judged against, and **it has never been taken apart**. The machine's own floor moved
+  **0.362 ms** across one session's three campaigns, but the join stage moved **4.731 ms** on the cold
+  path and the build side's read of the build file alone moved **10.330 ms** — so **the yardstick is as
+  wide as the engine's own cold read makes it**, and that is why the cold path's parts cannot be told
+  apart. **The resolution that would be needed is a cold-path drift below 0.878 ms** — the yardstick the
+  build side's gap is judged against — and that is **twelve times** narrower than the read's own drift.
+  **The next question is which of the drift's parts is the engine's, and how much of the engine's own
+  cost moves under the measurement.** It is **not** a spec yet: nothing has been measured for it,
+  and its instrument is not built.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a

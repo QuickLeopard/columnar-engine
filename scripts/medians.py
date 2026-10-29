@@ -1567,18 +1567,20 @@ def join_cost_drift(parts: dict[str, list[float]]) -> dict[str, float]:
 def join_cost_yardstick(parts: dict[str, list[float]], path: str) -> dict[str, float]:
     """Each leaf's yardstick, by the rule.
 
-    The yardstick for a leaf is the **larger** of the drifts of the
-    measurements that leaf stands on and of the **floor's** drift, the machine's
-    own measure of a memory-bound loop. The larger is the conservative choice: a
-    narrower yardstick would count leaves the machine could have produced on its
-    own.
+    The yardstick for a leaf is the **sum** of the drifts of the measurements
+    that leaf stands on, and the **floor's** drift, and the **larger** of the
+    two. The sum is the conservative choice, because the yardstick judges a
+    **difference**: the difference of two drifting series moves by up to the sum
+    of the two drifts, so the larger of them was never an upper bound on what
+    the machine could have produced on its own. The floor's drift is the second
+    floor, the machine's own measure of a memory-bound loop.
     """
     drifts = join_cost_drift(parts)
     floor = drifts.get(JOIN_COST_FLOOR, 0.0)
     yardsticks: dict[str, float] = {}
     for key, _, _, _, sides in JOIN_COST_LADDER[path]:
         sides_drifts = [drifts[side] for side in sides if side in drifts]
-        yardsticks[key] = max([*sides_drifts, floor])
+        yardsticks[key] = max([sum(sides_drifts), floor])
     return yardsticks
 
 
@@ -1648,6 +1650,33 @@ def join_cost_verdict(
         "verdict": verdict,
         "state": verdict_state,
     }
+
+
+def join_cost_query_cost(runs: list[dict]) -> dict[str, float]:
+    """The query's cost under the two orders, and the difference between them.
+
+    The query's own cost -- the join stage, as the query pays it -- must not
+    depend on the order the instrument put the query in. The even iterations
+    take the query first and the odd ones take it last, so the difference
+    between the two orders' medians is what the order could have moved the
+    published figure by.
+
+    It is the **median across the campaigns** of the per-campaign difference,
+    the same reduction every other figure here uses, and the threshold it is
+    measured against is **the floor's own spread** -- the machine's own measure
+    of what a change of this kind costs.
+    """
+    differences: dict[str, list[float]] = {}
+    for run in runs:
+        series = run.get("series_ms", {})
+        for path, key in (("cold", "stage_cold"), ("resident", "stage_resident")):
+            values = series.get(key)
+            if not values or len(values) < 2:
+                continue
+            first = statistics.median(values[0::2])
+            last = statistics.median(values[1::2])
+            differences.setdefault(path, []).append(abs(first - last))
+    return {path: statistics.median(values) for path, values in differences.items()}
 
 
 def _rendered(figure: float, places: int) -> str:
@@ -1757,6 +1786,17 @@ def print_join_cost(sets: list[tuple[str, list[tuple[str, list[dict]]]]]) -> Non
                 for label, word, value, spread, yardstick, state in verdict["parts"]:
                     print(f"{label:<44}{value:>12.3f}{spread:>12.3f}{yardstick:>12.3f}  {state} ({word})")
                 print(f"the verdict: {verdict['verdict']} ({verdict['state']})")
+
+            # The query's cost under the two orders: the interleaving's own
+            # effect on the figure that is published, measured against the
+            # floor's own spread.
+            query_cost = join_cost_query_cost([run for _, runs in files for run in runs])
+            if query_cost:
+                floor = join_cost_drift(parts).get(JOIN_COST_FLOOR, 0.0)
+                print("\n-- the query's cost, under the two orders --")
+                print(f"{'the path':<44}{'the difference':>12}{'the floor':>12}")
+                for path, difference in query_cost.items():
+                    print(f"{path:<44}{difference:>12.3f}{floor:>12.3f}")
 
 
 def main() -> int:

@@ -11,6 +11,21 @@ the rename's place in the order, the two thresholds that named a yardstick that 
 the quantity R5 asked for and R4 abolishes, the derivation's two passes, the guard's place in the
 publication, the edge the guard's own state derivation was missing from, and the families the
 spec's own tables left out — with the reasons recorded in **The plan's shape**.
+
+**Amended**: 2026-10-29 — **after the campaign**: R2's rule now takes the **sum** of the sides'
+drifts, and not their larger, because the yardstick judges a **difference** and the difference of
+two drifting series moves by up to the sum; the pre-registered yardsticks are published beside the
+amended ones, old-and-new, with the reason. **And R4's iteration count is six**, and not five,
+because the alternation takes the order's price out of the published figure only when the two
+orders' groups are the same size.
+**Amended**: 2026-10-29 — **after the campaign**: the pre-registration's own prediction did not
+hold on the new set, and the reason is recorded here and in R3. **R3 predicted that both paths
+would be `unattributed` with a `sound` yardstick** — and on the new set the **resident** path's
+verdict is **`the memory's`**, because the two sides are now measured **back to back**: the probe's
+file state's own spread is **0.390 ms**, narrower than its yardstick of **0.487 ms**, so the leaf
+**counts** where it was `inconclusive` before. **The prediction was made on spec 030's committed
+reports, and it is published beside the outcome, with the reason.**
+**ADR**: [ADR-0039](../../docs/adr/0039-the-drift-taken-apart.md) — the drift, taken apart
 **Predecessor**: [030-the-context-taken-apart](../030-the-context-taken-apart/spec.md)
 
 ## The problem
@@ -240,28 +255,52 @@ carried by **the sides it stands on**, and the yardstick has to know which they 
 > reader can see both.
 
 **And the rule is fixed before the campaign is taken, and it is fixed without reference to any
-verdict.** The yardstick for a leaf is the **larger** of the drifts of the measurements that leaf
-stands on — the one the query made and the one the instrument made outside it — and of the
-**floor's** drift, the machine's own measure of a memory-bound loop, which every part of the ladder
-resembles. Every drift below is computed from the **committed** reports, and every leaf's two
-sides are checked against the reports as well:
+verdict.** The yardstick for a leaf is the drift of the measurements that leaf stands on — the one
+the query made and the one the instrument made outside it — taken **together** with the **floor's**
+drift, the machine's own measure of a memory-bound loop, which every part of the ladder resembles.
+Every drift below is computed from the **committed** reports, and every leaf's two sides are checked
+against the reports as well:
 
 | the leaf | its sides, **resident** | the yardstick, **resident** | its sides, **cold** | the yardstick, **cold** |
 |---|---|---|---|---|
-| the build side's gap | the engine's own build ↔ the build side's whole | **1.088 ms** | the engine's own build ↔ the build side's whole | **0.936 ms** |
+| the build side's gap | the engine's own build ↔ the build side's whole | **1.741 ms** | the engine's own build ↔ the build side's whole | **0.944 ms** |
 | the open's gap | the engine's own open ↔ the build side's open | **0.936 ms** | the engine's own open ↔ the build side's open | **0.936 ms** |
-| the probe's file state | the held column ↔ the probe over the column | **0.936 ms** | — | — |
-| the probe's row-number offset | — | — | the probe in the batches ↔ the same without the offset | **3.640 ms** |
-| the probe's own remainder | the engine's own probe ↔ the held column | **1.011 ms** | the engine's own probe ↔ the probe without the offset | **3.640 ms** |
+| the probe's file state | the held column ↔ the probe over the column | **1.682 ms** | — | — |
+| the probe's row-number offset | — | — | the probe in the batches ↔ the same without the offset | **4.799 ms** |
+| the probe's own remainder | the engine's own probe ↔ the held column | **1.792 ms** | the engine's own probe ↔ the probe without the offset | **6.935 ms** |
 | the part in no gap | the stage's own elapsed, alone | **0.936 ms** | the stage's own elapsed, alone | **3.910 ms** |
+
+**And the rule was amended after the campaign, and the reason is recorded here.** The rule as it
+was pre-registered took the **larger** of the two sides' drifts, and the yardsticks it gave are
+published beside the amended ones, old-and-new, because a figure that moved is published with both:
+
+| the leaf | the pre-registered yardstick | the amended one | the difference |
+|---|---|---|---|
+| the build side's gap, resident | 1.088 ms | **1.741 ms** | the sides' drifts added |
+| the open's gap, resident | 0.936 ms | **0.936 ms** | the floor was already the larger |
+| the probe's file state, resident | 0.936 ms | **1.682 ms** | the sides' drifts added |
+| the probe's own remainder, resident | 1.011 ms | **1.792 ms** | the sides' drifts added |
+| the part in no gap, resident | 0.936 ms | **0.936 ms** | one side, and the floor was the larger |
+| the build side's gap, cold | 0.936 ms | **0.944 ms** | the sides' drifts added |
+| the open's gap, cold | 0.936 ms | **0.936 ms** | the floor was already the larger |
+| the probe's row-number offset, cold | 3.640 ms | **4.799 ms** | the sides' drifts added |
+| the probe's own remainder, cold | 3.640 ms | **6.935 ms** | the sides' drifts added |
+| the part in no gap, cold | 3.910 ms | **3.910 ms** | one side, and it was the larger |
+
+**The reason is not the verdict, and it is not a number: the yardstick judges a difference.** A
+leaf is the difference of two measurements, and the difference of two drifting series moves by up
+to the **sum** of the two drifts — so the **larger** of the two was never an upper bound on what
+the machine could have produced on its own, and the bound R2's own principle asks for is the sum.
+**A leaf's own spread is still what says whether the machine moved it**: a leaf whose own spread is
+wider than its yardstick is `inconclusive` and is not counted.
 
 **And the probe's gap is not in the table, because it is not a leaf.** It is the **parent** of the
 file state and the remainder — on the cold path, of the row-number offset and the remainder — and
 judging it beside its own leaves would break the tiling the reconciliation rests on.
 
-**The larger is the conservative choice, and it is the one that is taken**: a narrower yardstick
-would count leaves that the machine could have produced on its own, and the house's rule is that a
-gate must be able to say "I could not tell".
+**The sum is the conservative choice, and it is the one that is taken**: a narrower yardstick would
+count leaves that the machine could have produced on its own, and the house's rule is that a gate
+must be able to say "I could not tell".
 
 **And the yardstick is per leaf, because the leaves stand on different sides.** One number per path
 would be wrong: the build side's gap stands on the engine's own build and the build side's whole,
@@ -334,6 +373,15 @@ not sound**, and it is **not** published as a second verdict for the same path.
 numbers, both paths are `unattributed` with a `sound` yardstick**, because R2's yardstick is sound
 by construction and the leaves on the resident path that are judged are all at the noise. **The
 band moved, and so the yardstick moved with it; both are published, with the reason.**
+
+**And the prediction above did not hold on the campaign's own set, and that is published too.** The
+prediction was made on **spec 030's committed reports**, where the two sides of every leaf were measured
+a campaign apart. On the set this spec takes, the sides are measured **back to back**, and the resident
+path's verdict is **`the memory's`** — the probe's file state's own spread is **0.390 ms**, narrower than
+its yardstick of **0.487 ms**, so the leaf **counts** where it was `inconclusive` before. **The cold
+path's prediction held**: `unattributed`, with a `sound` yardstick. **A pre-registration that is not
+confirmed is published as it was written down, beside the outcome, with the reason** — and the reason is
+the instrument, not the code: **the code did not change.**
 
 > **The predecessor's requirement is rewritten, and the reason is recorded here and in the
 > predecessor's own header.** Spec 030's R4 published **`unattributed`** whenever no leaf counted,
@@ -798,6 +846,7 @@ the aggregate's value is checked against the published one — the same rule spe
 | [constitution.md](../../constitution.md) | **VII. Explicit Scope, No Silent Deferral** — the scope's exclusions, each with its reason, and R8: the open question is answered in the open either way |
 | [constitution.md](../../constitution.md) | **"Complexity requires justification"** — the interleaving, the alternation and the report's new fields |
 | [constitution.md](../../constitution.md) | **"Compliance is checked per spec"** — this section's citation of the principle each non-obvious requirement enforces |
+| [ADR-0039](../../docs/adr/0039-the-drift-taken-apart.md) | the drift taken apart, the yardstick that replaced the band, and the verdict's state |
 | [ADR-0038](../../docs/adr/0038-the-context-taken-apart.md) | the context taken apart, the ladder, and the band that is a difference of two drifts |
 | [ADR-0037](../../docs/adr/0037-the-lookups-shape-and-the-stage-that-moved.md) | the lookup's shape, the two artefacts of the instrument, and the context spec 030 took up |
 | [ADR-0035](../../docs/adr/0035-the-join-stage-taken-apart.md) | the join's stage, taken apart, and the residual the context is measured against |

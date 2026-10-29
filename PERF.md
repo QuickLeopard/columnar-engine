@@ -2318,62 +2318,80 @@ output's own `Debug` rendering, because the A/B's two codes are measured with a 
 instrument and a field the older code does not have cannot be named in a source file that has to compile
 against both.
 
-**And this increment's own comparison — the code that ships against the code spec 029 shipped, three
-campaigns each, interleaved, on the same host and with the same instrument:**
+**And this increment changed the instrument and not the engine, and the change is the two sides of
+every difference.** The query's own measurements and the standalone's — the build side's whole, the
+build side's open, the probe over a fresh column, the probe over the held column, the probe inside the
+reader's batches and the same probe without the row-number offset — are now taken **back to back in one
+iteration**, and **the order is alternated**: the even iterations take the query first and the odd ones
+take it last. The ladder is built **per iteration**, so the standalone's side enters as **the
+iteration's own measurement** and not as the campaign's median. **And the count is six, and it is even
+on purpose**: a machine that drifts while an iteration runs gives the first measurement a different
+price from the second, the alternation is what takes that price out of the published figure, and **an
+odd count would not take it out** — the two orders' groups would differ in size and the median would
+inherit the difference. The report carries **every part's per-iteration values**, the time each block
+took, the two orders' medians and their difference, and how far apart the two sides of each difference
+were taken, so the reduction and the leaves' correlation are checkable from the committed report.
 
-| part | the code this increment ships | the code it replaces | what it is |
-|---|---|---|---|
-| the stage, cold | 25.446 ms | 25.950 ms | the engine's own join stage, the cold path |
-| the stage, resident | 20.368 ms | 20.046 ms | the engine's own join stage, the resident path |
-| the build side's open | 0.030 ms | 0.027 ms | opening `orders.parquet`: its metadata, its schema |
-| the build side's read | 12.262 ms | 11.675 ms | reading the build side's columns through the engine's own reader |
-| the build side's keys | 0.335 ms | 0.334 ms | the per-row walk that collects the build side's keys |
-| the build side, whole | 12.605 ms | 12.373 ms | the read, the keys and the table together |
-| the build side, whole, over a cold file | 13.053 ms | 12.359 ms | the same, over a file the process had not read: the build side's **file state** |
-| the table, on its own | 0.220 ms | 0.223 ms | one byte a count, over the key's own range |
-| the probe, over the column | 9.080 ms | 9.175 ms | the resident path's probe: the engine's own column, in memory |
-| the probe, in the batches | 12.498 ms | 13.578 ms | the cold path's probe: inside the reader's own batch loop |
-| the probe, in the batches, without the offset | 12.582 ms | 13.511 ms | the same, **without** the row-number offset the engine's own clock leaves out |
-| the probe, over a held column | 8.186 ms | 7.935 ms | the probe over a column the dataset has **held**, with the build side's read in between |
-| the floor the probe cannot go under | 6.282 ms | 6.192 ms | the table's own load, one a probe row |
-| the candidate, written out | 10.695 ms | 10.567 ms | the same lookup, written out by hand over the same rows |
-| the candidate with the overflow consult | 8.924 ms | 9.049 ms | the candidate **with the map's consult** in it, and nothing else different |
-| the cold candidate | 11.825 ms | 11.785 ms | the same lookup, inside the reader's own batch loop |
-| the candidate, the chain | 9.449 ms | 9.270 ms | the plain candidate, with the byte read folded through `map_or` |
-| the candidate, the width | 9.125 ms | 9.074 ms | the plain candidate, with the byte widened to `u32` |
-| the candidate, the state through `self` | 9.417 ms | 9.002 ms | the plain candidate, read through a method over `&self` |
-| the candidate, the map's option | 9.381 ms | 9.338 ms | the plain candidate, with the overflow map's `Option` read and branched on |
-| the engine's lookup, over a plain slice | 9.343 ms | 8.911 ms | the engine's **own** lookup, over the instrument's own key source |
-| the read, plain | 0.555 ms | 0.541 ms | the plain read of the probe key column: the floor a read cannot go under |
-| the read, the small control | 0.041 ms | 0.039 ms | the same read over 512K values |
-| the cost of one clock read | 0.000 ms | 0.000 ms | the cost of one clock read: the **added clock's** price |
+**And this increment changed the instrument and not the engine, so the comparison is between two
+instruments over the same code.** The first column is **the new instrument**, the second is **the same
+code measured by the instrument that came before**, and the third is **the code spec 030 replaced**,
+measured by that same older instrument. Three campaigns each, on the same machine -- **not** in the same
+session, and the reason is published below. **Every figure that moved is published with the figure it
+moved from**, because a figure that moved is a figure the reader cannot check without the old one.
 
-| difference | the code this increment ships | the code it replaces | what it is |
-|---|---|---|---|
-| the table, as the difference | 0.015 ms | 0.189 ms | the whole over the read and the keys: the table's own cost |
-| the output rows | 4.377 ms | 4.234 ms | the candidate over the floor: what the 216,783 output rows cost |
-| the probe's remainder | −1.615 ms | −1.336 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
-| the map's share | −2.010 ms | −1.603 ms | the candidate with the consult over the candidate without it: **what the map costs** |
-| the cold remainder | 0.673 ms | 1.539 ms | the engine's probe in the batches over the cold candidate's |
-| the two paths | 5.077 ms | 6.166 ms | the cold stage over the resident stage |
-| the two probes | 3.418 ms | 4.403 ms | the batched probe over the column's |
-| the chain's cost | −1.246 ms | −1.521 ms | the **chain's** share of the remainder: the fold against `unwrap_or` |
-| the width's cost | −0.324 ms | 0.049 ms | the **width's** share: the byte widened to `u32` |
-| the state's cost | 0.683 ms | −0.073 ms | the **state's** share: the table reached through `&self` |
-| the map option's cost | −0.284 ms | 0.196 ms | the **map's discriminant's** share: the `Option` read and branched on |
-| the engine's loop's cost | 0.106 ms | −0.507 ms | the **engine's loop's** share: `probe_direct` against the hand-written loop |
-| the key source's cost | −0.263 ms | 0.264 ms | the **key source's** share: the engine's own column against a plain slice |
-| the ladder's sum | −1.615 ms | −1.336 ms | the six increments together: the remainder, by construction |
-| what is left unexplained | 0.000 ms | 0.000 ms | the remainder less the ladder's sum: the noise the decomposition carries |
-| the stage's residual, cold | 12.896 ms | 13.727 ms | the stage less the build side's whole and its open: the stage's own probe, **plus the build side's own gap**, which has never been separated |
-| the stage's residual, resident | 7.386 ms | 7.644 ms | the same, on the resident path |
-| the context, cold | 0.433 ms | 0.149 ms | the residual less the standalone probe: **the context** |
-| the context, resident | −1.565 ms | −1.614 ms | the same, on the resident path |
+| part | the new instrument | the old instrument | the code spec 030 replaced | what it is |
+|---|---|---|---|---|
+| the stage, cold | 24.690 ms | 25.446 ms | 25.950 ms | the engine's own join stage, the cold path |
+| the stage, resident | 19.431 ms | 20.368 ms | 20.046 ms | the engine's own join stage, the resident path |
+| the build side's open | 0.108 ms | 0.030 ms | 0.027 ms | opening `orders.parquet`: its metadata, its schema |
+| the build side's read | 11.898 ms | 12.262 ms | 11.675 ms | reading the build side's columns through the engine's own reader |
+| the build side's keys | 0.363 ms | 0.335 ms | 0.334 ms | the per-row walk that collects the build side's keys |
+| the build side, whole | 12.347 ms | 12.605 ms | 12.373 ms | the read, the keys and the table together |
+| the build side, whole, over a cold file | 13.267 ms | 13.053 ms | 12.359 ms | the same, over a file the process had not read: the build side's **file state** |
+| the table, on its own | 0.215 ms | 0.220 ms | 0.223 ms | one byte a count, over the key's own range |
+| the probe, over the column | 8.860 ms | 9.080 ms | 9.175 ms | the resident path's probe: the engine's own column, in memory |
+| the probe, in the batches | 13.121 ms | 12.498 ms | 13.578 ms | the cold path's probe: inside the reader's own batch loop |
+| the probe, in the batches, without the offset | 11.335 ms | 12.582 ms | 13.511 ms | the same, **without** the row-number offset the engine's own clock leaves out |
+| the probe, over a held column | 7.674 ms | 8.186 ms | 7.935 ms | the probe over a column the dataset has **held**, with the build side's read in between |
+| the floor the probe cannot go under | 6.147 ms | 6.282 ms | 6.192 ms | the table's own load, one a probe row |
+| the candidate, written out | 8.953 ms | 10.695 ms | 10.567 ms | the same lookup, written out by hand over the same rows |
+| the candidate with the overflow consult | 8.818 ms | 8.924 ms | 9.049 ms | the candidate **with the map's consult** in it, and nothing else different |
+| the cold candidate | 11.649 ms | 11.825 ms | 11.785 ms | the same lookup, inside the reader's own batch loop |
+| the candidate, the chain | 8.724 ms | 9.449 ms | 9.270 ms | the plain candidate, with the byte read folded through `map_or` |
+| the candidate, the width | 9.127 ms | 9.125 ms | 9.074 ms | the plain candidate, with the byte widened to `u32` |
+| the candidate, the state through `self` | 8.853 ms | 9.417 ms | 9.002 ms | the plain candidate, read through a method over `&self` |
+| the candidate, the map's option | 9.075 ms | 9.381 ms | 9.338 ms | the plain candidate, with the overflow map's `Option` read and branched on |
+| the engine's lookup, over a plain slice | 9.329 ms | 9.343 ms | 8.911 ms | the engine's **own** lookup, over the instrument's own key source |
+| the read, plain | 0.532 ms | 0.555 ms | 0.541 ms | the plain read of the probe key column: the floor a read cannot go under |
+| the read, the small control | 0.043 ms | 0.041 ms | 0.039 ms | the same read over 512K values |
+| the cost of one clock read | 0.000 ms | 0.000 ms | 0.000 ms | the cost of one clock read: the **added clock's** price |
+
+| difference | the new instrument | the old instrument | the code spec 030 replaced | what it is |
+|---|---|---|---|---|
+| the table, as the difference | 0.157 ms | 0.015 ms | 0.189 ms | the whole over the read and the keys: the table's own cost |
+| the output rows | 2.943 ms | 4.377 ms | 4.234 ms | the candidate over the floor: what the 216,783 output rows cost |
+| the probe's remainder | −0.092 ms | −1.615 ms | −1.336 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
+| the map's share | −0.290 ms | −2.010 ms | −1.603 ms | the candidate with the consult over the candidate without it: **what the map costs** |
+| the cold remainder | 1.472 ms | 0.673 ms | 1.539 ms | the engine's probe in the batches over the cold candidate's |
+| the two paths | 5.405 ms | 5.077 ms | 6.166 ms | the cold stage over the resident stage |
+| the two probes | 4.261 ms | 3.418 ms | 4.403 ms | the batched probe over the column's |
+| the chain's cost | −0.089 ms | −1.246 ms | −1.521 ms | the **chain's** share of the remainder: the fold against `unwrap_or` |
+| the width's cost | 0.334 ms | −0.324 ms | 0.049 ms | the **width's** share: the byte widened to `u32` |
+| the state's cost | −0.274 ms | 0.683 ms | −0.073 ms | the **state's** share: the table reached through `&self` |
+| the map option's cost | 0.173 ms | −0.284 ms | 0.196 ms | the **map's discriminant's** share: the `Option` read and branched on |
+| the engine's loop's cost | 0.427 ms | 0.106 ms | −0.507 ms | the **engine's loop's** share: `probe_direct` against the hand-written loop |
+| the key source's cost | −0.469 ms | −0.263 ms | 0.264 ms | the **key source's** share: the engine's own column against a plain slice |
+| the ladder's sum | −0.092 ms | −1.615 ms | −1.336 ms | the six increments together: the remainder, by construction |
+| what is left unexplained | 0.000 ms | 0.000 ms | 0.000 ms | the remainder less the ladder's sum: the noise the decomposition carries |
+| the stage's residual, cold | 12.249 ms | 12.896 ms | 13.727 ms | the stage less the build side's whole and its open: the stage's own probe, **plus the build side's own gap**, which has never been separated |
+| the stage's residual, resident | 7.187 ms | 7.386 ms | 7.644 ms | the same, on the resident path |
+| the context, cold | 0.199 ms | 0.433 ms | 0.149 ms | the residual less the standalone probe: **the context** |
+| the context, resident | −1.581 ms | −1.565 ms | −1.614 ms | the same, on the resident path |
 
 #### The context, taken apart
 
 **The context is one number made of three, and this is the three.** The join stage's plan output now
-reports its **parts** — the build table's construction, the probe, and the build side's file open — so the
+reports its **parts** -- the build table's construction, the probe, and the build side's file open -- so the
 build side's in-query cost is the engine's own account of itself and not an inference. On the **cold**
 path that costs **no new clock**: the build side and the probe were already timed apart, and the stage's
 clock only summed them. On the **resident** path it costs **two clock reads and one subtraction**, and
@@ -2382,52 +2400,140 @@ what they cost is **measured**: the cost of one clock read is **0.000013 ms**, s
 
 **And the ladder is built per iteration, because the stage's elapsed is the three parts added together in
 every one of them, and a median of a sum is not the sum of the medians.** The parts tile the context
-exactly in every iteration, so **the reconciliation is 0.000 ms** on both paths — published, so the claim
+exactly in every iteration, so **the reconciliation is 0.000 ms** on both paths -- published, so the claim
 is checked rather than asserted. The difference between the published parts' sum and the published
-context — **taken per campaign** — is **the reduction's own noise**, and it is published under that name.
+context -- **taken per campaign** -- is **the reduction's own noise**, and it is published under that name.
 The published medians do not reproduce it, because a median of a sum is not the sum of the medians.
 
-| the part | the cold path | its spread | the resident path | its spread |
-|---|---|---|---|---|
-| the build side's gap | −0.450 ms | 0.660 ms | −0.343 ms | 0.435 ms |
-| the open's gap | 0.094 ms | 0.007 ms | 0.088 ms | 0.007 ms |
-| the probe's gap | 0.308 ms | 2.171 ms | −1.376 ms | 1.912 ms |
-| the probe's file state | — | — | −1.178 ms | 1.398 ms |
-| the probe's row-number offset | 0.118 ms | 2.516 ms | — | — |
-| the probe's own remainder | 0.189 ms | 0.346 ms | −0.334 ms | 0.650 ms |
-| the part in no gap | 0.000 ms | 0.000 ms | 0.000 ms | 0.000 ms |
-| **the reconciliation** | 0.000 ms | 0.000 ms | 0.000 ms | 0.000 ms |
-| the three gaps together | 0.329 ms | 1.894 ms | −1.636 ms | 2.345 ms |
-| the reduction's own noise | −0.036 ms | 0.385 ms | 0.057 ms | 2.055 ms |
-| **the context** | **0.433 ms** | **2.211 ms** | **−1.565 ms** | **0.418 ms** |
+**And the two sides of every difference are now measured in the same iteration, and the order is
+alternated.** The ladder's leaves are differences, and a difference of two series measured a campaign
+apart is a difference of two **drifting** series -- so the sides are taken back to back, and the order
+between them is alternated, so that the machine's drift while an iteration runs does not land on one
+side of every leaf. **The order's own cost** is the difference between the two orders' medians, over the
+leaves and the context: **0.557 ms** on the cold path and **0.740 ms** on the resident path, against
+**the floor's own spread** of **0.362 ms**. **So the order could have moved a part on the cold path**,
+and the reader can see that it did not move this one: even if the order had moved the resident path's
+file state by all of its **0.740 ms**, it would still be **−0.498 ms**, outside its yardstick of
+**0.487 ms**. **And the query's own cost does not depend on the order**: the join stage's cost, as the
+query pays it, under the two orders the alternation makes --
+the cold path's query's cost, under the two orders, is **0.085 ms** apart;
+the resident path's query's cost, under the two orders, is **0.356 ms** apart;
+-- both **inside the floor's own spread** of **0.362 ms**, so the published stage is not the order's.
+**And the separation** -- how far apart the machine's own two measurements of one difference were taken, in
+the machine's own time -- is **268.183 ms** on the cold path and **325.329 ms** on the resident path. **And
+the interleaving's added work is measured, not assumed**: it adds **no clock read** -- every quantity is
+still timed by exactly the two clock reads it was timed by before, and the per-iteration values are
+**written, not timed** -- so the added work's cost is **0.000000 ms**, published beside the clock's own
+cost so the reader can see the resolution it was measured at.
+
+**And the yardstick is the machine's own drift, and the context's own spread is published as what it
+is.** The yardstick for a leaf is the **sum** of the drifts of the two measurements it stands on, and
+**the floor's** drift, and the larger of the two -- the drift being the **range** across the set's three
+campaigns. The sum is the conservative choice, because the yardstick judges a **difference**, and the
+difference of two drifting series moves by up to the sum of the two drifts. **A leaf's own spread is
+still what says whether the machine moved it**: a leaf whose own spread is wider than its yardstick is
+**inconclusive** and is not counted.
+
+| the part | the cold path | its spread | its yardstick | the resident path | its spread | its yardstick |
+|---|---|---|---|---|---|---|
+| the build side's gap | 0.145 ms | 0.120 ms | 0.878 ms | −0.091 ms | 0.564 ms | 0.722 ms |
+| the open's gap | 0.013 ms | 0.011 ms | 0.362 ms | 0.010 ms | 0.010 ms | 0.362 ms |
+| the probe's gap | 0.668 ms | 0.747 ms | — | −1.584 ms | 0.356 ms | — |
+| the probe's row-number offset | −0.572 ms | 1.700 ms | 7.860 ms | — | — | — |
+| the probe's file state | — | — | — | −1.238 ms | 0.390 ms | 0.487 ms |
+| the probe's own remainder | 0.551 ms | 0.585 ms | 7.894 ms | −0.356 ms | 0.219 ms | 0.449 ms |
+| the part in no gap | 0.000 ms | 0.000 ms | 4.731 ms | 0.000 ms | 0.000 ms | 0.362 ms |
+| **the reconciliation** | 0.000 ms | 0.000 ms | — | 0.000 ms | 0.000 ms | — |
+| the three gaps together | 0.809 ms | 0.647 ms | — | −1.735 ms | 0.843 ms | — |
+| the reduction's own noise | 0.366 ms | 1.045 ms | — | −0.145 ms | 0.496 ms | — |
+| **the context** | 0.199 ms | 0.667 ms | — | −1.581 ms | 0.356 ms | — |
+
+**And the leaves' states, one vocabulary per level, and each of them a published sentence:**
+
+the build side's gap, on the cold path, is **at the noise**;
+the open's gap, on the cold path, is **at the noise**;
+the probe's row-number offset, on the cold path, is **at the noise**;
+the probe's own remainder, on the cold path, is **at the noise**;
+the part in no gap, on the cold path, is **at the noise**;
+the verdict, on the cold path, is **unattributed**;
+the verdict's state, on the cold path, is **sound**.
+
+-- resident --
+the build side's gap, on the resident path, is **at the noise**;
+the open's gap, on the resident path, is **at the noise**;
+the probe's file state, on the resident path, is **a part of the context**;
+the probe's own remainder, on the resident path, is **at the noise**;
+the part in no gap, on the resident path, is **at the noise**;
+the verdict, on the resident path, is **the memory's**;
+the verdict's state, on the resident path, is **sound**.
+
+**And the verdict is one word and one state, and the word is a mechanism and the state is not:**
+
+the verdict, on the cold path, is **unattributed**;
+the verdict's state, on the cold path, is **sound**;
+the verdict, on the resident path, is **the memory's**;
+the verdict's state, on the resident path, is **sound**.
+
+**And the verdict spec 030 published is kept beside it, as the figure it was** -- **unattributed**, on a
+band of **0.418 ms** against the machine's own **0.936 ms** -- **annotated not sound**, because a band
+narrower than the machine's own movement could not tell what it judged. It is **not** published as a
+second verdict for the same path.
 
 **And the parts are attributed, each to the mechanism that can explain it.** The **build side's gap** is
-the build side's own: both sides read the build side's file **warm** — the campaign runs the query five
-times and every execution reads that file, so the published figure, the median of five, is over a warm
-file, and the standalone's measurement is over a warmer one still — so the file's state **cannot**
+the build side's own: both sides read the build side's file **warm** -- the campaign runs the query six
+times and every execution reads that file, so the published figure, the median of six, is over a warm
+file, and the standalone's measurement is over a warmer one still -- so the file's state **cannot**
 explain any of it. The file's state is published as the **bound** on what it could explain, and it is
-**0.205 ms** with a spread of **0.323 ms**; it is not subtracted from the gap, because a subtracted leaf
+**1.000 ms** with a spread of **4.273 ms**; it is not subtracted from the gap, because a subtracted leaf
 would claim the gap is explained by a file state that both sides share. The **open's gap** is the
 **clock's**: the stage's clock carries the build side's file open and the standalone build side's does
 not. The **probe's gap** is the probe's own: on the **resident** path the query's probe reads a column
 the dataset has **held** since it was loaded, with the build side's read in between, while the standalone
-reads its column afresh — that is the probe's **file state**, **−1.178 ms**; and on the **cold** path the
-standalone's probe carries the **row-number offset** arithmetic that the engine's own probe clock leaves
-out — `keep_matching_rows` applies it **outside** `filter.keep`'s clock — and that is **0.118 ms**.
+reads its column afresh -- that is the probe's **file state**, **−1.238 ms**, and it is the one leaf that
+counts; and on the **cold** path the standalone's probe carries the **row-number offset** arithmetic that
+the engine's own probe clock leaves out -- `keep_matching_rows` applies it **outside** `filter.keep`'s
+clock -- and that is **−0.572 ms**.
 
-**And the verdict is one word, and the word is the same on both paths**:
-the verdict, on the cold path, is **unattributed**;
-the verdict, on the resident path, is **unattributed**. The yardstick is
-the context's own spread, in the set that measures it: the cold path's spread is **2.211 ms** and the
-resident one's is **0.418 ms**. On the **cold** path the context itself, **0.433 ms**, is **inside** its own
-band, so the context is at the noise there. On the **resident** path the context, **−1.565 ms**, is
-**outside** its band — **the context is a real thing on that path** — but **every** part's own spread is
-wider than the band (0.435 ms, 0.007 ms, 1.398 ms and 0.650 ms against 0.418 ms), so every part is
-either at the noise or **inconclusive**, and **no mechanism is claimed**. The decomposition closes
-exactly, and on this host the parts cannot be told apart from the machine's own variation. The **floor**,
-the instrument's own measure of what a memory-bound loop costs here, is **6.282 ms** with a spread of
-**0.936 ms**, and the **scan's stage** and the build side's file state are reported beside every set and
+**And the conclusion is restated, because the sentence it rested on was not sound.** The documents said
+that "the context is a real thing" on the resident path, and they said it on the strength of a band of
+**0.418 ms** that was narrower than the machine's own **0.936 ms**: the band could not tell, and the
+verdict said only that no leaf counted. **With a yardstick that can measure, the resident path's context
+is a real thing and the memory is the mechanism** -- the probe's **file state**, **−1.238 ms** against a
+yardstick of **0.487 ms**, with the leaf's own spread of **0.390 ms** inside it -- **and the cold path's
+context is not**: **0.199 ms** against a yardstick of **0.878 ms**, at the noise. **The floor**, the
+instrument's own measure of what a memory-bound loop costs here, is **6.147 ms** with a drift of
+**0.362 ms**, and the **scan's stage** and the build side's file state are reported beside every set and
 are **never summed**.
+
+**And the resolution is published, either way.** The cold path's parts do not separate, and the reason is
+measured rather than guessed: the yardstick is the machine's own drift, and on the cold path **the drift
+is the engine's own cold read** — the build side's read of the build file moved **10.330 ms** across the
+set's three campaigns, the join stage moved **4.731 ms**, and the machine's own floor moved **0.362 ms**.
+**The resolution that would be needed is a cold-path drift below 0.878 ms** — the yardstick the build
+side's gap is judged against — and that is **twelve times** narrower than the read's own drift. **The next
+question is the drift's own parts**, and it is written down in the README's Next row and in
+[`STATUS.md`](../../STATUS.md)'s last section.
+
+**And the same code, measured by the instrument that came before, published with it.** The leaves' old
+yardsticks and the verdict that instrument's own numbers give:
+
+| the part | the cold path | its spread | its yardstick | the resident path | its spread | its yardstick |
+|---|---|---|---|---|---|---|
+| the build side's gap | −0.450 ms | 0.660 ms | 0.944 ms | −0.343 ms | 0.435 ms | 1.741 ms |
+| the open's gap | 0.094 ms | 0.007 ms | 0.936 ms | 0.088 ms | 0.007 ms | 0.936 ms |
+| the probe's gap | 0.308 ms | 2.171 ms | — | −1.376 ms | 1.912 ms | — |
+| the probe's row-number offset | 0.118 ms | 2.516 ms | 4.799 ms | — | — | — |
+| the probe's file state | — | — | — | −1.178 ms | 1.398 ms | 1.682 ms |
+| the probe's own remainder | 0.189 ms | 0.346 ms | 6.935 ms | −0.334 ms | 0.650 ms | 1.792 ms |
+| the part in no gap | −0.000 ms | 0.000 ms | 3.910 ms | −0.000 ms | 0.000 ms | 0.936 ms |
+| **the reconciliation** | −0.000 ms | 0.000 ms | — | −0.000 ms | 0.000 ms | — |
+| the three gaps together | 0.329 ms | 1.894 ms | — | −1.636 ms | 2.345 ms | — |
+| the reduction's own noise | −0.036 ms | 0.385 ms | — | 0.057 ms | 2.055 ms | — |
+| **the context** | 0.433 ms | 2.211 ms | — | −1.565 ms | 0.418 ms | — |
+
+**And the build side's file state is published for that set too** — **0.205 ms** with a spread of
+**0.323 ms** — so the bound the first set's build side's gap is judged against is published beside it, and
+the two are read against each other rather than one being read alone.
 
 **And spec 029's comparison, preserved — the code spec 029 shipped against the code it replaced, from the
 set that is kept under its own name:**
@@ -2475,7 +2581,7 @@ set that is kept under its own name:**
 | what is left unexplained | 0.000 ms | 0.000 ms | the remainder less the ladder's sum: the noise the decomposition carries |
 | the stage's residual, cold | 10.160 ms | 9.854 ms | the stage less the build side's whole and its open: the stage's own probe, **plus the build side's own gap**, which has never been separated |
 | the stage's residual, resident | 7.259 ms | 7.372 ms | the same, on the resident path |
-| the context, cold | 0.494 ms | −1.440 ms | the residual less the standalone probe: the price of running inside a query |
+| the context, cold | 0.494 ms | −1.440 ms | the residual less the standalone probe: a **difference of two numbers taken in two different contexts**, and **not** the price of running inside a query |
 | the context, resident | −1.069 ms | −2.409 ms | the same, on the resident path |
 
 **And spec 028's comparison, preserved — the code before it against the code it shipped, from the set
@@ -2550,20 +2656,24 @@ code's.
 which is the stage's own probe **plus the build side's own in-query-minus-outside gap**, because the
 build side's whole is measured **outside** the query and the two have never been separated — is
 **7.259 ms** on the resident path and **10.160 ms** on the cold one,
-and it is **not** the standalone probe: the gap between them, the **context**, is the price of running
-inside a query rather than in a quiet process, and it is **−1.069 ms** here against **−2.409 ms** on the
-old code — the crate boundary again, inside the context. **And the cold context changes sign between
-the two code sets: +0.494 ms on the code that ships, against −1.440 ms on the code it replaces.** A
-cost that flips sign across three consistent campaigns each is not a fixed overhead, so the context was
-named and **written down** — as `specs/030-the-context-taken-apart/`.
+and it is **not** the standalone probe: the gap between them, the **context**, is **a difference of two
+numbers taken in two different contexts** — **not** the price of running inside a query rather than in a
+quiet process, which is what this section used to call it, and what
+[ADR-0038](docs/adr/0038-the-context-taken-apart.md) corrected — and it is **−1.069 ms** here against
+**−2.409 ms** on the old code — the crate boundary again, inside the context. **And the cold context
+changes sign between the two code sets: +0.494 ms on the code that ships, against −1.440 ms on the code it
+replaces.** A cost that flips sign across three consistent campaigns each is not a fixed overhead, so the
+context was named and **written down** — as `specs/030-the-context-taken-apart/`.
 
-**And this increment took it apart, and the answer is that it cannot be told apart from the host.** The
-decomposition closes **exactly** — the reconciliation is **0.000 ms** on both paths — and the verdict is
+**And spec 030 took it apart, and the answer then was that it could not be told apart from the host.** The
+decomposition closes **exactly** — the reconciliation is **0.000 ms** on both paths — and the verdict was
 **unattributed** on both: the context's own spread, **2.211 ms** cold and **0.418 ms** resident, is wider
 than the context on the cold path and wider than every part's own spread on the resident one. The
-context is **real** on the resident path and **no part of it** can be claimed. **The next question is
+context was **real** on the resident path and **no part of it** could be claimed. **The next question was
 what would make the parts separable** — it is written down in the README's Next row and in
-[`STATUS.md`](STATUS.md)'s last section.
+[`STATUS.md`](STATUS.md)'s last section, and **this increment took it up**: the band was a **difference of
+two drifting series**, so the **drift** is measured on both sides and published, and it is the yardstick
+every part is judged against.
 
 **What this did not do.** The **scan's decode** is untouched: it is the scan's business, and it has been
 measured three times and refused every time. The **build side's reader** is untouched — the build side
@@ -2579,29 +2689,31 @@ path — it reports the join stage's parts and adds two clock reads on the resid
 clock costs 0.000026 ms** — so **no query figure moves**, and the comparison set that
 [§2h](#2h-the-hot-paths-taken-apart) publishes is the one spec 028 measured, unchanged.
 
-**And the query's cost did not change.** The two codes were measured **in the same minutes**, three
-campaigns each, interleaved: the stages are **25.446 ms** and **25.950 ms** cold and **20.368 ms** and
-**20.046 ms** resident — the new code's stage is **0.505 ms faster** cold and **0.322 ms slower**
-resident, against the floor's own spread of **0.936 ms** — and the **floor**, the instrument's own measure
-of what a memory-bound loop costs on this host, is **6.282 ms** against **6.192 ms**. The change's own
-added work is **0.000026 ms**, so it is inside the threshold: **the query did not get slower**.
+**And the query's cost did not change.** The two sides of every difference are measured back to back in one
+iteration, so the query's own cost is measured against the order the instrument put it in: the cold path's
+query's cost, under the two orders, is **0.085 ms** apart and the resident path's query's cost, under the
+two orders, is **0.356 ms** apart, both **inside the floor's own spread** of **0.362 ms**. **The published
+stage is not the order's.** The interleaving's added work is **0.000000 ms** -- it adds no clock read --
+and **the engine is not touched**, so no published query figure moves.
 
-All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **6.80–7.36** while
-the campaigns ran — the reports carry it, and it is **higher** than the **3.61–5.05** of the campaigns
-whose movement this section explains, which is why this increment's bands are wide. The raw reports are
-`bench-results/join-cost-run{1,2,3}.json` and `bench-results/join-cost-before-run{1,2,3}.json`, and
+All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **3.66–4.34** while
+this increment's campaigns ran -- the reports carry it, and it is **lower** than the **6.80–7.36** of spec
+030's campaigns, which is why the two sets' figures are not comparable one for one, and every figure that
+moved is published old-and-new with the reason. The raw reports are
+`bench-results/join-cost-run{1,2,3}.json` and `bench-results/join-cost-spec030-run{1,2,3}.json`, and
 `python3 scripts/medians.py` derives the tables above from them. The sets spec 029, spec 028 and spec 026
-published are kept under their own names — `bench-results/join-cost-spec029-run{1,2,3}.json`,
+published are kept under their own names -- `bench-results/join-cost-spec029-run{1,2,3}.json`,
 `bench-results/join-cost-spec029-before-run{1,2,3}.json`,
 `bench-results/join-cost-spec028-run{1,2,3}.json`,
 `bench-results/join-cost-spec028-before-run{1,2,3}.json`,
 `bench-results/join-cost-spec026-run{1,2,3}.json` and
-`bench-results/join-cost-spec025-run{1,2,3}.json` — and the tables above that preserve spec 029's and
+`bench-results/join-cost-spec025-run{1,2,3}.json` -- and the tables above that preserve spec 029's and
 spec 028's comparisons are derived from the first four. See
 [ADR-0035](docs/adr/0035-the-join-stage-taken-apart.md),
 [ADR-0036](docs/adr/0036-the-probes-remainder-taken.md),
-[ADR-0037](docs/adr/0037-the-lookups-shape-and-the-stage-that-moved.md) and
-[ADR-0038](docs/adr/0038-the-context-taken-apart.md).
+[ADR-0037](docs/adr/0037-the-lookups-shape-and-the-stage-that-moved.md),
+[ADR-0038](docs/adr/0038-the-context-taken-apart.md) and
+[ADR-0039](docs/adr/0039-the-drift-taken-apart.md).
 
 ---
 

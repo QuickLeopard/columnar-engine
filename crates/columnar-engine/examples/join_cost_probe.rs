@@ -122,7 +122,7 @@
 //!
 //! # What the figures are not
 //!
-//! These are figures on a **shared** host, taken five times each and reported
+//! These are figures on a **shared** host, taken six times each and reported
 //! as the median with the spread beside it. The report carries the host's load
 //! average, so a figure that drifted can be read against it.
 
@@ -2060,7 +2060,7 @@ struct Leaves {
 /// **residual** is what is left of it unexplained. The leaves are **bounds**:
 /// the build side's file state is the most the file's state can explain of the
 /// build side's gap, because the query reads the build side's file once per
-/// execution and the published figure is the median of five of them — so the
+/// execution and the published figure is the median of six of them — so the
 /// file's state at the time of the measurement is somewhere between a cold read
 /// and a warm one, and the bound is what the cold one costs over the warm one.
 fn context_ladder(input: &ContextInput<'_>) -> Context {

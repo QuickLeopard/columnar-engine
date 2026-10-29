@@ -34,7 +34,12 @@ QUERY_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-bef
 SORT_COST_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-run*.json"))
 SORT_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-before-run*.json"))
 JOIN_COST_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-run*.json"))
-JOIN_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-before-run*.json"))
+JOIN_COST_BEFORE_REPORTS = sorted(
+    (ROOT / "bench-results").glob("join-cost-spec030-before-run*.json")
+)
+JOIN_COST_SPEC030_REPORTS = sorted(
+    (ROOT / "bench-results").glob("join-cost-spec030-run*.json")
+)
 JOIN_COST_SPEC029_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec029-run*.json"))
 JOIN_COST_SPEC029_BEFORE_REPORTS = sorted(
     (ROOT / "bench-results").glob("join-cost-spec029-before-run*.json")
@@ -323,36 +328,127 @@ JOIN_COST_NEW_PARTS = (
     ("clock_cost", "the cost of one clock read", 6),
 )
 
-# The ladder's figures: the gaps, the leaves, the checks and the controls.
+# The floor: the machine's own measure of a memory-bound loop. Its drift is
+# the yardstick's floor.
+JOIN_COST_FLOOR = "floor_probe"
+
+# The ladder's leaves, per path: the figure, the leaf's name, the decimal
+# places, the word it carries, and **the sides the leaf stands on** -- the
+# measurements whose drifts the yardstick takes.
 #
-# They exist only in the set whose engine reported the join stage's parts, and
-# they are published inside the section that publishes the rest of the probe's
-# figures -- under no new heading, because the guard's section lookup ends at
-# the next one.
+# The parts are the **leaves**: the build side's gap is the build side's own
+# -- both sides read the build side's file warm, so the file's state does not
+# enter it -- and the probe's gap is its file's state, its row-number offset
+# and what is left of it.
+#
+# A leaf with one side stands on that side alone: the part in no gap is the
+# stage's own elapsed, and nothing is subtracted from it.
+JOIN_COST_LEAVES = {
+    "cold": (
+        (
+            "the_build_gap_cold",
+            "the build side's gap",
+            3,
+            "the build side's",
+            ("engine_build_cold", "build_whole"),
+        ),
+        (
+            "the_open_gap_cold",
+            "the open's gap",
+            3,
+            "the clock's",
+            ("engine_open_cold", "build_open"),
+        ),
+        (
+            "the_probe_row_offset",
+            "the probe's row-number offset",
+            3,
+            "the clock's",
+            ("probe_batches", "probe_batches_no_offset"),
+        ),
+        (
+            "the_probe_residual_cold",
+            "the probe's own remainder",
+            3,
+            "the probe's",
+            ("engine_probe_cold", "probe_batches_no_offset"),
+        ),
+        (
+            "the_host_remainder_cold",
+            "the part in no gap",
+            3,
+            "the host's",
+            ("stage_cold",),
+        ),
+    ),
+    "resident": (
+        (
+            "the_build_gap_resident",
+            "the build side's gap",
+            3,
+            "the build side's",
+            ("engine_build_resident", "build_whole"),
+        ),
+        (
+            "the_open_gap_resident",
+            "the open's gap",
+            3,
+            "the clock's",
+            ("engine_open_resident", "build_open"),
+        ),
+        (
+            "the_probe_file_state",
+            "the probe's file state",
+            3,
+            "the memory's",
+            ("probe_held", "probe_column"),
+        ),
+        (
+            "the_probe_residual_resident",
+            "the probe's own remainder",
+            3,
+            "the probe's",
+            ("engine_probe_resident", "probe_held"),
+        ),
+        (
+            "the_host_remainder_resident",
+            "the part in no gap",
+            3,
+            "the host's",
+            ("stage_resident",),
+        ),
+    ),
+}
+
+# The states a leaf can be in. A section that publishes a leaf's state
+# publishes one of these three words.
+JOIN_COST_STATES = ("a part of the context", "at the noise", "inconclusive")
+
+# The ladder's figures: the leaves, and the containers, the checks and the
+# controls beside them.
+#
+# They exist only in the sets whose engine reported the join stage's parts,
+# and they are published inside the section that publishes the rest of the
+# probe's figures -- under no new heading, because the guard's section lookup
+# ends at the next one.
 #
 # (figure, the label the section publishes it under, places)
-JOIN_COST_LADDER = (
-    ("the_build_gap_cold", "the build side's gap, cold", 3),
-    ("the_open_gap_cold", "the open's gap, cold", 3),
+JOIN_COST_LADDER = tuple(
+    (figure, f"{name}, {path}", places)
+    for path, leaves in JOIN_COST_LEAVES.items()
+    for figure, name, places, _word, _sides in leaves
+) + (
     ("the_probe_gap_cold", "the probe's gap, cold", 3),
     ("the_build_residual_cold", "the build side's own remainder, cold", 3),
-    ("the_probe_residual_cold", "the probe's own remainder, cold", 3),
-    ("the_host_remainder_cold", "the part in no gap, cold", 3),
     ("the_reconciliation_cold", "the reconciliation, cold", 3),
     ("the_gaps_sum_cold", "the three gaps, cold", 3),
     ("the_reduction_s_noise_cold", "the reduction's own noise, cold", 3),
-    ("the_build_gap_resident", "the build side's gap, resident", 3),
-    ("the_open_gap_resident", "the open's gap, resident", 3),
     ("the_probe_gap_resident", "the probe's gap, resident", 3),
     ("the_build_residual_resident", "the build side's own remainder, resident", 3),
-    ("the_probe_residual_resident", "the probe's own remainder, resident", 3),
-    ("the_host_remainder_resident", "the part in no gap, resident", 3),
     ("the_reconciliation_resident", "the reconciliation, resident", 3),
     ("the_gaps_sum_resident", "the three gaps, resident", 3),
     ("the_reduction_s_noise_resident", "the reduction's own noise, resident", 3),
     ("the_build_file_state", "the build side's file state", 3),
-    ("the_probe_row_offset", "the probe's row-number offset", 3),
-    ("the_probe_file_state", "the probe's file state", 3),
     ("the_added_clock_cost", "the added clock's cost", 6),
 )
 
@@ -378,41 +474,41 @@ JOIN_COST_LADDER_SPREADS = (
     ("the_build_file_state", "the build side's file state's spread", 3),
 )
 
-# The ladder's parts, per path: the figure, the word it carries. The band is
-# the context's own spread, a part whose own spread is wider than the band is
-# inconclusive and is not counted, and the verdict is the word of the largest
-# part that counts.
-JOIN_COST_VERDICT_PARTS = {
-    "cold": (
-        ("the_build_gap_cold", "the build side's"),
-        ("the_open_gap_cold", "the clock's"),
-        ("the_probe_row_offset", "the clock's"),
-        ("the_probe_residual_cold", "the probe's"),
-        ("the_host_remainder_cold", "the host's"),
-    ),
-    "resident": (
-        ("the_build_gap_resident", "the build side's"),
-        ("the_open_gap_resident", "the clock's"),
-        ("the_probe_file_state", "the memory's"),
-        ("the_probe_residual_resident", "the probe's"),
-        ("the_host_remainder_resident", "the host's"),
-    ),
-}
+# The sets whose engine reported the join stage's parts: the code that ships,
+# and spec 030's set beside it. The ladder, the yardsticks and the verdict
+# exist only in those two -- a set whose engine did not report the parts has
+# no ladder to stand on, and no yardstick to judge it by.
+JOIN_COST_LADDER_SETS = ("after", "spec030")
+
+# The figures the section publishes that the join probe did not measure
+# before: the order's own cost, the separation between the two sides of one
+# difference, and the interleaving's added work.
+#
+# (figure, the label the section publishes it under, places)
+JOIN_COST_NEW_FIGURES = (
+    ("the_order_s_cost_cold", "the order's own cost, cold", 3),
+    ("the_order_s_cost_resident", "the order's own cost, resident", 3),
+    ("the_separation_cold", "the separation, cold", 3),
+    ("the_separation_resident", "the separation, resident", 3),
+    ("the_added_work_cost", "the interleaving's added work", 6),
+)
 
 # The sets the join probe's figures come from.
 #
 # "after" is the code this increment ships and "before" is the code it
-# replaces -- the code spec 028 replaced -- measured **back to back** with it
+# replaces -- the code spec 030 replaced -- measured **back to back** with it
 # on the same host and with the same instrument, three campaigns each,
-# interleaved. "spec028" is the set spec 028 published and "spec028before" is
-# the set it measured against, both preserved under their own names, so that
-# every figure this section published stays derivable from a committed report.
+# interleaved. "spec030" is the set spec 030 published, preserved under its
+# own name, and "spec029", "spec029before", "spec028" and "spec028before" are
+# the sets before it, each preserved under its own name too, so that every
+# figure this section published stays derivable from a committed report.
 #
 # The instrument grew five parts in this increment, so the two sets it measured
 # carry five more figures than the two it did not.
 JOIN_COST_SETS = (
     ("after", "the new code's", JOIN_COST_PARTS),
     ("before", "the old code's", JOIN_COST_PARTS),
+    ("spec030", "spec 030's set's", JOIN_COST_PARTS),
     ("spec029", "spec 029's set's", JOIN_COST_PARTS),
     ("spec029before", "spec 029's before set's", JOIN_COST_PARTS),
     ("spec028", "spec 028's set's", JOIN_COST_OLD_PARTS),
@@ -424,7 +520,8 @@ JOIN_COST_SETS = (
 # failure -- a family is never skipped silently.
 JOIN_COST_FAMILIES = (
     ("the code that ships", JOIN_COST_REPORTS),
-    ("the code that replaces it", JOIN_COST_BEFORE_REPORTS),
+    ("the code the last increment replaced", JOIN_COST_BEFORE_REPORTS),
+    ("spec 030's code", JOIN_COST_SPEC030_REPORTS),
     ("spec 029's code", JOIN_COST_SPEC029_REPORTS),
     ("spec 029's before set", JOIN_COST_SPEC029_BEFORE_REPORTS),
     ("spec 028's code", JOIN_COST_SPEC028_REPORTS),
@@ -858,6 +955,180 @@ def _join_cost_figures(
     return parts, derived
 
 
+def join_cost_drift(parts: dict[str, list[float]]) -> dict[str, float]:
+    """Every measurement's drift: the range across a set's campaigns.
+
+    The drift is the machine's own movement over the set's three campaigns,
+    and it is the yardstick's only input. A measurement the set does not
+    report has no drift, and a leaf that stands on it stands on nothing.
+    """
+    return {key: max(values) - min(values) for key, values in parts.items() if values}
+
+
+def join_cost_yardstick(parts: dict[str, list[float]], path: str) -> dict[str, float]:
+    """Each leaf's yardstick, by the rule.
+
+    The yardstick for a leaf is the **sum** of the drifts of the measurements
+    that leaf stands on, and the **floor's** drift, and the **larger** of the
+    two. The sum is the conservative choice, because the yardstick judges a
+    **difference**: the difference of two drifting series moves by up to the
+    sum of the two drifts, so the larger of them was never an upper bound on
+    what the machine could have produced on its own. The floor's drift is the
+    second floor, the machine's own measure of a memory-bound loop.
+
+    `scripts/medians.py` derives them the same way, or the check is not a check.
+    """
+    drifts = join_cost_drift(parts)
+    floor = drifts.get(JOIN_COST_FLOOR, 0.0)
+    yardsticks: dict[str, float] = {}
+    for key, _name, _places, _word, sides in JOIN_COST_LEAVES[path]:
+        sides_drifts = [drifts[side] for side in sides if side in drifts]
+        yardsticks[key] = max([sum(sides_drifts), floor])
+    return yardsticks
+
+
+def join_cost_verdict(
+    parts: dict[str, list[float]],
+    derived: dict[str, list[float]],
+    path: str,
+) -> dict[str, object]:
+    """The yardsticks, the leaves' states, the verdict and the verdict's state.
+
+    A leaf whose **own spread** is wider than its yardstick is
+    **inconclusive** and is not counted; a leaf whose value is outside its
+    yardstick is **a part of the context**; anything else is **at the noise**.
+    The verdict is the word of the **largest** leaf that counts, and
+    **unattributed** when no leaf does.
+
+    The verdict's own **state** says whether the test could tell: **sound**
+    when the yardstick could measure what it judged, **not sound** when a
+    yardstick was narrower than the machine's own movement, and
+    **inconclusive** when no leaf could be judged at all.
+    """
+    context = [v for v in derived.get(f"the_context_{path}", []) if v is not None]
+    if not context:
+        return {}
+    yardsticks = join_cost_yardstick(parts, path)
+    leaves: list[tuple[str, str, str, float, float, float, str]] = []
+    for key, name, _places, word, _sides in JOIN_COST_LEAVES[path]:
+        values = [v for v in derived.get(key, []) if v is not None]
+        if not values:
+            continue
+        value = statistics.median(values)
+        spread = max(values) - min(values)
+        yardstick = yardsticks[key]
+        if spread > yardstick:
+            state = "inconclusive"
+        elif abs(value) > yardstick:
+            state = "a part of the context"
+        else:
+            state = "at the noise"
+        leaves.append((key, name, word, value, spread, yardstick, state))
+    if not leaves:
+        return {}
+    counted = [
+        abs(value)
+        for _key, _name, _word, value, _spread, _yardstick, state in leaves
+        if state == "a part of the context"
+    ]
+    verdict = "unattributed"
+    if counted:
+        largest = max(counted)
+        verdict = next(
+            word
+            for _key, _name, word, value, _spread, _yardstick, state in leaves
+            if state == "a part of the context" and abs(value) == largest
+        )
+    floor = join_cost_drift(parts).get(JOIN_COST_FLOOR, 0.0)
+    if all(state == "inconclusive" for *_rest, state in leaves):
+        verdict_state = "inconclusive"
+    elif yardsticks and min(yardsticks.values()) < floor:
+        verdict_state = "not sound"
+    else:
+        verdict_state = "sound"
+    return {
+        "yardsticks": yardsticks,
+        "leaves": leaves,
+        "verdict": verdict,
+        "state": verdict_state,
+    }
+
+
+def join_cost_path_yardstick(verdict: dict[str, object]) -> float | None:
+    """The yardstick of the leaf the verdict is about.
+
+    The **verdict's** yardstick is the yardstick of the **largest** leaf on the
+    path -- the leaf the verdict names when one counts, and the leaf that
+    would have named it when none does. It is the number the path's verdict
+    was made against, and it is published as "the {path} path's yardstick".
+    """
+    leaves = verdict.get("leaves") or []
+    sizes = [(abs(value), yardstick) for _k, _n, _w, value, _s, yardstick, _st in leaves]
+    if not sizes:
+        return None
+    largest = max(size for size, _yardstick in sizes)
+    return next(yardstick for size, yardstick in sizes if size == largest)
+
+
+def join_cost_path_phrases(verdict: dict[str, object], path: str) -> list[tuple[str, str]]:
+    """The sentences a document publishes a path's verdict in.
+
+    Three of them: the verdict's **word**, the verdict's **state**, and the
+    **yardstick** the verdict was made with. The word and the state are the
+    house's own published phrases; the yardstick is the one this increment
+    added, so that a verdict cannot be read without the ruler it was read
+    against.
+    """
+    phrases = [
+        (
+            f"the {path} path's verdict",
+            f"the verdict, on the {path} path, is **{verdict['verdict']}**",
+        ),
+        (
+            f"the {path} path's verdict's state",
+            f"the verdict's state, on the {path} path, is **{verdict['state']}**",
+        ),
+    ]
+    yardstick = join_cost_path_yardstick(verdict)
+    if yardstick is not None:
+        phrases.append(
+            (
+                f"the {path} path's yardstick",
+                f"the {path} path's yardstick is **{yardstick:.3f} ms**",
+            )
+        )
+    return phrases
+
+
+def join_cost_query_cost(runs: list[dict]) -> dict[str, float]:
+    """The query's cost under the two orders, and how far apart they are.
+
+    The query's own cost -- the join stage, as the query pays it -- must not
+    depend on the order the instrument put the query in. The even iterations
+    take the query first and the odd ones take it last, so the difference
+    between the two orders' medians is what the order could have moved the
+    published figure by.
+
+    It is the **median across the campaigns** of the per-campaign difference,
+    the same reduction every other figure here uses, and the threshold it is
+    measured against is **the floor's own spread** -- the machine's own measure
+    of what a change of this kind costs.
+
+    `scripts/medians.py` derives it the same way, or the check is not a check.
+    """
+    differences: dict[str, list[float]] = {}
+    for run in runs:
+        series = run.get("series_ms", {})
+        for path, key in (("cold", "stage_cold"), ("resident", "stage_resident")):
+            values = series.get(key)
+            if not values or len(values) < 2:
+                continue
+            first = statistics.median(values[0::2])
+            last = statistics.median(values[1::2])
+            differences.setdefault(path, []).append(abs(first - last))
+    return {path: statistics.median(values) for path, values in differences.items()}
+
+
 def rendered_figure(figure: float, places: int) -> str:
     """A figure as the document writes it.
 
@@ -884,6 +1155,34 @@ def figure_in(text: str, rendered: str) -> bool:
     units or by the end of the sentence, but not by more digits.
     """
     return re.search(r"(?<![\d.])" + re.escape(rendered) + r"(?!\d)", text) is not None
+
+
+def leaf_state_phrases(name: str, path: str, state: str) -> tuple[str, ...]:
+    """The sentences the section publishes a leaf's state in.
+
+    The leaf's name carries its own article -- "the build side's gap" -- so
+    the sentence is the name, the path, and the state. The spelling that
+    doubles the article is the same sentence, and the guard accepts either:
+    it checks what the section says, not how it says it.
+    """
+    return (
+        f"{name}, on the {path} path, is **{state}**",
+        f"the {name}, on the {path} path, is **{state}**",
+    )
+
+
+def leaf_state_in_rows(rows: list[str], state: str) -> bool | None:
+    """Whether the rows publish a leaf's state, and whether they publish another.
+
+    A ladder table's row carries both paths' figures, so a row that carries a
+    state carries the states of both paths of that leaf. `None` means the rows
+    carry no state at all: the section does not publish that state, and a
+    state that is not published is not checked.
+    """
+    words = {word for row in rows for word in JOIN_COST_STATES if word in row}
+    if not words:
+        return None
+    return state in words
 
 
 def section_of(text: str, heading: str) -> str | None:
@@ -1600,6 +1899,7 @@ def main() -> int:
         for which, paths in (
             ("after", JOIN_COST_REPORTS),
             ("before", JOIN_COST_BEFORE_REPORTS),
+            ("spec030", JOIN_COST_SPEC030_REPORTS),
             ("spec029", JOIN_COST_SPEC029_REPORTS),
             ("spec029before", JOIN_COST_SPEC029_BEFORE_REPORTS),
             ("spec028", JOIN_COST_SPEC028_REPORTS),
@@ -1674,11 +1974,145 @@ def main() -> int:
                         print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
 
             # The ladder: its figures and the spread beside each of them. They
-            # exist only in the set whose engine reported the join stage's
-            # parts.
-            after_derived = join_derived["after"]
-            for figure, label, places in JOIN_COST_LADDER:
-                values = [v for v in after_derived.get(figure, []) if v is not None]
+            # exist only in the sets whose engine reported the join stage's
+            # parts -- the code that ships and spec 030's set beside it -- and
+            # each set's ladder is looked for in the same section, because the
+            # section publishes both of them.
+            for which in JOIN_COST_LADDER_SETS:
+                ladder_derived = join_derived[which]
+                for figure, label, places in JOIN_COST_LADDER:
+                    values = [v for v in ladder_derived.get(figure, []) if v is not None]
+                    if not values:
+                        failures.append(
+                            f"PERF.md: no figure for {label} in the join probe's reports"
+                        )
+                        continue
+                    rendered = rendered_figure(statistics.median(values), places)
+                    if not figure_in(published, rendered):
+                        failures.append(
+                            f"PERF.md: {label} is {rendered} in the reports but that figure "
+                            f"does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
+                for figure, label, places in JOIN_COST_LADDER_SPREADS:
+                    values = [v for v in ladder_derived.get(figure, []) if v is not None]
+                    if not values:
+                        failures.append(
+                            f"PERF.md: no spread for {label} in the join probe's reports"
+                        )
+                        continue
+                    rendered = rendered_figure(max(values) - min(values), places)
+                    if not figure_in(published, rendered):
+                        failures.append(
+                            f"PERF.md: {label} is {rendered} in the reports but that figure "
+                            f"does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
+
+                # The yardstick each leaf is judged by, and the floor's drift it
+                # is floored at: the sum of the drifts of the sides the leaf
+                # stands on, and the floor's drift, and the larger of the two.
+                drifts = join_cost_drift(join_parts[which])
+                floor_drift = drifts.get(JOIN_COST_FLOOR)
+                if floor_drift is not None:
+                    label = "the floor's drift"
+                    rendered = rendered_figure(floor_drift, 3)
+                    if not figure_in(published, rendered):
+                        failures.append(
+                            f"PERF.md: {label} is {rendered} in the reports but that figure "
+                            f"does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
+                for path in ("cold", "resident"):
+                    verdict = join_cost_verdict(join_parts[which], ladder_derived, path)
+                    if not verdict:
+                        continue
+                    for _key, name, _word, _value, _spread, yardstick, state in verdict["leaves"]:
+                        label = f"{name}, {path} path's yardstick"
+                        rendered = rendered_figure(yardstick, 3)
+                        if not figure_in(published, rendered):
+                            failures.append(
+                                f"PERF.md: {label} is {rendered} in the reports but that figure "
+                                f"does not appear in the document"
+                            )
+                        else:
+                            print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
+                        # The state, where the section publishes it beside the
+                        # leaf's own figures: the row that carries the leaf's
+                        # yardstick carries the state too, or the section does
+                        # not publish that state at all.
+                        rows = [
+                            line
+                            for line in published.splitlines()
+                            if line.startswith("|") and figure_in(line, rendered)
+                        ]
+                        carried = leaf_state_in_rows(rows, state)
+                        if carried is False:
+                            failures.append(
+                                f"PERF.md: {name}, on the {path} path, is {state!r} by the "
+                                f"reports, and the ladder's row publishes another state"
+                            )
+                        elif carried:
+                            print(
+                                f"ok  {'PERF.md':<10} {f'{name}, {path} path\'s state':<40} {state}"
+                            )
+
+            # The verdict, in one of the six words, and the yardstick it is
+            # judged against. A leaf whose own spread is wider than its
+            # yardstick is inconclusive and is not counted; the verdict is the
+            # word of the largest leaf that counts; and the verdict's state
+            # says whether the yardstick could tell.
+            #
+            # The sentences are published for the set that measures the code
+            # that ships.
+            for path in ("cold", "resident"):
+                verdict = join_cost_verdict(
+                    join_parts["after"], join_derived["after"], path
+                )
+                if not verdict:
+                    continue
+                for _key, name, _word, _value, _spread, _yardstick, state in verdict["leaves"]:
+                    if not any(
+                        phrase in published
+                        for phrase in leaf_state_phrases(name, path, state)
+                    ):
+                        failures.append(
+                            f"PERF.md: {name}, on the {path} path, is {state!r} by the "
+                            f"reports, and the section does not say so"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {f'{name}, {path}':<40} {state}")
+                phrase = f"the verdict, on the {path} path, is **{verdict['verdict']}**"
+                if phrase not in published:
+                    failures.append(
+                        f"PERF.md: the {path} path's verdict is {verdict['verdict']!r} by the "
+                        f"reports, and the section does not say so"
+                    )
+                else:
+                    print(
+                        f"ok  {'PERF.md':<10} {f'the {path} path\'s verdict':<40} "
+                        f"{verdict['verdict']}"
+                    )
+                phrase = f"the verdict's state, on the {path} path, is **{verdict['state']}**"
+                if phrase not in published:
+                    failures.append(
+                        f"PERF.md: the {path} path's verdict's state is {verdict['state']!r} "
+                        f"by the reports, and the section does not say so"
+                    )
+                else:
+                    print(
+                        f"ok  {'PERF.md':<10} {f'the {path} path\'s verdict\'s state':<40} "
+                        f"{verdict['state']}"
+                    )
+
+            # The figures the section publishes that the join probe did not
+            # measure before: the order's own cost, the separation between the
+            # two sides of one difference, and the interleaving's added work.
+            for figure, label, places in JOIN_COST_NEW_FIGURES:
+                values = [v for v in join_derived["after"].get(figure, []) if v is not None]
                 if not values:
                     failures.append(
                         f"PERF.md: no figure for {label} in the join probe's reports"
@@ -1692,50 +2126,30 @@ def main() -> int:
                     )
                 else:
                     print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
-            for figure, label, places in JOIN_COST_LADDER_SPREADS:
-                values = [v for v in after_derived.get(figure, []) if v is not None]
-                if not values:
-                    failures.append(
-                        f"PERF.md: no spread for {label} in the join probe's reports"
-                    )
-                    continue
-                rendered = rendered_figure(max(values) - min(values), places)
-                if not figure_in(published, rendered):
-                    failures.append(
-                        f"PERF.md: {label} is {rendered} in the reports but that figure "
-                        f"does not appear in the document"
-                    )
-                else:
-                    print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
 
-            # The verdict, in one of the six words, and the band it is judged
-            # against. The band is the context's own spread; a part whose own
-            # spread is wider than the band is inconclusive and is not counted;
-            # the verdict is the word of the largest part that counts.
-            for path in ("cold", "resident"):
-                context = [v for v in after_derived.get(f"the_context_{path}", []) if v is not None]
-                if not context:
-                    continue
-                band = max(context) - min(context)
-                counted: list[tuple[float, str]] = []
-                for figure, word in JOIN_COST_VERDICT_PARTS[path]:
-                    values = [v for v in after_derived.get(figure, []) if v is not None]
-                    if not values:
-                        continue
-                    value = statistics.median(values)
-                    if max(values) - min(values) > band:
-                        continue
-                    if abs(value) > band:
-                        counted.append((abs(value), word))
-                verdict = max(counted)[1] if counted else "unattributed"
-                phrase = f"the verdict, on the {path} path, is **{verdict}**"
+            # The **query's cost** under the two orders. The interleaving is
+            # the one thing this increment changed about the query's
+            # measurement, so the query's cost is measured against the floor's
+            # own spread and the difference is published on both paths.
+            query_cost = join_cost_query_cost(
+                [json.loads(path.read_text()) for path in JOIN_COST_REPORTS]
+            )
+            for path, difference in query_cost.items():
+                phrase = (
+                    f"the {path} path's query's cost, under the two orders, is "
+                    f"**{difference:.3f} ms** apart"
+                )
                 if phrase not in published:
                     failures.append(
-                        f"PERF.md: the {path} path's verdict is {verdict!r} by the "
-                        f"reports, and the section does not say so"
+                        f"PERF.md: the {path} path's query's cost is {difference:.3f} ms "
+                        f"apart under the two orders by the reports, and the section "
+                        f"does not say so"
                     )
                 else:
-                    print(f"ok  {'PERF.md':<10} {f'the {path} path\'s verdict':<40} {verdict}")
+                    print(
+                        f"ok  {'PERF.md':<10} {f'the {path} path\'s query\'s cost':<40} "
+                        f"{difference:.3f} ms"
+                    )
 
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
@@ -2353,6 +2767,17 @@ def main() -> int:
                         f"the {path} path's spread is **{spread:.3f} ms**",
                     )
                 )
+            # The **verdict**, its **state** and the **yardstick** it was made
+            # with. A verdict that cannot be read without its ruler is not a
+            # verdict, so the row carries all three.
+            for path in ("cold", "resident"):
+                verdict = join_cost_verdict(
+                    join_parts.get("after", {}), join_derived.get("after", {}), path
+                )
+                if not verdict:
+                    continue
+                for label, phrase in join_cost_path_phrases(verdict, path):
+                    wanted.append((f"the Next row's {label}", phrase))
         for label, phrase in wanted:
             if phrase not in next_row:
                 failures.append(
@@ -2434,6 +2859,23 @@ def main() -> int:
                     join_derived.get(which, {}).get(difference, []),
                     places,
                 )
+            # The **verdict**, its **state** and the **yardstick** it was made
+            # with, in the probe row that publishes them.
+            published_probe = status_sections.get("probe")
+            for path in ("cold", "resident"):
+                verdict = join_cost_verdict(
+                    join_parts.get("after", {}), join_derived.get("after", {}), path
+                )
+                if not verdict:
+                    continue
+                for label, phrase in join_cost_path_phrases(verdict, path):
+                    if published_probe is None or phrase not in published_probe:
+                        failures.append(
+                            f"STATUS.md: the probe row does not carry {label}: the reports "
+                            f"say {phrase}"
+                        )
+                    else:
+                        print(f"ok  STATUS.md  {label:<40} {phrase}")
 
         if BEFORE_REPORTS:
             old = collect([json.loads(path.read_text()) for path in BEFORE_REPORTS])

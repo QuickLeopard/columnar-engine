@@ -1,4 +1,48 @@
 {
+  "blocks_ms": {
+    "the build block": {
+      "iterations_ms": [],
+      "total_ms": 74.222959
+    },
+    "the campaign": {
+      "iterations_ms": [],
+      "total_ms": 4941.5734999999995
+    },
+    "the controls block": {
+      "iterations_ms": [],
+      "total_ms": 4.98525
+    },
+    "the file state": {
+      "iterations_ms": [],
+      "total_ms": 13.267417
+    },
+    "the probe block": {
+      "iterations_ms": [],
+      "total_ms": 2740.353416
+    },
+    "the query's block": {
+      "iterations_ms": [
+        115.05375,
+        113.92425,
+        114.017625,
+        112.982208,
+        113.072083,
+        112.58841699999999
+      ],
+      "total_ms": 681.6383330000001
+    },
+    "the standalone's block": {
+      "iterations_ms": [
+        231.418583,
+        230.089042,
+        228.693792,
+        227.75625,
+        228.650792,
+        229.66916700000002
+      ],
+      "total_ms": 1376.277626
+    }
+  },
   "brackets": {
     "build_open": "the build side's file open, on its own.",
     "build_whole": "the build table's construction alone. Not the build side's file open, which the stage's own clock carries.",
@@ -17,213 +61,680 @@
     "stage_resident": "one interval -- the build table's construction, the probe key column's borrow, and the probe -- and the build side's file open. Not the dataset's own read, which happened before the query."
   },
   "build_key": "o_orderkey",
-  "code": "spec030-new",
-  "commit": "e75f8dc",
+  "code": "6e3ff64 (clean)",
+  "commit": "6e3ff64",
   "derived_ms": {
-    "build_table": -0.0004999999999986127,
-    "output_rows": 4.37675,
+    "build_table": 0.15679300000000057,
+    "output_rows": 2.6656249999999995,
     "the_added_clock_cost": 0.000026000000000000002,
-    "the_build_file_state": 0.20520799999999895,
-    "the_build_gap_cold": -0.7326259999999998,
-    "the_build_gap_resident": -0.3432089999999999,
-    "the_build_residual_cold": -0.7326259999999998,
-    "the_build_residual_resident": -0.3432089999999999,
-    "the_chain_s_cost": -1.4907920000000008,
-    "the_cold_remainder": 0.43004,
-    "the_context_cold": 1.7247049999999984,
-    "the_context_resident": -1.2754600000000016,
-    "the_gaps_sum_cold": 1.6889180000000006,
-    "the_gaps_sum_resident": -0.38846000000000125,
-    "the_host_remainder_cold": -1.5543122344752192e-15,
-    "the_host_remainder_resident": -8.881784197001252e-16,
-    "the_key_source_s_cost": -1.1369999999999987,
-    "the_ladder_s_sum": -2.7704999999999984,
-    "the_loop_s_cost": 0.10625100000000032,
-    "the_map_option_s_cost": -1.0399589999999996,
-    "the_map_s_share": -2.2312499999999993,
-    "the_open_gap_cold": 0.10058300000000002,
-    "the_open_gap_resident": 0.08808300000000001,
-    "the_probe_file_state": 0.200291,
-    "the_probe_gap_cold": 2.3209610000000005,
-    "the_probe_gap_resident": -0.1333340000000014,
-    "the_probe_residual_cold": 0.18400000000000105,
-    "the_probe_residual_resident": -0.3336250000000014,
-    "the_probe_row_offset": 2.1369609999999994,
-    "the_probe_s_remainder": -2.7704999999999984,
-    "the_reconciliation_cold": -1.3322676295501878e-15,
-    "the_reconciliation_resident": -8.881784197001252e-16,
-    "the_reduction_s_noise_cold": -0.03578699999999779,
-    "the_reduction_s_noise_resident": 0.8870000000000003,
-    "the_residual_cold": 15.347162999999998,
-    "the_residual_resident": 7.206957,
+    "the_added_work_clocks": 0,
+    "the_added_work_cost": 0.0,
+    "the_build_file_state": 0.999708,
+    "the_build_gap_cold": 0.14533400000000185,
+    "the_build_gap_resident": -0.09062499999999929,
+    "the_build_residual_cold": 0.14533400000000185,
+    "the_build_residual_resident": -0.09062499999999929,
+    "the_chain_s_cost": -0.08895899999999912,
+    "the_cold_remainder": 1.0309120000000007,
+    "the_context_cold": 0.455797000000004,
+    "the_context_resident": -1.5812079999999975,
+    "the_gaps_sum_cold": 0.8216300000000012,
+    "the_gaps_sum_resident": -1.734748999999999,
+    "the_host_remainder_cold": 6.661338147750939e-16,
+    "the_host_remainder_resident": 6.661338147750939e-16,
+    "the_key_source_s_cost": -0.02987500000000054,
+    "the_ladder_s_sum": -0.044624999999999915,
+    "the_loop_s_cost": -0.37087499999999984,
+    "the_map_option_s_cost": 0.17279100000000014,
+    "the_map_s_share": -0.39162499999999945,
+    "the_open_gap_cold": 0.008709000000000008,
+    "the_open_gap_resident": 0.008374999999999994,
+    "the_order_s_cost_cold": 0.4094160000000002,
+    "the_order_s_cost_resident": 0.7404999999999973,
+    "the_probe_file_state": -1.329874000000001,
+    "the_probe_gap_cold": 0.6675869999999993,
+    "the_probe_gap_resident": -1.6524989999999997,
+    "the_probe_residual_cold": 0.3740869999999994,
+    "the_probe_residual_resident": -0.2181659999999992,
+    "the_probe_row_offset": 0.02449600000000096,
+    "the_probe_s_remainder": -0.044624999999999915,
+    "the_reconciliation_cold": 6.661338147750939e-16,
+    "the_reconciliation_resident": 6.661338147750939e-16,
+    "the_reduction_s_noise_cold": 0.3658329999999972,
+    "the_reduction_s_noise_resident": -0.15354100000000148,
+    "the_residual_cold": 11.201207999999998,
+    "the_residual_resident": 7.186792000000001,
+    "the_separation_cold": 267.971708,
+    "the_separation_resident": 324.463646,
     "the_stage_parts_gap_cold": 0.0,
-    "the_stage_parts_gap_resident": -3.552713678800501e-15,
-    "the_state_s_cost": 0.6832499999999992,
-    "the_two_paths": 8.140206,
-    "the_two_probes": 5.140040999999998,
+    "the_stage_parts_gap_resident": 0.0,
+    "the_state_s_cost": -0.309291,
+    "the_two_paths": 3.758541000000001,
+    "the_two_probes": 1.8631210000000014,
     "the_unexplained": 0.0,
-    "the_width_s_cost": 0.10775000000000112
+    "the_width_s_cost": 0.5815839999999994
   },
   "engine_reports_parts": true,
   "engine_rows": 216783,
   "file": "data/lineitem.parquet",
-  "host_load_average": 6.8,
-  "iterations": 5,
+  "host_load_average": 3.66,
+  "iterations": 6,
+  "ladder_series_ms": {
+    "cold": {
+      "the build side's gap": [
+        0.16112500000000018,
+        -0.10350000000000037,
+        0.27608299999999986,
+        -0.24829100000000004,
+        0.14533400000000185,
+        -0.4930000000000003
+      ],
+      "the context": [
+        -0.7455030000000029,
+        1.2218350000000004,
+        1.551286000000001,
+        0.4123369999999973,
+        0.455797000000004,
+        -0.6167139999999982
+      ],
+      "the open's gap": [
+        0.025291999999999995,
+        0.032042,
+        0.0029590000000000033,
+        -0.006959000000000007,
+        0.008709000000000008,
+        -0.012541999999999998
+      ],
+      "the part in no gap": [
+        -1.4432899320127035e-15,
+        -1.1102230246251565e-15,
+        6.661338147750939e-16,
+        -1.942890293094024e-15,
+        3.164135620181696e-15,
+        1.9984014443252818e-15
+      ],
+      "the probe's file state": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "the probe's gap": [
+        -0.9319200000000016,
+        1.293293000000002,
+        1.2722440000000006,
+        0.6675869999999993,
+        0.30175399999999897,
+        -0.11117199999999983
+      ],
+      "the probe's own remainder": [
+        -0.4860030000000002,
+        0.6240400000000026,
+        1.2477479999999996,
+        0.3740869999999994,
+        0.32166800000000073,
+        -0.29967399999999955
+      ],
+      "the probe's row-number offset": [
+        0.44591700000000145,
+        -0.6692529999999994,
+        -0.02449600000000096,
+        -0.29349999999999987,
+        0.019914000000001764,
+        -0.18850199999999973
+      ]
+    },
+    "resident": {
+      "the build side's gap": [
+        -0.016000000000000014,
+        -0.2956260000000004,
+        -0.09062499999999929,
+        -0.3222909999999999,
+        0.2316660000000006,
+        -0.6337089999999996
+      ],
+      "the context": [
+        0.7769999999999975,
+        -1.9362089999999998,
+        -1.5812079999999975,
+        -2.1342489999999996,
+        -1.3937490000000023,
+        -2.400583
+      ],
+      "the open's gap": [
+        0.008374999999999994,
+        0.021583999999999992,
+        -0.010207999999999995,
+        -0.01154200000000001,
+        0.027083999999999997,
+        -0.007500000000000007
+      ],
+      "the part in no gap": [
+        -8.881784197001252e-16,
+        6.661338147750939e-16,
+        4.440892098500626e-16,
+        1.3322676295501878e-15,
+        -3.1086244689504383e-15,
+        8.881784197001252e-16
+      ],
+      "the probe's file state": [
+        0.8435410000000001,
+        -1.2572919999999996,
+        -1.4244999999999983,
+        -1.329874000000001,
+        -1.4343330000000005,
+        -1.4100000000000001
+      ],
+      "the probe's gap": [
+        0.7846249999999984,
+        -1.6621670000000002,
+        -1.4803749999999987,
+        -1.8004160000000011,
+        -1.6524989999999997,
+        -1.759374000000001
+      ],
+      "the probe's own remainder": [
+        -0.058916000000001745,
+        -0.40487500000000054,
+        -0.05587500000000034,
+        -0.470542,
+        -0.2181659999999992,
+        -0.34937400000000096
+      ],
+      "the probe's row-number offset": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  },
+  "orders_ms": {
+    "cold": {
+      "the build side's gap": {
+        "difference": 0.4094160000000002,
+        "query_first": 0.16112500000000018,
+        "standalone_first": -0.24829100000000004
+      },
+      "the context": {
+        "difference": 0.043460000000006715,
+        "query_first": 0.455797000000004,
+        "standalone_first": 0.4123369999999973
+      },
+      "the open's gap": {
+        "difference": 0.015668000000000015,
+        "query_first": 0.008709000000000008,
+        "standalone_first": -0.006959000000000007
+      },
+      "the part in no gap": {
+        "difference": 1.7763568394002505e-15,
+        "query_first": 6.661338147750939e-16,
+        "standalone_first": -1.1102230246251565e-15
+      },
+      "the probe's file state": {
+        "difference": 0.0,
+        "query_first": 0.0,
+        "standalone_first": 0.0
+      },
+      "the probe's own remainder": {
+        "difference": -0.05241899999999866,
+        "query_first": 0.32166800000000073,
+        "standalone_first": 0.3740869999999994
+      },
+      "the probe's row-number offset": {
+        "difference": 0.31341400000000164,
+        "query_first": 0.019914000000001764,
+        "standalone_first": -0.29349999999999987
+      }
+    },
+    "resident": {
+      "the build side's gap": {
+        "difference": 0.30629099999999987,
+        "query_first": -0.016000000000000014,
+        "standalone_first": -0.3222909999999999
+      },
+      "the context": {
+        "difference": 0.7404999999999973,
+        "query_first": -1.3937490000000023,
+        "standalone_first": -2.1342489999999996
+      },
+      "the open's gap": {
+        "difference": 0.015875,
+        "query_first": 0.008374999999999994,
+        "standalone_first": -0.007500000000000007
+      },
+      "the part in no gap": {
+        "difference": -1.7763568394002505e-15,
+        "query_first": -8.881784197001252e-16,
+        "standalone_first": 8.881784197001252e-16
+      },
+      "the probe's file state": {
+        "difference": -0.09462599999999721,
+        "query_first": -1.4244999999999983,
+        "standalone_first": -1.329874000000001
+      },
+      "the probe's own remainder": {
+        "difference": 0.3459589999999988,
+        "query_first": -0.058916000000001745,
+        "standalone_first": -0.40487500000000054
+      },
+      "the probe's row-number offset": {
+        "difference": 0.0,
+        "query_first": 0.0,
+        "standalone_first": 0.0
+      }
+    }
+  },
   "parts_ms": {
-    "build_keys": 0.334792,
-    "build_open": 0.032875,
-    "build_read": 12.838166999999999,
-    "build_whole": 13.172459,
-    "build_whole_cold": 13.377666999999999,
-    "candidate_chain": 9.762125,
-    "candidate_map_option": 9.513166,
-    "candidate_probe": 11.252917,
-    "candidate_state": 10.553125,
-    "candidate_width": 9.869875,
-    "candidate_with_map": 9.021667,
+    "build_keys": 0.347875,
+    "build_open": 0.104416,
+    "build_read": 11.763041,
+    "build_whole": 12.267709,
+    "build_whole_cold": 13.267417,
+    "candidate_chain": 8.723666,
+    "candidate_map_option": 9.16875,
+    "candidate_probe": 8.812624999999999,
+    "candidate_state": 8.995959,
+    "candidate_width": 9.30525,
+    "candidate_with_map": 8.421,
     "clock_cost": 0.000013000000000000001,
-    "cold_candidate": 13.192418,
-    "engine_build_cold": 12.439833,
-    "engine_build_resident": 12.82925,
-    "engine_lookup_plain": 9.619417,
-    "engine_open_cold": 0.13345800000000002,
-    "engine_open_resident": 0.12095800000000001,
-    "engine_probe_cold": 15.943419,
-    "engine_probe_resident": 8.349083,
-    "floor_probe": 6.876167,
-    "probe_batches": 13.622458,
-    "probe_batches_no_offset": 15.759419,
-    "probe_column": 8.482417000000002,
-    "probe_held": 8.682708000000002,
-    "read_plain": 0.573833,
-    "read_small": 0.040666,
-    "stage_cold": 28.552497,
-    "stage_resident": 20.412291,
-    "table_own": 0.24704199999999998
+    "cold_candidate": 9.600209,
+    "engine_build_cold": 12.164209,
+    "engine_build_resident": 12.071791,
+    "engine_lookup_plain": 8.797875,
+    "engine_open_cold": 0.107375,
+    "engine_open_resident": 0.10775,
+    "engine_probe_cold": 11.014790999999999,
+    "engine_probe_resident": 7.2528749999999995,
+    "floor_probe": 6.146999999999999,
+    "probe_batches": 10.631121,
+    "probe_batches_no_offset": 11.093047,
+    "probe_column": 8.767999999999999,
+    "probe_held": 7.5889169999999995,
+    "read_plain": 0.512833,
+    "read_small": 0.051,
+    "stage_cold": 23.189458,
+    "stage_resident": 19.430916999999997,
+    "table_own": 0.207834
   },
   "probe": "join-cost",
   "probe_key": "l_orderkey",
   "rows": 6000000,
-  "spreads_ms": {
+  "separation_ms": {
+    "cold": {
+      "the build side's gap": 267.971708,
+      "the open's gap": 261.770958,
+      "the probe's own remainder": 202.237542,
+      "the probe's row-number offset": 76.599918
+    },
+    "resident": {
+      "the build side's gap": 324.463646,
+      "the open's gap": 318.262896,
+      "the probe's file state": 19.902854,
+      "the probe's own remainder": 258.72948
+    }
+  },
+  "series_ms": {
     "build_keys": [
-      0.334458,
-      0.350208
+      0.355042,
+      0.345333,
+      0.351416,
+      0.347875,
+      0.344375,
+      0.341209
     ],
     "build_open": [
-      0.026375,
-      0.043542
+      0.07100000000000001,
+      0.086166,
+      0.104416,
+      0.126834,
+      0.08591599999999999,
+      0.112084
     ],
     "build_read": [
-      12.2085,
-      13.051834
+      12.143917,
+      11.567375,
+      11.905292,
+      11.687125,
+      11.475375,
+      11.763041
     ],
     "build_whole": [
-      12.505958,
-      13.499832999999999
+      11.917250000000001,
+      12.267709,
+      12.177875,
+      12.273916,
+      11.977125,
+      12.705499999999999
     ],
     "build_whole_cold": [
-      13.377666999999999,
-      13.377666999999999
+      13.267417
     ],
     "candidate_chain": [
-      9.128125,
-      10.492583
+      8.4995,
+      10.155541000000001,
+      8.723666,
+      8.779083,
+      8.454457999999999,
+      8.591042
     ],
     "candidate_map_option": [
-      8.780833,
-      10.232041
+      8.882667,
+      8.303875,
+      9.356,
+      8.731042,
+      9.323917,
+      9.16875
     ],
     "candidate_probe": [
-      10.259708,
-      11.493833
+      8.980792,
+      8.812624999999999,
+      8.532625,
+      8.927834,
+      8.412125,
+      8.768542
     ],
     "candidate_state": [
-      9.568916999999999,
-      11.180125
+      8.995959,
+      8.745875,
+      8.825332999999999,
+      8.577665999999999,
+      9.386959000000001,
+      9.040458
     ],
     "candidate_width": [
-      8.967584,
-      11.059042
+      9.128041999999999,
+      9.597041,
+      9.694833,
+      9.30525,
+      8.7515,
+      8.792583
     ],
     "candidate_with_map": [
-      8.863707999999999,
-      9.294291999999999
+      9.04925,
+      8.418625,
+      8.413333,
+      8.421,
+      8.44725,
+      8.420708000000001
+    ],
+    "clock_cost": [
+      0.000013000000000000001,
+      0.000013000000000000001,
+      0.000013000000000000001,
+      0.000013000000000000001,
+      0.000013000000000000001,
+      0.000013000000000000001
+    ],
+    "cold_candidate": [
+      9.840874,
+      9.675293,
+      9.442704999999998,
+      9.600209,
+      9.332372,
+      9.540378
+    ],
+    "engine_build_cold": [
+      12.078375000000001,
+      12.164209,
+      12.453958,
+      12.025625,
+      12.122459000000001,
+      12.212499999999999
+    ],
+    "engine_build_resident": [
+      11.901250000000001,
+      11.972083,
+      12.087250000000001,
+      11.951625,
+      12.208791,
+      12.071791
+    ],
+    "engine_lookup_plain": [
+      9.024458000000001,
+      8.797875,
+      8.678375,
+      8.839125,
+      8.546332999999999,
+      8.752792000000001
+    ],
+    "engine_open_cold": [
+      0.096292,
+      0.11820800000000001,
+      0.107375,
+      0.119875,
+      0.094625,
+      0.099542
+    ],
+    "engine_open_resident": [
+      0.079375,
+      0.10775,
+      0.094208,
+      0.11529199999999999,
+      0.11299999999999999,
+      0.104584
+    ],
+    "engine_probe_cold": [
+      11.014790999999999,
+      11.853916000000002,
+      11.850081,
+      10.934292,
+      10.932875,
+      10.793373
+    ],
+    "engine_probe_resident": [
+      8.783166999999999,
+      7.2528749999999995,
+      7.287625,
+      7.1183749999999995,
+      7.109126000000001,
+      6.9275839999999995
+    ],
+    "floor_probe": [
+      6.287834,
+      5.945125,
+      6.151791,
+      6.146999999999999,
+      5.78925,
+      5.939958000000001
+    ],
+    "probe_batches": [
+      11.946711,
+      10.560623,
+      10.577836999999999,
+      10.266705,
+      10.631121,
+      10.904545
+    ],
+    "probe_batches_no_offset": [
+      11.500793999999999,
+      11.229875999999999,
+      10.602333,
+      10.560205,
+      10.611206999999999,
+      11.093047
+    ],
+    "probe_column": [
+      7.9985420000000005,
+      8.915042,
+      8.767999999999999,
+      8.918791,
+      8.761625,
+      8.686958
+    ],
+    "probe_held": [
+      8.842083,
+      7.65775,
+      7.343500000000001,
+      7.5889169999999995,
+      7.327292,
+      7.2769580000000005
+    ],
+    "read_plain": [
+      1.792875,
+      0.512833,
+      0.49137499999999995,
+      0.494125,
+      0.488959,
+      0.638792
+    ],
+    "read_small": [
+      0.054209,
+      0.044042000000000005,
+      0.051,
+      0.055584,
+      0.039875,
+      0.040042
+    ],
+    "stage_cold": [
+      23.189458,
+      24.136333,
+      24.411414,
+      23.079791999999998,
+      23.149959000000003,
+      23.105415
+    ],
+    "stage_resident": [
+      20.763792,
+      19.332708,
+      19.469083,
+      19.185292,
+      19.430916999999997,
+      19.103959
+    ],
+    "table_own": [
+      0.42000000000000004,
+      0.20845799999999998,
+      0.207083,
+      0.207834,
+      0.207333,
+      0.206292
+    ]
+  },
+  "spreads_ms": {
+    "build_keys": [
+      0.341209,
+      0.355042
+    ],
+    "build_open": [
+      0.07100000000000001,
+      0.126834
+    ],
+    "build_read": [
+      11.475375,
+      12.143917
+    ],
+    "build_whole": [
+      11.917250000000001,
+      12.705499999999999
+    ],
+    "build_whole_cold": [
+      13.267417,
+      13.267417
+    ],
+    "candidate_chain": [
+      8.454457999999999,
+      10.155541000000001
+    ],
+    "candidate_map_option": [
+      8.303875,
+      9.356
+    ],
+    "candidate_probe": [
+      8.412125,
+      8.980792
+    ],
+    "candidate_state": [
+      8.577665999999999,
+      9.386959000000001
+    ],
+    "candidate_width": [
+      8.7515,
+      9.694833
+    ],
+    "candidate_with_map": [
+      8.413333,
+      9.04925
     ],
     "clock_cost": [
       0.000013000000000000001,
       0.000013000000000000001
     ],
     "cold_candidate": [
-      12.687247000000001,
-      13.309286
+      9.332372,
+      9.840874
     ],
     "engine_build_cold": [
-      11.944791,
-      13.283041
+      12.025625,
+      12.453958
     ],
     "engine_build_resident": [
-      11.938208000000001,
-      14.782583
+      11.901250000000001,
+      12.208791
     ],
     "engine_lookup_plain": [
-      9.378124999999999,
-      11.034125000000001
+      8.546332999999999,
+      9.024458000000001
     ],
     "engine_open_cold": [
-      0.126833,
-      0.139333
+      0.094625,
+      0.119875
     ],
     "engine_open_resident": [
-      0.1075,
-      0.125
+      0.079375,
+      0.11529199999999999
     ],
     "engine_probe_cold": [
-      15.135997999999999,
-      16.307211
+      10.793373,
+      11.853916000000002
     ],
     "engine_probe_resident": [
-      7.153375,
-      9.824416000000001
+      6.9275839999999995,
+      8.783166999999999
     ],
     "floor_probe": [
-      6.148625,
-      7.25475
+      5.78925,
+      6.287834
     ],
     "probe_batches": [
-      12.696871,
-      14.290496
+      10.266705,
+      11.946711
     ],
     "probe_batches_no_offset": [
-      13.736125999999999,
-      15.827704
+      10.560205,
+      11.500793999999999
     ],
     "probe_column": [
-      8.348875,
-      9.106333
+      7.9985420000000005,
+      8.918791
     ],
     "probe_held": [
-      8.291375,
-      9.840709
+      7.2769580000000005,
+      8.842083
     ],
     "read_plain": [
-      0.53475,
-      0.597209
+      0.488959,
+      1.792875
     ],
     "read_small": [
-      0.039625,
-      0.048959
+      0.039875,
+      0.055584
     ],
     "stage_cold": [
-      28.307083,
-      28.88621
+      23.079791999999998,
+      24.411414
     ],
     "stage_resident": [
-      20.10625,
-      24.010625
+      19.103959,
+      20.763792
     ],
     "table_own": [
-      0.232666,
-      0.25658400000000003
+      0.206292,
+      0.42000000000000004
     ]
   },
   "stage_rows": {
@@ -237,5 +748,5 @@
     ]
   },
   "table_rows": 216345,
-  "tree": "dirty"
+  "tree": "clean"
 }
