@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **29 specs**, **37 ADRs** and **29 defects** so far, and every
-one of the specs is closed.
+[`constitution.md`](constitution.md). **30 specs**, **37 ADRs** and **29 defects** so far, and every
+one of the specs but the last is closed.
 
 ---
 
@@ -173,7 +173,8 @@ path the probe runs *inside the scan*, so the scan/join boundary is exactly wher
 live; or it may be the two clocks measuring different intervals. **What would answer it:** measure the
 probe the way the query runs it — inside the scan, over the reader's batches, on the query's own
 column — and compare it against the same measurement taken inside the query's stage clock, so the
-difference is the context and nothing else. **There is no spec for this yet.**
+difference is the context and nothing else. **It is written down as
+[`spec 030`](specs/030-the-context-taken-apart/spec.md)**, which takes it apart.
 
 **2. `filter-range`, cold: Polars is ahead.** The engine's lazy path is 16.3 ms against Polars'
 15.2 ms, and the two spreads do not overlap. The scan that holds it is the Parquet decode, and the
