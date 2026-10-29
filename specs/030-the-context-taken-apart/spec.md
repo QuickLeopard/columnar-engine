@@ -51,7 +51,7 @@ context is the sum of **two** differences that have never been measured apart â€
 and of whatever the two clocks bracket differently, part by part. **Neither has been measured.**
 This spec takes the context apart.
 
-### What the code says the four clocks bracket
+### What the code says the five clocks bracket
 
 | the clock | it starts before | it stops after | it does not include |
 |---|---|---|---|
