@@ -50,6 +50,51 @@
 //! between the two candidates, so the difference between them is what the one
 //! thing that is different costs -- **measured, not assumed**.
 //!
+//! # The ladder
+//!
+//! The remainder is **3.337 ms** and it is not the map. What is left is the
+//! lookup's **shape**, and a list of names is not a decomposition: the parts
+//! have to be **measured**, one at a time, over the same rows and the same
+//! table, with each candidate differing from the one before it in exactly one
+//! thing.
+//!
+//! | the rung | what it is | the increment it prices |
+//! |---|---|---|
+//! | **`candidate_probe`** | the plain candidate: the byte, as a `u8`, through `unwrap_or` | -- |
+//! | **`candidate_chain`** | the same read, folded through `map_or` | the **`Option` chain** |
+//! | **`candidate_width`** | the byte widened to `u32`, the way the engine's is | the **`u32` width** |
+//! | **`candidate_state`** | the same read, but the table is a struct and the count comes from a method over `&self` | **the state through `self`** |
+//! | **`candidate_map_option`** | the same, with the overflow map's `Option` read and branched on | **the map's discriminant** |
+//! | **`engine_lookup_plain`** | the engine's **own** lookup, over the instrument's own key source | **the engine's loop** |
+//!
+//! And the last step: the engine's probe over the engine's own key column,
+//! which is **`probe_column`** -- the difference between it and
+//! **`engine_lookup_plain`** is the **key source**.
+//!
+//! The six increments add up to the remainder by construction, so what the
+//! ladder says is **where** the remainder is, and the difference between the
+//! sum of the increments and the remainder is the noise the decomposition
+//! carries. Every rung's rows are checked against the engine's rows, in order,
+//! before anything is timed.
+//!
+//! # Every rung reads a column materialised afresh
+//!
+//! The engine's own query materialises the probe column and then probes it, so
+//! the column it probes is one the reader has **just written**. A rung that
+//! read a buffer kept warm across the iterations would be measured on a
+//! **cheaper** column than the engine pays for, and the difference between the
+//! two would be the **buffer's**, not the lookup's. Every rung that touches
+//! the column therefore materialises it afresh, and times only the probe.
+//!
+//! # The stage's own residual
+//!
+//! The stage's **residual** is what the stage leaves after the build side's
+//! whole and its open -- the stage's own probe, and the output it gathers --
+//! and the **context** is the gap between that residual and the standalone
+//! probe of the same work: the price of running inside a query rather than in
+//! a quiet process. Both are published, because the residual is not the probe
+//! and the difference between them changes sign between sets.
+//!
 //! # The controls
 //!
 //! | | |
@@ -88,8 +133,8 @@ use std::time::{Duration, Instant};
 
 use arrow::array::Int64Array;
 use columnar_core::{ColumnChunk, ComparisonOp, ScalarValue};
-use columnar_engine::operators::join::{build_table, probe_rows};
-use columnar_engine::operators::key::{ArrowKeys, KeyColumn, KeyValue};
+use columnar_engine::operators::join::{build_table, probe_rows, BuildTable};
+use columnar_engine::operators::key::{ArrowKeys, KeyColumn, KeySource, KeyValue};
 use columnar_engine::pushdown::{Pushdown, PushdownPlan};
 use columnar_engine::queries::BuiltinQuery;
 use columnar_engine::{Dataset, ExecOptions, JoinSpec, ParquetSource, MAX_READER_BATCH_ROWS};
@@ -538,6 +583,180 @@ fn candidate_with_map(
     out
 }
 
+/// C1 — the chain: the byte read folded through `map_or` instead of `unwrap_or`.
+///
+/// The engine's byte read is `map_or(0, u32::from)`; the plain candidate's is
+/// `unwrap_or(0)`. This rung is the fold **without** the width, so that the
+/// width can be priced on its own.
+fn candidate_chain(
+    counts: &[u8],
+    base: i64,
+    values: &[i64],
+    rows: std::ops::Range<u32>,
+) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    for row in rows {
+        let index = usize::try_from(row).unwrap_or(usize::MAX);
+        let Some(&key) = values.get(index) else {
+            continue;
+        };
+        let offset = usize::try_from(key.saturating_sub(base)).unwrap_or(usize::MAX);
+        let count = counts.get(offset).copied().map_or(0, |byte| byte);
+        for _ in 0..count {
+            out.push(row);
+        }
+    }
+    out
+}
+
+/// C2 — the width: the byte widened to `u32`, the way the engine's is.
+///
+/// The engine's lookup answers in `u32`, and the count it answers with is the
+/// number of rows the key carries -- so the width is the width of the **output
+/// loop** as well as of the read.
+fn candidate_width(
+    counts: &[u8],
+    base: i64,
+    values: &[i64],
+    rows: std::ops::Range<u32>,
+) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    for row in rows {
+        let index = usize::try_from(row).unwrap_or(usize::MAX);
+        let Some(&key) = values.get(index) else {
+            continue;
+        };
+        let offset = usize::try_from(key.saturating_sub(base)).unwrap_or(usize::MAX);
+        let count = counts.get(offset).copied().map_or(0, u32::from);
+        for _ in 0..count {
+            out.push(row);
+        }
+    }
+    out
+}
+
+/// The table the state rung reads through: the counts and the base, in a struct.
+///
+/// The engine's own table holds its counts in a `Vec` and its base beside it,
+/// and the lookup reaches both through `&self`. This is that shape, with
+/// nothing else in it.
+struct CandidateTable {
+    /// The count a key accounts for, one byte a key.
+    counts: Vec<u8>,
+    /// The smallest key.
+    base: i64,
+}
+
+impl CandidateTable {
+    /// The engine's byte read, and nothing else.
+    fn count(&self, key: i64) -> u32 {
+        let index = usize::try_from(key.saturating_sub(self.base)).unwrap_or(usize::MAX);
+        self.counts.get(index).copied().map_or(0, u32::from)
+    }
+}
+
+/// C3 — the state over `&self`: the same read, but the table is a struct and
+/// the count comes from a method over `&self`.
+fn candidate_state(table: &CandidateTable, values: &[i64], rows: std::ops::Range<u32>) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    for row in rows {
+        let index = usize::try_from(row).unwrap_or(usize::MAX);
+        let Some(&key) = values.get(index) else {
+            continue;
+        };
+        let count = table.count(key);
+        for _ in 0..count {
+            out.push(row);
+        }
+    }
+    out
+}
+
+/// The table the map's-option rung reads through: the counts, the base and the
+/// overflow map, in a struct -- the engine's own shape.
+struct CandidateTableWithMap {
+    /// The count a key accounts for, one byte a key.
+    counts: Vec<u8>,
+    /// The smallest key.
+    base: i64,
+    /// The keys more than 255 build rows carry. **`None`** when nothing
+    /// overflowed, which is what the engine's own table holds for this data.
+    overflow: Option<HashMap<i64, u32>>,
+}
+
+impl CandidateTableWithMap {
+    /// The engine's own lookup, exactly: the byte, and the map only when the
+    /// map holds something.
+    fn count(&self, key: i64) -> u32 {
+        let index = usize::try_from(key.saturating_sub(self.base)).unwrap_or(usize::MAX);
+        let byte = self.counts.get(index).copied().map_or(0, u32::from);
+        let Some(overflow) = &self.overflow else {
+            return byte;
+        };
+        let extra = overflow.get(&key).copied().unwrap_or(0);
+        byte.saturating_add(extra)
+    }
+}
+
+/// C4 — the map's option: the same read, with the overflow map's `Option` read
+/// and branched on, the way the engine's fast path does.
+fn candidate_map_option(
+    table: &CandidateTableWithMap,
+    values: &[i64],
+    rows: std::ops::Range<u32>,
+) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    for row in rows {
+        let index = usize::try_from(row).unwrap_or(usize::MAX);
+        let Some(&key) = values.get(index) else {
+            continue;
+        };
+        let count = table.count(key);
+        for _ in 0..count {
+            out.push(row);
+        }
+    }
+    out
+}
+
+/// The instrument's own key source: a plain slice of integers.
+///
+/// The engine's fast path reads the key column through a `KeySource`, and the
+/// candidate reads a `Vec<i64>`. This is the source the engine's own lookup is
+/// measured over, so that the **key source** is a difference in the ladder and
+/// not a part of the lookup's.
+struct PlainKeys<'a> {
+    /// The key column's own values.
+    values: &'a [i64],
+}
+
+impl KeySource for PlainKeys<'_> {
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    fn has_nulls(&self) -> bool {
+        false
+    }
+
+    fn integer_values(&self) -> Option<&[i64]> {
+        Some(self.values)
+    }
+
+    fn value_at_in_range(&self, row: usize) -> Option<KeyValue<'_>> {
+        self.values.get(row).map(|value| KeyValue::Int(*value))
+    }
+}
+
+/// C5 — the engine's own lookup, over the instrument's own key source.
+///
+/// The engine's `probe_rows` is public and takes a `KeySource`, so the engine's
+/// own lookup can be measured over a plain slice without the engine giving
+/// anything up.
+fn engine_lookup_plain(table: &BuildTable, values: &[i64], rows: std::ops::Range<u32>) -> Vec<u32> {
+    probe_rows(table, &PlainKeys { values }, rows)
+}
+
 /// The candidate inside the reader's own batch loop.
 ///
 /// The same hand-written lookup, over the reader's own Arrow batches, so that
@@ -688,6 +907,16 @@ struct ProbeParts {
     with_map: Timing,
     /// The candidate inside the reader's own batch loop.
     cold: Timing,
+    /// The candidate whose byte read is folded through `map_or`.
+    chain: Timing,
+    /// The candidate whose byte is widened to `u32`.
+    width: Timing,
+    /// The candidate that reads its table through `&self`.
+    state: Timing,
+    /// The candidate that reads the overflow map's `Option`.
+    map_option: Timing,
+    /// The engine's own lookup over the instrument's own key source.
+    engine_plain: Timing,
     /// The rows the engine's probe produced.
     engine_rows: Vec<u32>,
     /// The probe key column's own values.
@@ -764,20 +993,20 @@ fn probe_parts(
     assert_eq!(candidate_rows, engine_rows, "the candidate probes differently");
     assert_eq!(candidate_rows, batched_rows, "the two paths probe differently");
 
-    let floor = repeat(ITERATIONS, || {
+    let floor = over_fresh_column(source, probe_index, flavor, |values| {
         let started = Instant::now();
-        let total = floor_probe(&counts, build.base, &values, all_rows.clone());
+        let total = floor_probe(&counts, build.base, values, all_rows.clone());
         let elapsed = started.elapsed();
         std::hint::black_box(total);
         elapsed
-    });
-    let candidate = repeat(ITERATIONS, || {
+    })?;
+    let candidate = over_fresh_column(source, probe_index, flavor, |values| {
         let started = Instant::now();
-        let rows = candidate_probe(&counts, build.base, &values, all_rows.clone());
+        let rows = candidate_probe(&counts, build.base, values, all_rows.clone());
         let elapsed = started.elapsed();
         std::hint::black_box(&rows);
         elapsed
-    });
+    })?;
 
     // The candidate with the overflow map's consult in it. The map is the
     // engine's own map's **kind** -- the same type, and empty, because every
@@ -787,13 +1016,13 @@ fn probe_parts(
     let with_map_rows =
         candidate_with_map(&counts, build.base, &overflow, &values, all_rows.clone());
     assert_eq!(with_map_rows, candidate_rows, "the map changes no row");
-    let with_map = repeat(ITERATIONS, || {
+    let with_map = over_fresh_column(source, probe_index, flavor, |values| {
         let started = Instant::now();
-        let rows = candidate_with_map(&counts, build.base, &overflow, &values, all_rows.clone());
+        let rows = candidate_with_map(&counts, build.base, &overflow, values, all_rows.clone());
         let elapsed = started.elapsed();
         std::hint::black_box(&rows);
         elapsed
-    });
+    })?;
 
     // The cold candidate: the same hand-written lookup, inside the reader's
     // own batch loop, so that the cold path's remainder is measurable.
@@ -801,7 +1030,180 @@ fn probe_parts(
         cold_candidate(path, &[probe_index, value_index], batch_rows, &counts, build.base)?;
     assert_eq!(cold_rows, engine_rows, "the cold candidate probes differently");
 
-    Ok(ProbeParts { column, batches, floor, candidate, with_map, cold, engine_rows, values })
+    // The ladder: the remainder's parts, one at a time.
+    let ladder = ladder_parts(&LadderInput {
+        source,
+        probe_index,
+        flavor,
+        counts: &counts,
+        base: build.base,
+        values: &values,
+        all_rows: all_rows.clone(),
+        table,
+        engine_rows: &engine_rows,
+    })?;
+
+    Ok(ProbeParts {
+        column,
+        batches,
+        floor,
+        candidate,
+        with_map,
+        cold,
+        chain: ladder.chain,
+        width: ladder.width,
+        state: ladder.state,
+        map_option: ladder.map_option,
+        engine_plain: ladder.engine_plain,
+        engine_rows,
+        values,
+    })
+}
+
+/// What the ladder is measured over.
+struct LadderInput<'a> {
+    /// The probe side's source.
+    source: &'a ParquetSource,
+    /// The probe key's column index.
+    probe_index: usize,
+    /// The kernel flavour.
+    flavor: columnar_kernels::Flavor,
+    /// The table's counts, one byte a key.
+    counts: &'a [u8],
+    /// The table's base: the smallest key it addresses.
+    base: i64,
+    /// The values the rows are checked over.
+    values: &'a [i64],
+    /// The rows the probe covers.
+    all_rows: std::ops::Range<u32>,
+    /// The engine's own table.
+    table: &'a BuildTable,
+    /// The rows the engine's probe produced.
+    engine_rows: &'a [u32],
+}
+
+/// The ladder's rungs, measured.
+struct LadderParts {
+    /// The candidate whose byte read is folded through `map_or`.
+    chain: Timing,
+    /// The candidate whose byte is widened to `u32`.
+    width: Timing,
+    /// The candidate that reads its table through `&self`.
+    state: Timing,
+    /// The candidate that reads the overflow map's `Option`.
+    map_option: Timing,
+    /// The engine's own lookup over the instrument's own key source.
+    engine_plain: Timing,
+}
+
+/// The ladder: the remainder's price, one thing at a time.
+///
+/// Each rung is the plain candidate plus **exactly one** thing, over the same
+/// rows and the same table, and each one is checked against the engine's rows
+/// before it is timed.
+fn ladder_parts(input: &LadderInput<'_>) -> Result<LadderParts, Box<dyn std::error::Error>> {
+    let source = input.source;
+    let probe_index = input.probe_index;
+    let flavor = input.flavor;
+    let counts = input.counts;
+    let base = input.base;
+    let values = input.values;
+    let all_rows = input.all_rows.clone();
+    let table = input.table;
+    let engine_rows = input.engine_rows;
+    // The rows are checked **before** anything is timed: a rung that answers
+    // differently is not a rung, it is a different join. The check runs over
+    // the values the instrument keeps; the timing runs over a column
+    // materialised afresh, which holds the same numbers.
+    let chain_rows = candidate_chain(counts, base, values, all_rows.clone());
+    assert_eq!(chain_rows, engine_rows, "the chain probes differently");
+    let width_rows = candidate_width(counts, base, values, all_rows.clone());
+    assert_eq!(width_rows, engine_rows, "the width probes differently");
+    let state_table = CandidateTable { counts: counts.to_vec(), base };
+    let state_rows = candidate_state(&state_table, values, all_rows.clone());
+    assert_eq!(state_rows, engine_rows, "the state probes differently");
+    let map_table = CandidateTableWithMap { counts: counts.to_vec(), base, overflow: None };
+    let map_rows = candidate_map_option(&map_table, values, all_rows.clone());
+    assert_eq!(map_rows, engine_rows, "the map's option probes differently");
+    let engine_plain_rows = engine_lookup_plain(table, values, all_rows.clone());
+    assert_eq!(engine_plain_rows, engine_rows, "the engine's lookup probes differently");
+
+    let chain = over_fresh_column(source, probe_index, flavor, |values| {
+        let started = Instant::now();
+        let rows = candidate_chain(counts, base, values, all_rows.clone());
+        let elapsed = started.elapsed();
+        std::hint::black_box(&rows);
+        elapsed
+    })?;
+
+    let width = over_fresh_column(source, probe_index, flavor, |values| {
+        let started = Instant::now();
+        let rows = candidate_width(counts, base, values, all_rows.clone());
+        let elapsed = started.elapsed();
+        std::hint::black_box(&rows);
+        elapsed
+    })?;
+
+    let state = over_fresh_column(source, probe_index, flavor, |values| {
+        let started = Instant::now();
+        let rows = candidate_state(&state_table, values, all_rows.clone());
+        let elapsed = started.elapsed();
+        std::hint::black_box(&rows);
+        elapsed
+    })?;
+
+    let map_option = over_fresh_column(source, probe_index, flavor, |values| {
+        let started = Instant::now();
+        let rows = candidate_map_option(&map_table, values, all_rows.clone());
+        let elapsed = started.elapsed();
+        std::hint::black_box(&rows);
+        elapsed
+    })?;
+
+    let engine_plain = over_fresh_column(source, probe_index, flavor, |values| {
+        let started = Instant::now();
+        let rows = engine_lookup_plain(table, values, all_rows.clone());
+        let elapsed = started.elapsed();
+        std::hint::black_box(&rows);
+        elapsed
+    })?;
+
+    Ok(LadderParts { chain, width, state, map_option, engine_plain })
+}
+
+/// The probe key column's own values, as a plain slice of integers.
+fn plain_values(chunk: &ColumnChunk) -> Result<&[i64], Box<dyn std::error::Error>> {
+    match &chunk.encoding {
+        columnar_core::Encoding::Int64 { values } => Ok(values),
+        other => Err(format!("the probe's key is not a plain integer: {other:?}").into()),
+    }
+}
+
+/// Times a measurement over the probe key column, **materialised afresh** each
+/// time.
+///
+/// The engine's own query materialises the column and then probes it, so the
+/// column it probes is one the reader has just written. A candidate that read a
+/// buffer kept warm across the iterations would be measured on a **cheaper**
+/// column than the engine pays for, and the difference between the two would
+/// be the buffer's, not the lookup's.
+fn over_fresh_column<F>(
+    source: &ParquetSource,
+    key_index: usize,
+    flavor: columnar_kernels::Flavor,
+    mut measure: F,
+) -> Result<Timing, Box<dyn std::error::Error>>
+where
+    F: FnMut(&[i64]) -> Duration,
+{
+    let mut samples = Vec::with_capacity(ITERATIONS);
+    for _ in 0..ITERATIONS {
+        let materialised = source.read(&[key_index], &PushdownPlan::default(), flavor, 1)?;
+        let chunk = materialised.chunk(PROBE_KEY).ok_or("the probe key is there")?;
+        let values = plain_values(chunk)?;
+        samples.push(measure(values));
+    }
+    Ok(Timing::of(&samples))
 }
 
 /// The probe key column's own values, as a plain slice of integers.
@@ -868,6 +1270,11 @@ fn measure(path: &Path) -> Result<Measured, Box<dyn std::error::Error>> {
         ("candidate_probe", probe.candidate),
         ("candidate_with_map", probe.with_map),
         ("cold_candidate", probe.cold),
+        ("candidate_chain", probe.chain),
+        ("candidate_width", probe.width),
+        ("candidate_state", probe.state),
+        ("candidate_map_option", probe.map_option),
+        ("engine_lookup_plain", probe.engine_plain),
         ("read_plain", read_plain_timing),
         ("read_small", read_small),
     ];
@@ -896,6 +1303,29 @@ fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn st
             .find(|(part, _)| *part == name)
             .map_or(f64::NAN, |(_, timing)| timing.median)
     };
+
+    // The ladder's six increments. They add up to the remainder by
+    // construction, so what they say is **where** the remainder is, and the
+    // difference between their sum and the remainder is the noise the
+    // decomposition carries.
+    let chain_cost = part("candidate_chain") - part("candidate_probe");
+    let width_cost = part("candidate_width") - part("candidate_chain");
+    let state_cost = part("candidate_state") - part("candidate_width");
+    let map_option_cost = part("candidate_map_option") - part("candidate_state");
+    let loop_cost = part("engine_lookup_plain") - part("candidate_map_option");
+    let key_source_cost = part("probe_column") - part("engine_lookup_plain");
+    let ladder_sum =
+        chain_cost + width_cost + state_cost + map_option_cost + loop_cost + key_source_cost;
+    let remainder = part("probe_column") - part("candidate_probe");
+
+    // The stage's own residual -- what the stage leaves after the build side's
+    // whole and its open -- and the context: the gap between that residual and
+    // the standalone probe of the same work.
+    let residual_cold = part("stage_cold") - part("build_whole") - part("build_open");
+    let residual_resident = part("stage_resident") - part("build_whole") - part("build_open");
+    let context_cold = residual_cold - part("probe_batches");
+    let context_resident = residual_resident - part("probe_column");
+
     let report = serde_json::json!({
         "probe": "join-cost",
         "file": path.display().to_string(),
@@ -910,11 +1340,23 @@ fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn st
         "derived_ms": {
             "build_table": part("build_whole") - part("build_read") - part("build_keys"),
             "output_rows": part("candidate_probe") - part("floor_probe"),
-            "the_probe_s_remainder": part("probe_column") - part("candidate_probe"),
+            "the_probe_s_remainder": remainder,
             "the_map_s_share": part("candidate_with_map") - part("candidate_probe"),
             "the_cold_remainder": part("probe_batches") - part("cold_candidate"),
             "the_two_paths": part("stage_cold") - part("stage_resident"),
             "the_two_probes": part("probe_batches") - part("probe_column"),
+            "the_chain_s_cost": chain_cost,
+            "the_width_s_cost": width_cost,
+            "the_state_s_cost": state_cost,
+            "the_map_option_s_cost": map_option_cost,
+            "the_loop_s_cost": loop_cost,
+            "the_key_source_s_cost": key_source_cost,
+            "the_ladder_s_sum": ladder_sum,
+            "the_unexplained": remainder - ladder_sum,
+            "the_residual_cold": residual_cold,
+            "the_residual_resident": residual_resident,
+            "the_context_cold": context_cold,
+            "the_context_resident": context_resident,
         },
         "engine_rows": measured.engine_rows,
         "table_rows": measured.table_rows,
