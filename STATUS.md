@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **31 specs**, **39 ADRs** and **29 defects** so far, and every
-one of the specs is closed.
+[`constitution.md`](constitution.md). **32 specs**, **39 ADRs** and **29 defects** so far, and every
+one of the specs but the last is closed.
 
 ---
 
@@ -259,6 +259,25 @@ for a pinned x86-64 runner; it has not run on one.
   **The next question is which of the drift's parts is the engine's, and how much of the engine's own
   cost moves under the measurement.** It is **not** a spec yet: nothing has been measured for it,
   and its instrument is not built.
+- **The next increment is the engine, as a library, and the reason is recorded.** The engine half of a
+  database already exists — it runs a typed plan over Parquet, and it is measured against DuckDB and
+  Polars — but **the library does not ship**: `cargo package` fails outright, because the three crates
+  have to be published in the order their dependencies decide; the packaged crate carries the
+  repository's root README instead of its own; the public surface is the research harness's, with the
+  research modules public and no `prelude`; the join's build side is a `PathBuf` and there is no table
+  and no name; the enums that will grow are not `#[non_exhaustive]`; and all **fourteen** measurement
+  probes would ship to crates.io. It is written down as
+  [`spec 034`](specs/034-the-engine-as-a-library/spec.md), with its requirements and its tasks, and
+  **nothing has been implemented for it yet**. **The drift's question waits one increment, and the
+  reason is recorded in that spec's scope**: this increment changes no engine work, so every published
+  figure must stand unchanged, and the two tracks do not touch the same code.
+- **A hostile Parquet file can ask for four gigabytes before a byte of payload is read.** The reader
+  speaks the Thrift **compact** protocol, whose `read_bytes` allocates the declared length eagerly,
+  bounded by a u32 — so a file's metadata can declare a four-gigabyte string. The engine does not fix
+  it: the fix is upstream (`thrift` ≥ 0.23), and `parquet` 54 pins `thrift = "0.17"`, so the fix is a
+  **`parquet` bump** — and a `parquet` bump moves the published figures, because Arrow's decode is
+  measured. **It is named in `deny.toml` with the reason**, and it is written down as
+  [`spec 034`](specs/034-the-engine-as-a-library/spec.md)'s R10 rather than left in the reader.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a
