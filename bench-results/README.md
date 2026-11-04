@@ -35,6 +35,9 @@ python3 scripts/medians.py
 | `join-cost-spec030-before-run1.json` … `join-cost-spec030-before-run3.json` | the same probe against the code spec 030 replaces, measured back to back on the same host and with the instrument of that day, **three campaigns each, interleaved** with the campaigns above -- so that the floor, the machine's own measure, sits beside the stage in the same minutes. That code does not report the join stage's parts, so its ladder is **absent** and its report says so. |
 | `join-cost-spec034-run1.json` … `join-cost-spec034-run3.json` | the **re-measurement of spec 034**: the same probe, the same instrument, against the tree the increment ships, on this host. The increment changed no engine work, so the set the file publishes keeps its name and stands, and this set is published **beside** it. |
 | `join-cost-spec034-before-run1.json` … `join-cost-spec034-before-run3.json` | the same probe against the **code spec 034 replaces** -- a worktree at `79ec08f` -- measured back to back on this host with the campaigns above, **three campaigns each, interleaved**, and **both trees clean**, so that the code's share of every difference is separated from the machine's. |
+| `join-cost-spec036-run1.json` … `join-cost-spec036-run3.json` | the **file-state floor**: the probe with **both floors measured in the iteration**. The **machine's own measure** is the memory-bound loop the probe cannot go below, over the probe's own fresh column, right after the probe that used it -- so it reads nothing of its own and perturbs nothing. The **file-state floor** is the build side's read through the engine's own reader, with the engine's own predicates, over the engine's own columns, taken **right after** the machine's own measure -- so the file's state and the machine's movement are in the same iteration, and the report carries **how far apart the two were taken**. The report carries **every part's per-iteration values**, as it always did. |
+| `join-cost-spec036-before-run1.json` … `join-cost-spec036-before-run3.json` | the same probe against the **code spec 036 replaces** -- a worktree at `02ba709` -- measured back to back on this host with the campaigns above, **three campaigns each, interleaved**, so that the figures that moved because the **instrument** changed are separated from the machine's. |
+| `join-cost-spec036-hunt-run1.json` … `join-cost-spec036-hunt-run9.json` | the **hunt**: nine more campaigns of the same instrument, on a quieter host. They are published because they say whether the file's state moved at all -- each campaign's own spread of the file's own read, and of the machine's own movement, is what an **excursion** looks like -- and it did not. |
 | `join-cost-spec029-run1.json` … `join-cost-spec029-run3.json` | the probe as it stood at spec 029's close -- against the code spec 029 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
 | `join-cost-spec029-before-run1.json` … `join-cost-spec029-before-run3.json` | the set spec 029 measured against the code it replaced, with the instrument of that day. Kept under its own name, for the same reason. |
 | `join-cost-spec028-run1.json` … `join-cost-spec028-run3.json` | the probe as it stood at spec 028's close -- against the code spec 028 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
@@ -160,6 +163,7 @@ questions.
 | §3n | *what is in the sort's stage that is not the sort's own work* | `sort-cost-run*.json`, `sort-cost-before-run*.json` |
 | §3o | *what is in the join's stage, what the remainder's parts are, what the context is made of, and how far the machine drifts under it* | `join-cost-run*.json`, `join-cost-spec030-run*.json`, `join-cost-spec030-before-run*.json`, `join-cost-spec029-run*.json`, `join-cost-spec029-before-run*.json`, `join-cost-spec028-run*.json`, `join-cost-spec028-before-run*.json` |
 | §3p | *the join's stage, measured again, and the code's share of the difference* | `join-cost-spec034-run*.json`, `join-cost-spec034-before-run*.json` |
+| §3r | *the file-state floor: the two floors in the iteration, the yardstick that sees the file's state, and the correction* | `join-cost-spec036-run*.json`, `join-cost-spec036-before-run*.json`, `join-cost-spec036-hunt-run*.json` |
 | §2h | *the same-moment A/B, and the resident movement it cannot explain* | `compare-ab-old-run1.json`, `compare-ab-new-run1.json` |
 
 The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and
@@ -273,6 +277,25 @@ just probe-join "data/lineitem.parquet" \
 
 The reason is recorded in [spec 034](../specs/034-the-engine-as-a-library/spec.md):
 a set that slides forward would publish a **host's** movement as the engine's.
+
+**And a set that changes the instrument takes its own names too.** Spec 036 changed the
+**instrument** -- the build side's read and the machine's own measure are measured **in
+the iteration** now -- so the set it measured takes `join-cost-spec036-run*.json`, the
+code it replaces takes `join-cost-spec036-before-run*.json`, and the nine further
+campaigns of the hunt take `join-cost-spec036-hunt-run*.json`:
+
+```bash
+just probe-join "data/lineitem.parquet" \
+    "bench-results/join-cost-spec036-run1.json"
+just probe-join "data/lineitem.parquet" \
+    "bench-results/join-cost-spec036-before-run1.json"
+just probe-join "data/lineitem.parquet" \
+    "bench-results/join-cost-spec036-hunt-run1.json"
+```
+
+The reason is recorded in [spec 036](../specs/036-the-file-state-floor/spec.md): the set
+the file publishes keeps its name and its figures, and the instrument's new figures are
+published **beside** it.
 
 The **operator probe** writes its own two reports, one per code version:
 

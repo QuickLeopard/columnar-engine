@@ -2834,9 +2834,12 @@ the sum of the medians, and the mean is the statistic the parts tile. The drift 
 range of the medians — it is the yardstick's own statistic — and it is published beside the movement.
 
 **And every leaf carries its paired figure**: the leaf's own series less the floor's own series,
-iteration by iteration. The floor is the machine's own measure and it is measured **in the same
-iteration, back to back, with the order alternating**, so the paired figure is the leaf's own
-movement with the machine's common movement taken out.
+iteration by iteration. The floor is the machine's own measure, and **its sentence is corrected in
+[§3r](#3r-the-file-state-floor)**: it was **not** measured in the same iteration, back to back, with the
+order alternating. The **sides** were; the floor was measured in its own block, after the iterations
+were over, and paired with the leaves **by index**. The paired figure is the leaf's own movement with
+the machine's common movement taken out, and the machine it takes out is the machine's movement **in
+another block** — a reasonable proxy, and not the same-iteration pairing this section said it was.
 
 **And the ladder is taken over the pair of campaigns that make the context's own drift**, so the
 movement is the one the yardstick is about. **From the set this file publishes:**
@@ -2916,6 +2919,114 @@ path's drift is **4.731 ms** — **18.72%** of its cost — and the resident pat
 cost, and the resident path's is **0.818 ms**, **4.52%**. **So in the published set the engine's cost
 moves by about two per cent on the path that holds the data and by about a fifth on the path that reads
 the file** — **and the difference between the two paths is the file's state, not the engine's work.**
+
+### 3r. The file-state floor
+
+**The resolution [§3q](#3q-the-drifts-own-parts) named is built here, and the sentence §3q published about
+it is corrected.** §3q said that the floor "is measured **in the same iteration, back to back, with the
+order alternating**". **The sides were. The floor was not.** The machine's own measure was taken in the
+instrument's **probe block**, after the iterations were over; the build side's read was taken in the
+**build block**; the ladder's leaves were taken in the **interleaved loop**. Three blocks, and the
+paired figures paired a leaf from one of them with a floor from another.
+
+**And that is why the attribution §3q published was an argument and not a measurement.** §3q said the
+excursions in the build side's read — **11.713**, **11.403**, **22.093**, **38.640**, **24.708**,
+**15.446** against a baseline of about 11.5 ms — are "the file's state, not the engine's work", because
+the machine's own measure over the same campaign read **5.926**, **5.808**, **5.728**, **5.773**,
+**5.809**, **5.989** and did not move. The two series were in two different blocks, minutes apart, and
+the comparison was the best the instrument could offer. **Now the instrument offers a better one.**
+
+**And the instrument changed.** The build side's read and the machine's own measure are measured **in
+the iteration** now, in the same iteration as the parts they are judged against, and the file's own read
+is measured **right after** the machine's own measure. The two floors are **8.565 ms**, **8.871 ms** and
+**8.793 ms** apart in the three campaigns — back to back, where the old pairing was minutes apart.
+
+**And the ladder, on the set this increment measured** — three campaigns, the host's load average
+**8.90**, **8.57** and **9.41**:
+
+| the ladder | the cold path | the resident path |
+|---|---|---|
+| **the context's drift** | **2.352 ms** | **2.400 ms** |
+| the build side's gap — drift, movement, paired | 0.381 ms, +1.500 ms, +1.048 ms | 1.709 ms, +1.242 ms, +0.789 ms |
+| the open's gap — drift, movement, paired | 0.031 ms, +0.034 ms, −0.419 ms | 0.019 ms, +0.035 ms, −0.418 ms |
+| the probe's file state, less its row-number offset | 0.186 ms, −0.551 ms, −1.004 ms | 0.508 ms, +0.403 ms, −0.049 ms |
+| the probe's own remainder | 1.358 ms, +2.710 ms, +2.257 ms | 0.322 ms, +0.600 ms, +0.147 ms |
+| the part in no gap | 0.000 ms, −0.000 ms, −0.453 ms | 0.000 ms, −0.000 ms, −0.453 ms |
+| **the movement, and the reconciliation** | **+3.693 ms**, **0.000000** | **+2.280 ms**, **0.000000** |
+| **the machine's own measure** — drift, movement | **0.258 ms**, +0.453 ms | **0.258 ms**, +0.453 ms |
+| **the file's own read** — drift, movement | **0.361 ms**, +0.086 ms | **0.361 ms**, +0.086 ms |
+| **the file's read less the machine's** — drift, movement | **0.446 ms**, −0.366 ms | **0.446 ms**, −0.366 ms |
+| **the cost's drift, and its share of it** | **1.441 ms**, **4.99%** | **0.565 ms**, **2.63%** |
+
+**And the yardstick now sees the file's state as well as the machine's.** A leaf's yardstick is the sum
+of the drifts of the measurements it stands on, the machine's own drift, and the **file-state floor's**
+drift — the larger of them:
+
+| the yardstick — the machine's, then the file-aware | the cold path | the resident path |
+|---|---|---|
+| the build side's gap | 0.809 ms, 0.809 ms | 1.606 ms, 1.606 ms |
+| the open's gap | 0.258 ms, 0.361 ms | 0.258 ms, 0.361 ms |
+| the probe's file state, less its row-number offset | 2.874 ms, 2.874 ms | 1.119 ms, 1.119 ms |
+| the probe's own remainder | 3.583 ms, 3.583 ms | 1.171 ms, 1.171 ms |
+| the part in no gap | 1.441 ms, 1.441 ms | 0.565 ms, 0.565 ms |
+
+**And the verdicts are the same under both yardsticks, and they are sound.** On this set:
+
+- the verdict, on the cold path, is **unattributed**
+- the verdict's state, on the cold path, is **sound**
+- the cold path's yardstick is **3.583 ms**
+- the verdict, on the resident path, is **the memory's**
+- the verdict's state, on the resident path, is **sound**
+- the resident path's yardstick is **1.119 ms**
+
+**So the file's state did not move enough on this host, today, to widen any yardstick that mattered** —
+only the open's gap's, from **0.258 ms** to **0.361 ms**, and that leaf is at the noise under both.
+
+**And the figures that moved are published old and new, with the reason.** The code before this
+increment was measured back to back with the code after it, on this host, in the same session:
+
+| the figure that moved | the code before it | the code now | the difference |
+|---|---|---|---|
+| the machine's own measure | 6.891 ms | 5.168 ms | −1.723 ms |
+| the file's own read | 12.006 ms | 12.479 ms | +0.474 ms |
+
+**The machine's own measure moved because the column it reads moved**: it is now measured over the
+probe's own fresh column, right after the probe streamed over it, and it was measured over a column
+freshly read in a block of its own. **The file's own read moved because it is now measured in the
+iteration**, with the host's other work around it, and it was measured six times in a row in the build
+block. Neither difference is the engine's work: the engine's own path is not touched by this increment.
+
+**And the placement of the file's state decides a verdict.** On the code before this increment's own
+numbers, the build block's read — six consecutive reads, in a block of its own — drifts **0.806 ms**,
+against the resident path's probe's file state's yardstick of **0.778 ms**, and that leaf sits at
+**−0.788 ms**: outside the narrower ruler and inside the wider one. **So a file's state measured in the
+block would have flipped the resident path's verdict from the memory's to unattributed — on a number
+measured in another block.** That is the correction's cost, stated plainly: the file's state has to be
+measured where the leaves are, or it must not be in the yardstick at all.
+
+**And the attribution: the excursions did not recur, and that is published rather than asserted.** Nine
+more campaigns of the same instrument, on a quieter host (the load average **4.59**, **4.31**,
+**4.28**, **4.66**, **4.45**, **4.49**, **4.85**, **4.70** and **4.81**), are committed under their own
+names, and the file's own read's largest spread within a campaign was **1.805 ms** and the machine's own
+movement's largest spread within a campaign was **1.842 ms**. **So on this host, today, neither the
+file nor the machine excursed** — and the published set's excursion, the one at **38.640 ms**, was three
+times the baseline of a day that had a load average of **3.66** to **4.34**, lower than any of the
+fifteen campaigns measured here.
+
+**So the answer is in three parts.** **The instrument is in place**: the file's own read and the
+machine's own movement, measured in the same iteration, back to back, and every figure above is
+derived from the committed reports by the guard. **The correction stands**: §3q's sentence was wrong,
+and it is corrected in the place that published it, and in [ADR-0041](docs/adr/0041-the-drifts-own-parts.md)
+it is recorded as the decision it was and corrected in [ADR-0042](docs/adr/0042-the-file-state-floor.md).
+**And the attribution of the published set's excursions is still not a measurement** — because the file's
+state did not move on this host, today, to be measured. What the increment makes true is that **the next
+time it moves, the two will be measured apart, in the same iteration, eight or nine milliseconds
+apart.**
+
+**And the yardstick's question is answered.** A yardstick for the cold path that sees the file's state
+as well as the machine's **exists**, and it is the yardstick this section publishes: the machine's own
+drift, the file-state floor's drift, and the larger of them. **Which of them is larger is a property of
+the host's state on the day** — and on this day they were **0.258 ms** and **0.361 ms**.
 
 ---
 
@@ -3245,6 +3356,20 @@ share — and every figure it prints is checked, inside the section that publish
 ```bash
 python3 scripts/medians.py
 python3 scripts/check-published-figures.py
+```
+
+**And §3r's file-state floor has its own three sets**, under their own names, because the instrument
+changed — the build side's read and the machine's own measure are measured **in the iteration** now:
+
+```bash
+# this increment's set
+just probe-join "data/lineitem.parquet" "bench-results/join-cost-spec036-run1.json"
+
+# the code this increment replaces, on this same host, back to back
+just probe-join "data/lineitem.parquet" "bench-results/join-cost-spec036-before-run1.json"
+
+# the hunt: nine more campaigns of the same instrument
+just probe-join "data/lineitem.parquet" "bench-results/join-cost-spec036-hunt-run1.json"
 ```
 
 The probe runs the engine's **own** plans through the engine's own entry point and checks the answers

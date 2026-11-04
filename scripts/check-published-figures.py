@@ -1089,6 +1089,136 @@ SPEC035_LEAVES = {
     ),
 }
 
+# Spec 036: the file-state floor.
+#
+# The instrument changed: the build side's read and the machine's own floor are
+# now measured **in the iteration**, in the same iteration as the parts they are
+# judged against, and the file's own read is measured right after the machine's
+# own measure. So the set this increment measured takes its own name, and the
+# code before it is measured back to back on this host, under its own name.
+JOIN_COST_SPEC036_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec036-run*.json"))
+JOIN_COST_SPEC036_BEFORE_REPORTS = sorted(
+    (ROOT / "bench-results").glob("join-cost-spec036-before-run*.json")
+)
+# The **hunt**: nine more campaigns of the same instrument, on a quieter host.
+# They are published because they say whether the file's state moved at all on
+# this host, today -- and it did not, which is the answer to the attribution.
+JOIN_COST_SPEC036_HUNT_REPORTS = sorted(
+    (ROOT / "bench-results").glob("join-cost-spec036-hunt-run*.json")
+)
+SPEC036_SECTION = "### 3r"
+
+# The sets this increment measured: the code after it, and the code before it,
+# measured back to back on this host.
+SPEC036_FAMILIES = (
+    ("the set spec 036 measured", JOIN_COST_SPEC036_REPORTS),
+    ("the set the code before it measured", JOIN_COST_SPEC036_BEFORE_REPORTS),
+)
+
+# The file-state floor: the file's own read, in the iteration.
+#
+# It is the same part the build block used to time on its own -- the build
+# side's read, through the engine's own reader, with the engine's own
+# predicates -- and it is measured in the iteration now, so that the file's
+# state and the machine's own movement are in the same iteration as the parts.
+JOIN_COST_FILE_FLOOR = "build_read"
+
+# The figures that moved because the instrument changed: the machine's own
+# measure and the file's own read, both measured in the iteration now. They are
+# published old and new, with the reason, because the old ones were measured
+# somewhere else and on another day.
+SPEC036_MOVED = (
+    ("the machine's own measure", JOIN_COST_FLOOR, 3),
+    ("the file's own read", JOIN_COST_FILE_FLOOR, 3),
+)
+
+
+def join_cost_floors(paths: list[Path], path: str) -> dict[str, object]:
+    """The two floors, over one path's ladder.
+
+    The **machine's own measure** is the memory-bound loop, and the **file's own
+    read** is the build side's read through the engine's reader. Both are
+    measured **in the iteration**, and the file's own read is measured right
+    after the machine's own measure, so the pairing that takes the machine's
+    movement out of the file's read takes it out of a movement measured beside
+    it.
+
+    The **paired** series is the file's own read less the machine's own
+    movement, iteration by iteration: the file's share, with the machine's
+    common movement taken out.
+    """
+    ladder = join_cost_ladder(paths, path)
+    low, high = ladder["the extremes"]
+    runs = [json.loads(report.read_text()) for report in paths]
+
+    def medians(series: list[list[float]]) -> list[float]:
+        return [sorted(samples)[len(samples) // 2] for samples in series]
+
+    def means(series: list[list[float]]) -> list[float]:
+        return [sum(samples) / len(samples) for samples in series]
+
+    machine = [run["series_ms"][JOIN_COST_FLOOR] for run in runs]
+    file_state = [run["series_ms"][JOIN_COST_FILE_FLOOR] for run in runs]
+    paired = [
+        [file - floor for file, floor in zip(file_series, machine_series)]
+        for file_series, machine_series in zip(file_state, machine)
+    ]
+    machine_medians = medians(machine)
+    file_medians = medians(file_state)
+    paired_medians = medians(paired)
+    separations = [
+        run["derived_ms"].get("the_floors_separation") for run in runs
+    ]
+    return {
+        "the machine's drift": max(machine_medians) - min(machine_medians),
+        "the machine's movement": means(machine)[high] - means(machine)[low],
+        "the machine's medians": machine_medians,
+        "the file's drift": max(file_medians) - min(file_medians),
+        "the file's movement": means(file_state)[high] - means(file_state)[low],
+        "the file's medians": file_medians,
+        "the paired drift": max(paired_medians) - min(paired_medians),
+        "the paired movement": means(paired)[high] - means(paired)[low],
+        "the separation": [value for value in separations if value is not None],
+    }
+
+
+def join_cost_within_campaign_spread(paths: list[Path], part: str) -> list[float]:
+    """Each campaign's own spread of one measurement.
+
+    It is the spread **within** a campaign -- the largest iteration less the
+    smallest -- and it is what an **excursion** looks like: one iteration of a
+    campaign standing away from the others, in a series whose other iterations
+    are together.
+    """
+    spreads: list[float] = []
+    for report in paths:
+        run = json.loads(report.read_text())
+        series = run["series_ms"][part]
+        spreads.append(max(series) - min(series))
+    return spreads
+
+
+def join_cost_yardstick_file_aware(
+    parts: dict[str, list[float]],
+    path: str,
+) -> dict[str, float]:
+    """Each leaf's yardstick, with the file's state in it.
+
+    The yardstick is the sum of the drifts of the measurements the leaf stands
+    on, the machine's own drift, and the **file-state floor's** drift -- the
+    larger of them. So the yardstick covers what the machine **and the file**
+    could have produced on their own, and a leaf whose own drift is wider than
+    that is **inconclusive** rather than a part of the context.
+    """
+    drifts = join_cost_drift(parts)
+    machine = drifts.get(JOIN_COST_FLOOR, 0.0)
+    file_state = drifts.get(JOIN_COST_FILE_FLOOR, 0.0)
+    yardsticks: dict[str, float] = {}
+    for key, _name, _places, _word, sides in JOIN_COST_LEAVES[path]:
+        sides_drifts = [drifts[side] for side in sides if side in drifts]
+        yardsticks[key] = max([sum(sides_drifts), machine, file_state])
+    return yardsticks
+
 
 def join_cost_ladder(paths: list[Path], path: str) -> dict[str, object]:
     """The drift's ladder on one path: the leaves' drifts, and the movement.
@@ -1209,6 +1339,7 @@ def join_cost_verdict(
     parts: dict[str, list[float]],
     derived: dict[str, list[float]],
     path: str,
+    yardsticks: dict[str, float] | None = None,
 ) -> dict[str, object]:
     """The yardsticks, the leaves' states, the verdict and the verdict's state.
 
@@ -1222,11 +1353,15 @@ def join_cost_verdict(
     when the yardstick could measure what it judged, **not sound** when a
     yardstick was narrower than the machine's own movement, and
     **inconclusive** when no leaf could be judged at all.
+
+    The yardsticks are the machine's own by default. A yardstick that sees the
+    file's state as well is passed in, and the same rules are applied to it.
     """
     context = [v for v in derived.get(f"the_context_{path}", []) if v is not None]
     if not context:
         return {}
-    yardsticks = join_cost_yardstick(parts, path)
+    if yardsticks is None:
+        yardsticks = join_cost_yardstick(parts, path)
     leaves: list[tuple[str, str, str, float, float, float, str]] = []
     for key, name, _places, word, _sides in JOIN_COST_LEAVES[path]:
         values = [v for v in derived.get(key, []) if v is not None]
@@ -2611,6 +2746,218 @@ def main() -> int:
                 else:
                     print(f"ok  {'PERF.md':<10} {f'{set_label}: a build read iteration':<60} {rendered}")
 
+    # Spec 036: the file-state floor -- the two floors, the file-aware
+    # yardstick, and the old-and-new, in the section that publishes them.
+    floor_section = section_of(texts["PERF.md"], SPEC036_SECTION)
+    if floor_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the file-state floor "
+            f"({SPEC036_SECTION}) is not in the document"
+        )
+    else:
+        floor_families = {
+            label: _join_cost_figures(paths) for label, paths in SPEC036_FAMILIES
+        }
+        new_paths = dict(SPEC036_FAMILIES)["the set spec 036 measured"]
+        if len(new_paths) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the join probe's set for the set spec 036 measured has {len(new_paths)} "
+                f"campaigns, and the method says {MIN_CAMPAIGNS}"
+            )
+        else:
+            parts, derived = floor_families["the set spec 036 measured"]
+            for path in ("cold", "resident"):
+                ladder = join_cost_ladder(new_paths, path)
+                floors = join_cost_floors(new_paths, path)
+                wanted: list[tuple[str, float, int]] = [
+                    (f"the {path} path's context's drift", ladder["the context's drift"], 3),
+                    (f"the {path} path's movement", ladder["the movement"], 3),
+                    (f"the {path} path's reconciliation", ladder["the reconciliation"], 6),
+                    (f"the {path} path's cost's drift", ladder["the cost's drift"], 3),
+                    (f"the {path} path's cost's share", ladder["the cost's share"], 2),
+                    (f"the {path} path's machine's drift", floors["the machine's drift"], 3),
+                    (f"the {path} path's machine's movement", floors["the machine's movement"], 3),
+                    (f"the {path} path's file's drift", floors["the file's drift"], 3),
+                    (f"the {path} path's file's movement", floors["the file's movement"], 3),
+                    (f"the {path} path's paired drift", floors["the paired drift"], 3),
+                    (f"the {path} path's paired movement", floors["the paired movement"], 3),
+                ]
+                for leaf in ladder["the leaves"]:
+                    wanted.append((f"the {path} path's {leaf['name']}'s drift", leaf["drift"], 3))
+                    wanted.append(
+                        (f"the {path} path's {leaf['name']}'s movement", leaf["movement"], 3)
+                    )
+                    wanted.append(
+                        (f"the {path} path's {leaf['name']}'s paired movement", leaf["paired"], 3)
+                    )
+                for label, figure, places in wanted:
+                    rendered = rendered_figure(figure, places)
+                    if not figure_in(floor_section, rendered):
+                        failures.append(
+                            f"PERF.md: the set spec 036 measured's {label} is {rendered} by the "
+                            f"reports but that figure does not appear in the section"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {f'{label}':<60} {rendered}")
+
+            # The **two floors' separation**: how far apart they were taken in
+            # the iteration they share. It is the distance the pairing covers.
+            for index, value in enumerate(floors["the separation"], 1):
+                rendered = rendered_figure(value, 3)
+                if not figure_in(floor_section, rendered):
+                    failures.append(
+                        f"PERF.md: the set spec 036 measured's floors' separation, campaign {index}, "
+                        f"is {rendered} by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(
+                        f"ok  {'PERF.md':<10} {f'the floors separation, campaign {index}':<60} "
+                        f"{rendered}"
+                    )
+
+            # The **yardsticks**: the machine's own, and the one that sees the
+            # file's state as well. The leaves' states are judged against the
+            # second one, and the verdicts are published under both.
+            for path in ("cold", "resident"):
+                machine_yardsticks = join_cost_yardstick(parts, path)
+                file_yardsticks = join_cost_yardstick_file_aware(parts, path)
+                for key, name, _places, _word, _sides in JOIN_COST_LEAVES[path]:
+                    for label, yardsticks in (
+                        (f"the {path} path's {name}'s machine's yardstick", machine_yardsticks),
+                        (f"the {path} path's {name}'s file-aware yardstick", file_yardsticks),
+                    ):
+                        rendered = rendered_figure(yardsticks[key], 3)
+                        if not figure_in(floor_section, rendered):
+                            failures.append(
+                                f"PERF.md: the set spec 036 measured's {label} is {rendered} by the "
+                                f"reports but that figure does not appear in the section"
+                            )
+                        else:
+                            print(f"ok  {'PERF.md':<10} {f'{label}':<60} {rendered}")
+                for label, verdict in (
+                    ("the machine's yardstick", join_cost_verdict(parts, derived, path)),
+                    (
+                        "the file-aware yardstick",
+                        join_cost_verdict(parts, derived, path, file_yardsticks),
+                    ),
+                ):
+                    if not verdict:
+                        continue
+                    for phrase_label, phrase in join_cost_path_phrases(verdict, path):
+                        if phrase not in floor_section:
+                            failures.append(
+                                f"PERF.md: the set spec 036 measured's {label} does not publish "
+                                f"{phrase_label}: the reports say {phrase}"
+                            )
+                        else:
+                            print(
+                                f"ok  {'PERF.md':<10} {f'{label}, {phrase_label}':<60} {phrase}"
+                            )
+
+        # The **old and the new**, part by part: the figures that moved because
+        # the instrument changed, measured back to back on this host.
+        new_parts = floor_families["the set spec 036 measured"][0]
+        old_parts = floor_families["the set the code before it measured"][0]
+        for label, part, places in SPEC036_MOVED:
+            new_values = new_parts.get(part, [])
+            old_values = old_parts.get(part, [])
+            if not new_values or not old_values:
+                continue
+            for figure_label, value in (
+                (f"the old {label}", statistics.median(old_values)),
+                (f"the new {label}", statistics.median(new_values)),
+                (
+                    f"the difference in {label}",
+                    statistics.median(new_values) - statistics.median(old_values),
+                ),
+            ):
+                rendered = rendered_figure(value, places)
+                if not figure_in(floor_section, rendered):
+                    failures.append(
+                        f"PERF.md: {figure_label} is {rendered} by the reports "
+                        f"but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{figure_label}':<60} {rendered}")
+
+        # The **old instrument's own numbers**: the file's state, measured in the
+        # block it was measured in, and the verdict it would have decided.
+        old_paths = dict(SPEC036_FAMILIES)["the set the code before it measured"]
+        if len(old_paths) >= MIN_CAMPAIGNS:
+            old_parts, old_derived = floor_families["the set the code before it measured"]
+            old_floors = join_cost_floors(old_paths, "cold")
+            wanted = [
+                (
+                    "the code before it: the file's own read's drift",
+                    old_floors["the file's drift"],
+                    3,
+                ),
+            ]
+            path = "resident"
+            machine_yardsticks = join_cost_yardstick(old_parts, path)
+            file_yardsticks = join_cost_yardstick_file_aware(old_parts, path)
+            key = "the_probe_file_state"
+            wanted.append(
+                (
+                    "the code before it: the resident path's probe's file state's machine's yardstick",
+                    machine_yardsticks[key],
+                    3,
+                )
+            )
+            wanted.append(
+                (
+                    "the code before it: the resident path's probe's file state's file-aware yardstick",
+                    file_yardsticks[key],
+                    3,
+                )
+            )
+            values = [v for v in old_derived.get(key, []) if v is not None]
+            if values:
+                wanted.append(
+                    (
+                        "the code before it: the resident path's probe's file state's value",
+                        statistics.median(values),
+                        3,
+                    )
+                )
+            for label, figure, places in wanted:
+                rendered = rendered_figure(figure, places)
+                if not figure_in(floor_section, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} by the reports "
+                        f"but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{label}':<60} {rendered}")
+
+        # The **hunt**: nine more campaigns of the same instrument. They are
+        # published because they say whether the file's state moved at all on
+        # this host, today -- the answer to the attribution.
+        if len(JOIN_COST_SPEC036_HUNT_REPORTS) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the join probe's hunt has {len(JOIN_COST_SPEC036_HUNT_REPORTS)} campaigns, "
+                f"and the method says {MIN_CAMPAIGNS}"
+            )
+        else:
+            for label, part in (
+                ("the file's own read's largest spread within a campaign", JOIN_COST_FILE_FLOOR),
+                (
+                    "the machine's own movement's largest spread within a campaign",
+                    JOIN_COST_FLOOR,
+                ),
+            ):
+                spreads = join_cost_within_campaign_spread(
+                    JOIN_COST_SPEC036_HUNT_REPORTS, part
+                )
+                rendered = rendered_figure(max(spreads), 3)
+                if not figure_in(floor_section, rendered):
+                    failures.append(
+                        f"PERF.md: the hunt's {label} is {rendered} by the reports "
+                        f"but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'the hunt: {label}':<60} {rendered}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -3411,6 +3758,7 @@ def main() -> int:
         f"{len(SORT_COST_CHECKS)} of the sort probe, "
         f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe, "
         f"{len(SPEC035_FAMILIES) * (2 * (7 + 3 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
+        f"{2 * (11 + 3 * len(SPEC035_LEAVES['cold'])) + 3 + 2 * (2 * len(SPEC035_LEAVES['cold']) + 6) + 3 * len(SPEC036_MOVED) + 6} of the file-state floor, "
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
     )
     return 0

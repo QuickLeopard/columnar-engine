@@ -1449,6 +1449,12 @@ JOIN_COST_DERIVED = (
 # yardstick's floor.
 JOIN_COST_FLOOR = "floor_probe"
 
+# The file-state floor: the file's own read, in the iteration. It is the build
+# side's read through the engine's own reader, with the engine's own
+# predicates, and it is measured in the iteration -- so the file's state and
+# the machine's own movement are in the same iteration as the parts.
+JOIN_COST_FILE_FLOOR = "build_read"
+
 # The ladder's leaves, per path: the figure, the label the section publishes it
 # under, the decimal places, the word it carries, and **the sides the leaf
 # stands on** -- the measurements whose drifts the yardstick takes.
@@ -1584,10 +1590,29 @@ def join_cost_yardstick(parts: dict[str, list[float]], path: str) -> dict[str, f
     return yardsticks
 
 
+def join_cost_yardstick_file_aware(parts: dict[str, list[float]], path: str) -> dict[str, float]:
+    """Each leaf's yardstick, with the file's state in it.
+
+    The yardstick for a leaf is the **sum** of the drifts of the measurements
+    that leaf stands on, the **floor's** drift, and the **file-state floor's**
+    drift -- the **larger** of them. So the yardstick covers what the machine
+    **and the file** could have produced on their own.
+    """
+    drifts = join_cost_drift(parts)
+    floor = drifts.get(JOIN_COST_FLOOR, 0.0)
+    file_state = drifts.get(JOIN_COST_FILE_FLOOR, 0.0)
+    yardsticks: dict[str, float] = {}
+    for key, _label, _places, _word, sides in JOIN_COST_LADDER[path]:
+        sides_drifts = [drifts[side] for side in sides if side in drifts]
+        yardsticks[key] = max([sum(sides_drifts), floor, file_state])
+    return yardsticks
+
+
 def join_cost_verdict(
     parts: dict[str, list[float]],
     derived: dict[str, list[float]],
     path: str,
+    yardsticks: dict[str, float] | None = None,
 ) -> dict[str, object]:
     """The context's verdict, in one of the six words, the yardstick it was judged
     against, and the state of that test.
@@ -1603,11 +1628,15 @@ def join_cost_verdict(
     the yardstick could measure what it judged and at least one leaf could be
     judged, **not sound** when the yardstick was narrower than the machine's own
     movement, and **inconclusive** when no leaf could be judged at all.
+
+    A yardstick that sees the file's state as well is passed in, and the same
+    rules are applied to it.
     """
     context = derived.get(f"the_context_{path}", [])
     if not context:
         return {}
-    yardsticks = join_cost_yardstick(parts, path)
+    if yardsticks is None:
+        yardsticks = join_cost_yardstick(parts, path)
     leaves: list[tuple[str, str, float, float, float, str]] = []
     for key, label, _, word, _sides in JOIN_COST_LADDER[path]:
         values = [value for value in derived.get(key, []) if value is not None]
@@ -1878,6 +1907,110 @@ def print_drift_ladder(sets: list[tuple[str, list[dict]]]) -> None:
                   f" {100.0 * cost_drift / (sum(cost) / len(cost)):.2f}% of it")
 
 
+def print_file_state_floor(sets: list[tuple[str, list[dict]]]) -> None:
+    """Print the file-state floor: the two floors, and the pairing between them.
+
+    This is spec 036: the machine's own measure and the file's own read are
+    both measured **in the iteration**, back to back, and the file's own read
+    is the build side's read through the engine's own reader, with the engine's
+    own predicates -- the file's state, as the engine pays it.
+
+    The **paired** series is the file's own read less the machine's own
+    movement, iteration by iteration: the file's share, with the machine's
+    common movement taken out. And the **yardstick** that sees the file's state
+    as well as the machine's is the larger of the machine's own drift and the
+    file-state floor's drift.
+    """
+    def medians(samples: list[list[float]]) -> list[float]:
+        return [sorted(one)[len(one) // 2] for one in samples]
+
+    for label, runs in sets:
+        if not runs:
+            continue
+        print(f"\n=== THE FILE-STATE FLOOR -- {label} ({len(runs)} campaigns) ===")
+        machine = [run["series_ms"][JOIN_COST_FLOOR] for run in runs]
+        file_state = [run["series_ms"][JOIN_COST_FILE_FLOOR] for run in runs]
+        paired = [
+            [file - floor for file, floor in zip(file_series, machine_series)]
+            for file_series, machine_series in zip(file_state, machine)
+        ]
+        for name, series in (
+            ("the machine's own measure", machine),
+            ("the file's own read", file_state),
+            ("the file's read less the machine's", paired),
+        ):
+            medians_of = medians(series)
+            print(
+                f"   {name:<44} drift {max(medians_of) - min(medians_of):8.3f} ms"
+                f"   medians {', '.join(f'{value:.3f}' for value in medians_of)}"
+            )
+        separations = [
+            run["derived_ms"].get("the_floors_separation") for run in runs
+        ]
+        separations = [value for value in separations if value is not None]
+        if separations:
+            print(
+                "   the two floors' separation: "
+                f"{', '.join(f'{value:.3f}' for value in separations)} ms"
+            )
+
+        parts: dict[str, list[float]] = {}
+        derived: dict[str, list[float]] = {}
+        for run in runs:
+            for key, value in run.get("parts_ms", {}).items():
+                parts.setdefault(key, []).append(value)
+            for key, value in run.get("derived_ms", {}).items():
+                derived.setdefault(key, []).append(value)
+        for path in ("cold", "resident"):
+            machine_yardsticks = join_cost_yardstick(parts, path)
+            file_yardsticks = join_cost_yardstick_file_aware(parts, path)
+            print(f"\n-- the {path} path: the yardsticks, the machine's and the file-aware --")
+            for key, leaf, _places, _word, _sides in JOIN_COST_LADDER[path]:
+                print(
+                    f"   {leaf:<44} the machine's {machine_yardsticks[key]:8.3f} ms"
+                    f"   the file-aware {file_yardsticks[key]:8.3f} ms"
+                )
+            for name, yardsticks in (
+                ("the machine's", machine_yardsticks),
+                ("the file-aware", file_yardsticks),
+            ):
+                verdict = join_cost_verdict(parts, derived, path, yardsticks)
+                if verdict:
+                    print(
+                        f"   the verdict under {name} yardstick: "
+                        f"{verdict['verdict']} ({verdict['state']})"
+                    )
+
+
+def print_excursion_hunt(runs: list[dict]) -> None:
+    """Print the hunt: whether the file's state moved at all.
+
+    This is spec 036's answer to the attribution: the excursions the published
+    set carries did not recur, and the hunt is the campaigns that say so. Each
+    campaign's own spread of the file's own read, and of the machine's own
+    movement, is what an **excursion** looks like -- one iteration standing
+    away from the others.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE HUNT -- {len(runs)} more campaigns of the same instrument ===")
+    for name, part in (
+        ("the file's own read", JOIN_COST_FILE_FLOOR),
+        ("the machine's own movement", JOIN_COST_FLOOR),
+    ):
+        spreads = []
+        for run in runs:
+            series = run["series_ms"][part]
+            spreads.append(max(series) - min(series))
+        print(
+            f"   {name:<44} the largest spread within a campaign {max(spreads):8.3f} ms"
+            f"   the medians {', '.join(f'{value:.3f}' for value in spreads)}"
+        )
+    loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+    if loads:
+        print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -2117,18 +2250,38 @@ def main() -> int:
     if join_sets:
         print_join_cost(join_sets)
 
-    # Spec 035's ladder: the drift's own parts, over the set the file publishes
-    # and the set spec 034 measured beside it.
+    # Spec 035's ladder: the drift's own parts, over the set the file publishes,
+    # the set spec 034 measured beside it, and the set spec 036 measured.
     ladder_sets = [
         (label, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
         for label, pattern in (
             ("the set the file publishes now", "join-cost-run*.json"),
             ("the set spec 034 measured", "join-cost-spec034-run*.json"),
+            ("the set spec 036 measured", "join-cost-spec036-run*.json"),
         )
         if sorted(Path("bench-results").glob(pattern))
     ]
     if ladder_sets:
         print_drift_ladder(ladder_sets)
+
+    # Spec 036: the file-state floor -- the two floors, the yardstick that sees
+    # the file's state, and the code before this increment, measured back to back
+    # on this host.
+    floor_sets = [
+        (label, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
+        for label, pattern in (
+            ("the set spec 036 measured", "join-cost-spec036-run*.json"),
+            ("the set the code before it measured", "join-cost-spec036-before-run*.json"),
+        )
+        if sorted(Path("bench-results").glob(pattern))
+    ]
+    if floor_sets:
+        print_file_state_floor(floor_sets)
+
+    # The hunt: nine more campaigns of the same instrument, published because
+    # they say whether the file's state moved at all on this host.
+    hunt = [load(p) for p in sorted(Path("bench-results").glob("join-cost-spec036-hunt-run*.json"))]
+    print_excursion_hunt(hunt)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))
