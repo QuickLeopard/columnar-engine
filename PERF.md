@@ -2820,6 +2820,95 @@ and is **5.376 ms**: the same code, on a quieter and faster host. The tree this 
 measured on this host in this session, reads **18.455 ms** against this increment's **18.366 ms** —
 so what moved is the machine's, and the published figures stand.
 
+### 3q. The drift's own parts
+
+**The drift is the yardstick every part is judged against, and this section takes it apart.** A
+**drift** is a range — the spread of a measurement's medians over a session's three campaigns — and a
+range is **not additive**: the drift of a sum is not the sum of the drifts, and two parts can each
+drift while the sum they make stays where it was. What **is** additive is the **movement** — the
+difference between two campaigns — because **per iteration** the ladder's leaves sum to the context
+and the reconciliation is **0.000 ms**.
+
+**So the ladder is built on the movement, and it is taken on the means.** The median of a sum is not
+the sum of the medians, and the mean is the statistic the parts tile. The drift itself stays the
+range of the medians — it is the yardstick's own statistic — and it is published beside the movement.
+
+**And the ladder is taken over the pair of campaigns that make the context's own drift**, so the
+movement is the one the yardstick is about. **From the set this file publishes:**
+
+| the ladder | the cold path | the resident path |
+|---|---|---|
+| **the context's drift** | **0.667 ms** | **0.356 ms** |
+| the build side's gap — drift, movement | 0.120 ms, +1.054 ms | 0.564 ms, +1.228 ms |
+| the open's gap — drift, movement | 0.011 ms, −0.005 ms | 0.010 ms, −0.016 ms |
+| the probe's file state, less its row-number offset | 1.700 ms, +1.179 ms | 0.390 ms, −0.001 ms |
+| the probe's own remainder | 0.585 ms, −0.098 ms | 0.219 ms, +0.325 ms |
+| the part in no gap | 0.000 ms, 0.000 ms | 0.000 ms, 0.000 ms |
+| **the movement, and the reconciliation** | **+2.130 ms**, **0.000000** | **+1.536 ms**, **0.000000** |
+| **the floor** — the machine's own movement | **0.362 ms**, +0.205 ms | **0.362 ms**, +0.246 ms |
+
+**And from the set this increment measured, on a quieter host:**
+
+| the ladder | the cold path | the resident path |
+|---|---|---|
+| **the context's drift** | **0.184 ms** | **0.371 ms** |
+| the build side's gap — drift, movement | 0.117 ms, +0.146 ms | 0.254 ms, +0.061 ms |
+| the open's gap — drift, movement | 0.004 ms, +0.003 ms | 0.011 ms, −0.001 ms |
+| the probe's file state, less its row-number offset | 0.109 ms, +0.140 ms | 0.125 ms, +0.188 ms |
+| the probe's own remainder | 0.262 ms, −0.083 ms | 0.106 ms, −0.049 ms |
+| the part in no gap | 0.000 ms, 0.000 ms | 0.000 ms, 0.000 ms |
+| **the movement, and the reconciliation** | **+0.206 ms**, **0.000000** | **+0.199 ms**, **0.000000** |
+| **the floor** — the machine's own movement | **0.275 ms**, +0.301 ms | **0.275 ms**, −0.301 ms |
+
+**And the answer is that the drift has three parts — the machine's own movement, the file's state and
+the engine's own variance — and which of them is largest is a property of the host's state on the
+day, not of the code.**
+
+**On the busy host the published set was taken on, the cold path's movement is the file's state and
+the build side's gap**: **+1.179 ms** and **+1.054 ms** of the **+2.130 ms**, against the machine's own
+**+0.205 ms**. **And the file's state is in the build side's read's own series**: the read's medians
+are **11.763 ms**, **22.093 ms**, **11.898 ms** for the three campaigns, and inside the middle one the
+read's own six iterations are **11.713**, **11.403**, **22.093**, **38.640**, **24.708**, **15.446** —
+three excursions above 22 ms against a baseline of about 11.7 ms. **That is the file's state, not the
+engine's work**: the same code runs in every iteration.
+
+**And on the quiet host the same read never breaks away**: its three medians are **10.316 ms**,
+**10.952 ms**, **10.657 ms**, and its six iterations in the middle campaign are **11.079**, **10.916**,
+**10.975**, **10.952**, **10.891**, **10.804** — every one of them within a millisecond. **So the
+excursions are the file's state and not the machine's speed**, and the file's state is the one part of
+the drift that the code cannot cause and the instrument does not yet measure per iteration.
+
+**And on the quiet host this increment's set was taken on, the machine's own movement is larger than
+the cold path's whole movement**: the floor's **+0.301 ms** against **+0.206 ms**. So the machine's
+share is not a fixed number either — **which is why the two sets are published beside each other and
+not one instead of the other**: the decomposition is a property of the code, and the shares are a
+property of the day.
+
+**And the yardstick's validity follows, leaf by leaf.** A leaf's yardstick is its own drift unless
+the floor's is wider. On the published set's cold path the **probe's file state less its row-number
+offset** drifts **1.700 ms** and the **probe's own remainder** **0.585 ms**, against the floor's
+**0.362 ms** — **their own drift is their yardstick, and the floor does not reach them**. The **build
+side's gap** drifts **0.120 ms** and the **open's gap** **0.011 ms**, and the floor covers both. On the
+resident path the **build side's gap** drifts **0.564 ms**, above the floor's **0.362 ms**, and the
+other four are covered. **On the increment's set the answer flips**, on the other path: the cold
+path's context drifts **0.184 ms** against the floor's **0.275 ms** — **covered** — and the resident
+path's drifts **0.371 ms** — **not covered**.
+
+**And the resolution that would be needed** is a yardstick for the cold path that sees the file's
+state as well as the machine's, because the cold path's largest leaf **is** the file's state — and
+**no floor over a memory-bound loop can see it**. The instrument measures the build side's file state
+**once per campaign**, the process's first read of the build side's data, and not per iteration, so
+the excursions inside the iterations cannot be attributed to it from the report. **A file-state floor —
+the file's own read, measured in the iteration, paired with the parts — is what would settle it, and
+it is a new instrument**, which wants its own measurement and its own increment.
+
+**And how much of the engine's own cost moves under the measurement.** In the published set the cold
+path's drift is **4.731 ms** — **18.72%** of its cost — and the resident path's is **0.340 ms**,
+**1.75%** of its own. In the increment's set the cold path's drift is **1.237 ms**, **6.76%** of its
+cost, and the resident path's is **0.818 ms**, **4.52%**. **So the engine's cost holds to about a
+fiftieth on the path that holds the data, and to about a seventh on the path that reads the file** —
+and the difference between the two is the file's state, not the engine's work.
+
 ---
 
 ## 4. The defects the increments found

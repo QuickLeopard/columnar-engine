@@ -1037,6 +1037,145 @@ def join_cost_drift(parts: dict[str, list[float]]) -> dict[str, float]:
     return {key: max(values) - min(values) for key, values in parts.items() if values}
 
 
+# Spec 035: the drift's own parts.
+#
+# A **drift** is a range, and a range is not additive: the drift of a sum is
+# not the sum of the drifts. What **is** additive is the **movement** -- the
+# difference between two campaigns -- and the parts tile it, because per
+# iteration the ladder's leaves sum to the context and the reconciliation is
+# 0.000 ms.
+#
+# The movement is taken on the **means**, and not on the medians, because the
+# median of a sum is not the sum of the medians: the mean is the statistic the
+# parts tile. The drift itself stays the range of the medians -- it is the
+# yardstick's own statistic, and it is published beside the movement.
+#
+# The leaves are the ladder's **tiling** leaves: the build side's gap, the
+# open's gap, the probe's file state less its row-number offset, and the
+# probe's own remainder. The fifth leaf, the part in no gap, is always zero.
+# The section that publishes the ladder, and the two sets it is taken over.
+SPEC035_SECTION = "### 3q"
+SPEC035_FAMILIES = (
+    ("the published set", JOIN_COST_REPORTS),
+    ("this increment's set", JOIN_COST_SPEC034_REPORTS),
+)
+
+SPEC035_LEAVES = {
+    "cold": (
+        ("the build side's gap", "the_build_gap_cold", "the build side's gap"),
+        ("the open's gap", "the_open_gap_cold", "the open's gap"),
+        (
+            "the probe's file state, less its row-number offset",
+            "the_probe_row_offset",
+            None,
+        ),
+        ("the probe's own remainder", "the_probe_residual_cold", "the probe's own remainder"),
+        ("the part in no gap", "the_host_remainder_cold", "the part in no gap"),
+    ),
+    "resident": (
+        ("the build side's gap", "the_build_gap_resident", "the build side's gap"),
+        ("the open's gap", "the_open_gap_resident", "the open's gap"),
+        (
+            "the probe's file state, less its row-number offset",
+            "the_probe_file_state",
+            None,
+        ),
+        (
+            "the probe's own remainder",
+            "the_probe_residual_resident",
+            "the probe's own remainder",
+        ),
+        ("the part in no gap", "the_host_remainder_resident", "the part in no gap"),
+    ),
+}
+
+
+def join_cost_ladder(paths: list[Path], path: str) -> dict[str, object]:
+    """The drift's ladder on one path: the leaves' drifts, and the movement.
+
+    The **drift** of a measurement is the range of its medians over the set's
+    campaigns -- the yardstick's own statistic. The **movement** is the
+    difference between the two campaigns that make the **context's** own drift,
+    taken on the means, because the mean is the statistic the parts tile.
+
+    The ladder closes exactly: the movement of the context is the sum of the
+    movements of its leaves, and the difference between the two is the
+    reconciliation.
+    """
+    runs = [json.loads(path.read_text()) for path in paths]
+
+    def series_of(leaf: str) -> list[list[float]]:
+        """One leaf's per-iteration series, one list per campaign."""
+        return [run["ladder_series_ms"][path][leaf] for run in runs]
+
+    def medians(series: list[list[float]]) -> list[float]:
+        return [sorted(samples)[len(samples) // 2] for samples in series]
+
+    def means(series: list[list[float]]) -> list[float]:
+        return [sum(samples) / len(samples) for samples in series]
+
+    context = series_of("the context")
+    context_medians = medians(context)
+    low = context_medians.index(min(context_medians))
+    high = context_medians.index(max(context_medians))
+    movement = means(context)[high] - means(context)[low]
+
+    leaves: list[dict[str, object]] = []
+    total = 0.0
+    for name, key, series_name in SPEC035_LEAVES[path]:
+        published = [run["derived_ms"][key] for run in runs]
+        leaf_movement = 0.0
+        if series_name is None:
+            # The leaf enters the ladder as the file's state **less** the
+            # offset, so on the cold path it is the offset taken against the
+            # probe's gap.
+            fs = series_of("the probe's file state")
+            off = series_of("the probe's row-number offset")
+            signed = [[f - o for f, o in zip(a, b)] for a, b in zip(fs, off)]
+            leaf_movement = means(signed)[high] - means(signed)[low]
+        else:
+            series = series_of(series_name)
+            leaf_movement = means(series)[high] - means(series)[low]
+        total += leaf_movement
+        leaves.append(
+            {
+                "name": name,
+                "drift": max(published) - min(published),
+                "medians": published,
+                "movement": leaf_movement,
+            }
+        )
+
+    floor = [run["parts_ms"]["floor_probe"] for run in runs]
+    floor_series = [run["series_ms"]["floor_probe"] for run in runs]
+    cost = [run["parts_ms"][f"stage_{path}"] for run in runs]
+    cost_drift = max(cost) - min(cost)
+    return {
+        "the context's drift": max(context_medians) - min(context_medians),
+        "the context's medians": context_medians,
+        "the extremes": (low, high),
+        "the movement": movement,
+        "the leaves": leaves,
+        "the reconciliation": abs(movement - total),
+        "the floor's drift": max(floor) - min(floor),
+        "the floor's movement": means(floor_series)[high] - means(floor_series)[low],
+        "the floor's medians": floor,
+        "the cost's medians": cost,
+        "the cost's drift": cost_drift,
+        "the cost's share": 100.0 * cost_drift / (sum(cost) / len(cost)),
+    }
+
+
+def join_cost_ladder_reconciliation(paths: list[Path], path: str) -> float:
+    """The ladder's reconciliation: the movement, less the leaves' sum.
+
+    It is the difference between the context's movement and the sum of the
+    movements of its leaves, and it is **0.000 ms** -- the ladder closes
+    exactly, because the parts tile.
+    """
+    return float(join_cost_ladder(paths, path)["the reconciliation"])
+
+
 def join_cost_yardstick(parts: dict[str, list[float]], path: str) -> dict[str, float]:
     """Each leaf's yardstick, by the rule.
 
@@ -2396,6 +2535,72 @@ def main() -> int:
                     else:
                         print(f"ok  {'PERF.md':<10} {f'{family}: {label}':<40} {phrase}")
 
+    # Spec 035: the drift's own parts -- the ladder, over both sets, in the
+    # section that publishes it. Every figure the section carries is derived
+    # here, and looked for **inside** it.
+    ladder_section = section_of(texts["PERF.md"], SPEC035_SECTION)
+    if ladder_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the drift's ladder "
+            f"({SPEC035_SECTION}) is not in the document"
+        )
+    else:
+        for set_label, paths in SPEC035_FAMILIES:
+            if len(paths) < MIN_CAMPAIGNS:
+                failures.append(
+                    f"the join probe's set for {set_label} has {len(paths)} campaigns, "
+                    f"and the method says {MIN_CAMPAIGNS}"
+                )
+                continue
+            for path in ("cold", "resident"):
+                ladder = join_cost_ladder(paths, path)
+                wanted: list[tuple[str, float, int]] = [
+                    (f"the {path} path's context's drift", ladder["the context's drift"], 3),
+                    (f"the {path} path's movement", ladder["the movement"], 3),
+                    (f"the {path} path's reconciliation", ladder["the reconciliation"], 6),
+                    (f"the {path} path's floor's drift", ladder["the floor's drift"], 3),
+                    (f"the {path} path's floor's movement", ladder["the floor's movement"], 3),
+                    (f"the {path} path's cost's drift", ladder["the cost's drift"], 3),
+                    (f"the {path} path's cost's share", ladder["the cost's share"], 2),
+                ]
+                for leaf in ladder["the leaves"]:
+                    wanted.append((f"the {path} path's {leaf['name']}'s drift", leaf["drift"], 3))
+                    wanted.append(
+                        (f"the {path} path's {leaf['name']}'s movement", leaf["movement"], 3)
+                    )
+                for label, figure, places in wanted:
+                    rendered = rendered_figure(figure, places)
+                    if not figure_in(ladder_section, rendered):
+                        failures.append(
+                            f"PERF.md: {set_label}'s {label} is {rendered} by the reports "
+                            f"but that figure does not appear in the section"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {f'{set_label}: {label}':<60} {rendered}")
+            # The file's state: the build side's read's own medians over the
+            # campaigns, and the six iterations of the campaign that broke away.
+            ladder_runs = [json.loads(path.read_text()) for path in paths]
+            reads = [run["parts_ms"]["build_read"] for run in ladder_runs]
+            for index, value in enumerate(reads, 1):
+                rendered = rendered_figure(value, 3)
+                if not figure_in(ladder_section, rendered):
+                    failures.append(
+                        f"PERF.md: {set_label}'s build side's read, campaign {index}, is "
+                        f"{rendered} by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{set_label}: the build read, campaign {index}':<60} {rendered}")
+            for value in ladder_runs[1]["series_ms"]["build_read"]:
+                rendered = rendered_figure(value, 3)
+                if not figure_in(ladder_section, rendered):
+                    failures.append(
+                        f"PERF.md: {set_label}'s build side's read, one of the six iterations of "
+                        f"the second campaign, is {rendered} by the reports but that figure does "
+                        f"not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{set_label}: a build read iteration':<60} {rendered}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -3195,6 +3400,7 @@ def main() -> int:
         f"{len(QUERY_COST_CHECKS) + len(QUERY_COST_SHAPE_CHECKS)} of the query probe, "
         f"{len(SORT_COST_CHECKS)} of the sort probe, "
         f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe, "
+        f"{len(SPEC035_FAMILIES) * (2 * (7 + 2 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
     )
     return 0
