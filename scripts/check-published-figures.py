@@ -48,6 +48,19 @@ JOIN_COST_SPEC028_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-spec
 JOIN_COST_SPEC028_BEFORE_REPORTS = sorted(
     (ROOT / "bench-results").glob("join-cost-spec028-before-run*.json")
 )
+# Spec 034's re-measurement: the code this increment ships, and the code it
+# replaces, measured back to back on this host. The increment changed no engine
+# work, so the set the file publishes keeps its name and these take their own.
+COMPARE_SPEC034_REPORTS = sorted((ROOT / "bench-results").glob("compare-spec034-run*.json"))
+COMPARE_SPEC034_BEFORE_REPORTS = sorted(
+    (ROOT / "bench-results").glob("compare-spec034-before-run*.json")
+)
+JOIN_COST_SPEC034_REPORTS = sorted(
+    (ROOT / "bench-results").glob("join-cost-spec034-run*.json")
+)
+JOIN_COST_SPEC034_BEFORE_REPORTS = sorted(
+    (ROOT / "bench-results").glob("join-cost-spec034-before-run*.json")
+)
 PROBE_REPORTS = sorted((ROOT / "bench-results").glob("operator-probe-*.json"))
 SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-run*.json"))
 BROWSER_REPORTS = sorted((ROOT / "bench-results").glob("browser-run*.json"))
@@ -331,6 +344,65 @@ JOIN_COST_NEW_PARTS = (
 # The floor: the machine's own measure of a memory-bound loop. Its drift is
 # the yardstick's floor.
 JOIN_COST_FLOOR = "floor_probe"
+
+# Spec 034's re-measurement. The increment changed no engine work, so the set
+# the file publishes keeps its name and stands; the re-measurement is published
+# **beside** it, under its own names, and the code's share of the difference
+# is measured with the code the increment replaces, back to back on this host.
+#
+# Two sections publish it: the comparison's own figures, and the join probe's.
+# The figures are looked for **inside** those sections, so that a figure that
+# happens to equal an unrelated number elsewhere in the document cannot
+# satisfy the check by accident.
+SPEC034_COMPARE_SECTION = "### 2i"
+SPEC034_JOIN_SECTION = "### 3p"
+
+# The three families of the re-measurement: the standing set, this increment's
+# set, and the code this increment replaces, measured back to back.
+SPEC034_COMPARE_FAMILIES = (
+    ("the published set", REPORTS),
+    ("this increment's set", COMPARE_SPEC034_REPORTS),
+    ("the code this increment replaces", COMPARE_SPEC034_BEFORE_REPORTS),
+)
+
+SPEC034_JOIN_FAMILIES = (
+    ("the published set", JOIN_COST_REPORTS),
+    ("this increment's set", JOIN_COST_SPEC034_REPORTS),
+    ("the code this increment replaces", JOIN_COST_SPEC034_BEFORE_REPORTS),
+)
+
+# (label, system, mode, metric, query, places)
+#
+# The mode is the row's own -- the engine's cold path is **lazy** and its
+# resident one **eager** -- and the incumbents have no mode of their own.
+SPEC034_COMPARE_ROWS = (
+    ("join-orders, cold", "engine", "lazy", "cold", "join-orders", 1),
+    ("join-orders, resident", "engine", "eager", "resident", "join-orders", 1),
+    ("sort-topk, cold", "engine", "lazy", "cold", "sort-topk", 1),
+    ("sort-topk, resident", "engine", "eager", "resident", "sort-topk", 1),
+    ("q6, cold -- the control", "engine", "lazy", "cold", "q6", 1),
+    ("q6-revenue, cold -- the control", "engine", "lazy", "cold", "q6-revenue", 1),
+    ("DuckDB's join-orders, cold", "duckdb", "-", "cold", "join-orders", 1),
+    ("Polars' join-orders, cold", "polars", "-", "cold", "join-orders", 1),
+    ("the peer's join-orders, cold", "datafusion-peer", "-", "cold", "join-orders", 1),
+)
+
+# (label, part, places)
+#
+# The join probe's parts, the ones the re-measurement publishes: the stage on
+# both paths, the build side's whole, the probe measured both ways, the floor
+# the probe cannot go under, the candidate written out by hand, and the plain
+# read.
+SPEC034_JOIN_PARTS = (
+    ("the stage, cold", "stage_cold", 3),
+    ("the stage, resident", "stage_resident", 3),
+    ("the build side, whole", "build_whole", 3),
+    ("the probe, over the column", "probe_column", 3),
+    ("the probe, in the batches", "probe_batches", 3),
+    ("the floor the probe", "floor_probe", 3),
+    ("the candidate, written out", "candidate_probe", 3),
+    ("the read, plain", "read_plain", 3),
+)
 
 # The ladder's leaves, per path: the figure, the leaf's name, the decimal
 # places, the word it carries, and **the sides the leaf stands on** -- the
@@ -2150,6 +2222,179 @@ def main() -> int:
                         f"ok  {'PERF.md':<10} {f'the {path} path\'s query\'s cost':<40} "
                         f"{difference:.3f} ms"
                     )
+
+    # Spec 034's re-measurement: the same code, and the code it replaces,
+    # measured back to back on this host. The published figures stand; the
+    # re-measurement is published beside them, and the code's share of the
+    # difference is the difference between this increment's code and the code
+    # it replaces.
+    #
+    # A family that is missing, or that has fewer campaigns than the method
+    # says, is a **failure**, for the reason the join probe's families are:
+    # the evidence is what the figures are derived from.
+    for label, paths in SPEC034_COMPARE_FAMILIES:
+        if not paths:
+            failures.append(f"the comparison's set for {label} is missing")
+        elif len(paths) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the comparison's set for {label} has {len(paths)} campaigns, "
+                f"and the method says {MIN_CAMPAIGNS}"
+            )
+    for label, paths in SPEC034_JOIN_FAMILIES:
+        if not paths:
+            failures.append(f"the join probe's set for {label} is missing")
+        elif len(paths) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the join probe's set for {label} has {len(paths)} campaigns, "
+                f"and the method says {MIN_CAMPAIGNS}"
+            )
+
+    compare_section = section_of(texts["PERF.md"], SPEC034_COMPARE_SECTION)
+    if compare_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the re-measurement's comparison "
+            f"figures ({SPEC034_COMPARE_SECTION}) is not in the document"
+        )
+    else:
+        compare_families = {
+            label: collect([json.loads(path.read_text()) for path in paths])
+            for label, paths in SPEC034_COMPARE_FAMILIES
+        }
+        for family, figures in compare_families.items():
+            for label, system, mode, metric, query, places in SPEC034_COMPARE_ROWS:
+                values = figures.get((system, mode, metric, query), [])
+                if not values:
+                    failures.append(
+                        f"PERF.md: no figure for {label} in {family}'s comparison reports"
+                    )
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(compare_section, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in {family}'s reports but that "
+                        f"figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{family}: {label}':<40} {rendered}")
+
+        # The **code's share**: the difference between this increment's code and
+        # the code it replaces, row by row. It is derived, not typed.
+        new_figures = compare_families["this increment's set"]
+        old_figures = compare_families["the code this increment replaces"]
+        for label, system, mode, metric, query, places in SPEC034_COMPARE_ROWS:
+            new_values = new_figures.get((system, mode, metric, query), [])
+            old_values = old_figures.get((system, mode, metric, query), [])
+            if not new_values or not old_values:
+                continue
+            difference = statistics.median(new_values) - statistics.median(old_values)
+            rendered = rendered_figure(difference, places)
+            if not figure_in(compare_section, rendered):
+                failures.append(
+                    f"PERF.md: the code's share of {label} is {rendered} in the reports "
+                    f"but that figure does not appear in the section"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {f'the code\'s share of {label}':<40} {rendered}")
+
+    join_section = section_of(texts["PERF.md"], SPEC034_JOIN_SECTION)
+    if join_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the re-measurement's join probe "
+            f"figures ({SPEC034_JOIN_SECTION}) is not in the document"
+        )
+    else:
+        join_families = {
+            label: _join_cost_figures(paths) for label, paths in SPEC034_JOIN_FAMILIES
+        }
+        for family, (parts, _derived) in join_families.items():
+            for label, part, places in SPEC034_JOIN_PARTS:
+                values = parts.get(part, [])
+                if not values:
+                    failures.append(
+                        f"PERF.md: no figure for {label} in {family}'s join probe reports"
+                    )
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(join_section, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in {family}'s reports but that "
+                        f"figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{family}: {label}':<40} {rendered}")
+
+            # The **drift** of a part over its own campaigns: the yardstick a
+            # difference of two medians is judged against. The stage's own
+            # drift is the yardstick the code's share is read with.
+            drifts = join_cost_drift(parts)
+            for part, label in (
+                ("stage_cold", "the stage, cold"),
+                ("stage_resident", "the stage, resident"),
+            ):
+                drift = drifts.get(part)
+                if drift is None:
+                    continue
+                rendered = rendered_figure(drift, 3)
+                if not figure_in(join_section, rendered):
+                    failures.append(
+                        f"PERF.md: {family}'s {label} drift is {rendered} in the reports "
+                        f"but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{family}: {label} drift':<40} {rendered}")
+
+        # The **code's share**: the difference between this increment's code
+        # and the code it replaces, part by part. It is derived, not typed.
+        new_parts = join_families["this increment's set"][0]
+        old_parts = join_families["the code this increment replaces"][0]
+        for label, part, places in SPEC034_JOIN_PARTS:
+            new_values = new_parts.get(part, [])
+            old_values = old_parts.get(part, [])
+            if not new_values or not old_values:
+                continue
+            difference = statistics.median(new_values) - statistics.median(old_values)
+            rendered = rendered_figure(difference, places)
+            if not figure_in(join_section, rendered):
+                failures.append(
+                    f"PERF.md: the code's share of {label} is {rendered} in the reports "
+                    f"but that figure does not appear in the section"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {f'the code\'s share of {label}':<40} {rendered}")
+
+        # The **verdicts**: the words, their states, and the yardstick each was
+        # made with, on this increment's set and on the code it replaces.
+        #
+        # The verdict and its state are published in the house's own sentences.
+        # The **yardstick** is published as a figure, because the two codes'
+        # yardsticks are two figures and the section carries them side by side.
+        for family in ("this increment's set", "the code this increment replaces"):
+            parts, derived = join_families[family]
+            for path in ("cold", "resident"):
+                verdict = join_cost_verdict(parts, derived, path)
+                if not verdict:
+                    continue
+                for label, phrase in join_cost_path_phrases(verdict, path):
+                    if label.endswith("yardstick"):
+                        yardstick = join_cost_path_yardstick(verdict)
+                        if yardstick is None:
+                            continue
+                        rendered = rendered_figure(yardstick, 3)
+                        if not figure_in(join_section, rendered):
+                            failures.append(
+                                f"PERF.md: {family}'s {label} is {rendered} ms by the "
+                                f"reports, and that figure does not appear in the section"
+                            )
+                        else:
+                            print(f"ok  {'PERF.md':<10} {f'{family}: {label}':<40} {rendered}")
+                        continue
+                    if phrase not in join_section:
+                        failures.append(
+                            f"PERF.md: {family}'s {label} is {phrase!r} by the reports, "
+                            f"and the section does not say so"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {f'{family}: {label}':<40} {phrase}")
 
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:

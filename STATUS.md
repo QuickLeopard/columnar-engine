@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **32 specs**, **39 ADRs** and **29 defects** so far, and every
+[`constitution.md`](constitution.md). **32 specs**, **40 ADRs** and **29 defects** so far, and every
 one of the specs but the last is closed.
 
 ---
@@ -134,6 +134,14 @@ difference of two **drifting** series. The decomposition, the drift, the method 
 [`spec 033`](specs/033-the-drift-taken-apart/spec.md) and in
 [ADR-0039](docs/adr/0039-the-drift-taken-apart.md); the context's own decomposition is in
 [ADR-0038](docs/adr/0038-the-context-taken-apart.md).
+
+**And the same probe, measured again on spec 034's tree.** The probe was re-run on the tree that
+increment ships and — **back to back, on this host** — on the tree it replaces: the stage's cold path
+reads **18.366 ms** against the old code's **18.455 ms**, a difference of **−0.089 ms** against a drift
+of **1.237 ms**, and the floor reads **5.376 ms** against **5.361 ms**. **The figures above stand**: the
+movement between them and this set is the **host's** — the incumbents moved with it, and the old code
+measures the same as the new one. [`PERF.md` §3p](PERF.md#3p-the-joins-stage-measured-again) has the
+table, and [§2i](PERF.md#2i-the-same-code-measured-again) has the query's.
 
 ---
 
@@ -258,19 +266,29 @@ for a pinned x86-64 runner; it has not run on one.
   build side's gap is judged against — and that is **twelve times** narrower than the read's own drift.
   **The next question is which of the drift's parts is the engine's, and how much of the engine's own
   cost moves under the measurement.** It is **not** a spec yet: nothing has been measured for it,
-  and its instrument is not built.
-- **The next increment is the engine, as a library, and the reason is recorded.** The engine half of a
-  database already exists — it runs a typed plan over Parquet, and it is measured against DuckDB and
-  Polars — but **the library does not ship**: `cargo package` fails outright, because the three crates
-  have to be published in the order their dependencies decide; the packaged crate carries the
-  repository's root README instead of its own; the public surface is the research harness's, with the
-  research modules public and no `prelude`; the join's build side is a `PathBuf` and there is no table
-  and no name; the enums that will grow are not `#[non_exhaustive]`; and all **fourteen** measurement
-  probes would ship to crates.io. It is written down as
-  [`spec 034`](specs/034-the-engine-as-a-library/spec.md), with its requirements and its tasks, and
-  **nothing has been implemented for it yet**. **The drift's question waits one increment, and the
-  reason is recorded in that spec's scope**: this increment changes no engine work, so every published
-  figure must stand unchanged, and the two tracks do not touch the same code.
+  and its instrument is not built. **It waited one increment, and the reason is recorded in
+  [spec 034](specs/034-the-engine-as-a-library/spec.md)'s scope**: that increment changed no engine
+  work, so every published figure had to stand unchanged, and the two tracks do not touch the same code.
+- **The three crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
+  research harness into a library: the surface is decided and written down (**45 names**, closed by the
+  rule that every type in a public signature is on the list), the three crates package **in the order
+  their dependencies decide**, each carries its own README and licence, the research modules are
+  reachable and undocumented, the enums that will grow are `#[non_exhaustive]`, and the embedder test
+  imports **only** the facade. **What is left is the publish itself**: it needs a crates.io account and a
+  token, it makes the code public, and it is **not** an act this repository can take on its own. The
+  three names are **free** — `columnar-core`, `columnar-kernels` and `columnar-engine` are all
+  unregistered — and the order is **core, then kernels, then engine**, with the commands in
+  [`docs/embedding.md`](docs/embedding.md). Until it is published, `cargo package` succeeds for
+  `columnar-core` and **waits** for its sibling for the other two, and the check says which sibling each
+  of them waits for.
+- **The comparison campaigns were taken again, and the published set stands.** Spec 034 changed no engine
+  work, so the set the file publishes keeps its name and its figures, and the increment's re-measurement
+  is published **beside** it: the same code on this host, and the code the increment replaces, measured
+  back to back, both trees clean. **The code's share of every difference is nil** — the join's cold stage
+  differs by **−0.089 ms** against a drift of **1.237 ms** — and the movement between the published set
+  and this one is the **host's**: the incumbents, which the increment cannot have touched, moved with it.
+  [§2i](PERF.md#2i-the-same-code-measured-again) and [§3p](PERF.md#3p-the-joins-stage-measured-again) have
+  the tables.
 - **A hostile Parquet file can ask for four gigabytes before a byte of payload is read.** The reader
   speaks the Thrift **compact** protocol, whose `read_bytes` allocates the declared length eagerly,
   bounded by a u32 — so a file's metadata can declare a four-gigabyte string. The engine does not fix
@@ -283,9 +301,6 @@ for a pinned x86-64 runner; it has not run on one.
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a
   billing message rather than a test failure. The published figures are therefore taken on this
   machine and not on CI, and every report carries the host's load average.
-- **The comparison campaigns were not taken again.** Spec 029's change does not touch the query's
-  path, so no published query figure moves, and the comparison set in [`PERF.md` §2](PERF.md#2-the-engine-against-duckdb-polars-and-datafusion)
-  is spec 028's, unchanged.
 - **The official TPC-H SF-1 file.** The generator produces a TPC-H-*shaped* file with approximated
   distributions, UTF-8 dates and a seeded PRNG. The manifest says so, and the constitution names it
   as a boundary.

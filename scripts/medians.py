@@ -2015,9 +2015,14 @@ def main() -> int:
     # measured it again, with two more parts in the instrument, and the two
     # sets spec 026 published are preserved under their own names.
     join_sets = [
-        ("the code this increment ships", "join-cost-run*.json"),
-        ("the code the last increment shipped", "join-cost-spec030-run*.json"),
-        ("the code that one replaces", "join-cost-spec030-before-run*.json"),
+        # Spec 034 changed no engine work, so the set the file publishes keeps
+        # its name and the re-measurement takes its own. The two are published
+        # side by side: the standing figures, and the ones this host measures.
+        ("the code this increment ships", "join-cost-spec034-run*.json"),
+        ("the code this increment replaces", "join-cost-spec034-before-run*.json"),
+        ("the code the last increment shipped", "join-cost-run*.json"),
+        ("the code spec 030 shipped", "join-cost-spec030-run*.json"),
+        ("the code spec 030 replaced", "join-cost-spec030-before-run*.json"),
         ("spec 029's set, as spec 029 measured it", "join-cost-spec029-run*.json"),
         ("spec 029's before set", "join-cost-spec029-before-run*.json"),
         ("spec 028's set, as spec 028 measured it", "join-cost-spec028-run*.json"),

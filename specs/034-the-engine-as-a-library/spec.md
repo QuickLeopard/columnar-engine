@@ -38,6 +38,16 @@ can be verified before the publish — each crate's manifest, each crate's **tre
 order computed from the manifests** rather than written down — and for the two crates that wait it
 reports exactly which sibling they wait for. The publish itself is a separate act, with its own
 account, and it is **not** this increment's.
+**Amended**: 2026-11-04 — **the published set does not slide**: the rule that each increment's set
+takes the plain names, and the last increment's set moves aside, holds for the increments that
+**publish a new set of figures**. This one publishes none — the published set is the standing one, and
+the re-measurement takes its own names (`compare-spec034-run*.json`,
+`compare-spec034-before-run*.json`, `join-cost-spec034-run*.json` and
+`join-cost-spec034-before-run*.json`). The reason: the host this increment measured on is **faster**
+than the one the published set was taken on — the incumbents moved with it — so sliding the published
+set forward would have published a **host's** movement as the engine's. The re-measurement is
+published **beside** the published set, and the code's share of every difference is measured against
+the code this increment replaces, back to back on the same host.
 **Predecessor**: [033-the-drift-taken-apart](../033-the-drift-taken-apart/spec.md)
 
 ## The problem
@@ -384,6 +394,21 @@ Stated explicitly, with the reason (Principle VII):
 6. The whole suite green: `cargo fmt`, clippy on arm64 and x86-64, the tests, `cargo deny`, the
    wasm32 check, the published-figures guard and the page checks.
 
+**And the campaigns were taken again, on both codes, and the figures stand.** The comparison and the
+join probe were re-run on the tree this increment ships and — **back to back, on this host** — on the
+tree it replaces, a worktree at `79ec08f`: three campaigns each, both trees **clean**, the two codes
+**interleaved**, so that a host which drifts moves both sides. **The code's share of every difference
+is nil** — the join's cold stage reads **18.366 ms** against the old code's **18.455 ms**, a difference
+of **−0.089 ms** against a drift of **1.237 ms**, and the cold `join-orders` query reads **82.0 ms**
+against **82.5 ms**.
+
+**And the movement between the published set and the re-measurement is the host's.** The incumbents,
+which this increment cannot have touched, moved with it — DuckDB's `join-orders` cold from **91.0 ms**
+to **85.0 ms**. So the published figures stand where spec 033 published them, the re-measurement is
+published **beside** them under its own names, and every figure — old and new — is derived from a
+committed report: [`PERF.md` §2i](../../PERF.md#2i-the-same-code-measured-again) and
+[§3p](../../PERF.md#3p-the-joins-stage-measured-again).
+
 ## The references
 
 | | |
@@ -401,4 +426,5 @@ Stated explicitly, with the reason (Principle VII):
 | [spec 001](../001-columnar-core/spec.md) | the scope, the pipeline, and the exclusions this spec inherits |
 | [spec 033](../033-the-drift-taken-apart/spec.md) | the drift, the yardstick, and the deferred question |
 | [`PERF.md`](../../PERF.md) §3o | the figures R8 says must stand |
+| [`PERF.md`](../../PERF.md) §2i, §3p | the re-measurement: the same code, and the code it replaces, back to back |
 | [`STATUS.md`](../../STATUS.md) | where the project's open questions live |

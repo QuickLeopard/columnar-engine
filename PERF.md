@@ -1113,6 +1113,56 @@ accounted: 97.39 ms of the query's 97.40 ms (0.01 ms outside the stages)
 reported the rows that survived it. See
 [§3m](#3m-the-time-the-plan-output-does-not-name) for why the two are not about the same thing.
 
+### 2i. The same code, measured again
+
+**This increment changes no engine work, and the published figures stand.** The comparison campaigns
+were re-run on the tree this increment ships, and — **back to back, in the same session** — on the
+tree it replaces, which is a worktree at `79ec08f`. Three campaigns each, both trees **clean**, and
+the two codes **interleaved**, so that a host which drifts moves both sides. The reports are
+`bench-results/compare-spec034-run{1,2,3}.json` and
+`bench-results/compare-spec034-before-run{1,2,3}.json`.
+
+**The engine's own figures, and the code this increment replaces beside them:**
+
+| | the published set | this set | the code this increment replaces | the code's share |
+|---|---|---|---|---|
+| `join-orders`, cold | 97.6 ms | 82.0 ms | 82.5 ms | **−0.5 ms** — the machine's |
+| `join-orders`, resident | 26.6 ms | 22.0 ms | 21.8 ms | **+0.2 ms** — the machine's |
+| `sort-topk`, cold | 39.5 ms | 34.9 ms | 34.3 ms | **+0.6 ms** — the machine's |
+| `sort-topk`, resident | 2.7 ms | 2.4 ms | 2.4 ms | **0.0 ms** — the machine's |
+| *`q6`, cold — the control* | *15.4 ms* | *14.0 ms* | *14.3 ms* | *−0.3 ms* |
+| *`q6-revenue`, cold — the control* | *58.9 ms* | *52.9 ms* | *52.5 ms* | *+0.4 ms* |
+
+**And the incumbents, which this increment did not touch at all:**
+
+| `join-orders`, cold | the published set | this set | the code this increment replaces |
+|---|---|---|---|
+| DuckDB | 91.0 ms | 85.0 ms | 84.0 ms |
+| Polars | 219.1 ms | 197.5 ms | 198.1 ms |
+| DataFusion's peer | 168.8 ms | 144.5 ms | 146.0 ms |
+
+**The code's share is nil, and the incumbents are what say so.** Every difference between this
+increment's code and the code it replaces is **inside the spread of the campaigns it is a difference
+of**: the join's cold query's **−0.5 ms** against a spread of **2.345 ms** and **2.491 ms**, the sort's
+cold **+0.6 ms** against **0.941 ms** and **1.271 ms**, the join's resident **+0.2 ms** against
+**0.254 ms** and **0.286 ms**, the sort's resident **0.0 ms** against **0.073 ms** and **0.086 ms**.
+**And the incumbents moved by as much**: DuckDB **+1.0 ms**, Polars **−0.6 ms** and the peer
+**−1.5 ms** between the two sessions — code this increment cannot have touched. So the band is the
+machine's, and the engine's own figures sit inside it.
+
+**And the movement between the published set and this one is the host's, not the engine's.** The
+published set was taken on a host whose load average was **3.66–4.34**; this session's ran at
+**2.59–3.47**, and the host is not only quieter but **faster**: DuckDB's `join-orders` cold moved
+**91.0 ms** to **85.0 ms**, Polars' **219.1 ms** to **197.5 ms**, and the peer's **168.8 ms** to
+**144.5 ms**. The **code** did not move: the tree this increment replaces, measured on this host in
+this session, reads **82.5 ms** against this increment's **82.0 ms**.
+
+**So the standing figures are what they were, and this set is what the same code costs on this host.**
+The re-measurement is published **beside** the published set rather than in place of it, because the
+difference between the two is **not** the engine's work: publishing it in its place would have
+published a **host's** movement as the engine's. The join's stage, taken apart, is in
+[§3p](#3p-the-joins-stage-measured-again).
+
 ## 3. What the engine's own stages say
 
 The plan output splits the engine's work by stage. The two blocks in [§3b](#3b-the-query-that-no-longer-materialises-anything)
@@ -2715,6 +2765,61 @@ spec 028's comparisons are derived from the first four. See
 [ADR-0038](docs/adr/0038-the-context-taken-apart.md) and
 [ADR-0039](docs/adr/0039-the-drift-taken-apart.md).
 
+### 3p. The join's stage, measured again
+
+**The join's stage is the engine's own work, and it is the instrument that says this increment
+changed none of it.** The join probe was re-run on the tree this increment ships, and — **back to
+back, in the same session** — on the tree it replaces, a worktree at `79ec08f`. Three campaigns each,
+both trees **clean**, the two codes **interleaved**. The reports are
+`bench-results/join-cost-spec034-run{1,2,3}.json` and
+`bench-results/join-cost-spec034-before-run{1,2,3}.json`.
+
+| part | the published set | this increment's code | the code it replaces | the code's share |
+|---|---|---|---|---|
+| the stage, cold | 24.690 ms | 18.366 ms | 18.455 ms | −0.089 ms |
+| the stage, resident | 19.431 ms | 18.031 ms | 17.926 ms | 0.106 ms |
+| the build side, whole | 12.347 ms | 11.249 ms | 11.265 ms | −0.017 ms |
+| the probe, over the column | 8.860 ms | 7.793 ms | 7.851 ms | −0.058 ms |
+| the probe, in the batches | 13.121 ms | 6.999 ms | 7.129 ms | −0.130 ms |
+| the floor the probe cannot go under | 6.147 ms | 5.376 ms | 5.361 ms | 0.015 ms |
+| the candidate, written out | 8.953 ms | 7.968 ms | 7.940 ms | 0.028 ms |
+| the read, plain | 0.532 ms | 0.491 ms | 0.490 ms | 0.001 ms |
+
+**And the yardstick every one of those shares is read against — the stage's own drift over its three
+campaigns:**
+
+| the stage's own drift | the published set | this increment's code | the code it replaces |
+|---|---|---|---|
+| the stage, cold | 4.731 ms | 1.237 ms | 0.900 ms |
+| the stage, resident | 0.340 ms | 0.818 ms | 0.658 ms |
+
+**So the code's share is nil, part by part.** The stage's cold difference is **−0.089 ms** against a
+drift of **1.237 ms** and **0.900 ms**, the stage's resident **0.106 ms** against **0.818 ms** and
+**0.658 ms**, the probe's own **−0.058 ms** and **−0.130 ms**, the floor's **0.015 ms**, the read's
+**0.001 ms**. **Every one of them is inside the drift of the campaigns it is a difference of**, and the
+floor — the table's own load, which no lookup can go under — moved **0.015 ms** between two codes that
+differ in a facade.
+
+**And the verdicts are the verdicts the published set published.** On this increment's code:
+
+the verdict, on the cold path, is **unattributed**;
+the verdict's state, on the cold path, is **sound**;
+the verdict, on the resident path, is **the memory's**;
+the verdict's state, on the resident path, is **sound**;
+
+**and on the code it replaces, measured back to back, they are the same two words.** The **yardsticks**
+are the host's, and they moved: the cold path's yardstick is **0.962 ms** on this increment's code and
+**0.526 ms** on the code it replaces, against the published set's **7.860 ms**; the resident path's
+yardstick is **0.859 ms** and **0.773 ms**, against **0.487 ms**. The **published set's cold yardstick
+was that wide** because the host it was taken on was the busy one: its stage's own drift was
+**4.731 ms**, where this host's is **1.237 ms**.
+
+**And the movement between the published set and this one is the host's.** The stage's cold path was
+**24.690 ms** in the published set and is **18.366 ms** here, and the floor under it was **6.147 ms**
+and is **5.376 ms**: the same code, on a quieter and faster host. The tree this increment replaces,
+measured on this host in this session, reads **18.455 ms** against this increment's **18.366 ms** —
+so what moved is the machine's, and the published figures stand.
+
 ---
 
 ## 4. The defects the increments found
@@ -2987,6 +3092,17 @@ python3 scripts/medians.py bench-results/compare-spec024-run*.json
 python3 scripts/medians.py bench-results/compare-spec025-run*.json
 ```
 
+**And the re-measurement of §2i sits beside them too**, under its own names: the code this increment
+ships, and the code it replaces, measured back to back on this host.
+
+```bash
+# this increment's set
+python3 scripts/medians.py bench-results/compare-spec034-run*.json
+
+# the code this increment replaces, on this same host, back to back
+python3 scripts/medians.py bench-results/compare-spec034-before-run*.json
+```
+
 The third is what makes the published **old-and-new** figures checkable rather than typed, and the
 guard checks all of them:
 
@@ -3012,6 +3128,17 @@ just probe-query "data/lineitem.parquet" "bench-results/query-cost-run1.json"
 just probe-sort "data/lineitem.parquet" "bench-results/sort-cost-run1.json"
 
 just probe-join  "data/lineitem.parquet" "bench-results/join-cost-run1.json"
+```
+
+**And the join probe's re-measurement of §3p has its own two sets**, under their own names, and
+`scripts/medians.py` prints them beside the others:
+
+```bash
+# this increment's set
+just probe-join "data/lineitem.parquet" "bench-results/join-cost-spec034-run1.json"
+
+# the code this increment replaces, on this same host, back to back
+just probe-join "data/lineitem.parquet" "bench-results/join-cost-spec034-before-run1.json"
 ```
 
 The probe runs the engine's **own** plans through the engine's own entry point and checks the answers

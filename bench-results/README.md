@@ -17,6 +17,8 @@ python3 scripts/medians.py
 | `compare-run1.json` | the first of the three runs the published table is the median of |
 | `compare-run2.json` | the second |
 | `compare-run3.json` | the third |
+| `compare-spec034-run1.json` … `compare-spec034-run3.json` | the **re-measurement of spec 034**: the same code, on this host, three campaigns. The increment changed no engine work, so the published set keeps its name and stands, and this set is published **beside** it. |
+| `compare-spec034-before-run1.json` … `compare-spec034-before-run3.json` | the **code spec 034 replaces**, measured back to back on this host with the campaigns above, **three campaigns each, interleaved** — so that the code's share of the difference between the two codes is separated from the machine's. |
 | `compare-before-run1.json` … `compare-before-run3.json` | the **old code, re-measured on this host** — the code spec 028 replaced, back to back with the campaigns above, so the code's share of every moved figure is separated from the machine's. The control is the six queries this increment did not touch. |
 | `compare-spec021-run1.json` … `compare-spec021-run3.json` | the set **before that one**: the code spec 022 and 023 replaced, on the host it was measured on. Committed so the published old-and-new figures are derived rather than typed. |
 | `compare-spec023-run1.json` … `compare-spec023-run3.json` | the set **before that one**: the code spec 024 replaced, on the host it was measured on. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
@@ -31,6 +33,8 @@ python3 scripts/medians.py
 | `join-cost-run1.json` … `join-cost-run3.json` | the **join probe** against the code spec 033 ships -- the join's stage on both paths, the build side's open, read, keys and table, the probe measured both ways, the floor the probe cannot go under, the candidate that is the cross-check, the candidate with the overflow map's consult in it, the cold candidate inside the reader's own batch loop, **the ladder**: five rungs that each add exactly one thing to the plain candidate, so that the remainder's parts are measured, and **the context's decomposition**: the build side's file state, the probe inside the reader's batches with and without the row-number offset, the probe over a column the dataset has held, and the cost of one clock read. **And this increment's instrument takes the two sides of every difference in the same iteration, back to back, and alternates the order between the iterations** -- **six** iterations, an even count on purpose, so that the two orders' groups are the same size and the order's own price does not land on the published figure. The report carries **every part's per-iteration values**, **the time each block took**, **the two orders' medians and their difference** and **the separation** -- how far apart the machine's own two measurements of one difference were taken -- so that the ladder's reduction, the leaves' correlation and the machine's own drift are checkable from the committed report. Every rung that touches the column materialises it afresh, the way the query's does. The report carries **the code it measured** and **whether the engine reported the join stage's parts**, because the commit alone does not tell two codes apart. |
 | `join-cost-spec030-run1.json` … `join-cost-spec030-run3.json` | the probe as it stood at spec 030's close -- against the code spec 030 shipped, with the instrument of that day: the ladder and the context's decomposition, but the two sides of every difference measured a campaign apart, so that the **drift** between them was inside the context and not measured. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
 | `join-cost-spec030-before-run1.json` … `join-cost-spec030-before-run3.json` | the same probe against the code spec 030 replaces, measured back to back on the same host and with the instrument of that day, **three campaigns each, interleaved** with the campaigns above -- so that the floor, the machine's own measure, sits beside the stage in the same minutes. That code does not report the join stage's parts, so its ladder is **absent** and its report says so. |
+| `join-cost-spec034-run1.json` … `join-cost-spec034-run3.json` | the **re-measurement of spec 034**: the same probe, the same instrument, against the tree the increment ships, on this host. The increment changed no engine work, so the set the file publishes keeps its name and stands, and this set is published **beside** it. |
+| `join-cost-spec034-before-run1.json` … `join-cost-spec034-before-run3.json` | the same probe against the **code spec 034 replaces** -- a worktree at `79ec08f` -- measured back to back on this host with the campaigns above, **three campaigns each, interleaved**, and **both trees clean**, so that the code's share of every difference is separated from the machine's. |
 | `join-cost-spec029-run1.json` … `join-cost-spec029-run3.json` | the probe as it stood at spec 029's close -- against the code spec 029 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
 | `join-cost-spec029-before-run1.json` … `join-cost-spec029-before-run3.json` | the set spec 029 measured against the code it replaced, with the instrument of that day. Kept under its own name, for the same reason. |
 | `join-cost-spec028-run1.json` … `join-cost-spec028-run3.json` | the probe as it stood at spec 028's close -- against the code spec 028 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
@@ -137,6 +141,7 @@ questions.
 | §2a, §2b (the set before that one) | *the same table, two increments ago* | `compare-spec024-run*.json` |
 | §2h | *what the join's probe and the sort cost, apart* | `operator-probe-*.json` |
 | §2h (the code's share) | *what the change did, as opposed to the machine* | `compare-before-run*.json` |
+| §2i | *what the same code costs on this host, and the code's share of the difference* | `compare-spec034-run*.json`, `compare-spec034-before-run*.json` |
 | §2h (the stages) | *what each stage of the engine's own work cost* | the comparison sets — every campaign records the plan output |
 | §2e, `q6` | *how does each system's number move with the thread count* | `scaling-run*.json` |
 | §2e, `q6-revenue` | the same, on the real Q6 | `scaling-revenue-run*.json` |
@@ -154,6 +159,7 @@ questions.
 | §3m | *where does the time the plan output does not name go* | `query-cost-run*.json`, `query-cost-before-run*.json` |
 | §3n | *what is in the sort's stage that is not the sort's own work* | `sort-cost-run*.json`, `sort-cost-before-run*.json` |
 | §3o | *what is in the join's stage, what the remainder's parts are, what the context is made of, and how far the machine drifts under it* | `join-cost-run*.json`, `join-cost-spec030-run*.json`, `join-cost-spec030-before-run*.json`, `join-cost-spec029-run*.json`, `join-cost-spec029-before-run*.json`, `join-cost-spec028-run*.json`, `join-cost-spec028-before-run*.json` |
+| §3p | *the join's stage, measured again, and the code's share of the difference* | `join-cost-spec034-run*.json`, `join-cost-spec034-before-run*.json` |
 | §2h | *the same-moment A/B, and the resident movement it cannot explain* | `compare-ab-old-run1.json`, `compare-ab-new-run1.json` |
 
 The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and
@@ -251,6 +257,22 @@ and `join-cost-spec030-before-run*.json`:
 just probe-join "data/lineitem.parquet" \
     "bench-results/join-cost-run1.json"
 ```
+
+**And a set that publishes no new figures does not take the plain names.** Spec 034
+changed no engine work, so the set the file published keeps its name and stands,
+and the increment's re-measurement takes its own -- `join-cost-spec034-run*.json`,
+and `join-cost-spec034-before-run*.json` for the code it replaces, measured back to
+back on this host:
+
+```bash
+just probe-join "data/lineitem.parquet" \
+    "bench-results/join-cost-spec034-run1.json"
+just probe-join "data/lineitem.parquet" \
+    "bench-results/join-cost-spec034-before-run1.json"
+```
+
+The reason is recorded in [spec 034](../specs/034-the-engine-as-a-library/spec.md):
+a set that slides forward would publish a **host's** movement as the engine's.
 
 The **operator probe** writes its own two reports, one per code version:
 

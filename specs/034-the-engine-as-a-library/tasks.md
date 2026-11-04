@@ -66,10 +66,18 @@ check says which sibling each crate waits for.
 
 - [x] The **embedder test** — `crates/columnar-engine/tests/embed.rs` — imports **only** the facade
       and is written the way an embedder would write it. It is the surface's test.
-- [ ] The **benchmark campaigns are re-run** and the published figures **stand unchanged**, or the
-      change is explained and published old-and-new.
-- [ ] The **ADR** records the decision, and the publication names it — `PERF.md`, the README's Next
+- [x] The **benchmark campaigns are re-run** and the published figures **stand unchanged**, or the
+      change is explained and published old-and-new. They were re-run on **both** codes — this
+      increment's tree and the tree it replaces — back to back on this host, three campaigns each and
+      both trees clean, and the code's share of every difference is **nil**.
+- [x] The **ADR** records the decision, and the publication names it — `PERF.md`, the README's Next
       row and `STATUS.md`'s last section — and the raw reports are committed.
+
+**Amended**: the campaigns' publication — the published set **does not slide**: this increment
+publishes no new figures, so the published set keeps its name and stands, and the re-measurement is
+published **beside** it under its own names. The reason is recorded in the spec's header: the host
+this increment measured on is faster than the one the published set was taken on, and sliding the
+published set forward would have published a **host's** movement as the engine's.
 
 ## Phase 7 — the closure
 
@@ -80,8 +88,8 @@ check says which sibling each crate waits for.
 
 ## The gate
 
-- [ ] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check,
+- [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check,
       the published-figures guard and the page checks all green.
-- [ ] `cargo package` green for the three crates, in order, and `cargo publish --dry-run` green for
+- [x] `cargo package` green for the three crates, in order, and `cargo publish --dry-run` green for
       each.
 - [ ] CI green, and the spec's status is `done` with the date it finished.

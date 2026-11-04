@@ -150,9 +150,26 @@ suite that keeps the six implementations honest, and the **embedder test** —
 embedder would write it. It is the surface's own test: if it needs something the surface does not
 carry, the surface is wrong.
 
-**And the published figures did not move.** The campaigns were re-run on the tree this increment
-ships, and the figures stand where spec 033 published them; the raw reports are committed beside the
-old ones, under their own names, so every figure is derivable from a committed report.
+**And the published figures stand, and the reason they stand is that the code did not change.** The
+campaigns were re-run on the tree this increment ships and — **back to back, on this host** — on the
+tree it replaces, a worktree at `79ec08f`; three campaigns each, both trees **clean**, the two codes
+interleaved. **The code's share of every difference is nil**: the join's cold stage reads **18.366 ms**
+against the old code's **18.455 ms**, a difference of **−0.089 ms** against a drift of **1.237 ms**, and
+the cold `join-orders` query reads **82.0 ms** against **82.5 ms**.
+
+**And the movement between the published set and the re-measurement is the host's, not the engine's.**
+The incumbents, which this increment cannot have touched, moved with it: DuckDB's `join-orders` cold
+went from **91.0 ms** to **85.0 ms**, Polars' from **219.1 ms** to **197.5 ms**. So the figures stand
+where spec 033 published them, the re-measurement is published **beside** them under its own names, and
+every figure — old and new — is derivable from a committed report.
+
+**And a set that publishes no new figures does not take the plain names.** The rule that each
+increment's set takes the plain names and the last one's moves aside holds for the increments that
+**publish a new set of figures**. This one publishes none: the published set is the standing one, and
+the re-measurement takes its own names — `compare-spec034-run*.json`,
+`compare-spec034-before-run*.json`, `join-cost-spec034-run*.json` and
+`join-cost-spec034-before-run*.json`. Sliding the published set forward would have published a
+**host's** movement as the engine's, and the reason is recorded in the spec's header.
 
 **And the crate is now a product.** Each published crate carries its own README, written for an
 embedder; the crate-level rustdoc carries a **runnable** example, and the doctest runs in CI

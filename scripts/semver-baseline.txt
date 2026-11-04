@@ -10,10 +10,12 @@
 # API was decided. A commit after that one that removes a name, changes a
 # signature or adds a variant to a frozen enum fails the build here.
 #
-# The revision is written below, on one line, and nothing else. It is empty
-# until the revision exists -- a revision cannot be written into the commit
-# it names -- and the CI job says so when it is empty rather than pretending
-# to have run a check.
+# The revision is written below, on one line, and nothing else. It is the
+# commit that established the surface -- `42f08b4`, the code commit of spec
+# 034 -- and it is written here, in the commit that publishes the surface,
+# because a commit cannot contain its own SHA. Before this line was written
+# the CI job said so rather than pretending to have run a check.
 #
 # When the crates are published, this file becomes redundant: the published
 # version is the better baseline, and the CI job prefers it.
+42f08b4
