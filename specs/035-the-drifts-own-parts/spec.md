@@ -1,7 +1,8 @@
 # Spec 035 — The drift's own parts
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-11-04
+**Finished**: 2026-11-04
 **Predecessor**: [033-the-drift-taken-apart](../033-the-drift-taken-apart/spec.md)
 
 ## The problem

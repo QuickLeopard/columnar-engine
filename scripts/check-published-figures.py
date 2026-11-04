@@ -1057,7 +1057,7 @@ def join_cost_drift(parts: dict[str, list[float]]) -> dict[str, float]:
 SPEC035_SECTION = "### 3q"
 SPEC035_FAMILIES = (
     ("the published set", JOIN_COST_REPORTS),
-    ("this increment's set", JOIN_COST_SPEC034_REPORTS),
+    ("the set spec 034 measured", JOIN_COST_SPEC034_REPORTS),
 )
 
 SPEC035_LEAVES = {

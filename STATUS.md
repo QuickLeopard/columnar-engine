@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **33 specs**, **41 ADRs** and **29 defects** so far, and every
-one of the specs but the last is closed.
+[`constitution.md`](constitution.md). **33 specs**, **41 ADRs** and **29 defects** so far, and **every
+one of the specs is closed**.
 
 ---
 
@@ -305,8 +305,11 @@ for a pinned x86-64 runner; it has not run on one.
   bounded by a u32 — so a file's metadata can declare a four-gigabyte string. The engine does not fix
   it: the fix is upstream (`thrift` ≥ 0.23), and `parquet` 54 pins `thrift = "0.17"`, so the fix is a
   **`parquet` bump** — and a `parquet` bump moves the published figures, because Arrow's decode is
-  measured. **It is named in `deny.toml` with the reason**, and it is written down as
-  [`spec 034`](specs/034-the-engine-as-a-library/spec.md)'s R10 rather than left in the reader.
+  measured. **And the target is known, not guessed**: `parquet` **58.4.1** takes **`thrift` ^0.23**, and
+  **59.0.0** and **60.0.0** drop `thrift` altogether — but every one of them takes `arrow` with it
+  (**58.4.1**, **59.0.0**, **60.0.0**), and Arrow's decode is what is measured, so the bump is its own
+  increment with its own figures. **It is named in `deny.toml` with the reason**, and it is written down
+  as [`spec 034`](specs/034-the-engine-as-a-library/spec.md)'s R10 rather than left in the reader.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a
