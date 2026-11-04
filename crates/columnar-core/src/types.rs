@@ -49,7 +49,13 @@ impl DataType {
 /// `Utf8` variant with an owned `String` rather than a `&str` because a
 /// predicate threshold is stored in the plan and may outlive the batch it
 /// was built against.
+///
+/// The enum is **`#[non_exhaustive]`**: a type this general grows a variant
+/// -- a date, a decimal, a boolean -- and an exhaustive match on it is a
+/// breaking change the moment it does. A caller outside this crate matches
+/// it with a wildcard arm, and a caller inside it does not have to.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ScalarValue {
     /// A 64-bit signed integer.
     Int64(i64),

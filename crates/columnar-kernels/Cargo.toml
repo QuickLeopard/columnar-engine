@@ -8,9 +8,10 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "SIMD comparison kernels for the columnar engine, with a C++ FFI seam and a Rust intrinsics path"
-readme.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# The crate's own README, not the repository's.
+readme = "README.md"
+keywords = ["simd", "comparison", "kernels", "neon", "avx2"]
+categories = ["hardware-support", "algorithms", "no-std"]
 
 [lints]
 workspace = true

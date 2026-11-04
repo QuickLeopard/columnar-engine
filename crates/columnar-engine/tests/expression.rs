@@ -25,9 +25,10 @@ use arrow::record_batch::RecordBatch;
 use columnar_core::{
     ArithOp, BatchColumn, BatchData, ComparisonOp, Expr, NullBitmap, Predicate, ScalarValue,
 };
+use columnar_engine::plan::ResolvedAggregateFn;
 use columnar_engine::{
     execute, execute_on, Aggregate, AggregateSpec, Dataset, EngineError, ExecOptions,
-    ParquetSource, QueryPlan, ResolvedAggregateFn,
+    ParquetSource, QueryPlan,
 };
 
 /// A float column over the given values.

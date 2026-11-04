@@ -722,7 +722,7 @@ fn engine_q6(path: &Path) -> (Duration, f64, f64, f64) {
     let options = ExecOptions { threads: Some(1), ..ExecOptions::default() };
     let definition = columnar_engine::queries::QUERIES
         .iter()
-        .find(|definition| definition.query == columnar_engine::BuiltinQuery::Q6Revenue)
+        .find(|definition| definition.query == columnar_engine::queries::BuiltinQuery::Q6Revenue)
         .expect("the revenue query is a builtin query");
     // The query reads one table, so the build table's file is not used.
     let plan = (definition.plan)(path);
@@ -1194,7 +1194,7 @@ fn write_report(out: &str, path: &Path, decodes: &[ColumnDecodes], query: &Query
             "name": "q6-revenue",
             "sql": columnar_engine::queries::QUERIES
                 .iter()
-                .find(|definition| definition.query == columnar_engine::BuiltinQuery::Q6Revenue)
+                .find(|definition| definition.query == columnar_engine::queries::BuiltinQuery::Q6Revenue)
                 .map_or("", |definition| definition.sql),
             "survivors": query.survivors,
             "value": query.q6_value,

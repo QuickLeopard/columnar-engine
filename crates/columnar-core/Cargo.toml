@@ -8,9 +8,11 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Core vocabulary of the columnar engine: types, encodings, null bitmaps, selection vectors"
-readme.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# The crate's own README, not the repository's. A reader on crates.io opens
+# the crate's front page, and the portfolio's front page is not the crate's.
+readme = "README.md"
+keywords = ["columnar", "encoding", "nullability", "selection-vector"]
+categories = ["data-structures", "encoding", "algorithms"]
 
 [lints]
 workspace = true

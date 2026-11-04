@@ -2,6 +2,42 @@
 
 **Status**: in progress
 **Started**: 2026-11-04
+**Amended**: 2026-11-04 — **R3's list**: the list is now **closed by a rule** — *every type that appears
+in the public signature of a surface item is on the list* — and the list itself is written out in
+**The surface, exactly**. The reason: R3's first draft named nineteen items and **missed seven that
+the surface cannot do without** — `ComparisonOp`, `ScalarValue`, `ArithOp`, `MemoryError`,
+`DatasetError`, `PushdownMetrics` and `Flavor` — because a list written from the plan's shape is not
+the same list as the one written from the code's signatures. A predicate cannot be built without
+`ComparisonOp`, a group key cannot be read without `ScalarValue`, and the plan output cannot be read
+without `PushdownMetrics`. **A surface list that misses a type in a public signature is not a
+surface list.**
+**Amended**: 2026-11-04 — **R4's `Predicate`**: `Predicate` is a **struct**, not an enum, so
+`#[non_exhaustive]` on it means the other thing — it forbids the struct literal outside its crate
+and keeps `Predicate::new` the one way to build one. The reason: the code decides what the attribute
+can mean, and `Predicate` is never built by a literal anywhere in the workspace, so the attribute
+costs nothing and buys the same promise the enum would have.
+**Amended**: 2026-11-04 — **R8's "the engine's `src/` diff is the surface's visibility and nothing
+else"**: the non-exhaustive attribute puts **wildcard arms into three of the engine's own match
+sites** (`plan/resolve.rs` on `Expr` and on `ScalarValue`, and `memory.rs` on `ScalarValue`), because
+an enum that is not exhaustive cannot be matched exhaustively outside the crate that defines it. The
+reason: the attribute is not optional, the arms **preserve today's behaviour exactly** — they are
+unreachable until a variant is added, and the variant that would reach them is added in
+`columnar-core`, which is the crate whose compatibility promise it is — and **no figure moves**.
+**Amended**: 2026-11-04 — **the research modules are `#[doc(hidden)]`, not private**: `operators`,
+`pushdown`, `dictionary`, `queries`, `explain`, `memory` and `plan` stay reachable and become
+undocumented. The reason: this repository's **fourteen measurement probes**, the CLI and the
+crate's own tests live in the same crates and name those modules; making them private would move the
+evidence harness into a fork of itself, and a harness that forks is a harness that stops measuring
+the same thing. `source` and `dataset` are **private**, as R3 says, and the two places that named
+them move to the crate root and to a `testing` module.
+**Amended**: 2026-11-04 — **R1's `cargo package` succeeds for the three crates**: it succeeds for
+`columnar-core` today, and for `columnar-kernels` and `columnar-engine` **once their sibling is on
+crates.io** — cargo resolves a packaged crate's dependencies from the registry, not from the
+workspace, and no local arrangement changes that. The reason: the check verifies everything that
+can be verified before the publish — each crate's manifest, each crate's **tree**, and the **publish
+order computed from the manifests** rather than written down — and for the two crates that wait it
+reports exactly which sibling they wait for. The publish itself is a separate act, with its own
+account, and it is **not** this increment's.
 **Predecessor**: [033-the-drift-taken-apart](../033-the-drift-taken-apart/spec.md)
 
 ## The problem
@@ -81,12 +117,14 @@ schedule — and the boundaries: read-only, Parquet, one inner equi-join, no SQL
 
 ### R3 — The public surface is the facade, and it is decided before the first publish
 
-The names an embedder needs are on **one list**: `execute`, `execute_on`, `QueryPlan`, `Predicate`,
-`Expr`, `Aggregate`, `AggregateSpec`, `JoinSpec`, `SortSpec`, `AggregateResult`, `AggregateValue`,
-`Group`, `EngineError`, `PlanOutput`, `StageStats`, `ExecOptions`, `MemoryBudget`, `Dataset` and
-`ParquetSource`. A `facade` module and a `prelude` carry them. The research modules — `operators`,
-`pushdown`, `dictionary` and `queries` — are **not** part of the surface, and `source` and `dataset`
-keep only the two types the embedder needs, re-exported at the crate root.
+The names an embedder needs are on **one list**, and the list is written out in **The surface,
+exactly**, below. A `facade` module and a `prelude` carry them, and the crate root re-exports the
+same list — the root is the surface's short path, and [ADR-0033](../../docs/adr/0033-the-crates-modules.md)
+says the crate root *is* the public surface. The research modules — `operators`, `pushdown`,
+`dictionary` and `queries` — are **not** part of the surface: they are reachable, because this
+repository's harness lives in the same crate, and they are **undocumented**, because they are not
+promised. And `source` and `dataset` are **private**: they keep only the two types the embedder
+needs, re-exported at the crate root.
 
 **After 0.1.0 the surface is a compatibility promise, so it is decided before the first publish,
 not after it.** This is the one part of the increment that cannot be done twice: a published crate's
@@ -148,6 +186,89 @@ provide**. So the trust boundary is published rather than implied:
 
 The finding is in `STATUS.md`'s open questions as well, and it is **not** this increment's to fix: see
 the scope.
+
+## The surface, exactly
+
+**This is A1 — the list, written down before anything moved.** It is the list the code carries, and
+the rule that closes it is one sentence:
+
+> **Every type that appears in the public signature of a surface item is on the list.**
+
+A name that is not on it is not part of the surface; a name that is on it is. The list is written
+here rather than in a requirement because **after 0.1.0 it is a promise**, and a promise written in
+prose is a promise that drifts.
+
+### The engine's surface — `columnar-engine`
+
+| | the name | what it is |
+|---|---|---|
+| **the entry points** | `execute` | the eager path: a plan over a decoded dataset |
+| | `execute_on` | the lazy path: a plan over a Parquet file, reading only what it needs |
+| | `open_source` | the open helper: a path → a `ParquetSource` |
+| | `open_table` | the open helper for a **named** table: a catalog and a name → a `ParquetSource` |
+| **the plan** | `QueryPlan` | the plan the caller writes |
+| | `Predicate` | the filter |
+| | `ComparisonOp` | the predicate's operator |
+| | `ScalarValue` | the predicate's threshold, and the group key's value |
+| | `Expr` | the aggregate's expression |
+| | `ArithOp` | the expression's operator |
+| | `Aggregate` | one aggregate |
+| | `AggregateSpec` | the aggregation |
+| | `JoinSpec` | the join |
+| | `SortSpec` | the sort |
+| **the naming** | `Catalog` | the names → the Parquet paths |
+| | `TableAddress` | a table's address: a file, or a name the catalog resolves |
+| | `PlanBuilder` | the plan builder: a plan that names its tables |
+| | `col` | the expression builder: `col("x")` |
+| | `ColumnExpr` | the expression builder's column |
+| | `Operand` | the expression builder's operand: a column or a constant |
+| | `lit` | the expression builder's constant: `lit(1.0)` |
+| **the result** | `AggregateResult` | the result of a plan |
+| | `AggregateValue` | one aggregate's value |
+| | `Group` | one group |
+| **the errors** | `EngineError` | everything that can go wrong |
+| | `MemoryError` | why a plan did not fit its budget |
+| | `DatasetError` | why a file could not be read |
+| **the plan output** | `PlanOutput` | the rendered plan |
+| | `StageStats` | one stage's statistics |
+| | `JoinReport` | the join's report |
+| | `SortReport` | the sort's report |
+| | `Attribution` | the query's own time, and how the stages divide it |
+| | `PushdownMetrics` | what the pushed-down predicates cost |
+| **the knobs** | `ExecOptions` | the knobs: the budget, the flavor, the threads |
+| | `MemoryBudget` | the per-query memory budget |
+| | `Flavor` | the kernel flavor |
+| **the vocabulary** | `DataType` | the engine's type for a column |
+| | `ColumnChunk` | a column's values, its encoding and its validity |
+| | `Encoding` | how a column's values are stored |
+| | `NullBitmap` | which of a column's values are NULL |
+| **the data** | `Dataset` | the decoded columns, in memory |
+| | `ParquetSource` | the file |
+| | `SourceColumn` | a column of the file: its name and the engine's type for it |
+| | `RowGroupRange` | a row group's rows, and the range of a column's values in it |
+| | `MAX_READER_BATCH_ROWS` | the reader's batch size, in rows |
+
+**Forty-five names, and every one of them is reachable from `columnar_engine::prelude::*` and from
+the crate root.** The list is the crate's rustdoc, the crate's README and the embedder test's
+imports — one list, read three times, in three places that must agree.
+
+### What is not on the list, and why
+
+| | |
+|---|---|
+| `operators`, `pushdown`, `dictionary`, `queries`, `explain`, `memory`, `plan` | **Reachable, undocumented.** They are this repository's measurement harness — the fourteen probes live in this crate — and a harness that cannot reach the engine's internals measures nothing. `#[doc(hidden)]` says *reachable, not promised*. |
+| `source`, `dataset` | **Private.** They keep only the two types the embedder needs, and the crate root re-exports them. |
+| `testing` | **Reachable, undocumented.** The three decode counters the crate's own tests read. They are instrumentation, not an API. |
+| `columnar-core`'s own modules | **Out of scope for this spec.** The vocabulary crate's root is already flat — every type it has is re-exported at its root — and R3 is about the engine's surface. |
+
+### The two paths to a name
+
+The crate root and the prelude carry the same list, and the reason there are two is the one the
+house already decided: [ADR-0033](../../docs/adr/0033-the-crates-modules.md) — *`lib.rs` is the
+public surface*. The root is where an embedder writes `columnar_engine::QueryPlan`, and the prelude
+is where an embedder writes `use columnar_engine::prelude::*;`. **No research module offers a third
+path to a surface name**, and the ones that do — `plan::QueryPlan`, `operators::aggregate::AggregateResult` —
+are the undocumented ones, which is why they are not a promise.
 
 ## The plan's shape
 

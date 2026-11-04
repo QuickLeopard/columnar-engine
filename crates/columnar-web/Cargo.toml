@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 description = "The browser build of the columnar engine's comparison kernel"
 readme.workspace = true
+# The browser build of this repository's kernel: it is not a library anybody depends on,
+# and it must never be published by a workspace-wide publish.
+publish = false
 keywords = ["wasm", "webassembly", "simd", "query-engine", "benchmark"]
 categories = ["wasm", "database-implementations", "algorithms"]
 

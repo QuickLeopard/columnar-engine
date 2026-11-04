@@ -35,9 +35,9 @@ use arrow::array::{ArrayRef, Float64Array, Int64Array, StringArray, StringDictio
 use arrow::datatypes::{DataType, Field, Int32Type, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use columnar_core::{ComparisonOp, Predicate, ScalarValue};
+use columnar_engine::pushdown::PushdownPlan;
 use columnar_engine::{
-    execute, execute_on, Aggregate, AggregateSpec, Dataset, ExecOptions, ParquetSource,
-    PushdownPlan, QueryPlan,
+    execute, execute_on, Aggregate, AggregateSpec, Dataset, ExecOptions, ParquetSource, QueryPlan,
 };
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -307,6 +307,9 @@ fn the_two_paths_agree_for_every_operator() {
                 ScalarValue::Float64(_) => "l_discount",
                 ScalarValue::Int64(_) => "l_quantity",
                 ScalarValue::Utf8(_) => "l_shipdate",
+                // `ScalarValue` is `#[non_exhaustive]`: a threshold of a kind
+                // this engine does not know has no column to test it against.
+                _ => panic!("a threshold of a kind this engine does not know"),
             };
             let plan = count_plan(column, op, threshold.clone());
             both_paths(&file.path, &plan);

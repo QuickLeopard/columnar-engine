@@ -6,13 +6,17 @@
 #   2. the workspace is lint-clean under clippy `all` + `pedantic`,
 #   3. every test passes -- including the differential suite, which is the
 #      mechanism that keeps the six kernel implementations honest,
-#   4. the x86-64 half of the kernel still compiles,
-#   5. the browser's half of the kernel still compiles,
-#   6. the dependency policy holds,
-#   7. no dataset is committed,
-#   8. the published figures still agree with the committed reports,
-#   9. the browser page still keeps the promises it makes, and
-#  10. the DataFusion peer -- the third system the comparison quotes -- is
+#   4. the doctests pass -- the crate-level example is the one a reader
+#      copies, and `cargo test --all-targets` does not run it,
+#   5. the x86-64 half of the kernel still compiles,
+#   6. the browser's half of the kernel still compiles,
+#   7. the dependency policy holds,
+#   8. the three published crates package, in the order their dependencies
+#      decide, and the public surface has not broken,
+#   9. no dataset is committed,
+#  10. the published figures still agree with the committed reports,
+#  11. the browser page still keeps the promises it makes, and
+#  12. the DataFusion peer -- the third system the comparison quotes -- is
 #      linted and tested on its own.
 #
 # The benchmark is NOT run here. A shared runner is a noisy machine, and a
@@ -103,6 +107,12 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
       - name: cargo test
         run: cargo test --workspace --all-targets
+      # The doctests are not part of `--all-targets`, and the crate-level
+      # example is the one a reader copies: it writes a Parquet file, runs a
+      # plan over it, and checks the answer. A broken example is a broken
+      # README, so it runs in CI.
+      - name: cargo test --doc
+        run: cargo test --workspace --doc
 
   differential:
     name: differential kernel agreement
@@ -180,6 +190,55 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  package:
+    name: the package and the public surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The semver check compares the public surface against a baseline
+          # revision, and the revision has to be in the clone.
+          fetch-depth: 0
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+      - name: cargo-semver-checks
+        # The version is pinned, for the same reason the toolchain is: a
+        # version bump should show up as a diff to review rather than as a
+        # surprise failure.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks@0.51.0
+      # The three crates package, in the order their dependencies decide, and
+      # each package carries its own README, its src/, its licence -- and no
+      # probe, no dataset and no report.
+      - name: The package check
+        run: ./scripts/check-package.sh
+      # A breaking change to the public surface fails the build, not the
+      # embedder.
+      #
+      # The baseline is the last **published** version of the crate. Before
+      # the first publish there is none, and the recorded baseline -- the
+      # revision that established the surface -- stands in for it. The
+      # recorded baseline is empty until that revision exists, and the check
+      # says so rather than pretending to have run.
+      - name: The public surface has not broken
+        run: |
+          baseline="$(grep -v '^#' scripts/semver-baseline.txt | grep -v '^[[:space:]]*$' | head -1)"
+          for crate in columnar-core columnar-kernels columnar-engine; do
+            manifest="crates/$crate/Cargo.toml"
+            if cargo semver-checks check-release --manifest-path "$manifest" 2>/dev/null; then
+              echo "$crate: the surface has not broken since the last published version"
+              continue
+            fi
+            if [ -z "$baseline" ]; then
+              echo "$crate: no published version and no recorded baseline -- the check starts when there is one"
+              continue
+            fi
+            cargo semver-checks check-release --manifest-path "$manifest" --baseline-rev "$baseline"
+          done
 
   no-generated-data:
     name: no generated data is committed

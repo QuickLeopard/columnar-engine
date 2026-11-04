@@ -69,7 +69,13 @@ impl ArithOp {
 }
 
 /// A scalar arithmetic expression.
+///
+/// The enum is **`#[non_exhaustive]`**: an expression language grows -- a
+/// function call, a cast -- and an exhaustive match on it is a breaking
+/// change the moment it does. A caller outside this crate matches it with a
+/// wildcard arm, and a caller inside it does not have to.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Expr {
     /// A literal value.
     Constant(ScalarValue),

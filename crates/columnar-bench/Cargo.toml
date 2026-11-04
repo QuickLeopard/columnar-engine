@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 description = "Benchmark harness and external comparison driver"
 readme.workspace = true
+# A benchmark harness for this repository's comparisons: it is not a library anybody depends on,
+# and it must never be published by a workspace-wide publish.
+publish = false
 keywords.workspace = true
 categories.workspace = true
 

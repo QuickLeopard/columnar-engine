@@ -661,7 +661,7 @@ fn the_published_join_query_runs() {
 
     let definition = columnar_engine::queries::QUERIES
         .iter()
-        .find(|definition| definition.query == columnar_engine::BuiltinQuery::JoinOrders)
+        .find(|definition| definition.query == columnar_engine::queries::BuiltinQuery::JoinOrders)
         .expect("the join query is a builtin query");
     let plan = (definition.plan)(&build_path);
 

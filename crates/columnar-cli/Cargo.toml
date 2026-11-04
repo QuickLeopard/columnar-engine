@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 description = "Command line interface for the columnar engine"
 readme.workspace = true
+# The command line tool this repository measures with: it is not a library anybody depends on,
+# and it must never be published by a workspace-wide publish.
+publish = false
 keywords.workspace = true
 categories.workspace = true
 

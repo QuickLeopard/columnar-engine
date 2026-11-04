@@ -613,8 +613,11 @@ fn group_may_satisfy(predicate: &Predicate, min: &ScalarValue, max: &ScalarValue
 fn coordinate(value: &ScalarValue) -> Option<i128> {
     match value {
         ScalarValue::Int64(value) => Some(i128::from(*value)),
-        ScalarValue::Float64(_) => None,
         ScalarValue::Utf8(text) => iso_days(text).map(i128::from),
+        // A float has no place on a column's line -- it is not an ordered
+        // point -- and neither has a value of a kind this engine does not
+        // know: `ScalarValue` is `#[non_exhaustive]`.
+        _ => None,
     }
 }
 

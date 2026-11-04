@@ -62,7 +62,8 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use columnar_engine::{ParquetSource, PushdownPlan, MAX_READER_BATCH_ROWS};
+use columnar_engine::pushdown::PushdownPlan;
+use columnar_engine::{ParquetSource, MAX_READER_BATCH_ROWS};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 use parquet::file::reader::{FileReader, SerializedFileReader};

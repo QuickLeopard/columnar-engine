@@ -107,7 +107,7 @@ impl Dataset {
     /// Returns [`DatasetError::Io`] if the file cannot be opened, and
     /// [`DatasetError::Parquet`] if it is not a Parquet file the reader
     /// understands.
-    pub fn read_parquet(path: &Path) -> Result<Self, DatasetError> {
+    pub fn read_parquet(path: impl AsRef<Path>) -> Result<Self, DatasetError> {
         Self::read_parquet_with_threads(path, 1)
     }
 
@@ -130,7 +130,11 @@ impl Dataset {
     /// Returns [`DatasetError::Io`] if the file cannot be opened, and
     /// [`DatasetError::Parquet`] if it is not a Parquet file the reader
     /// understands.
-    pub fn read_parquet_with_threads(path: &Path, threads: usize) -> Result<Self, DatasetError> {
+    pub fn read_parquet_with_threads(
+        path: impl AsRef<Path>,
+        threads: usize,
+    ) -> Result<Self, DatasetError> {
+        let path = path.as_ref();
         let file = File::open(path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .map_err(|error| DatasetError::Parquet(error.to_string()))?;

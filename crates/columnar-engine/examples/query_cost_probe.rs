@@ -78,7 +78,8 @@ use std::time::{Duration, Instant};
 
 use columnar_core::SelectionVector;
 use columnar_engine::queries::BuiltinQuery;
-use columnar_engine::{memory, Dataset, ExecOptions, ParquetSource, QueryDefinition, QueryPlan};
+use columnar_engine::queries::QueryDefinition;
+use columnar_engine::{memory, Dataset, ExecOptions, ParquetSource, QueryPlan};
 
 const ITERATIONS: usize = 5;
 

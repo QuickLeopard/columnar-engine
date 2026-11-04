@@ -67,7 +67,14 @@ impl ComparisonOp {
 }
 
 /// A filter over one column.
+///
+/// The struct is **`#[non_exhaustive]`**, and the reason is the same one the
+/// enums have: a filter grows -- a second column, a bound pair -- and a
+/// struct literal in an embedder's code is a breaking change the moment it
+/// does. The fields stay public and readable; what is closed is the
+/// **construction**, and [`Predicate::new`] is the one way in.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Predicate {
     /// The name of the column to filter.
     pub column: String,

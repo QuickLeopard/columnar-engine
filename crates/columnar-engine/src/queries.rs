@@ -164,14 +164,11 @@ fn address_of(address: TableAddress<'_>) -> String {
 }
 
 /// How a system's SQL names the table the query reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TableAddress<'a> {
-    /// The table is the Parquet file itself, quoted into the SQL.
-    File(&'a Path),
-    /// The table has this name, and the system has already loaded the file
-    /// under it.
-    Named(&'a str),
-}
+///
+/// The type lives in [`crate::facade`], because the facade owns the naming:
+/// a table's address is the same decision for the harness's SQL and for the
+/// catalog's reference, and it is the facade's decision to make.
+pub use crate::facade::TableAddress;
 
 /// Every builtin query.
 pub const QUERIES: &[QueryDefinition] = &[

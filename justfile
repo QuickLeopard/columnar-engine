@@ -22,7 +22,7 @@ build:
 # The last two are also CI jobs, but the local gate must not be weaker than
 # CI -- a private repository's Actions minutes are billed, and this account's
 # billing is currently blocked, so the local gate is the one that runs.
-check: fmt lint test check-published check-page
+check: fmt lint test check-published check-page check-package
 
 # Compile the x86-64 half of the kernel from this ARM64 machine.
 #
@@ -61,6 +61,7 @@ lint:
 # Run every test, including the differential kernel suite.
 test:
     cargo test --workspace --all-targets
+    cargo test --workspace --doc
 
 # Run only the differential kernel suite -- the gate that protects the
 # project's headline claim.
@@ -82,6 +83,25 @@ verify-avx2:
 # Check the dependency policy.
 deny:
     cargo deny check
+
+# Check the package: the three published crates, in the order their
+# dependencies decide, and what each of them carries.
+#
+# A crate whose sibling is not on crates.io yet cannot be packaged, and the
+# script says so and says which sibling it waits for. The publish itself is
+# a separate act -- see `docs/embedding.md`.
+check-package:
+    ./scripts/check-package.sh
+
+# Check that the public surface has not broken.
+#
+# The baseline is the last published version of the crate when there is one,
+# and the recorded baseline -- `scripts/semver-baseline.txt` -- when there is
+# not. The tool is not part of the toolchain:
+#
+#     cargo install cargo-semver-checks --locked
+check-semver:
+    ./scripts/check-semver.sh
 
 # ---------------------------------------------------------------------------
 # Data

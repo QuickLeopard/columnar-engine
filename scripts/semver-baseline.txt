@@ -1,0 +1,19 @@
+# The baseline of the public surface.
+#
+# `cargo semver-checks` compares the crate's public API against a baseline
+# and fails the build when the API has broken. The baseline it prefers is the
+# last **published** version of the crate on crates.io -- that is the version
+# an embedder depends on, and it is the one that must not break.
+#
+# The three crates are not published yet. Until they are, the baseline is the
+# revision that established the surface: the commit where spec 034's public
+# API was decided. A commit after that one that removes a name, changes a
+# signature or adds a variant to a frozen enum fails the build here.
+#
+# The revision is written below, on one line, and nothing else. It is empty
+# until the revision exists -- a revision cannot be written into the commit
+# it names -- and the CI job says so when it is empty rather than pretending
+# to have run a check.
+#
+# When the crates are published, this file becomes redundant: the published
+# version is the better baseline, and the CI job prefers it.

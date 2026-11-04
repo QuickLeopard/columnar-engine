@@ -99,7 +99,11 @@ pub struct SourceColumn {
     ///
     /// The pushdown needs this, because it is the pushdown that has to
     /// evaluate an Arrow array.
-    pub arrow_type: ArrowType,
+    ///
+    /// The field is **crate-private** on purpose: Arrow's type is the
+    /// reader's business, and the engine's surface does not name Arrow's
+    /// types. A reader who wants the engine's own type has `data_type`.
+    pub(crate) arrow_type: ArrowType,
 }
 
 /// The limit on the number of rows the Parquet reader hands over at a time.

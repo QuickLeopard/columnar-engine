@@ -434,7 +434,7 @@ fn the_published_sort_query_runs() {
     ];
     let definition = columnar_engine::queries::QUERIES
         .iter()
-        .find(|definition| definition.query == columnar_engine::BuiltinQuery::SortTopK)
+        .find(|definition| definition.query == columnar_engine::queries::BuiltinQuery::SortTopK)
         .expect("the sort query is a builtin query");
     let plan = (definition.plan)(Path::new("unused"));
 

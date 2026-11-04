@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 description = "Deterministic TPC-H style dataset generator"
 readme.workspace = true
+# A dataset generator for this repository's benchmarks: it is not a library anybody depends on,
+# and it must never be published by a workspace-wide publish.
+publish = false
 keywords.workspace = true
 categories.workspace = true
 

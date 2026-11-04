@@ -162,6 +162,13 @@ fn resolve_expr(expr: &Expr, schema: &dyn ColumnSchema) -> Result<ResolvedExpr, 
             ScalarValue::Utf8(text) => Err(EngineError::TypeMismatch(format!(
                 "the expression's constant `{text}` is a string, and an arithmetic expression computes a number"
             ))),
+            // `ScalarValue` is `#[non_exhaustive]`: a variant added to it in a
+            // later version of `columnar-core` cannot be matched here, and a
+            // constant this engine does not know is not a number either.
+            _ => Err(EngineError::TypeMismatch(
+                "the expression's constant is of a type this engine does not compute with"
+                    .to_owned(),
+            )),
         },
         Expr::Column(name) => {
             let index = column_index(schema, name)?;
@@ -196,6 +203,12 @@ fn resolve_expr(expr: &Expr, schema: &dyn ColumnSchema) -> Result<ResolvedExpr, 
         Expr::Negate(inner) => {
             Ok(ResolvedExpr::Negate(Box::new(resolve_expr(inner, schema)?)))
         }
+        // `Expr` is `#[non_exhaustive]`: a variant added to it in a later
+        // version of `columnar-core` cannot be matched here, and this engine
+        // does not know how to execute it yet.
+        _ => Err(EngineError::TypeMismatch(
+            "the expression is of a kind this engine does not compute with".to_owned(),
+        )),
     }
 }
 

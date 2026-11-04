@@ -8,9 +8,14 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Vectorized operators, Parquet ingestion and the query pipeline"
-readme.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# The crate's own README, not the repository's.
+readme = "README.md"
+keywords = ["columnar", "query-engine", "parquet", "embedded-analytics"]
+categories = ["database-implementations", "algorithms", "data-structures"]
+# The fourteen measurement probes are this project's evidence harness, not an
+# embedder's examples, so the package does not carry them. The package carries
+# no dataset, no benchmark report and no instrument.
+exclude = ["examples/**"]
 
 [lints]
 workspace = true

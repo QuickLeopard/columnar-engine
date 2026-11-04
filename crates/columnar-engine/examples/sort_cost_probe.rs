@@ -90,8 +90,9 @@ use std::time::{Duration, Instant};
 use arrow::array::{Array, Float64Array};
 use columnar_engine::operators::key::KeyColumn;
 use columnar_engine::operators::sort;
+use columnar_engine::pushdown::PushdownPlan;
 use columnar_engine::queries::BuiltinQuery;
-use columnar_engine::{Dataset, ExecOptions, ParquetSource, PushdownPlan, MAX_READER_BATCH_ROWS};
+use columnar_engine::{Dataset, ExecOptions, ParquetSource, MAX_READER_BATCH_ROWS};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 
