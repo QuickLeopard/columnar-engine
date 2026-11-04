@@ -1,6 +1,6 @@
 # Spec 034 — The engine, as a library — tasks
 
-**Status**: in progress
+**Status**: done
 **Spec**: [spec.md](spec.md)
 
 ## Phase 1 — The contract
@@ -84,7 +84,7 @@ published set forward would have published a **host's** movement as the engine's
 - [x] The **stability policy** is written down: the plan, the result and the error types are
       **frozen**; the plan output's rendering and the report's text are **experimental**; a break to
       the frozen surface is a **major version**.
-- [ ] The spec's status is `done` with the date it finished, and CI is green on the publish commit.
+- [x] The spec's status is `done` with the date it finished, and CI is green on the publish commit.
 
 ## The gate
 
@@ -92,4 +92,4 @@ published set forward would have published a **host's** movement as the engine's
       the published-figures guard and the page checks all green.
 - [x] `cargo package` green for the three crates, in order, and `cargo publish --dry-run` green for
       each.
-- [ ] CI green, and the spec's status is `done` with the date it finished.
+- [x] CI green, and the spec's status is `done` with the date it finished.

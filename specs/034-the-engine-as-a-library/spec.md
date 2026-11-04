@@ -1,7 +1,8 @@
 # Spec 034 — The engine, as a library
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-11-04
+**Finished**: 2026-11-04
 **Amended**: 2026-11-04 — **R3's list**: the list is now **closed by a rule** — *every type that appears
 in the public signature of a surface item is on the list* — and the list itself is written out in
 **The surface, exactly**. The reason: R3's first draft named nineteen items and **missed seven that
