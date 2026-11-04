@@ -41,6 +41,11 @@ new measurement**.
    floor's own series, iteration by iteration — because the floor is the machine's own measure and it
    is measured **in the same iteration, back to back, with the order alternating**: the paired figure
    is the leaf's own movement with the machine's common movement taken out.
+   **And the sentence is corrected in [ADR-0042](0042-the-file-state-floor.md)**: the **sides** were
+   measured in the same iteration, back to back, with the order alternating; the **floor was not** — it
+   was measured in its own block, after the iterations were over, and paired with the leaves by index,
+   so the machine's movement it takes out is the machine's movement in another block. The pairing was a
+   reasonable proxy, and it was not the same-iteration pairing this decision said it was.
 
 3. **The instrument is not changed.** The file's state is measured **once per campaign** — the
    process's first read of the build side's data — and not per iteration, so the excursions inside the

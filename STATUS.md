@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **34 specs**, **41 ADRs** and **29 defects** so far, and every
+[`constitution.md`](constitution.md). **34 specs**, **42 ADRs** and **29 defects** so far, and every
 one of the specs but the last is closed.
 
 ---
@@ -272,14 +272,28 @@ for a pinned x86-64 runner; it has not run on one.
   published set, **6.76%** and **4.52%** in the increment's — so the engine's cost moves by about two
   per cent on the path that holds the data and by about a fifth on the path that reads the file.
   [§3q](PERF.md#3q-the-drifts-own-parts) has the ladder.
-- **The next question is a file-state floor.** The cold path's largest leaf **is** the file's state, and
-  **no floor over a memory-bound loop can see it**: the instrument measures the build side's file state
-  **once per campaign** — the process's first read of the build side's data — and not per iteration, so
-  the excursions inside the iterations cannot be attributed to it from the report. **The question is what
-  a yardstick for the cold path has to measure** — the file's own read, measured in the iteration,
-  paired with the parts — **and what it would cost to measure the file's state without perturbing the
-  thing it measures.** It is **not** a spec yet: nothing has been measured for it, and its instrument is
-  not built.
+- **The file-state floor is built, and the sentence that named it is corrected.** Spec 036 moved both
+  floors into the iteration: the **file's own read** — the build side's read through the engine's own
+  reader, with the engine's own predicates — is now the **file-state floor**, measured right after the
+  **machine's own measure**, and the two are **8.565 ms**, **8.871 ms** and **8.793 ms** apart in the
+  three campaigns. **And the correction**: PERF.md §3q and ADR-0041 said the floor was measured *in the
+  same iteration, back to back, with the order alternating*; the **sides** were, and the floor was
+  measured in its own block and paired with the leaves by index, so the machine it took out was the
+  machine's movement **in another block**. It is corrected in §3q, where it was published, and
+  [ADR-0042](docs/adr/0042-the-file-state-floor.md) records it. **And the yardstick now sees the file's
+  state as well as the machine's** — the machine's drift, the file-state floor's drift, and the larger of
+  them: **0.258 ms** and **0.361 ms** on this day, and only the open's gap's yardstick changes, from
+  **0.258 ms** to **0.361 ms**. **And the attribution is published as it came out**: the excursions did
+  not recur — over **nine more campaigns** the file's own read's largest spread within a campaign was
+  **1.805 ms** and the machine's own movement's was **1.842 ms** — so the published set's excursion at
+  **38.640 ms** is not re-attributed, and what the increment makes true is that **the next time the
+  file's state moves, the two will be measured apart, in the same iteration.**
+  [§3r](PERF.md#3r-the-file-state-floor) has the tables.
+- **The measurement track's question is answered, and what is left is the work the repository cannot take
+  on its own.** The next increment is **the library's publish** — it needs a crates.io account and a
+  token, and it makes the code public — or the **`parquet` bump**, whose target is known and whose own
+  measurement has to be taken because Arrow's decode is what the published figures measure. Both are
+  written down below, and neither is a spec yet.
 - **The three crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
   research harness into a library: the surface is decided and written down (**45 names**, closed by the
   rule that every type in a public signature is on the list), the three crates package **in the order
