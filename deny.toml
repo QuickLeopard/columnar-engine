@@ -90,7 +90,7 @@ ignore = true
 # Ignore nothing by default -- an unrecognised advisory class should be
 # visible rather than silently accepted.
 #
-# One exception, and it is a real one:
+# Two exceptions, and they are real ones:
 #
 #   * RUSTSEC-2024-0436 -- `paste` is no longer maintained.
 #
@@ -101,7 +101,26 @@ ignore = true
 # mean dropping the Arrow/Parquet stack, which is not on the table. The
 # alternative -- an unmaintained build-time macro in the dependency graph -- is
 # accepted deliberately, with this comment as the record.
-ignore = ["RUSTSEC-2024-0436"]
+#
+#   * RUSTSEC-2026-0435 -- `thrift` 0.17.0, an unbounded allocation in
+#     `TBinaryInputProtocol::read_bytes`.
+#
+# The advisory's sink is the **binary** protocol. `parquet` 54.3.1 never
+# constructs it: the crate contains no reference to `TBinaryInputProtocol` at
+# all, and its file reader builds a `TCompactInputProtocol`
+# (`file/serialized_reader.rs`). The engine opens **files**; it opens no
+# transport and speaks no binary protocol, so the named sink is not reachable
+# in this graph.
+#
+# **And the related weakness is named here rather than hidden.** The compact
+# protocol's own `read_bytes` allocates the declared length eagerly, bounded by
+# a u32 -- so a hostile Parquet file's metadata can ask for four gigabytes
+# before a byte of payload is read. That is a *different* path, it **is**
+# reachable, and the fix is upstream (`thrift` >= 0.23), which `parquet` 54 does
+# not allow: its manifest pins `thrift = "0.17"`. It is written down as an open
+# question in `STATUS.md` and as an exclusion in spec 034, because a `parquet`
+# bump moves the published figures and wants its own measurement.
+ignore = ["RUSTSEC-2024-0436", "RUSTSEC-2026-0435"]
 
 # ---------------------------------------------------------------------------
 # Dependency sources.
