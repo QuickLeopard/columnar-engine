@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **33 specs**, **40 ADRs** and **29 defects** so far, and every
+[`constitution.md`](constitution.md). **33 specs**, **41 ADRs** and **29 defects** so far, and every
 one of the specs but the last is closed.
 
 ---
@@ -256,19 +256,30 @@ for a pinned x86-64 runner; it has not run on one.
 
 ### The work the project has not done
 
-- **The next question is the drift itself, and it is written down here and in the README's Next row.**
-  Spec 033 is written down and closed, and it leaves one question: the **drift** is now the yardstick
-  every part is judged against, and **it has never been taken apart**. The machine's own floor moved
-  **0.362 ms** across one session's three campaigns, but the join stage moved **4.731 ms** on the cold
-  path and the build side's read of the build file alone moved **10.330 ms** — so **the yardstick is as
-  wide as the engine's own cold read makes it**, and that is why the cold path's parts cannot be told
-  apart. **The resolution that would be needed is a cold-path drift below 0.878 ms** — the yardstick the
-  build side's gap is judged against — and that is **twelve times** narrower than the read's own drift.
-  **The next question is which of the drift's parts is the engine's, and how much of the engine's own
-  cost moves under the measurement.** It is **not** a spec yet: nothing has been measured for it,
-  and its instrument is not built. **It waited one increment, and the reason is recorded in
-  [spec 034](specs/034-the-engine-as-a-library/spec.md)'s scope**: that increment changed no engine
-  work, so every published figure had to stand unchanged, and the two tracks do not touch the same code.
+- **The drift's own parts are taken apart, and the answer is that the yardstick is not a property of the
+  code.** Spec 035 decomposed the drift into its parts — the **machine's own movement** (the floor),
+  the **file's state** and the **engine's own variance** — and it closes exactly: the reconciliation is
+  **0.000000 ms** on both paths and on both sets. **And which of them is largest is a property of the
+  host's state on the day, not of the code.** On the busy host the published set was taken on, the cold
+  path's movement is the file's state (**+1.179 ms**) and the build side's gap (**+1.054 ms**) against
+  the machine's own **+0.205 ms** — and the build side's read's own series shows three excursions above
+  22 ms in one campaign, against about **11.7 ms** in the others. On the quiet host the same read never
+  breaks away — **10.316 ms**, **10.952 ms**, **10.657 ms**, every iteration within a millisecond — and
+  the machine's own **+0.301 ms** is larger than the cold path's whole movement. **And the floor's
+  validity flips with it**: sound on the resident path of one set, not on the cold path of the same set,
+  and the other way round on the other set. **And how much of the engine's own cost moves under the
+  measurement**: **18.72%** of the cold path's cost and **1.75%** of the resident path's in the
+  published set, **6.76%** and **4.52%** in the increment's — so the engine's cost moves by about two
+  per cent on the path that holds the data and by about a fifth on the path that reads the file.
+  [§3q](PERF.md#3q-the-drifts-own-parts) has the ladder.
+- **The next question is a file-state floor.** The cold path's largest leaf **is** the file's state, and
+  **no floor over a memory-bound loop can see it**: the instrument measures the build side's file state
+  **once per campaign** — the process's first read of the build side's data — and not per iteration, so
+  the excursions inside the iterations cannot be attributed to it from the report. **The question is what
+  a yardstick for the cold path has to measure** — the file's own read, measured in the iteration,
+  paired with the parts — **and what it would cost to measure the file's state without perturbing the
+  thing it measures.** It is **not** a spec yet: nothing has been measured for it, and its instrument is
+  not built.
 - **The three crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
   research harness into a library: the surface is decided and written down (**45 names**, closed by the
   rule that every type in a public signature is on the list), the three crates package **in the order

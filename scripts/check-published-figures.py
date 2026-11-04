@@ -1124,18 +1124,16 @@ def join_cost_ladder(paths: list[Path], path: str) -> dict[str, object]:
     total = 0.0
     for name, key, series_name in SPEC035_LEAVES[path]:
         published = [run["derived_ms"][key] for run in runs]
-        leaf_movement = 0.0
         if series_name is None:
             # The leaf enters the ladder as the file's state **less** the
             # offset, so on the cold path it is the offset taken against the
             # probe's gap.
             fs = series_of("the probe's file state")
             off = series_of("the probe's row-number offset")
-            signed = [[f - o for f, o in zip(a, b)] for a, b in zip(fs, off)]
-            leaf_movement = means(signed)[high] - means(signed)[low]
+            series = [[f - o for f, o in zip(a, b)] for a, b in zip(fs, off)]
         else:
             series = series_of(series_name)
-            leaf_movement = means(series)[high] - means(series)[low]
+        leaf_movement = means(series)[high] - means(series)[low]
         total += leaf_movement
         leaves.append(
             {
@@ -1143,6 +1141,7 @@ def join_cost_ladder(paths: list[Path], path: str) -> dict[str, object]:
                 "drift": max(published) - min(published),
                 "medians": published,
                 "movement": leaf_movement,
+                "series": series,
             }
         )
 
@@ -1150,6 +1149,14 @@ def join_cost_ladder(paths: list[Path], path: str) -> dict[str, object]:
     floor_series = [run["series_ms"]["floor_probe"] for run in runs]
     cost = [run["parts_ms"][f"stage_{path}"] for run in runs]
     cost_drift = max(cost) - min(cost)
+    for leaf in leaves:
+        # The **paired** movement: the leaf's own series less the floor's own
+        # series, iteration by iteration. The floor is the machine's own
+        # measure and it is measured in the same iteration, back to back, with
+        # the order alternating, so this is the leaf's own movement with the
+        # machine's common movement taken out.
+        signed = [[a - b for a, b in zip(one, other)] for one, other in zip(leaf["series"], floor_series)]
+        leaf["paired"] = means(signed)[high] - means(signed)[low]
     return {
         "the context's drift": max(context_medians) - min(context_medians),
         "the context's medians": context_medians,
@@ -2568,6 +2575,9 @@ def main() -> int:
                     wanted.append(
                         (f"the {path} path's {leaf['name']}'s movement", leaf["movement"], 3)
                     )
+                    wanted.append(
+                        (f"the {path} path's {leaf['name']}'s paired movement", leaf["paired"], 3)
+                    )
                 for label, figure, places in wanted:
                     rendered = rendered_figure(figure, places)
                     if not figure_in(ladder_section, rendered):
@@ -3400,7 +3410,7 @@ def main() -> int:
         f"{len(QUERY_COST_CHECKS) + len(QUERY_COST_SHAPE_CHECKS)} of the query probe, "
         f"{len(SORT_COST_CHECKS)} of the sort probe, "
         f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe, "
-        f"{len(SPEC035_FAMILIES) * (2 * (7 + 2 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
+        f"{len(SPEC035_FAMILIES) * (2 * (7 + 3 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
     )
     return 0

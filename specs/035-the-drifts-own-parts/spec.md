@@ -163,7 +163,7 @@ The edges: 1 → 2 → 3 → 4 → 5 → 6 → 7, and 1 → 4 (the reproducibili
    committed reports by the guard's machinery, and the guard looks for it **inside** the section that
    publishes it.
 2. **The campaigns are not re-taken**, because the instrument is not changed: the decomposition reads
-   the set the file publishes now — `bench-results/join-cost-run*.json` — and the set this increment
+   the set the file publishes now — `bench-results/join-cost-run*.json` — and the set spec 034
    measured beside it — `bench-results/join-cost-spec034-run*.json`. **Both are published**, because
    the decomposition is a property of the code, and the two sets disagree about how much the machine
    moved on the day they were taken.
@@ -177,7 +177,7 @@ The edges: 1 → 2 → 3 → 4 → 5 → 6 → 7, and 1 → 4 (the reproducibili
 | [`constitution.md`](../../constitution.md) II, III, V | the method: measure first, the figures are derived, medians of three campaigns |
 | [`constitution.md`](../../constitution.md) VII | explicit scope, no silent deferral |
 | [`PERF.md`](../../PERF.md) §3o | the drift, the ladder and the verdicts this increment reads |
-| [`PERF.md`](../../PERF.md) §3p | the re-measurement, and the two sets this increment derives from |
+| [`PERF.md`](../../PERF.md) §3p | the re-measurement, and the second set the ladder is taken over |
 | [`spec 033`](../033-the-drift-taken-apart/spec.md) | the drift as the yardstick, and the question this increment answers |
 | [`spec 030`](../030-the-context-taken-apart/spec.md) | the ladder, and the reconciliation that closes exactly |
 | [`ADR-0039`](../../docs/adr/0039-the-drift-taken-apart.md) | the drift's own decision |

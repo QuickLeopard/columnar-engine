@@ -2833,30 +2833,35 @@ and the reconciliation is **0.000 ms**.
 the sum of the medians, and the mean is the statistic the parts tile. The drift itself stays the
 range of the medians — it is the yardstick's own statistic — and it is published beside the movement.
 
+**And every leaf carries its paired figure**: the leaf's own series less the floor's own series,
+iteration by iteration. The floor is the machine's own measure and it is measured **in the same
+iteration, back to back, with the order alternating**, so the paired figure is the leaf's own
+movement with the machine's common movement taken out.
+
 **And the ladder is taken over the pair of campaigns that make the context's own drift**, so the
 movement is the one the yardstick is about. **From the set this file publishes:**
 
 | the ladder | the cold path | the resident path |
 |---|---|---|
 | **the context's drift** | **0.667 ms** | **0.356 ms** |
-| the build side's gap — drift, movement | 0.120 ms, +1.054 ms | 0.564 ms, +1.228 ms |
-| the open's gap — drift, movement | 0.011 ms, −0.005 ms | 0.010 ms, −0.016 ms |
-| the probe's file state, less its row-number offset | 1.700 ms, +1.179 ms | 0.390 ms, −0.001 ms |
-| the probe's own remainder | 0.585 ms, −0.098 ms | 0.219 ms, +0.325 ms |
-| the part in no gap | 0.000 ms, 0.000 ms | 0.000 ms, 0.000 ms |
+| the build side's gap — drift, movement, paired | 0.120 ms, +1.054 ms, +0.849 ms | 0.564 ms, +1.228 ms, +0.982 ms |
+| the open's gap — drift, movement, paired | 0.011 ms, −0.005 ms, −0.210 ms | 0.010 ms, −0.016 ms, −0.261 ms |
+| the probe's file state, less its row-number offset | 1.700 ms, +1.179 ms, +0.974 ms | 0.390 ms, −0.001 ms, −0.247 ms |
+| the probe's own remainder | 0.585 ms, −0.098 ms, −0.303 ms | 0.219 ms, +0.325 ms, +0.079 ms |
+| the part in no gap | 0.000 ms, 0.000 ms, −0.205 ms | 0.000 ms, 0.000 ms, −0.246 ms |
 | **the movement, and the reconciliation** | **+2.130 ms**, **0.000000** | **+1.536 ms**, **0.000000** |
 | **the floor** — the machine's own movement | **0.362 ms**, +0.205 ms | **0.362 ms**, +0.246 ms |
 
-**And from the set this increment measured, on a quieter host:**
+**And from the set spec 034 measured, on a quieter host:**
 
 | the ladder | the cold path | the resident path |
 |---|---|---|
 | **the context's drift** | **0.184 ms** | **0.371 ms** |
-| the build side's gap — drift, movement | 0.117 ms, +0.146 ms | 0.254 ms, +0.061 ms |
-| the open's gap — drift, movement | 0.004 ms, +0.003 ms | 0.011 ms, −0.001 ms |
-| the probe's file state, less its row-number offset | 0.109 ms, +0.140 ms | 0.125 ms, +0.188 ms |
-| the probe's own remainder | 0.262 ms, −0.083 ms | 0.106 ms, −0.049 ms |
-| the part in no gap | 0.000 ms, 0.000 ms | 0.000 ms, 0.000 ms |
+| the build side's gap — drift, movement, paired | 0.117 ms, +0.146 ms, −0.154 ms | 0.254 ms, +0.061 ms, +0.362 ms |
+| the open's gap — drift, movement, paired | 0.004 ms, +0.003 ms, −0.298 ms | 0.011 ms, −0.001 ms, +0.300 ms |
+| the probe's file state, less its row-number offset | 0.109 ms, +0.140 ms, −0.161 ms | 0.125 ms, +0.188 ms, +0.488 ms |
+| the probe's own remainder | 0.262 ms, −0.083 ms, −0.384 ms | 0.106 ms, −0.049 ms, +0.252 ms |
+| the part in no gap | 0.000 ms, 0.000 ms, −0.301 ms | 0.000 ms, 0.000 ms, +0.301 ms |
 | **the movement, and the reconciliation** | **+0.206 ms**, **0.000000** | **+0.199 ms**, **0.000000** |
 | **the floor** — the machine's own movement | **0.275 ms**, +0.301 ms | **0.275 ms**, −0.301 ms |
 
@@ -2866,7 +2871,9 @@ day, not of the code.**
 
 **On the busy host the published set was taken on, the cold path's movement is the file's state and
 the build side's gap**: **+1.179 ms** and **+1.054 ms** of the **+2.130 ms**, against the machine's own
-**+0.205 ms**. **And the file's state is in the build side's read's own series**: the read's medians
+**+0.205 ms** — **and paired against the floor they are still +0.974 ms and +0.849 ms**,
+so the machine's share is a fifth of each and the rest is neither the machine's nor the engine's.
+**And the file's state is in the build side's read's own series**: the read's medians
 are **11.763 ms**, **22.093 ms**, **11.898 ms** for the three campaigns, and inside the middle one the
 read's own six iterations are **11.713**, **11.403**, **22.093**, **38.640**, **24.708**, **15.446** —
 three excursions above 22 ms against a baseline of about 11.7 ms. **That is the file's state, not the
@@ -2878,9 +2885,10 @@ engine's work**: the same code runs in every iteration.
 excursions are the file's state and not the machine's speed**, and the file's state is the one part of
 the drift that the code cannot cause and the instrument does not yet measure per iteration.
 
-**And on the quiet host this increment's set was taken on, the machine's own movement is larger than
-the cold path's whole movement**: the floor's **+0.301 ms** against **+0.206 ms**. So the machine's
-share is not a fixed number either — **which is why the two sets are published beside each other and
+**And on the quiet host spec 034's set was taken on, the machine's own movement is larger than
+the cold path's whole movement**: the floor's **+0.301 ms** against **+0.206 ms** — **and paired
+against the floor the cold path's leaves' movements are −0.154 ms and −0.161 ms**, so on that host they
+**are** the machine's movement and nothing else. So the machine's share is not a fixed number either — **which is why the two sets are published beside each other and
 not one instead of the other**: the decomposition is a property of the code, and the shares are a
 property of the day.
 
@@ -2890,7 +2898,7 @@ offset** drifts **1.700 ms** and the **probe's own remainder** **0.585 ms**, aga
 **0.362 ms** — **their own drift is their yardstick, and the floor does not reach them**. The **build
 side's gap** drifts **0.120 ms** and the **open's gap** **0.011 ms**, and the floor covers both. On the
 resident path the **build side's gap** drifts **0.564 ms**, above the floor's **0.362 ms**, and the
-other four are covered. **On the increment's set the answer flips**, on the other path: the cold
+other four are covered. **On spec 034's set the answer flips**, on the other path: the cold
 path's context drifts **0.184 ms** against the floor's **0.275 ms** — **covered** — and the resident
 path's drifts **0.371 ms** — **not covered**.
 
@@ -2905,9 +2913,9 @@ it is a new instrument**, which wants its own measurement and its own increment.
 **And how much of the engine's own cost moves under the measurement.** In the published set the cold
 path's drift is **4.731 ms** — **18.72%** of its cost — and the resident path's is **0.340 ms**,
 **1.75%** of its own. In the increment's set the cold path's drift is **1.237 ms**, **6.76%** of its
-cost, and the resident path's is **0.818 ms**, **4.52%**. **So the engine's cost holds to about a
-fiftieth on the path that holds the data, and to about a seventh on the path that reads the file** —
-and the difference between the two is the file's state, not the engine's work.
+cost, and the resident path's is **0.818 ms**, **4.52%**. **So in the published set the engine's cost
+moves by about two per cent on the path that holds the data and by about a fifth on the path that reads
+the file** — **and the difference between the two paths is the file's state, not the engine's work.**
 
 ---
 
@@ -3228,6 +3236,15 @@ just probe-join "data/lineitem.parquet" "bench-results/join-cost-spec034-run1.js
 
 # the code this increment replaces, on this same host, back to back
 just probe-join "data/lineitem.parquet" "bench-results/join-cost-spec034-before-run1.json"
+```
+
+**And §3q's ladder is printed by the same script**, over the set this file publishes and the set spec
+034 measured beside it — the leaves' drifts, their movements, the reconciliation and the cost's own
+share — and every figure it prints is checked, inside the section that publishes it, by the guard:
+
+```bash
+python3 scripts/medians.py
+python3 scripts/check-published-figures.py
 ```
 
 The probe runs the engine's **own** plans through the engine's own entry point and checks the answers

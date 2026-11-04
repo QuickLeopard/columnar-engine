@@ -1799,6 +1799,85 @@ def print_join_cost(sets: list[tuple[str, list[tuple[str, list[dict]]]]]) -> Non
                     print(f"{path:<44}{difference:>12.3f}{floor:>12.3f}")
 
 
+def print_drift_ladder(sets: list[tuple[str, list[dict]]]) -> None:
+    """Print the drift's own parts: the ladder, and the movement that makes it.
+
+    This is spec 035: the drift is a **range**, and a range is not additive, so
+    the decomposition is made of **movements** -- the difference between two
+    campaigns -- and the movement is taken on the **means**, because the mean is
+    the statistic the parts tile. The drift itself stays the range of the
+    medians, and it is printed beside the movement.
+
+    The ladder is taken over the pair of campaigns that make the **context's**
+    own drift, so the movement is the one the yardstick is about, and the
+    reconciliation says whether the ladder closes: it does, exactly.
+    """
+    leaves = {
+        "cold": (
+            ("the build side's gap", "the_build_gap_cold", "the build side's gap"),
+            ("the open's gap", "the_open_gap_cold", "the open's gap"),
+            ("the probe's file state, less its row-number offset", "the_probe_row_offset", None),
+            ("the probe's own remainder", "the_probe_residual_cold", "the probe's own remainder"),
+            ("the part in no gap", "the_host_remainder_cold", "the part in no gap"),
+        ),
+        "resident": (
+            ("the build side's gap", "the_build_gap_resident", "the build side's gap"),
+            ("the open's gap", "the_open_gap_resident", "the open's gap"),
+            ("the probe's file state, less its row-number offset", "the_probe_file_state", None),
+            ("the probe's own remainder", "the_probe_residual_resident", "the probe's own remainder"),
+            ("the part in no gap", "the_host_remainder_resident", "the part in no gap"),
+        ),
+    }
+    for label, runs in sets:
+        if not runs:
+            continue
+        print(f"\n=== THE DRIFT'S OWN PARTS -- {label} ({len(runs)} campaigns) ===")
+        for path in ("cold", "resident"):
+            def series_of(leaf: str) -> list[list[float]]:
+                return [run["ladder_series_ms"][path][leaf] for run in runs]
+
+            def medians(samples: list[list[float]]) -> list[float]:
+                return [sorted(s)[len(s) // 2] for s in samples]
+
+            def means(samples: list[list[float]]) -> list[float]:
+                return [sum(s) / len(s) for s in samples]
+
+            context = series_of("the context")
+            context_medians = medians(context)
+            low = context_medians.index(min(context_medians))
+            high = context_medians.index(max(context_medians))
+            movement = means(context)[high] - means(context)[low]
+            print(f"\n-- the {path} path: the context's drift {max(context_medians) - min(context_medians):.3f} ms"
+                  f", the extremes are campaigns {low + 1} and {high + 1} --")
+            total = 0.0
+            floor_series = [run["series_ms"]["floor_probe"] for run in runs]
+            for name, key, series_name in leaves[path]:
+                published = [run["derived_ms"][key] for run in runs]
+                if series_name is None:
+                    fs = series_of("the probe's file state")
+                    offset = series_of("the probe's row-number offset")
+                    series = [[f - o for f, o in zip(a, b)] for a, b in zip(fs, offset)]
+                else:
+                    series = series_of(series_name)
+                leaf_movement = means(series)[high] - means(series)[low]
+                paired = [[a - b for a, b in zip(one, other)] for one, other in zip(series, floor_series)]
+                leaf_paired = means(paired)[high] - means(paired)[low]
+                total += leaf_movement
+                print(f"   {name:<48} drift {max(published) - min(published):8.3f} ms"
+                      f"   movement {leaf_movement:+8.3f} ms   paired {leaf_paired:+8.3f} ms")
+            floor = [run["parts_ms"]["floor_probe"] for run in runs]
+            floor_series = [run["series_ms"]["floor_probe"] for run in runs]
+            floor_movement = means(floor_series)[high] - means(floor_series)[low]
+            print(f"   {'the floor -- the machine\'s own movement':<48} drift {max(floor) - min(floor):8.3f} ms"
+                  f"   movement {floor_movement:+8.3f} ms")
+            print(f"   the movement {movement:+.3f} ms, the leaves' sum {total:+.3f} ms,"
+                  f" the reconciliation {abs(movement - total):.6f} ms")
+            cost = [run["parts_ms"][f"stage_{path}"] for run in runs]
+            cost_drift = max(cost) - min(cost)
+            print(f"   the cost: {cost[0]:.3f} ms, its drift {cost_drift:.3f} ms,"
+                  f" {100.0 * cost_drift / (sum(cost) / len(cost)):.2f}% of it")
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -2037,6 +2116,19 @@ def main() -> int:
     ]
     if join_sets:
         print_join_cost(join_sets)
+
+    # Spec 035's ladder: the drift's own parts, over the set the file publishes
+    # and the set spec 034 measured beside it.
+    ladder_sets = [
+        (label, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
+        for label, pattern in (
+            ("the set the file publishes now", "join-cost-run*.json"),
+            ("the set spec 034 measured", "join-cost-spec034-run*.json"),
+        )
+        if sorted(Path("bench-results").glob(pattern))
+    ]
+    if ladder_sets:
+        print_drift_ladder(ladder_sets)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))
