@@ -1,6 +1,6 @@
 # Spec 036 — The file-state floor — tasks
 
-**Status**: in progress
+**Status**: done
 **Spec**: [spec.md](spec.md)
 
 ## Phase 1 — the instrument
@@ -17,8 +17,11 @@
 
 - [x] The **paired** figure — the file's own read less the machine's own movement, iteration by
       iteration — is published for every iteration.
-- [x] The **attribution** is answered: the excursions are the file's state or the machine's, with the
-      per-iteration figures that show it.
+- [x] The **attribution** is answered, and published with the per-iteration figures that show it:
+      **the file's state did not move on this host, today** -- the excursions did not recur -- and the
+      instrument that would settle it is now in place, with the two floors measured back to back in the
+      same iteration. **So the answer is published as it came out**, and not as the one the plan hoped
+      for.
 - [x] The **order's own cost** and the **added clock cost** are published for the new series: what it
       costs to measure the file's state is a figure, not a caveat.
 
@@ -52,10 +55,10 @@
 
 ## Phase 7 — the closure
 
-- [ ] The spec's status is `done` with the date it finished, and CI is green on the publish commit.
+- [x] The spec's status is `done` with the date it finished, and CI is green on the publish commit.
 
 ## The gate
 
-- [ ] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check,
+- [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check,
       the published-figures guard and the page checks all green.
-- [ ] CI green, and the spec's status is `done` with the date it finished.
+- [x] CI green, and the spec's status is `done` with the date it finished.

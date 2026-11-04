@@ -1,7 +1,8 @@
 # Spec 036 — The file-state floor
 
-**Status**: in progress
+**Status**: done
 **Started**: 2026-11-04
+**Finished**: 2026-11-04
 **Predecessor**: [035-the-drifts-own-parts](../035-the-drifts-own-parts/spec.md)
 
 ## The problem

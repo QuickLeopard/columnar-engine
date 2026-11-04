@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **34 specs**, **42 ADRs** and **29 defects** so far, and every
-one of the specs but the last is closed.
+[`constitution.md`](constitution.md). **34 specs**, **42 ADRs** and **29 defects** so far, and **every
+one of the specs is closed**.
 
 ---
 
@@ -221,9 +221,14 @@ file state is **−1.238 ms** against a yardstick of **0.487 ms**, outside its o
 The context's own spread came down with it — **0.418 ms** to **0.356 ms** on the resident path and
 **2.211 ms** to **0.667 ms** on the cold one — and it is published old-and-new with the reason.
 **What would answer it:** whether the file state is the whole of it — the same mechanism measured on the
-cold path, where the verdict is still unattributed. It is written down as
-[`spec 033`](specs/033-the-drift-taken-apart/spec.md), which is closed, and in
-[ADR-0039](docs/adr/0039-the-drift-taken-apart.md).
+cold path, where the verdict is still unattributed. **And spec 036 built the instrument that would** —
+the **file-state floor**, the build side's read through the engine's own reader, measured in the
+iteration right after the machine's own measure, so that the two are back to back in the same
+iteration — **and the file's state did not move on the day the set was taken**: the verdict is still
+**unattributed** on the cold path, and only the open's gap's yardstick widened, from **0.258 ms** to
+**0.361 ms**. **So the question stands, and the instrument that would settle it is in place.** It is
+written down as [`spec 036`](specs/036-the-file-state-floor/spec.md) and in
+[ADR-0042](docs/adr/0042-the-file-state-floor.md).
 
 **2. `filter-range`, cold: Polars is ahead.** The engine's lazy path is 16.3 ms against Polars'
 15.2 ms, and the two spreads do not overlap. The scan that holds it is the Parquet decode, and the
