@@ -3,7 +3,7 @@
     "cpu": "Apple M4 Max",
     "arch": "aarch64",
     "cores": 14,
-    "os": "macOS 27.0.1",
+    "os": "macOS 27.2",
     "simd": "neon",
     "forced_simd": "auto",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -12,50 +12,50 @@
   "dataset": {
     "path": "data/lineitem.parquet",
     "rows": 6000000,
-    "bytes": 242857841,
+    "bytes": 242859461,
     "scale_factor": 1,
     "seed": 24001,
     "null_rate": 0.0,
-    "row_groups": 0
+    "row_groups": 6
   },
   "kernel_ab": {
     "rows": 20000000,
-    "iterations": 8,
+    "iterations": 5,
     "column": "l_discount",
     "operator": ">=",
     "threshold": 0.04,
     "flavors": [
       {
         "flavor": "scalar",
-        "rows_per_sec": 3464991008.5648947,
-        "ns_per_row": 0.2886010375,
+        "rows_per_sec": 3343535798.468781,
+        "ns_per_row": 0.29908458,
         "matches": 12726115,
         "ratio_vs_scalar": 1.0,
-        "ratio_vs_auto": 0.5887895066905295
+        "ratio_vs_auto": 0.6248107140796092
       },
       {
         "flavor": "cpp-auto",
-        "rows_per_sec": 5884940151.262088,
-        "ns_per_row": 0.1699252625,
+        "rows_per_sec": 5351277952.065928,
+        "ns_per_row": 0.18687125,
         "matches": 12726115,
-        "ratio_vs_scalar": 1.6983998332796453,
+        "ratio_vs_scalar": 1.6004847187568982,
         "ratio_vs_auto": 1.0
       },
       {
         "flavor": "cpp-simd",
-        "rows_per_sec": 8661113629.750925,
-        "ns_per_row": 0.11545859375,
+        "rows_per_sec": 7423009473.61584,
+        "ns_per_row": 0.13471625,
         "matches": 12726115,
-        "ratio_vs_scalar": 2.4996063794515075,
-        "ratio_vs_auto": 1.4717420070777538
+        "ratio_vs_scalar": 2.2201076707524146,
+        "ratio_vs_auto": 1.387147059096434
       },
       {
         "flavor": "rust-simd",
-        "rows_per_sec": 8488908047.882747,
-        "ns_per_row": 0.11780078125,
+        "rows_per_sec": 8588882653.360083,
+        "ns_per_row": 0.11642958,
         "matches": 12726115,
-        "ratio_vs_scalar": 2.4499076698610605,
-        "ratio_vs_auto": 1.4424799283748384
+        "ratio_vs_scalar": 2.5688023610494857,
+        "ratio_vs_auto": 1.6050152375367153
       }
     ]
   }

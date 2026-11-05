@@ -50,7 +50,7 @@ use crate::result::DatasetReport;
 pub struct ScalingPoint {
     /// The thread count every system ran at.
     pub threads: usize,
-    /// How many threads the engine **actually** used.
+    /// How many workers the engine's **read** used.
     ///
     /// Not the count that was asked for: the read splits the file's row
     /// groups across the threads, so a file with six row groups has six
@@ -59,10 +59,26 @@ pub struct ScalingPoint {
     /// six-row-group file -- so this column is the one that explains the
     /// shape of the engine's curve.
     ///
-    /// In the **cold** mode this is the read's worker count; in the
-    /// **resident** mode there is no read in the measurement, so it is the
-    /// operator worker count instead.
+    /// In the **cold** mode this is the read's worker count, because the read
+    /// is inside the measurement. In the **resident** mode there is no read in
+    /// the measurement at all, so the number is the file's **cap** on
+    /// parallelism rather than a count of anything that ran -- and the
+    /// operators that did run there are counted in `filter_workers` and
+    /// `projection_workers`.
     pub workers: usize,
+    /// The **filter's** worker count: the operators that ran, not the threads
+    /// that were asked for.
+    ///
+    /// The operators' parallelism is capped by the **row count**, not by the
+    /// file's row groups, so the filter runs fourteen workers on a file whose
+    /// read is capped at six. `None` when the mode ran no query: the load
+    /// mode measures the decode and answers nothing.
+    #[serde(default)]
+    pub filter_workers: Option<usize>,
+    /// The **projection's** worker count, on the same terms as
+    /// `filter_workers`.
+    #[serde(default)]
+    pub projection_workers: Option<usize>,
     /// The engine's cold number: the whole query, the file included.
     pub engine_ms: f64,
     /// The engine's scan stage: the read, the pushdown and the merge.
@@ -215,7 +231,7 @@ impl ScalingReport {
         } else {
             writeln!(
                 out,
-                "threads   workers     engine   engine-scan  engine-ops     duckdb     polars  datafusion   engine x    duckdb x"
+                "threads   workers  filter  proj      engine   engine-scan  engine-ops     duckdb     polars  datafusion   engine x    duckdb x"
             )
             .ok();
         }
@@ -246,9 +262,11 @@ impl ScalingReport {
             }
             writeln!(
                 out,
-                "{:>7}  {:>7}  {:>8.1}   {:>11.1}   {:>10.1}   {:>8.1}   {:>8.1}   {:>10}   {:>8.2}x   {:>7.2}x",
+                "{:>7}  {:>7}  {:>6}  {:>4}  {:>8.1}   {:>11.1}   {:>10.1}   {:>8.1}   {:>8.1}   {:>10}   {:>8.2}x   {:>7.2}x",
                 point.threads,
                 point.workers,
+                workers_cell(point.filter_workers),
+                workers_cell(point.projection_workers),
                 point.engine_ms,
                 point.engine_scan_ms,
                 point.engine_operators_ms,
@@ -260,6 +278,18 @@ impl ScalingReport {
             )
             .ok();
         }
+    }
+}
+
+/// A worker count in a table cell, or a dash when there is none.
+///
+/// A missing count is a dash and never a zero: a zero would be read as a
+/// system that did no work, and a mode that ran no query did not do the work
+/// with zero workers.
+fn workers_cell(count: Option<usize>) -> String {
+    match count {
+        Some(count) => format!("{count:>6}"),
+        None => format!("{:>6}", "-"),
     }
 }
 

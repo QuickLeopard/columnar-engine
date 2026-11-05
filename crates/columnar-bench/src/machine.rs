@@ -84,6 +84,42 @@ pub fn simd_probe_is_overridden() -> bool {
     columnar_kernels::force::is_forced()
 }
 
+/// The host's load average, as the OS reports it.
+///
+/// The load is the **host's own measure of itself**, and it is recorded
+/// beside a measurement because a number taken on a busy machine and a number
+/// taken on a quiet one are not the same number: the second is faster, and
+/// the difference is the host's and not the code's.
+///
+/// A host that does not report a load average gives `0.0`, which says "this
+/// host did not say" and not "this host was idle".
+#[must_use]
+pub fn host_load_average() -> f64 {
+    if let Some(value) = run("sysctl", &["-n", "vm.loadavg"]) {
+        if let Some(load) = first_number(&value) {
+            return load;
+        }
+    }
+    if let Ok(contents) = std::fs::read_to_string("/proc/loadavg") {
+        if let Some(load) = first_number(&contents) {
+            return load;
+        }
+    }
+    0.0
+}
+
+/// The first number in a line of text, when there is one.
+///
+/// The load average is reported as `{ 2.31 3.02 3.44 }` on macOS and as
+/// `2.31 3.02 3.44 1/2345 6789` on Linux; both start with the one-minute
+/// average, which is the number a reader compares.
+fn first_number(text: &str) -> Option<f64> {
+    text.replace(['{', '}'], " ")
+        .split_whitespace()
+        .next()
+        .and_then(|first| first.parse::<f64>().ok())
+}
+
 /// The CPU model, as the OS reports it.
 fn cpu_model() -> String {
     #[cfg(target_os = "macos")]

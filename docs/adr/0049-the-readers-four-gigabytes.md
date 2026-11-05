@@ -79,8 +79,13 @@ the hole is what this increment is about.
   asked for before.
 
 - **The `thrift` exemption in `deny.toml` is re-examined against the graph that is actually there.**
-  The advisory names `thrift` 0.17.0, and the bump takes `thrift` out of the graph — so an exemption
-  that names a crate the graph does not contain is **removed**, with the reason.
+  The advisory names `thrift` 0.17.0, and the bump takes the graph's `thrift` to **0.23.0** — a
+  version the advisory's criteria do not cover, so `cargo deny` reports the advisory as **not
+  encountered**. An exemption that names nothing is a **silence**, so it is **removed**, with the
+  reason.
+  **And the reason this ADR first wrote was wrong**, and is corrected here: it said the bump takes
+  `thrift` **out of the graph**, and it does not — `parquet` 58.4.1 depends on `thrift` 0.23.0.
+  [ADR-0050](0050-the-bump-and-the-exemption-that-named-nothing.md) records the correction.
 
 - **Arrow's decode is measured, so the bump moves the published figures.** Every figure that moves is
   published **beside** the figure it replaces, with the reason, and the machine's own floor is

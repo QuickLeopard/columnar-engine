@@ -61,6 +61,18 @@ pub struct SizePoint {
     pub rows: u64,
     /// The dataset's bytes on disk.
     pub bytes: u64,
+    /// The engine's **estimated working set** for this query at this size, in
+    /// bytes.
+    ///
+    /// The engine estimates the working set before it reads a single row and
+    /// refuses the query when the estimate does not fit the budget, so the
+    /// estimate is a number a reader can check against the budget the report
+    /// carries. It is recorded for that reason: the refusal is otherwise a
+    /// story, and a story is not a figure.
+    ///
+    /// `None` when the report was taken before the field existed.
+    #[serde(default)]
+    pub engine_estimate_bytes: Option<u64>,
     /// The engine's cold number: the whole query, the file included.
     pub engine_ms: f64,
     /// The engine's scan stage.
@@ -99,6 +111,13 @@ pub struct SizeReport {
     /// any row is read. The figure is recorded because the curve says which
     /// budget it was measured under.
     pub memory_budget_bytes: u64,
+    /// The host's load average when the campaign ran.
+    ///
+    /// The load is the host's own measure of itself, and it is recorded
+    /// beside the curve because a number taken on a busy host and a number
+    /// taken on a quiet one are not the same number. A reader comparing this
+    /// campaign with another one can see which of the two the host was.
+    pub host_load_average: f64,
     /// The points of the curve, in the order the files were given.
     pub points: Vec<SizePoint>,
 }
@@ -163,6 +182,7 @@ impl SizeReport {
             self.memory_budget_bytes / (1024 * 1024)
         )
         .ok();
+        writeln!(out, "load      {} of the host's load average", self.host_load_average).ok();
         writeln!(
             out,
             "mode      {} \u{b7} the file is read and the query answered in one go",
@@ -177,10 +197,11 @@ impl SizeReport {
         // The header is built from the same widths as the rows, so the two
         // cannot drift apart.
         let header = format!(
-            "{:>5}  {:>10}  {:>7}  {:>8}   {:>11}   {:>10}  {:>9}  {:>9}  {:>10}  {:>8}",
+            "{:>5}  {:>10}  {:>7}  {:>8}  {:>8}   {:>11}   {:>10}  {:>9}  {:>9}  {:>10}  {:>8}",
             "sf",
             "rows",
             "MiB",
+            "est MiB",
             "engine",
             "engine-scan",
             "engine-ops",
@@ -195,10 +216,11 @@ impl SizeReport {
         for point in &self.points {
             writeln!(
                 out,
-                "{:>5}  {:>10}  {:>7.1}  {:>8.1}   {:>11.1}   {:>10.1}  {:>9}  {:>9}  {:>10}  {:>8}",
+                "{:>5}  {:>10}  {:>7.1}  {:>8}  {:>8.1}   {:>11.1}   {:>10.1}  {:>9}  {:>9}  {:>10}  {:>8}",
                 scale_label(point.scale_factor),
                 point.rows,
                 point.bytes as f64 / (1024.0 * 1024.0),
+                estimate_label(point.engine_estimate_bytes),
                 point.engine_ms,
                 point.engine_scan_ms,
                 point.engine_operators_ms,
@@ -240,6 +262,19 @@ fn optional_label(value: Option<f64>) -> String {
     label(value.unwrap_or(f64::NAN))
 }
 
+/// The engine's estimated working set, in MiB, or a dash when there is none.
+///
+/// The estimate is a number the reader can compare with the budget, so it is
+/// rendered in the same unit the budget is rendered in. A report taken before
+/// the field existed has no estimate, and a dash says so where a zero would
+/// say the engine expected to need nothing at all.
+fn estimate_label(bytes: Option<u64>) -> String {
+    match bytes {
+        Some(bytes) => format!("{:.1}", bytes as f64 / (1024.0 * 1024.0)),
+        None => "-".to_owned(),
+    }
+}
+
 /// A scale factor, or a dash when the dataset's manifest did not say.
 fn scale_label(scale_factor: Option<u32>) -> String {
     scale_factor.map_or_else(|| "-".to_owned(), |scale| scale.to_string())
@@ -273,6 +308,7 @@ mod tests {
             scale_factor: Some(1),
             rows: 6_000_000,
             bytes: 1_048_576,
+            engine_estimate_bytes: Some(396_000_000),
             engine_ms: 100.0,
             engine_scan_ms: 60.0,
             engine_operators_ms: 40.0,
@@ -290,6 +326,7 @@ mod tests {
             sql: "SELECT sum(l_extendedprice * (1 - l_discount)) FROM lineitem".to_owned(),
             mode: "cold".to_owned(),
             memory_budget_bytes: 1024 * 1024 * 1024,
+            host_load_average: 0.0,
             points,
         }
     }
@@ -350,5 +387,23 @@ mod tests {
         point.scale_factor = None;
         let row = row_of(&report(vec![point]).render());
         assert!(row.starts_with("    -"), "the scale factor is not marked: {row}");
+    }
+
+    /// The engine's estimate is rendered in the same unit as the budget, so
+    /// that the two can be read against each other.
+    #[test]
+    fn the_estimate_is_rendered_in_mib() {
+        let row = row_of(&report(vec![point()]).render());
+        assert!(row.contains("377.7"), "the estimate is missing: {row}");
+    }
+
+    /// A report taken before the field existed has no estimate, and a dash
+    /// says so. A zero would say the engine expected to need nothing.
+    #[test]
+    fn a_missing_estimate_is_rendered_as_a_dash() {
+        let mut point = point();
+        point.engine_estimate_bytes = None;
+        let row = row_of(&report(vec![point]).render());
+        assert!(row.contains(" - "), "the missing estimate is not marked: {row}");
     }
 }

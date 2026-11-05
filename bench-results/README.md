@@ -11,7 +11,7 @@ python3 scripts/medians.py
 
 | file | what it is |
 |---|---|
-| `kernel.json` | a copy of `kernel-run4.json`, the kernel campaign nearest the medians |
+| `kernel.json` | a copy of `kernel-run2.json`, the kernel campaign nearest the medians — `python3 scripts/nearest-run.py` picks it |
 | `kernel-run1.json` … `kernel-run6.json` | the six **kernel A/B campaigns** the §1 table is the median of — four flavours of one predicate over 20 million rows, eight iterations each |
 | `compare.json` | the **representative** comparison run — the run whose figures sit nearest the medians |
 | `compare-run1.json` | the first of the three runs the published table is the median of |
@@ -44,6 +44,7 @@ python3 scripts/medians.py
 | `many-files-run1.json` … `many-files-run3.json` | the **file boundary's cost**: the published file's own **six row groups** written as six files, and the same rows read **as one file and as six**, through the engine's own reader, in the same campaign -- so the only difference between the two reads is the number of files. The report carries both reads, the boundary's cost in milliseconds and in share, and **the verdict on the rows**, which are compared row by row, in order, on the key column. |
 | `file-set-run1.json` … `file-set-run3.json` | the **source over a set of files**: the published file's own **six row groups** written as six files, and the same rows read **three ways** -- as the one file, as the six files one by one, and as the six files **read as one table** through the engine's new source -- in the same campaign, on the same host. The report carries the three reads, the parallel pair, the two opens, the source's cost against the one file's read in milliseconds and in share, **and the verdict on the rows**: the set's rows are compared with the one file's row by row, in order, on the key column, and the same filtered plan is counted over the file and over the set. |
 | `hostile-metadata-run1.json` … `hostile-metadata-run3.json` | the **hostile file**: a real Parquet file -- one column, one row group, one page -- with that page's header replaced by a hand-written one whose statistics field **declares a length**, read through the **engine's own reader** with a counting global allocator around it. The report carries the **largest single allocation the reader asked for** at each declared length (1 MiB, 64 MiB, 1 GiB, 4 GiB), the share of the declared length that is, the read's time, and **the honest file as the control**: the same file, unpatched, so the figure says what the reader asks for when there is nothing hostile in it. |
+| `<family>-spec041-before-run1.json` … `<family>-spec041-before-run3.json` | the **set the bump replaces**: every published family, measured on the tree **before** `parquet` 58.4.1 — the code spec 041 replaces. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. The families are `compare`, `hostile-metadata`, `query-cost`, `sort-cost`, `join-cost`, `scan-cost`, `file-set`, `many-files`, `write-cost`, `write-cost-engine-batch`, `store-write`, `materialised`, `rle-expansion`, `dictionary-cost-{6,12,24}`, `row-group-cost-{6,12,24}`, `row-groups-{6,12,24}`, `scaling`, `scaling-rg12`, `scaling-rg24`, `scaling-revenue`, `scaling-resident`, `scaling-resident-revenue`, `scaling-load`, `curve`, `batch-size` and `kernel`. |
 | `join-cost-spec029-run1.json` … `join-cost-spec029-run3.json` | the probe as it stood at spec 029's close -- against the code spec 029 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
 | `join-cost-spec029-before-run1.json` … `join-cost-spec029-before-run3.json` | the set spec 029 measured against the code it replaced, with the instrument of that day. Kept under its own name, for the same reason. |
 | `join-cost-spec028-run1.json` … `join-cost-spec028-run3.json` | the probe as it stood at spec 028's close -- against the code spec 028 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
@@ -70,9 +71,9 @@ python3 scripts/medians.py
 | `scaling-load-run1.json` | the first of the three **load sweeps** the §2g table is the median of |
 | `scaling-load-run2.json` | the second |
 | `scaling-load-run3.json` | the third |
-| `compare.json` | a copy of `compare-run1.json`, the run whose figures sit nearest the medians |
-| `scaling.json` | a copy of `scaling-run2.json`, the sweep run nearest the medians |
-| `scaling-revenue.json` | a copy of `scaling-revenue-run2.json`, the sweep run nearest the medians |
+| `compare.json` | a copy of `compare-run2.json`, the run whose figures sit nearest the medians — `python3 scripts/nearest-run.py` picks it |
+| `scaling.json` | a copy of `scaling-run3.json`, the sweep run nearest the medians — `python3 scripts/nearest-run.py` picks it |
+| `scaling-revenue.json` | a copy of `scaling-revenue-run2.json`, the sweep run nearest the medians — `python3 scripts/nearest-run.py` picks it |
 | `avx2-run-<run id>.json` | the **x86-64 kernel A/B**, one file per workflow run — twenty-one of them, from `bench-avx2.yml`, each dispatched from commit `8271054`. The file name is the run id, so a figure can be traced back to the run that produced it. |
 | `browser-run1.json` | the first of the three **browser campaigns** the §1a table is the median of |
 | `browser-run2.json` | the second |
@@ -84,7 +85,7 @@ python3 scripts/medians.py
 | `materialised-run1.json` | the first of the three **materialised column campaigns** the §3h table is the median of |
 | `materialised-run2.json` | the second |
 | `materialised-run3.json` | the third |
-| `curve-run1.json` | the first of the three **size-curve campaigns** the §3i table is the median of |
+| `curve-run1.json` | the first of the three **size-curve campaigns** the §3i table is the median of. Each report carries, at every size, the engine's **estimate** of its working set — the figure the memory budget is checked against, before a row is read — and the report carries the **host's load average** the campaign ran at, so that a campaign taken on a busy host and one taken on a quiet one can be told apart. |
 | `curve-run2.json` | the second |
 | `curve-run3.json` | the third |
 | `scaling-rg12-run1.json` | the first of the three **thread-count sweeps on the twelve-row-group file** the §3j table is the median of |
@@ -102,11 +103,11 @@ python3 scripts/medians.py
 | `row-groups-24-run1.json` | the first of the three **probe campaigns on the twenty-four-row-group file** |
 | `row-groups-24-run2.json` | the second |
 | `row-groups-24-run3.json` | the third |
-| `scaling-rg12.json` | a copy of `scaling-rg12-run2.json`, the run nearest the medians |
-| `scaling-rg24.json` | a copy of `scaling-rg24-run2.json`, the run nearest the medians |
-| `row-groups-6.json` | a copy of `row-groups-6-run1.json`, the campaign nearest the medians |
-| `row-groups-12.json` | a copy of `row-groups-12-run2.json`, the campaign nearest the medians |
-| `row-groups-24.json` | a copy of `row-groups-24-run2.json`, the campaign nearest the medians |
+| `scaling-rg12.json` | a copy of `scaling-rg12-run1.json`, the run nearest the medians — `python3 scripts/nearest-run.py` picks it |
+| `scaling-rg24.json` | a copy of `scaling-rg24-run3.json`, the run nearest the medians — `python3 scripts/nearest-run.py` picks it |
+| `row-groups-6.json` | a copy of `row-groups-6-run3.json`, the campaign nearest the medians — `python3 scripts/nearest-run.py` picks it |
+| `row-groups-12.json` | a copy of `row-groups-12-run3.json`, the campaign nearest the medians — `python3 scripts/nearest-run.py` picks it |
+| `row-groups-24.json` | a copy of `row-groups-24-run2.json`, the campaign nearest the medians — `python3 scripts/nearest-run.py` picks it |
 | `row-group-cost-6-run1.json` | the first of the three **per-row-group cost campaigns on the six-row-group file** — the crate's read, the engine's scan and the ladder of reader batch sizes the §3j mechanism table is the median of |
 | `row-group-cost-6-run2.json` | the second |
 | `row-group-cost-6-run3.json` | the third |
@@ -199,6 +200,15 @@ The sweep's report records the thread count that was **asked for** and the worke
 the workers: this file has six, so six is the ceiling however many threads are requested. The
 **§3j** sweeps are the same measurement on files with twelve and twenty-four row groups, and their
 worker counts are 12 and 14 at fourteen threads.
+
+**And the sweep's report now carries *two* worker counts, because there are two.** The **read's**
+parallelism is capped by the file's row groups, and the **operators'** by the row count — so on this
+file the read runs **six** workers at fourteen threads while the filter runs **fourteen**. The
+report's `workers` field is the read's, and `filter_workers` and `projection_workers` are the
+operators'. The `workers` field used to hold the operators' count in the resident mode, and the
+doc comment on it still said so; spec 020 changed the code and left the comment behind. The reason
+is in [ADR-0051](../docs/adr/0051-the-workers-column-that-changed-its-meaning.md), and the sweep
+families were re-measured so that every report can say both.
 
 ## Why three runs and a median
 

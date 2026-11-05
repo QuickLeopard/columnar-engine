@@ -919,6 +919,29 @@ CURVE_CHECKS = [
     ("PERF.md", "the curve's duckdb at 24M rows", "duckdb", 24000000, 1),
 ]
 
+# The curve's section, and the engine's **estimate** of its working set at
+# the two sizes the budget question is about: the one that fits the default
+# budget and the one that does not. The estimate is the engine's own, taken
+# before a row is read, and the report carries it at every point.
+CURVE_SECTION = "### 3i"
+CURVE_ESTIMATE_CHECKS = [
+    ("the curve's estimate at 12M rows", 12000000),
+    ("the curve's estimate at 24M rows", 24000000),
+]
+
+
+def curve_estimate(runs: list[dict], rows: int) -> float | None:
+    """The engine's estimated working set at one size, in MiB."""
+    values = [
+        point["engine_estimate_bytes"]
+        for run in runs
+        for point in run.get("points", [])
+        if point.get("rows") == rows and point.get("engine_estimate_bytes") is not None
+    ]
+    if not values:
+        return None
+    return statistics.median(values) / (1024 * 1024)
+
 
 def curve_figure(runs: list[dict], system: str, rows: int) -> float | None:
     """The median of one system's figure at one size."""
@@ -1275,10 +1298,144 @@ FILE_SET_CLAIM = "reading a table that is many files costs nothing measurable"
 HOSTILE_REPORTS = sorted((ROOT / "bench-results").glob("hostile-metadata-run*.json"))
 SPEC041_SECTION = "### 3w"
 
-HOSTILE_CLAIM = "the reader asks for exactly what the file declares"
+HOSTILE_CLAIM = "the reader no longer asks for what the file declares"
+
+# The set the bump replaces: the same probe, on the tree before `parquet`
+# 58.4.1. The section publishes the hole and its closure side by side, and
+# both are checked.
+HOSTILE_BEFORE_REPORTS = sorted(
+    (ROOT / "bench-results").glob("hostile-metadata-spec041-before-run*.json")
+)
 
 # The declared lengths the probe sweeps: the curve the figure is read by.
 HOSTILE_ROWS = 4
+
+# The share of the declared length, at the precision the section writes it:
+# before the bump the share is 1.0, and after it is two parts in a billion --
+# which is 0.0 at one decimal place, so the section's precision is seven.
+HOSTILE_SHARE_PLACES = 7
+
+# Spec 041's second half: the section that publishes the figures the bump
+# moved, old and new, side by side. **Every row is checked twice** -- the
+# figure the set the bump replaces holds, and the figure this file publishes
+# -- and both are checked **inside the section**, so the table cannot drift
+# from the reports it is derived from.
+SPEC041X_SECTION = "### 3x"
+
+# (label, the family, the figure, the decimal places)
+#
+# The families are the report globs, before and after: the set the bump
+# replaces is the same family with "-spec041-before" inserted before "-run".
+SPEC041X_ROWS = (
+    ("the engine's cold `q6`, lazy", "compare", "engine_cold_q6_lazy", 1),
+    ("the engine's cold `q6`, eager", "compare", "engine_cold_q6_eager", 1),
+    ("`DuckDB`'s cold `q6`", "compare", "duckdb_cold_q6", 1),
+    ("the engine's resident `q6`", "compare", "engine_resident_q6", 1),
+    ("the whole query, resident", "query-cost", "query_resident_join_orders", 3),
+    ("the stage, cold", "sort-cost", "stage_cold", 2),
+    ("the join's stage, cold", "join-cost", "stage_cold", 3),
+    ("the floor the probe", "join-cost", "floor_probe", 3),
+    ("the write of the whole file", "write-cost", "write_file", 3),
+    ("the commit, all five steps", "store-write", "commit", 3),
+    ("Arrow's decode", "materialised", "arrow_decode", 2),
+    ("the expansion", "rle-expansion", "expansion", 2),
+    ("the crate's read, expanded", "dictionary-cost-6", "crate_expanded", 2),
+    ("the derived batch", "row-group-cost-6", "derived_batch", 2),
+    ("the engine at 1 thread", "scaling", "engine_1_thread", 1),
+    ("the engine at 6M rows", "curve", "engine_6m", 1),
+    ("the engine at 24M rows", "curve", "engine_24m", 1),
+    ("the Rust SIMD over the scalar", "kernel", "rust_simd_ratio", 2),
+    ("the largest allocation", "hostile-metadata", "largest_allocation", 0),
+)
+
+
+def spec041x_figures(family: str, suffix: str) -> dict[str, float] | None:
+    """The headline figure of every family, for the set `suffix` names.
+
+    The suffix is "" for the published set and "-spec041-before" for the set
+    the bump replaces. The figures are the guard's own, so the section's table
+    and the guard cannot disagree about them.
+    """
+    paths = sorted((ROOT / "bench-results").glob(f"{family}{suffix}-run*.json"))
+    if not paths:
+        return None
+    reports = [json.loads(path.read_text()) for path in paths]
+
+    def median(values: list[float]) -> float | None:
+        clean = [value for value in values if value is not None]
+        return statistics.median(clean) if clean else None
+
+    if family == "compare":
+        def compare(system: str, mode: str, metric: str, query: str) -> float | None:
+            values = []
+            for report in reports:
+                if system == "engine":
+                    for entry in report.get("engine_queries", []):
+                        want = "eager" if mode in ("resident", "eager") else "lazy"
+                        if entry["query"] == query and entry["mode"] == want:
+                            values.append(entry.get("cold_ms" if metric == "cold" else "elapsed_ms"))
+                else:
+                    for entry in report.get("external", []):
+                        if entry["query"] == query and entry["comparator"] == system and entry["mode"] == mode:
+                            values.append(entry.get("query_ms"))
+            return median(values)
+
+        return {
+            "engine_cold_q6_lazy": compare("engine", "cold", "cold", "q6"),
+            "engine_cold_q6_eager": compare("engine", "eager", "cold", "q6"),
+            "duckdb_cold_q6": compare("duckdb", "cold", "cold", "q6"),
+            "engine_resident_q6": compare("engine", "resident", "resident", "q6"),
+        }
+    if family == "query-cost":
+        values = [report["queries"]["resident"]["join-orders"]["query_ms"] for report in reports]
+        return {"query_resident_join_orders": median(values)}
+    if family == "sort-cost":
+        values = [report["parts_ms"]["stage_cold"] for report in reports]
+        return {"stage_cold": median(values)}
+    if family == "join-cost":
+        parts, _ = _join_cost_figures(paths)
+        return {"stage_cold": median(parts.get("stage_cold", [])), "floor_probe": median(parts.get("floor_probe", []))}
+    if family == "write-cost":
+        values = [report["measurements_ms"]["write_file"] for report in reports]
+        return {"write_file": median(values)}
+    if family == "store-write":
+        values = [report["measurements_ms"]["commit"] for report in reports]
+        return {"commit": median(values)}
+    if family == "materialised":
+        return {"arrow_decode": materialised_figure(reports, "l_quantity.arrow_decode")}
+    if family == "rle-expansion":
+        values = [report["measurements_ms"]["expansion"] for report in reports]
+        return {"expansion": median(values)}
+    if family == "dictionary-cost-6":
+        return {"crate_expanded": dictionary_cost_figure({"A": reports}, "measurements", "crate_expanded", "A")}
+    if family == "row-group-cost-6":
+        return {"derived_batch": row_group_cost_figure({"A": reports}, "ladder", 125000, "A")}
+    if family == "scaling":
+        values = [
+            point.get("engine_ms")
+            for report in reports
+            for point in report.get("points", [])
+            if point["threads"] == 1
+        ]
+        return {"engine_1_thread": median(values)}
+    if family == "curve":
+        def curve_engine(rows: int) -> float | None:
+            values = [
+                point.get("engine_ms")
+                for report in reports
+                for point in report.get("points", [])
+                if point.get("rows") == rows
+            ]
+            return median(values)
+
+        return {"engine_6m": curve_engine(6000000), "engine_24m": curve_engine(24000000)}
+    if family == "kernel":
+        return {"rust_simd_ratio": kernel_figure(reports, "rust-simd", "ratio_vs_scalar")}
+    if family == "hostile-metadata":
+        values = [report["hostile"][3]["largest_allocation_bytes"] for report in reports]
+        return {"largest_allocation": median(values)}
+    return None
+
 
 
 def join_cost_floors(paths: list[Path], path: str) -> dict[str, object]:
@@ -3510,7 +3667,7 @@ def main() -> int:
                     if len(run.get("hostile", [])) > index and declared
                 ]
                 if shares:
-                    rendered = rendered_figure(statistics.median(shares), 1)
+                    rendered = rendered_figure(statistics.median(shares), HOSTILE_SHARE_PLACES)
                     if not figure_in(hostile_section, rendered):
                         failures.append(
                             f"PERF.md: a declared {declared} asks for a share of {rendered} "
@@ -3557,13 +3714,116 @@ def main() -> int:
                         f"{'the hostile file: the honest file\'s read':<60} {rendered}"
                     )
 
+            # The set the bump replaces: the hole, published beside the
+            # closure. The section shows both, so both are checked.
+            if HOSTILE_BEFORE_REPORTS:
+                # **A name of its own.** The variable below used to be called
+                # `before_runs`, and it shadowed the compare family's own
+                # `before_runs` -- so the stage checks that come after this
+                # block read the hostile probe's reports where they meant the
+                # old comparison's, and every one of them failed with "no
+                # figure ... in the before reports".
+                hostile_before_runs = [
+                    json.loads(path.read_text()) for path in HOSTILE_BEFORE_REPORTS
+                ]
+                for index, row in enumerate(hostile_before_runs[0].get("hostile", [])):
+                    declared = row["declared_bytes"]
+                    values = [
+                        run["hostile"][index]["largest_allocation_bytes"]
+                        for run in hostile_before_runs
+                        if len(run.get("hostile", [])) > index
+                    ]
+                    if not values:
+                        continue
+                    rendered = rendered_figure(statistics.median(values), 0)
+                    if not figure_in(hostile_text, rendered):
+                        failures.append(
+                            f"PERF.md: before the bump a declared {declared} asked for "
+                            f"{rendered} by the reports but that figure does not appear "
+                            f"in the section"
+                        )
+                    else:
+                        print(
+                            f"ok  {'PERF.md':<10} "
+                            f"{f'the hostile file, before the bump: a declared {declared}':<60} {rendered}"
+                        )
+
+                    shares = [
+                        run["hostile"][index]["largest_allocation_bytes"] / declared
+                        for run in hostile_before_runs
+                        if len(run.get("hostile", [])) > index and declared
+                    ]
+                    if shares:
+                        rendered = rendered_figure(statistics.median(shares), 1)
+                        if not figure_in(hostile_section, rendered):
+                            failures.append(
+                                f"PERF.md: before the bump a declared {declared} asked for "
+                                f"a share of {rendered} by the reports but that figure does "
+                                f"not appear in the section"
+                            )
+                        else:
+                            print(
+                                f"ok  {'PERF.md':<10} "
+                                f"{f'the hostile file, before the bump: the share of a declared {declared}':<60} {rendered}"
+                            )
+
+                    times = [
+                        run["hostile"][index]["elapsed_ms"]
+                        for run in before_runs
+                        if len(run.get("hostile", [])) > index
+                    ]
+                    if times:
+                        rendered = rendered_figure(statistics.median(times), 3)
+                        if not figure_in(hostile_section, rendered):
+                            failures.append(
+                                f"PERF.md: before the bump a declared {declared} read in "
+                                f"{rendered} by the reports but that figure does not appear "
+                                f"in the section"
+                            )
+                        else:
+                            print(
+                                f"ok  {'PERF.md':<10} "
+                                f"{f'the hostile file, before the bump: the read of a declared {declared}':<60} {rendered}"
+                            )
+
             if HOSTILE_CLAIM not in hostile_section:
                 failures.append(
                     f"PERF.md: the hostile file's probe does not publish its claim: "
-                    f"the reports say {HOSTILE_CLAIM}"
-                )
+                    f"the reports say {HOSTILE_CLAIM}"                )
             else:
                 print(f"ok  {'PERF.md':<10} {'the hostile file: the claim':<60} {HOSTILE_CLAIM}")
+
+    # Spec 041's second half: §3x publishes the figures the bump moved, old
+    # and new, side by side. **Both halves of every pair are checked**, and
+    # both are checked inside the section, so the table cannot drift from the
+    # reports it is derived from.
+    spec041x_section = section_of(texts["PERF.md"], SPEC041X_SECTION)
+    if spec041x_section is None:
+        failures.append(f"PERF.md: the bump's figures ({SPEC041X_SECTION}) is not in the document")
+    else:
+        for label, family, figure_key, places in SPEC041X_ROWS:
+            for suffix, which in (("-spec041-before", "the set the bump replaces"), ("", "this file publishes")):
+                figures = spec041x_figures(family, suffix)
+                if figures is None:
+                    failures.append(
+                        f"PERF.md: no figures for {label} in the {which} reports"
+                    )
+                    continue
+                value = figures.get(figure_key)
+                if value is None:
+                    failures.append(f"PERF.md: no figure for {label} in the {which} reports")
+                    continue
+                rendered = f"{value:,.{places}f}"
+                if rendered not in spec041x_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the {which} reports but "
+                        f"that figure does not appear in the section that publishes it"
+                    )
+                else:
+                    print(
+                        f"ok  {'PERF.md':<10} "
+                        f"{f'{label}, {which}':<60} {rendered}"
+                    )
 
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
@@ -3728,6 +3988,26 @@ def main() -> int:
                 )
             else:
                 print(f"ok  {doc:<10} {label:<28} {rendered}")
+
+        # The estimate is checked **inside** the section that publishes it,
+        # because the section is where a reader looks for it.
+        curve_section = section_of(texts["PERF.md"], CURVE_SECTION)
+        if curve_section is None:
+            failures.append(f"PERF.md: the curve ({CURVE_SECTION}) is not in the document")
+        else:
+            for label, rows in CURVE_ESTIMATE_CHECKS:
+                figure = curve_estimate(curve_runs, rows)
+                if figure is None:
+                    failures.append(f"PERF.md: no estimate for {label} in the curve reports")
+                    continue
+                rendered = f"{figure:.1f}"
+                if rendered not in curve_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that "
+                        f"figure does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<40} {rendered}")
 
     if MATERIALISED_REPORTS:
         materialised_runs = [json.loads(path.read_text()) for path in MATERIALISED_REPORTS]

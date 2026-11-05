@@ -69,10 +69,13 @@ with the host's load recorded.
 
 ### R2 — The published claim is corrected where it was published
 
-**Three places say the metadata is the hole and that `thrift` ≥ 0.23 is the fix.** Each is
-corrected **in the place that published it** — spec 034's R10, `STATUS.md`'s open questions, and
-`deny.toml`'s comment — to what the measurement says: the **page headers** are the hole, the
-metadata path is bounded, and the fix is `parquet`'s own reader rather than thrift's opt-in limit.
+**Five places say the metadata is the hole and that `thrift` ≥ 0.23 is the fix.** Each is
+corrected **in the place that published it** — spec 034's R10, `STATUS.md`'s open questions,
+`deny.toml`'s comment, `crates/columnar-engine/README.md` and `docs/embedding.md` — to what
+the measurement says: the **page headers** are the hole, the metadata path is bounded, and the
+fix is `parquet`'s own reader rather than thrift's opt-in limit. *(Amended: the requirement
+first named three places. The claim was published in five, and the reason is in
+[The amendment](#the-amendment).)*
 
 **And a new ADR records the correction**, with the reason and the evidence, because a sentence that
 was published as a finding and was wrong is exactly the kind of thing a reader must be able to
@@ -99,6 +102,12 @@ published **beside** the figure it replaces, with the reason, and **the code's s
 difference is separated from the host's** — the machine's own floor is measured in the same
 campaign, as every other comparison in this repository does it.
 
+**The campaign is the whole set.** The bump changes the writer's bytes, so the dataset is
+regenerated, and a regenerated dataset moves *every* figure that reads a file. So **every published
+family is re-measured**, not the families the bump is expected to touch, and **the superseded sets
+are committed under their own names** — `<family>-spec041-before-run{1,2,3}.json` — so the figures
+this increment replaces stay derivable from a committed report.
+
 ### R6 — The surface does not break
 
 `cargo semver-checks` passes against the last published version. **The surface is still 46 names**,
@@ -117,6 +126,79 @@ crate in the graph is removed**, because an exemption nobody checks is a silence
 capability, no operator, and no behaviour change for an honest file. **The store, the source over
 a set of files, and the write side are untouched** except where the dependency bump reaches them —
 and where it reaches them, the figures move and are published.
+
+## The amendment
+
+**The increment was widened by its own measurement, and the reason is recorded here.**
+
+### 1. The claim was published in five places, not three
+
+R2 named three: spec 034's R10, `STATUS.md`'s open questions and `deny.toml`'s comment. **The
+claim was published in five** — the engine's own `README.md` and `docs/embedding.md` said it too,
+and a reader of either would have believed it. **All five are corrected where they were
+published**, and [ADR-0050](../../docs/adr/0050-the-bump-and-the-exemption-that-named-nothing.md)
+records it.
+
+**And the reason ADR-0049 gave for dropping the exemption was wrong.** It said `thrift` was out of
+the graph; **`thrift` 0.23.0 is still in it**, and `cargo deny` reports the advisory as *not
+encountered* for a different reason — the advisory names the crate's binary protocol sink, which
+`parquet` never constructs. ADR-0049's consequence is corrected in place, and ADR-0050 says why.
+
+### 2. The dataset was regenerated, and every published family was re-measured
+
+The scope table above anticipated it: *"the bump does not change what the store writes — or it
+does, and that is measured."* **It does.** The `parquet` writer's bytes moved — the file the
+generator writes is **242,859,461** bytes where it was **242,857,841**, and the first difference
+is at byte **242,810,880**, in the metadata; the data pages are identical.
+
+**A regenerated dataset moves every figure that reads a file**, so the campaign is the whole set:
+every published family was re-measured on the bumped tree, and **the superseded sets are committed
+under their own names** so the figures this increment replaces stay derivable. The store's
+byte-for-byte acceptance — the published file *is* the file the current code writes — holds again,
+measured and not merely tested.
+
+### 3. The sweep report now carries **both** worker counts, and the sweeps were re-measured for it
+
+**This is the one change to the harness the increment makes, and it is a correction rather than a
+feature.** The constitution's performance standard says: *"A published worker count is the count
+that ran … the read's parallelism is capped by the file's row groups, and the operators' by the
+row count."* **Two counts, and the sweep report had one.**
+
+The one it had was the **read's** — `min(threads, row_groups)` — in every mode. **But the doc
+comment on it still described spec 007's behaviour**, when the resident mode reported the
+*operators'* count instead, and spec 020 changed the code without changing the comment. So §2f's
+table published **the operators' count** (eight and fourteen workers) under the header *"the
+engine's workers"*, while §2e and every other sweep published **the read's** (six). **The two
+sections were answering different questions under the same header**, and the re-measurement
+surfaced it.
+
+So the report carries **both** — `workers` is the read's, and `filter_workers` and
+`projection_workers` are the operators' — and **the seven sweep families were re-measured**, so
+every sweep report can say both. The published tables in §2e, §2f and §2g name the two counts
+apart. [ADR-0051](../../docs/adr/0051-the-workers-column-that-changed-its-meaning.md) records it.
+
+### 4. The curve was re-measured at all three sizes, and it found a figure that was derived
+
+**The campaign had measured the curve on the six-million-row file only**, so the published curve
+had lost its twelve- and twenty-four-million-row points — and the size axis is the axis the curve
+exists for. It is re-measured at all three sizes, and the report now carries two things it did
+not: the engine's **estimate** of its working set at every size — the figure the memory budget is
+checked against, before a row is read — and the **host's load average** the campaign ran at.
+
+**And the estimate is what found the correction.** §3i published **391 MiB** as the estimate that
+refuses the real Q6 at 24 million rows. **That figure was derived** — *about 16 bytes a row*, times
+the row count — and the multiplication was **13.3 MiB** out: the engine's own estimate is
+**377.7 MiB**, which is **16.5 bytes a row**. The estimate is made from the file's row count and its
+schema, and the bump changed the file's *metadata* and not its rows or its columns, so **the bump
+did not move it** — it was wrong before the bump too. The correction is published in the two places
+that published it — §3i and ADR-0021 — and
+[ADR-0052](../../docs/adr/0052-the-estimate-that-was-derived-instead-of-measured.md) records it.
+
+**And the host's movement is published with it.** The curve's campaigns ran at a load average of
+**2.15 to 2.44**, where the campaigns that published the rest of the file ran at **10.1** and above.
+The engine's own numbers here are therefore lower than the same query's numbers elsewhere in the
+file, and the incumbents — which do not read the file through this repository's Arrow — moved with
+them.
 
 ## The plan's shape
 

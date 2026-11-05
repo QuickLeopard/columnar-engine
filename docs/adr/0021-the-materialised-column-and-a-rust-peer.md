@@ -205,11 +205,13 @@ grows, which is exactly what "the cost is bytes" predicts. The scan is the query
 published as what it is.
 
 **And the curve found a limit that is not a timing.** The engine's **default** memory budget refuses the real Q6
-at 24 million rows: the estimate is about 16 bytes a row, so 24 million rows need roughly **391 MiB** against the
+at 24 million rows: the engine's own estimate is **377.7 MiB** — 16.5 bytes a row — against the
 **256 MiB** default, and the query is rejected before a row is read. The budget is a **policy knob**, not a limit
 on the engine — below it, it changes nothing at all — and the curve is measured at **1024 MiB** so that the largest
 size runs at all. The figure is in the report, because a curve that says which budget it was measured under is a
-curve a reader can check.
+curve a reader can check. **This paragraph published 391 MiB until
+[ADR-0052](0052-the-estimate-that-was-derived-instead-of-measured.md) corrected it**: the figure was derived by
+hand — *about 16 bytes a row*, times the row count — and the multiplication was 13.3 MiB out.
 
 ## The decision
 

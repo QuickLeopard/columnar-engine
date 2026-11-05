@@ -806,6 +806,17 @@ fn run_sweep(
         let (engine_ms, engine_scan_ms, engine_operators_ms, engine_result) =
             measure_engine_for_sweep(definition, data, &dataset, iterations, *count, mode)?;
         let engine_workers = source.worker_count(*count);
+        // The operators that **ran**, which is not the read's worker count:
+        // the read is capped by the file's row groups and the operators by the
+        // row count, and a reader shown only one of them reads the curve
+        // wrong. The load mode answers no query, so it has neither.
+        let (filter_workers, projection_workers) =
+            engine_result.as_ref().map_or((None, None), |result| {
+                (
+                    Some(result.plan_output.filter_workers),
+                    Some(result.plan_output.projection_workers),
+                )
+            });
 
         // The engine's answer at this thread count has to be the same as at
         // every other one. The rows come back in the file's order whatever
@@ -838,6 +849,8 @@ fn run_sweep(
         points.push(ScalingPoint {
             threads: *count,
             workers: engine_workers,
+            filter_workers,
+            projection_workers,
             engine_ms,
             engine_scan_ms,
             engine_operators_ms,

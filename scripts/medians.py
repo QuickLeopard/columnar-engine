@@ -127,6 +127,8 @@ def collect_scaling(runs: list[dict]) -> dict[int, dict[str, list[float]]]:
         for point in run.get("points", []):
             threads = point["threads"]
             push(threads, "workers", point.get("workers"))
+            push(threads, "filter_workers", point.get("filter_workers"))
+            push(threads, "projection_workers", point.get("projection_workers"))
             push(threads, "engine", point.get("engine_ms"))
             push(threads, "engine_scan", point.get("engine_scan_ms"))
             push(threads, "engine_operators", point.get("engine_operators_ms"))
@@ -135,6 +137,17 @@ def collect_scaling(runs: list[dict]) -> dict[int, dict[str, list[float]]]:
             push(threads, "datafusion", point.get("datafusion_ms"))
 
     return out
+
+
+def worker_cell(values: list[float] | None) -> str:
+    """A worker count, right-aligned, or a dash when there is none.
+
+    A missing count is a dash and never a zero: a mode that ran no query did
+    not do the work with zero workers.
+    """
+    if not values:
+        return f"{'-':>8}"
+    return f"{median(values):>8.0f}"
 
 
 def print_scaling(runs: list[dict], label: str = "q6", mode: str = "cold") -> None:
@@ -158,15 +171,17 @@ def print_scaling(runs: list[dict], label: str = "q6", mode: str = "cold") -> No
         f"{row_groups if row_groups is not None else '?'} row groups"
     )
     print(
-        f"{'threads':>8}{'workers':>9}{'engine':>26}{'engine scan':>26}{'engine ops':>26}"
-        f"{'duckdb':>26}{'polars':>26}{'datafusion':>26}"
+        f"{'threads':>8}{'read':>8}{'filter':>8}{'proj':>8}{'engine':>26}{'engine scan':>26}"
+        f"{'engine ops':>26}{'duckdb':>26}{'polars':>26}{'datafusion':>26}"
     )
     for threads in sorted(sweep):
         figures = sweep[threads]
         workers = figures.get("workers", [0])
         row = (
             f"{threads:>8}"
-            f"{median(workers):>9.0f}"
+            f"{median(workers):>8.0f}"
+            f"{worker_cell(figures.get('filter_workers'))}"
+            f"{worker_cell(figures.get('projection_workers'))}"
             f"{cell(figures.get('engine'))}"
             f"{cell(figures.get('engine_scan'))}"
             f"{cell(figures.get('engine_operators'))}"
@@ -693,6 +708,7 @@ def print_curve(runs: list[dict]) -> None:
     datafusion = points("datafusion_ms")
     scan = points("engine_scan_ms")
     operators = points("engine_operators_ms")
+    estimate = points("engine_estimate_bytes")
     rows_of: dict[int, int] = {}
     for run in runs:
         for point in run.get("points", []):
@@ -702,7 +718,7 @@ def print_curve(runs: list[dict]) -> None:
     print(f"\n=== THE SIZE CURVE, {len(runs)} campaigns ===")
     if budget:
         print(f"the engine's memory budget: {budget // (1024 * 1024)} MiB")
-    header = f"{'rows':>10}{'sf':>4}{'engine':>12}{'scan':>10}{'ops':>8}"
+    header = f"{'rows':>10}{'sf':>4}{'est MiB':>10}{'engine':>12}{'scan':>10}{'ops':>8}"
     for name in ("duckdb", "polars", "datafusion"):
         header += f"{name:>12}"
     header += f"{'ms/Mrow':>10}"
@@ -710,6 +726,8 @@ def print_curve(runs: list[dict]) -> None:
     print("-" * len(header))
     for rows in sorted(engine):
         line = f"{rows:>10}{rows_of.get(rows, 0):>4}"
+        estimates = estimate.get(rows)
+        line += f"{statistics.median(estimates) / (1024 * 1024):>10.1f}" if estimates else f"{'-':>10}"
         line += f"{statistics.median(engine[rows]):>12.1f}"
         line += f"{statistics.median(scan.get(rows, [0.0])):>10.1f}"
         line += f"{statistics.median(operators.get(rows, [0.0])):>8.1f}"
@@ -2168,7 +2186,7 @@ def print_file_set(runs: list[dict]) -> None:
         print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
 
 
-def print_hostile(runs: list[dict]) -> None:
+def print_hostile(runs: list[dict], before_runs: list[dict] | None = None) -> None:
     """Print what a hostile file asks of the reader.
 
     This is spec 041: the reader is the trust boundary, and the published
@@ -2183,9 +2201,14 @@ def print_hostile(runs: list[dict]) -> None:
     reader that allocates what it is told draws a straight line through the
     declared lengths, and a reader that refuses the file asks for the same
     small thing every time.
+
+    **And the set before the bump is printed beside the set after it**, because
+    the bump is what closes the hole, and a figure without the figure it
+    replaces says nothing about whether it moved.
     """
     if not runs:
         return
+    before_runs = before_runs or []
     print(f"\n=== THE HOSTILE FILE ({len(runs)} campaigns) ===")
     control = [run["control"]["largest_allocation_bytes"] for run in runs if "control" in run]
     if control:
@@ -2217,6 +2240,31 @@ def print_hostile(runs: list[dict]) -> None:
     loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
     if loads:
         print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+    if not before_runs:
+        return
+    print(f"\n-- the same probe, on the tree before the bump ({len(before_runs)} campaigns) --")
+    for index, row in enumerate(before_runs[0].get("hostile", [])):
+        declared = row["declared_bytes"]
+        largest = [
+            run["hostile"][index]["largest_allocation_bytes"]
+            for run in before_runs
+            if len(run.get("hostile", [])) > index
+        ]
+        if not largest:
+            continue
+        after = [
+            run["hostile"][index]["largest_allocation_bytes"]
+            for run in runs
+            if len(run.get("hostile", [])) > index
+        ]
+        share = median(largest) / declared if declared else 0.0
+        after_share = median(after) / declared if declared and after else 0.0
+        print(
+            f"   {f'a declared {declared:,} bytes, the largest allocation':<44} "
+            f"{int(median(largest)):>10}   share {share:.3f}"
+            f"   ->  {int(median(after)) if after else 0:>10}   share {after_share:.3f}"
+        )
 
 
 def print_store_write(runs: list[dict]) -> None:
@@ -2377,6 +2425,22 @@ def main() -> int:
             scaling_runs = [load(p) for p in scaling_paths]
             print_scaling(scaling_runs, label, mode)
 
+    # The set the bump replaces, printed beside the set after it, because the
+    # bump changed the writer's bytes and the sweeps measure a file.
+    for pattern, label, mode in (
+        ("scaling-spec041-before-run*.json", "q6", "cold"),
+        ("scaling-rg12-spec041-before-run*.json", "q6", "cold"),
+        ("scaling-rg24-spec041-before-run*.json", "q6", "cold"),
+        ("scaling-revenue-spec041-before-run*.json", "q6-revenue", "cold"),
+        ("scaling-resident-spec041-before-run*.json", "q6", "resident"),
+        ("scaling-resident-revenue-spec041-before-run*.json", "q6-revenue", "resident"),
+        ("scaling-load-spec041-before-run*.json", "q6", "load"),
+    ):
+        scaling_paths = sorted(Path("bench-results").glob(pattern))
+        if scaling_paths:
+            scaling_runs = [load(p) for p in scaling_paths]
+            print_scaling(scaling_runs, label, mode)
+
     # The row-group cap's own table: the same sweep on a file with six row
     # groups, on one with twelve, and on one with twenty-four.
     sweep_files = [
@@ -2499,13 +2563,15 @@ def main() -> int:
     # measured it again, with two more parts in the instrument, and the two
     # sets spec 026 published are preserved under their own names.
     join_sets = [
-        # Spec 034 changed no engine work, so the set the file publishes keeps
-        # its name and the re-measurement takes its own. The two are published
-        # side by side: the standing figures, and the ones this host measures.
-        ("the code this increment ships", "join-cost-spec034-run*.json"),
-        ("the code this increment replaces", "join-cost-spec034-before-run*.json"),
-        ("the code the last increment shipped", "join-cost-run*.json"),
-        ("the code spec 030 shipped", "join-cost-spec030-run*.json"),
+        # Spec 041 changed the dependency the read goes through, so the set the
+        # file publishes is the bumped code and the set it replaces is the one
+        # the bump took out. The two are printed side by side, because the
+        # difference between them is the bump's and the host's.
+        ("the code this increment ships", "join-cost-run*.json"),
+        ("the code this increment replaces", "join-cost-spec041-before-run*.json"),
+        ("the code spec 034 shipped", "join-cost-spec034-run*.json"),
+        ("the code spec 034 replaces", "join-cost-spec034-before-run*.json"),
+        ("the code the last increment shipped", "join-cost-spec030-run*.json"),
         ("the code spec 030 replaced", "join-cost-spec030-before-run*.json"),
         ("spec 029's set, as spec 029 measured it", "join-cost-spec029-run*.json"),
         ("spec 029's before set", "join-cost-spec029-before-run*.json"),
@@ -2528,6 +2594,7 @@ def main() -> int:
         (label, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
         for label, pattern in (
             ("the set the file publishes now", "join-cost-run*.json"),
+            ("the set spec 041 replaces", "join-cost-spec041-before-run*.json"),
             ("the set spec 034 measured", "join-cost-spec034-run*.json"),
             ("the set spec 036 measured", "join-cost-spec036-run*.json"),
         )
@@ -2585,8 +2652,13 @@ def main() -> int:
 
     # Spec 041: the reader's four gigabytes -- a real file with one hostile
     # page header, and the largest single allocation the reader asked for.
+    # The set before the bump is printed beside the set after it, because the
+    # bump is what closes the hole.
     hostile_runs = [load(p) for p in sorted(Path("bench-results").glob("hostile-metadata-run*.json"))]
-    print_hostile(hostile_runs)
+    hostile_before = [
+        load(p) for p in sorted(Path("bench-results").glob("hostile-metadata-spec041-before-run*.json"))
+    ]
+    print_hostile(hostile_runs, hostile_before)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))

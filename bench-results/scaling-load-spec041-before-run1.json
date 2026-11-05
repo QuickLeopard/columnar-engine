@@ -1,0 +1,87 @@
+{
+  "machine": {
+    "cpu": "Apple M4 Max",
+    "arch": "aarch64",
+    "cores": 14,
+    "os": "macOS 27.0.1",
+    "simd": "neon",
+    "forced_simd": "auto",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "threads": 1
+  },
+  "dataset": {
+    "path": "data/lineitem.parquet",
+    "rows": 6000000,
+    "bytes": 242857841,
+    "scale_factor": 1,
+    "seed": 24001,
+    "null_rate": 0.0,
+    "row_groups": 0
+  },
+  "query": "q6",
+  "sql": "SELECT count(*) FROM lineitem WHERE l_discount >= 0.04 AND l_discount <= 0.07 AND l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01'",
+  "mode": "load",
+  "row_groups": 6,
+  "points": [
+    {
+      "threads": 1,
+      "workers": 1,
+      "engine_ms": 546.862834,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 0.0,
+      "duckdb_ms": 1232.0,
+      "polars_ms": 1016.979,
+      "datafusion_ms": 333.762
+    },
+    {
+      "threads": 2,
+      "workers": 2,
+      "engine_ms": 405.138917,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 0.0,
+      "duckdb_ms": 611.0,
+      "polars_ms": 512.63,
+      "datafusion_ms": 229.287
+    },
+    {
+      "threads": 4,
+      "workers": 4,
+      "engine_ms": 312.165708,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 0.0,
+      "duckdb_ms": 412.0,
+      "polars_ms": 358.833,
+      "datafusion_ms": 126.125
+    },
+    {
+      "threads": 6,
+      "workers": 6,
+      "engine_ms": 232.957042,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 0.0,
+      "duckdb_ms": 237.0,
+      "polars_ms": 189.964,
+      "datafusion_ms": 127.035
+    },
+    {
+      "threads": 8,
+      "workers": 6,
+      "engine_ms": 234.703292,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 0.0,
+      "duckdb_ms": 231.0,
+      "polars_ms": 193.617,
+      "datafusion_ms": 75.045
+    },
+    {
+      "threads": 14,
+      "workers": 6,
+      "engine_ms": 230.05575,
+      "engine_scan_ms": 0.0,
+      "engine_operators_ms": 0.0,
+      "duckdb_ms": 232.0,
+      "polars_ms": 198.043,
+      "datafusion_ms": 76.162
+    }
+  ]
+}

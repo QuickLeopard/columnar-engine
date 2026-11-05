@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **39 specs**, **49 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **39 specs**, **52 ADRs** and **29 defects** so far, and every one
 of the specs but one is closed.
 
 ---
@@ -33,6 +33,13 @@ the predicates pushed in).
 Apache-2.0. The C++ baseline in `crates/columnar-kernels/src/` is this repository's own work and
 carries the same licence; there is no vendored third-party source in the tree.
 
+The tree reads Parquet through the **`parquet` crate, 58.4.1**, and Arrow through **`arrow`,
+58.4.1** — one line in the workspace's shared dependency table, so the version cannot drift between
+crates. The bump from **54.3.1** is the increment spec 041 is, and it was measured before it was
+published: [`PERF.md` §3x](PERF.md#3x-the-bump-and-the-figures-it-moved) and
+[ADR-0050](docs/adr/0050-the-bump-and-the-exemption-that-named-nothing.md). The toolchain is
+**Rust 1.97.1**.
+
 ---
 
 ## Where it stands
@@ -46,42 +53,66 @@ count, with every answer cross-checked against the engine's own.** The headline 
 
 | query | **engine** | duckdb | polars | datafusion | |
 |---|---|---|---|---|---|
-| `q6` | **15.4 ms** | 32.0 ms | 190.5 ms | 34.8 ms | the engine wins |
-| `q6-revenue` | **58.9 ms** | 67.0 ms | 198.7 ms | 112.6 ms | the engine wins |
-| `join-orders` | 97.6 ms | **91.0 ms** | 219.1 ms | 168.8 ms | DuckDB wins |
-| `sort-topk` | 39.5 ms | **38.0 ms** | 1398.0 ms | 39.8 ms | DuckDB wins |
-| `filter-range` | 16.3 ms | 31.0 ms | **15.2 ms** | 20.7 ms | Polars wins |
+| `q6` | **14.9 ms** | 35.0 ms | 201.8 ms | 38.5 ms | the engine wins |
+| `q6-revenue` | **59.1 ms** | 70.0 ms | 201.7 ms | 118.2 ms | the engine wins |
+| `join-orders` | 100.0 ms | **94.0 ms** | 225.7 ms | 175.3 ms | DuckDB wins |
+| `sort-topk` | **39.0 ms** | 39.0 ms | 1468.9 ms | 41.3 ms | level with DuckDB |
+| `filter-range` | **15.8 ms** | 33.0 ms | 16.5 ms | 21.8 ms | the engine wins |
 
 **Six of the eight cold queries in [`PERF.md`'s table](PERF.md#2b-cold--read-the-parquet-file-and-answer-in-one-go)
-are the engine's**; the two it loses are named in the open questions below. The engine's eager path —
-all sixteen columns — takes 552.3 ms for the same file, and is measured on its own in
+are the engine's**; the one it loses is named in the open questions below, and the sort is level with
+DuckDB. The engine's eager path — all sixteen columns — takes **587.2 ms** for the same file, where
+the set the bump replaces had **552.3 ms**, and is measured on its own in
 [`PERF.md` §2g](PERF.md#2g-the-load-sweep--where-the-engines-biggest-number-was).
+
+**What moved, and why.** The engine's cold path reads the file through this repository's Arrow, and
+**the bump changed Arrow's decode**: the engine's `q6` moved from **15.4 ms** to **14.9 ms** and its
+`filter-range` from **16.3 ms** to **15.8 ms**, which is the decode getting faster. **The incumbents do
+not read the file through this repository's Arrow**, so **their movement is the host's** — DuckDB's `q6`
+moved from **32.0 ms** to **35.0 ms**, Polars' from **190.5 ms** to **201.8 ms** and the peer's from
+**34.8 ms** to **38.5 ms** — and they are the yardstick the host's movement is read against. **And the
+host's movement is in the engine's own figures too**: its `join-orders` rose from **97.6 ms** to
+**100.0 ms**, and the host did change between the sets — the OS moved from macOS 27.0.1 to 27.2.
 
 ### Resident — the data is already in memory
 
 | query | **engine** | duckdb | polars | datafusion | |
 |---|---|---|---|---|---|
-| `q6` | **9.4 ms** | 45.0 ms | 67.4 ms | 23.8 ms | the engine wins |
-| `join-orders` | **26.6 ms** | 35.0 ms | 78.9 ms | 85.8 ms | the engine wins |
-| `sort-topk` | **2.7 ms** | 3.0 ms | 1356.8 ms | 3.8 ms | the engine wins |
-| `filter-range` | **6.6 ms** | 19.0 ms | 10.8 ms | 10.1 ms | the engine wins |
+| `q6` | **10.1 ms** | 48.0 ms | 75.8 ms | 25.5 ms | the engine wins |
+| `join-orders` | **26.0 ms** | 40.0 ms | 90.6 ms | 91.1 ms | the engine wins |
+| `sort-topk` | **3.1 ms** | 4.0 ms | 1564.0 ms | 4.5 ms | the engine wins |
+| `filter-range` | **7.7 ms** | 20.0 ms | 13.3 ms | 12.1 ms | the engine wins |
 
 **The engine wins every query in this table**, against a Rust peer on the same Arrow stack. The
 asymmetry is named: the incumbents have both tables in memory before their clock starts, while the
 engine's resident path **reads the build side inside the clock**.
 
+**What moved, and why.** **The resident path never decodes a file, so the bump cannot be in it**: the
+movement is the **host's** and the engine's own variance. The engine's `q6` moved from **9.4 ms** to
+**10.1 ms** and its `filter-range` from **6.6 ms** to **7.7 ms**, while **the incumbents moved with
+it** — Polars' `q6` rose from **67.4 ms** to **75.8 ms** and its `join-orders` from **78.9 ms** to
+**90.6 ms**, DuckDB's `q6` from **45.0 ms** to **48.0 ms** and its `join-orders` from **35.0 ms** to
+**40.0 ms** — and they are the yardstick.
+
 ### The load — the file into memory
 
 | threads | **engine** | duckdb | polars | datafusion | |
 |---|---|---|---|---|---|
-| 1 | **576.8 ms** | 1275.0 ms | 1069.8 ms | 362.3 ms | ahead of DuckDB and Polars, behind the peer |
-| 6 | 251.0 ms | **239.0 ms** | 193.5 ms | 127.7 ms | behind all three |
-| 14 | 243.9 ms | **235.0 ms** | 204.8 ms | 83.5 ms | behind all three |
+| 1 | **546.8 ms** | 1228.0 ms | 1019.4 ms | 328.9 ms | ahead of DuckDB and Polars, behind the peer |
+| 6 | **216.5 ms** | 223.0 ms | 190.3 ms | 119.7 ms | ahead of DuckDB, behind Polars and the peer |
+| 14 | **211.3 ms** | 219.0 ms | 180.0 ms | 70.6 ms | ahead of DuckDB, behind Polars and the peer |
 
 **This was the engine's worst figure** — once the largest number the repository had published — and
-it is now ahead of DuckDB and Polars at one thread and behind them at six. The engine's worker
-count is capped at the file's six row groups, exactly `min(threads, row_groups)`, and the peer reads
-the same file a different way.
+it is now ahead of DuckDB and Polars at one thread, and at six ahead of DuckDB and behind Polars.
+The engine's worker count is capped at the file's six row groups, exactly `min(threads, row_groups)`,
+and the peer reads the same file a different way.
+
+**What moved, and why.** The whole table fell: DuckDB's one-thread load moved from **1275.0 ms** to
+**1228.0 ms**, Polars' from **1069.8 ms** to **1019.4 ms** and the peer's from **362.3 ms** to
+**328.9 ms**, and the engine's own from **576.8 ms** to **546.8 ms**. **The incumbents do not read the
+file through this repository's Arrow, so their movement is the host's**; the engine's own figure reads
+the file through it, so **the bump's decode is in the engine's figure as well**, and this table cannot
+separate the two.
 
 ### The join's probe, taken apart
 
@@ -91,38 +122,40 @@ lookup can go under — and against the same lookup written out by hand over the
 
 | | ms |
 |---|---|
-| the engine's own probe, over the engine's column | 8.860 |
-| the floor the probe cannot go under | 6.147 |
-| the same lookup, written out by hand | 8.953 |
-| **the remainder** — the engine's probe over the hand-written one | **−0.092** |
-| the join's stage, cold | 24.690 |
-| the join's stage, resident | 19.431 |
-| the build side's whole — the read, the keys and the table | 12.347 |
-| the stage's residual — the stage's own probe plus the build side's own gap | 7.187 |
-| the context — the residual against the standalone probe | −1.581 |
+| the engine's own probe, over the engine's column | 9.100 |
+| the floor the probe cannot go under | 4.948 |
+| the same lookup, written out by hand | 8.754 |
+| **the remainder** — the engine's probe over the hand-written one | **0.436** |
+| the join's stage, cold | 27.493 |
+| the join's stage, resident | 20.276 |
+| the build side's whole — the read, the keys and the table | 12.568 |
+| the stage's residual — the stage's own probe plus the build side's own gap | 7.686 |
+| the context — the residual against the standalone probe | −1.354 |
 
-**The remainder this table publishes is −0.092 ms, with a spread of 0.178 ms** — inside the noise, and
-**the lookup's shape is free** still. The figures moved against spec 030's set, and every one of them is
-published old-and-new: the engine's own probe was **9.080 ms** and is **8.860 ms**, the floor was
-**6.282 ms** and is **6.147 ms**, the hand-written lookup was **10.695 ms** and is **8.953 ms**, the stage
-was **25.446 ms** cold and is **24.690 ms**, **20.368 ms** resident and is **19.431 ms**, the build side's
-whole was **12.605 ms** and is **12.347 ms**, the residual was **7.386 ms** and is **7.187 ms**, and the
-context was **−1.565 ms** and is **−1.581 ms**. **The code did not change** — the difference is the
-**instrument's** and the **host's**, and the two sets were not taken in the same session: this one ran on a
-host whose load average was **3.66–4.34**, spec 030's on one at **6.80–7.36**. The remainder was
-**3.337 ms** before spec 029, and it held two artefacts of the instrument rather than the engine's cost —
-the crate boundary, and a warm buffer where the query probes a column the reader has just written.
+**The remainder this table publishes is 0.436 ms, with a spread of 0.943 ms** — inside the noise, and
+**the lookup's shape is free** still. The figures moved against the set the bump replaces, and every
+one of them is published old-and-new: the engine's own probe was **8.860 ms** and is **9.100 ms**, the
+floor was **6.147 ms** and is **4.948 ms**, the hand-written lookup was **8.953 ms** and is **8.754 ms**,
+the stage was **24.690 ms** cold and is **27.493 ms**, **19.431 ms** resident and is **20.276 ms**, the
+build side's whole was **12.347 ms** and is **12.568 ms**, the residual was **7.187 ms** and is
+**7.686 ms**, and the context was **−1.581 ms** and is **−1.354 ms**. **The engine's own code did not
+change, and the probe never decodes a file — it probes a column in memory — so the bump cannot be in
+it**: the difference is the **host's** and the engine's own variance, and the two sets were not taken
+in the same session: this one ran on a host whose load average was **14.74–15.35**, the set the bump
+replaces on one at **3.66–4.34**. The remainder was **3.337 ms** before spec 029, and it held two
+artefacts of the instrument rather than the engine's cost — the crate boundary, and a warm buffer where
+the query probes a column the reader has just written.
 
 **And the verdicts, with the yardstick each was made with.** The context's verdict is published in the
 house's own sentences, and the yardstick it was made with is published beside it:
 the verdict, on the cold path, is **unattributed**;
 the verdict's state, on the cold path, is **sound**;
-the cold path's yardstick is **7.860 ms** — the probe's row-number offset's own, the largest leaf on
+the cold path's yardstick is **2.236 ms** — the probe's own remainder's own, the largest leaf on
 that path;
-the verdict, on the resident path, is **the memory's**;
+the verdict, on the resident path, is **unattributed**;
 the verdict's state, on the resident path, is **sound**;
-the resident path's yardstick is **0.487 ms** — the probe's file state's own, the largest leaf on that
-path, and the one that counts.
+the resident path's yardstick is **1.324 ms** — the probe's file state's own, the largest leaf on that
+path.
 **The legacy band verdict is kept beside it, annotated not sound**: a band of **0.418 ms** against the
 machine's own **0.936 ms** was never a yardstick.
 
@@ -139,9 +172,10 @@ difference of two **drifting** series. The decomposition, the drift, the method 
 increment ships and — **back to back, on this host** — on the tree it replaces: the stage's cold path
 reads **18.366 ms** against the old code's **18.455 ms**, a difference of **−0.089 ms** against a drift
 of **1.237 ms**, and the floor reads **5.376 ms** against **5.361 ms**. **The figures above stand**: the
-movement between them and this set is the **host's** — the incumbents moved with it, and the old code
-measures the same as the new one. [`PERF.md` §3p](PERF.md#3p-the-joins-stage-measured-again) has the
-table, and [§2i](PERF.md#2i-the-same-code-measured-again) has the query's.
+movement between them and this set is the **host's** and the **bump's** — the incumbents moved with it,
+and the old code measures the same as the new one.
+[`PERF.md` §3p](PERF.md#3p-the-joins-stage-measured-again) has the table, and
+[§2i](PERF.md#2i-the-same-code-measured-again) has the query's.
 
 ---
 
@@ -196,10 +230,10 @@ refusals with the numbers that refused them, published as the finding.
 
 ### The questions the engine has not answered
 
-**1. The context — it is decomposed, and on the resident path the memory answers it.** The join's stage's
-residual is 7.187 ms on the resident path, and the standalone probe of the same work is 8.860 ms. The
-gap is **−1.581 ms**: inside the query, the probe accounts for *less* than it does in a quiet
-process. On the cold path the same gap is **0.199 ms** — positive where the resident one is negative
+**1. The context — it is decomposed, and in this set the verdict is unattributed.** The join's stage's
+residual is 7.686 ms on the resident path, and the standalone probe of the same work is 9.100 ms. The
+gap is **−1.354 ms**: inside the query, the probe accounts for *less* than it does in a quiet
+process. On the cold path the same gap is **1.382 ms** — positive where the resident one is negative
 — and **0.149 ms** on the old code, measured in the same session.
 
 **Spec 030 took it apart, and the answer was that it cannot be attributed.** The join stage's plan
@@ -215,11 +249,15 @@ memory's.** The band those parts were judged against was the **context's own spr
 of two drifting series** — and it could be narrower than the machine's own movement. So the two sides of
 every difference are now measured **in the same iteration, back to back**, with the **order alternated**
 between the iterations, and the **drift** — the machine's own variation, measured on both sides — is
-published and is the yardstick every part is judged against. The verdict is **unattributed** on the cold
-path and **the memory's** on the resident path, and both yardsticks are **sound**: the resident path's
-file state is **−1.238 ms** against a yardstick of **0.487 ms**, outside its own spread of **0.390 ms**.
-The context's own spread came down with it — **0.418 ms** to **0.356 ms** on the resident path and
-**2.211 ms** to **0.667 ms** on the cold one — and it is published old-and-new with the reason.
+published and is the yardstick every part is judged against. The verdict is **unattributed** on both
+paths, and both yardsticks are **sound**: the resident path's file state is **−1.208 ms** against a
+yardstick of **1.324 ms**, and its own spread of **1.354 ms** is wider than that yardstick, so no
+mechanism can be claimed there. **And that is the host's, not the bump's** — the probe never decodes a
+file: where the set the bump replaces had the file state at **−1.238 ms** against a yardstick of
+**0.487 ms** and a spread of **0.390 ms**, outside it, the verdict was **the memory's**.
+The context's own spread moved with it — **0.418 ms** to **0.356 ms** to **0.184 ms** on the resident
+path and **2.211 ms** to **0.667 ms** to **2.271 ms** on the cold one — and it is published old-and-new
+with the reason: **the host's**, and the sets were not taken in the same session.
 **What would answer it:** whether the file state is the whole of it — the same mechanism measured on the
 cold path, where the verdict is still unattributed. **And spec 036 built the instrument that would** —
 the **file-state floor**, the build side's read through the engine's own reader, measured in the
@@ -230,22 +268,27 @@ iteration — **and the file's state did not move on the day the set was taken**
 written down as [`spec 036`](specs/036-the-file-state-floor/spec.md) and in
 [ADR-0042](docs/adr/0042-the-file-state-floor.md).
 
-**2. `filter-range`, cold: Polars is ahead.** The engine's lazy path is 16.3 ms against Polars'
-15.2 ms, and the two spreads do not overlap. The scan that holds it is the Parquet decode, and the
-decode has been measured three times and refused every time: owning the decode buys nothing, and
-neither does *not* expanding the predicate's column — the expansion of six million RLE indices costs
-1.79 ms and the mask the alternative would build costs 1.73 ms, so the hypothesis never pays for
-itself. **What would answer it:** a file with a page index, or a reader that owns the Parquet
-decode. Neither is in scope of what the project has done so far.
+**2. `filter-range`, cold: the two spreads overlap.** The engine's lazy path is **15.8 ms** against
+Polars' **16.5 ms**, where the set the bump replaces had **16.3 ms** against **15.2 ms** — and the
+engine's own spread is **15.1–19.2 ms** against Polars' **16.4–16.7 ms**, so the ordering is inside the
+noise. The scan that holds it is the Parquet decode, and the decode has been measured three times and
+refused every time: owning the decode buys nothing, and neither does *not* expanding the predicate's
+column — the expansion of six million RLE indices costs **1.77 ms** where the set the bump replaces had
+**1.79 ms**, and the mask the alternative would build costs **1.75 ms** where it had **1.73 ms**, so the
+hypothesis never pays for itself. **And the bump is in the decode, not in the expansion**: Arrow's own
+decode of the column fell from **4.13 ms** to **3.34 ms**, while the expansion's own cost moved with the
+host. **What would answer it:** a file with a page index, or a reader that owns the Parquet decode.
+Neither is in scope of what the project has done so far.
 
-**3. `join-orders`, cold: DuckDB is ahead.** The engine is 97.6 ms against DuckDB's 91.0 ms, and
-the published analysis says the gap is **DuckDB's own figure that moved**: DuckDB's cold join fell
-from 95.0 ms while the engine's rose from 96.7 ms, and the engine's *old* code, re-measured on this
-host in the same session, reads 97.3 ms against the same DuckDB's 92.0 ms — so the gap is there for
-the code spec 026 shipped as well. The engine's stage was taken apart in spec 026 and the answer
-was that it is the **build side's read** — 11.716 ms of the 21.731 ms cold stage — and Arrow's
-decode of `orders.parquet`, which has been measured three times and refused every time.
-**What would answer it:** the parts, not the total.
+**3. `join-orders`, cold: DuckDB is ahead.** The engine is **100.0 ms** against DuckDB's **94.0 ms**,
+where the set the bump replaces had **97.6 ms** against **91.0 ms**: the gap is **0.6 ms** smaller than
+it was, and the whole of that is DuckDB's own movement. The published analysis says the gap is
+**DuckDB's own figure that moved**: DuckDB's cold join fell from 95.0 ms while the engine's rose from
+96.7 ms, and the engine's *old* code, re-measured on this host in the same session, reads 97.3 ms
+against the same DuckDB's 92.0 ms — so the gap is there for the code spec 026 shipped as well. The
+engine's stage was taken apart in spec 026 and the answer was that it is the **build side's read** —
+11.716 ms of the 21.731 ms cold stage — and Arrow's decode of `orders.parquet`, which has been
+measured three times and refused every time. **What would answer it:** the parts, not the total.
 
 **4. The morsel driver.** The pushdown leaves the operators nothing to do on the cold path, so a
 morsel driver has nothing to drive there. It has not been built, and nothing measured so far says
@@ -295,16 +338,19 @@ for a pinned x86-64 runner; it has not run on one.
   file's state moves, the two will be measured apart, in the same iteration.**
   [§3r](PERF.md#3r-the-file-state-floor) has the tables.
 - **The write side is measured, and the store's shape is decided by figures.** Spec 037 priced the half
-  of the engine that no figure had ever measured. The write of the published file is **1844.195 ms**, one
-  row group costs **306.230 ms**, and the **commit** — the data file's `fsync`, the manifest written and
-  `fsync`ed, the `rename`, the directory's `fsync` — is **7.651 ms**, which is **0.004** of the write:
+  of the engine that no figure had ever measured. The write of the published file is **1679.362 ms**, one
+  row group costs **279.785 ms**, and the **commit** — the data file's `fsync`, the manifest written and
+  `fsync`ed, the `rename`, the directory's `fsync` — is **8.493 ms**, which is **0.005** of the write:
   **the protocol's shape is not constrained by the flush on this host**, so the store needs no write-ahead
   log and no rollback to be affordable. **And the dictionary stays on**: the same rows written plain take
-  **1.55×** the bytes and read back **2.60×** slower. **And the batch size is a property of the bytes**:
+  **1.55×** the bytes and read back **2.47×** slower. **And the batch size is a property of the bytes**:
   at **65,536** rows the probe's file **is** the published file, byte for byte, and at the engine's own
   **125,000** it differs **from byte 7** — the writer cuts its mini-batches, and the dictionary's fallback
-  with them, at the caller's batch boundary. **And the write costs 3.36× a full read**, so *write once,
-  read many* pays for itself after about four full reads.
+  with them, at the caller's batch boundary. **And the write costs 3.22× a full read**, so *write once,
+  read many* pays for itself after about four full reads. **And what moved here is the host's**: the write
+  of the published file was **1844.195 ms** and is **1679.362 ms**, the row group **306.230 ms** and is
+  **279.785 ms**, the commit **7.651 ms** and is **8.493 ms** — **0.004** of the write and is **0.005** —
+  and the plain encoding read back **2.60×** slower and is **2.47×**.
   [§3s](PERF.md#3s-the-write-side) has the tables, and
   [ADR-0043](docs/adr/0043-the-write-side.md) records the decision.
 - **The store's half is built, and it writes the published file byte for byte.** Spec 038 built
@@ -316,15 +362,20 @@ for a pinned x86-64 runner; it has not run on one.
   the grid is **65,536**, the store **checks** it, and a batch off the grid is refused with an error —
   because a file that comes out differently is a caller that batched differently, and the store would rather
   say so than write a file whose bytes nobody can predict. **And the acceptance is the strongest one
-  available**: fed the published file's own rows, the store wrote **242,857,841** bytes — **the published
-  file, byte for byte** — in every campaign. [§3t](PERF.md#3t-the-stores-own-write) has the tables, and
-  [ADR-0044](docs/adr/0044-the-stores-half.md) records the decision.
+  available**: fed the published file's own rows, the store wrote **242,859,461** bytes — **the published
+  file, byte for byte** — in every campaign. **And the published file's own bytes moved with the bump**:
+  it was **242,857,841** bytes and is **242,859,461**, the writer's output changed with Arrow, and the store
+  writes the file that is published now, byte for byte, as before. [§3t](PERF.md#3t-the-stores-own-write) has
+  the tables, and [ADR-0044](docs/adr/0044-the-stores-half.md) records the decision.
 - **The file boundary's cost is measured, and it is free.** The store writes a table as **many** files and
   the engine's only source is **one**, so what the boundary costs had to be measured before the engine was
   taught to read the set. **The experiment was the published file's own six row groups** -- the same rows as
   the published file -- written as six files and read **both ways**, through the engine's own reader, in the
-  same campaign: **66.003 ms** for the one file and **64.114 ms** for the six, and the difference is
-  **−1.152 ms**, inside the one file's own spread. **So the file boundary costs nothing measurable**, and
+  same campaign: **70.151 ms** for the one file and **68.267 ms** for the six, and the difference is
+  **−1.416 ms**, inside the one file's own spread. **And what moved here is the bump's and the host's** —
+  the engine reads the file through this repository's Arrow, and the host moved with it: the one file was
+  **66.003 ms** and is **70.151 ms**, the six **64.114 ms** and is **68.267 ms**, and the difference
+  **−1.152 ms** and is **−1.416 ms**. **So the file boundary costs nothing measurable**, and
   the rows are the same -- compared **row by row, in order**, on the key column. **And so the source's case
   is correctness, not performance**: the naive way to read a store's table is **wrong** for a filter, an
   aggregate and a join, and a source that reads the set as one table is what makes it right -- so it has to
@@ -335,8 +386,10 @@ for a pinned x86-64 runner; it has not run on one.
   over a **set** of files: `FileSetSource` is **one new name** on the surface, `execute_on` takes a
   `ParquetSource` exactly as it did, and the set reads the files **as one table** — the metadata merged,
   the statistics the table's, the predicate reaching **every** file, the rows in the files' order. **And
-  it is free**: the set's read is **−0.599 ms** against the one file's — negative, and inside the one file's
-  own spread — and in parallel **0.133 ms** against **35.123 ms**, a share of **0.004**. **And the way it
+  it is free**: the set's read is **−0.991 ms** against the one file's — negative, and inside the one file's
+  own spread — and in parallel **−0.019 ms** against **35.879 ms**, a share of **−0.001**. **And the set
+  the bump replaces had it at **−0.599 ms** against **35.123 ms**, a share of **0.004** — the same cause
+  as the boundary's: the bump's decode and the host's movement.** **And the way it
   is free is the way that matters**: the files' readers are **chained** and decoded in **one pass**, so the
   rows are copied **once**; the first implementation merged the files' chunks instead, and the second copy
   was worth **8.747 ms**, **13%** of the read. **And the answers are the engine's**: the set's rows are the
@@ -401,10 +454,11 @@ for a pinned x86-64 runner; it has not run on one.
   is published **beside** it: the same code on this host, and the code the increment replaces, measured
   back to back, both trees clean. **The code's share of every difference is nil** — the join's cold stage
   differs by **−0.089 ms** against a drift of **1.237 ms** — and the movement between the published set
-  and this one is the **host's**: the incumbents, which the increment cannot have touched, moved with it.
+  and this one is the **host's** and the **bump's**: the incumbents, which the increment cannot have
+  touched, moved with it.
   [§2i](PERF.md#2i-the-same-code-measured-again) and [§3p](PERF.md#3p-the-joins-stage-measured-again) have
   the tables.
-- **A hostile Parquet file can ask for four gigabytes before a byte of payload is read — and the
+- **A hostile Parquet file could ask for four gigabytes before a byte of payload was read — and the
   sentence that said so was wrong about where, and wrong about the fix.** The reader speaks the Thrift
   **compact** protocol, whose `read_bytes` allocates the declared length eagerly, bounded by a u32.
   **And the measurement says the hole is in the file's page headers, not in its metadata**: the
@@ -413,14 +467,18 @@ for a pinned x86-64 runner; it has not run on one.
   same as an honest file's — while the **page headers**, read one after another as the reader walks a
   row group, go through the *streaming* protocol, and there the declared length is allocated before a
   byte of it is read. **The probe writes a real file with one hand-written page header and reads it
-  through the engine's own reader**: the largest single allocation the reader asks for is **the
-  declared length, exactly** — 1,048,576 at 1 MiB, 67,108,864 at 64 MiB, 1,073,741,824 at 1 GiB and
-  **4,294,967,295 at 4 GiB**, a share of **1.0** at every length, from a **25-byte** header — and
-  **the cost is address space, not time**: the read takes **0.089 ms**, less than the honest file's own
-  **0.300 ms**. **And the fix the sentence named would not have closed it**: `thrift` ≥ 0.23 refuses
-  an over-long length only if the caller asks it to, the default asks for nothing, and `parquet`
-  asks for nothing either. **What closes it is `parquet`'s own reader, from 58.4.1**, which does not
-  read the page statistics by default — so the declared length is never parsed at all. **The
+  through the engine's own reader**: before the bump, the largest single allocation the reader asked
+  for was **the declared length, exactly** — 1,048,576 at 1 MiB, 67,108,864 at 64 MiB, 1,073,741,824 at
+  1 GiB and **4,294,967,295 at 4 GiB**, a share of **1.0** at every length, from a **25-byte** header —
+  and **the cost was address space, not time**: the read took **0.089 ms**, less than the honest file's
+  own **0.300 ms**. **And on the tree this file ships, the reader asks for what an honest file costs**:
+  **8,192** bytes at every declared length — a share of **0.0078125** at 1 MiB, **0.0001221** at
+  64 MiB, **0.0000076** at 1 GiB and **0.0000019** at 4 GiB — and the 4 GiB read takes **0.044 ms**,
+  less than the honest file's own **0.095 ms**. **And the fix the sentence named would not have closed
+  it**: `thrift` ≥ 0.23 refuses an over-long length only if the caller asks it to, the default asks for
+  nothing, and `parquet` asks for nothing either. **What closes it is `parquet`'s own reader, from
+  58.4.1**, which does not read the page statistics by default — so the declared length is never parsed
+  at all. **The
   sentence is corrected where it was published** — in [`spec 034`](specs/034-the-engine-as-a-library/spec.md)'s
   R10, here and in `deny.toml` — and [ADR-0049](docs/adr/0049-the-readers-four-gigabytes.md) records
   the correction. The figure is in [§3w](PERF.md#3w-the-readers-four-gigabytes).

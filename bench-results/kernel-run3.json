@@ -3,7 +3,7 @@
     "cpu": "Apple M4 Max",
     "arch": "aarch64",
     "cores": 14,
-    "os": "macOS 27.0.1",
+    "os": "macOS 27.2",
     "simd": "neon",
     "forced_simd": "auto",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -12,50 +12,50 @@
   "dataset": {
     "path": "data/lineitem.parquet",
     "rows": 6000000,
-    "bytes": 242857841,
+    "bytes": 242859461,
     "scale_factor": 1,
     "seed": 24001,
     "null_rate": 0.0,
-    "row_groups": 0
+    "row_groups": 6
   },
   "kernel_ab": {
     "rows": 20000000,
-    "iterations": 8,
+    "iterations": 5,
     "column": "l_discount",
     "operator": ">=",
     "threshold": 0.04,
     "flavors": [
       {
         "flavor": "scalar",
-        "rows_per_sec": 3001031604.614086,
-        "ns_per_row": 0.33321875,
+        "rows_per_sec": 2986813219.6353097,
+        "ns_per_row": 0.334805,
         "matches": 12726115,
         "ratio_vs_scalar": 1.0,
-        "ratio_vs_auto": 0.5349456063021664
+        "ratio_vs_auto": 0.5645400456982422
       },
       {
         "flavor": "cpp-auto",
-        "rows_per_sec": 5609975237.218679,
-        "ns_per_row": 0.17825390625,
+        "rows_per_sec": 5290702125.375567,
+        "ns_per_row": 0.18901083,
         "matches": 12726115,
-        "ratio_vs_scalar": 1.8693489360769617,
+        "ratio_vs_scalar": 1.771353525086367,
         "ratio_vs_auto": 1.0
       },
       {
         "flavor": "cpp-simd",
-        "rows_per_sec": 8368802672.786353,
-        "ns_per_row": 0.11949140625,
+        "rows_per_sec": 7918988745.137246,
+        "ns_per_row": 0.12627875,
         "matches": 12726115,
-        "ratio_vs_scalar": 2.788641965622528,
-        "ratio_vs_auto": 1.4917717670596082
+        "ratio_vs_scalar": 2.651317026815676,
+        "ratio_vs_auto": 1.4967746354790492
       },
       {
         "flavor": "rust-simd",
-        "rows_per_sec": 8223719293.210389,
-        "ns_per_row": 0.12159948125,
+        "rows_per_sec": 7970561845.70156,
+        "ns_per_row": 0.12546167,
         "matches": 12726115,
-        "ratio_vs_scalar": 2.7402974632344494,
-        "ratio_vs_auto": 1.4659100879182412
+        "ratio_vs_scalar": 2.668583958750111,
+        "ratio_vs_auto": 1.5065225100223836
       }
     ]
   }

@@ -158,20 +158,29 @@ The engine reads **files an embedder's users provide**, so it says what it reads
 
 It reads **Parquet files**. It opens **no transport** and speaks **no binary protocol**.
 
-**The dependency policy exempts one advisory, and the exemption is published.** `RUSTSEC-2026-0435`
-— `thrift` 0.17.0, an unbounded allocation in `TBinaryInputProtocol::read_bytes` — is ignored in
+**The dependency policy exempts one advisory, and the exemption is published.** `RUSTSEC-2024-0436` —
+`paste` is no longer maintained — is ignored in
 [`deny.toml`](https://github.com/QuickLeopard/columnar-engine/blob/main/deny.toml), with the
-reason recorded beside it: the advisory's sink is the **binary** protocol, `parquet` 54.3.1 never
-constructs it, and the engine opens files rather than transports.
+reason recorded beside it: it is a build-time macro of the Parquet stack, not shipped code.
 
-**And the related weakness is published here too, rather than hidden.** The compact protocol the
-reader *does* use allocates the declared length eagerly, bounded by a `u32` — so a hostile Parquet
-file's metadata can ask for roughly four gigabytes before a byte of payload is read. That is a
-different path, and it **is** reachable.
+**And the exemption of `thrift` is gone.** `RUSTSEC-2026-0435` — `thrift` 0.17.0, an unbounded
+allocation in `TBinaryInputProtocol::read_bytes` — is no longer ignored, because the graph's `thrift`
+is **0.23.0** and the advisory does not cover it. `cargo deny` says so itself: with the exemption in
+place, it reports *no crate matched advisory criteria*. An exemption that names nothing is a silence.
 
-The engine does not fix it. The fix is upstream (`thrift` ≥ 0.23), and `parquet` 54 pins
-`thrift = "0.17"`, so the fix is a **`parquet` bump** — which is deliberately **not** part of this
-increment, because a `parquet` bump moves the published figures and wants its own measurement.
+**And the weakness that exemption stood next to was measured, and it is closed.** The hole was **not**
+in the file's metadata — the footer is read through the reader's own *slice* protocol, which refuses a
+declared length larger than the bytes that remain **before** it allocates. The hole was in the **page
+headers**: the compact protocol allocates the declared length eagerly, bounded by a `u32`, so a
+hostile Parquet file could ask for **four gigabytes** before a byte of payload was read — and the
+probe that measured it asked for exactly what the file declared, out of a 25-byte header.
+
+**The engine does not fix it with a wrapper of its own.** The fix is upstream, and it is in
+`parquet`'s own reader from **58.4.1**: it does not read the page statistics by default, so the
+declared length is never parsed at all. The reader now asks for **8 KiB** at every declared length —
+the honest file's own figure. The measurement, the before and the after, are in
+[`PERF.md` §3w](https://github.com/QuickLeopard/columnar-engine/blob/main/PERF.md#3w-the-readers-four-gigabytes)
+and in [ADR-0049](https://github.com/QuickLeopard/columnar-engine/blob/main/docs/adr/0049-the-readers-four-gigabytes.md).
 
 **A reader who cannot see the weakness cannot decide whether to read an untrusted file.** The
 decision is the embedder's. The engine's job is to say what it does.

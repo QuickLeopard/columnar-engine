@@ -22,42 +22,63 @@ figure it replaces.
 ## Phase 2 — the before, and the correction
 
 - [x] **Three campaigns** on the tree as it stands, and the medians published.
-- [x] The **claim is corrected where it was published**: spec 034's R10, `STATUS.md`'s open
-      questions, and `deny.toml`'s comment — the hole is in the **page headers**, the metadata path
-      is **bounded**, and thrift's limit is **opt-in** and parquet does not opt in.
-- [x] **A new ADR records the correction**, with the evidence and the reason.
+- [x] The **claim is corrected where it was published** — in **five** places, not three: spec 034's
+      R10, `STATUS.md`'s open questions, `deny.toml`'s comment, `crates/columnar-engine/README.md`
+      and `docs/embedding.md`. The hole is in the **page headers**, the metadata path is
+      **bounded**, and thrift's limit is **opt-in** and parquet does not opt in.
+- [x] **A new ADR records the correction**, with the evidence and the reason — and the reason
+      ADR-0049 gave for dropping the exemption is corrected too, because `thrift` 0.23.0 is still in
+      the graph.
 
 ## Phase 3 — the bump
 
-- [ ] `parquet` **54.3.1 → 58.4.1** and `arrow` **54 → 58.4.1**, in the workspace's shared
+- [x] `parquet` **54.3.1 → 58.4.1** and `arrow` **54 → 58.4.1**, in the workspace's shared
       dependency table.
-- [ ] The churn the compiler finds is **fixed**, and the engine's behaviour for an honest file does
+- [x] The churn the compiler finds is **fixed**, and the engine's behaviour for an honest file does
       not change: the same rows, the same answers, the same plans.
-- [ ] The **store's** bytes are checked: the published file is the published file, byte for byte.
+- [x] The **store's** bytes are checked: the published file is the published file, byte for byte.
+- [x] **The dataset is regenerated**, because the bump changed the writer's bytes — the published
+      file is **242,859,461** bytes where it was 242,857,841, and the data pages are identical.
 
 ## Phase 4 — the after, and the figures that moved
 
-- [ ] **Three campaigns** on the bumped tree, the same probe, and the medians published beside the
+- [x] **Three campaigns** on the bumped tree, the same probe, and the medians published beside the
       "before" — **the hole is closed when the reader asks for nothing like what the file declared**.
-- [ ] **Every published figure that moved is published old and new**, in the section that publishes
-      it, with the reason, and the machine's own floor beside it.
-- [ ] `scripts/medians.py` and `scripts/check-published-figures.py` know the new reports and the
+- [x] **The whole campaign is re-taken**, because a regenerated dataset moves every figure that
+      reads a file, and **the superseded sets are committed under their own names** so every figure
+      published old-against-new stays derivable from a committed report.
+- [x] **Every published figure that moved is published old and new**, in the section that publishes
+      it, with the reason, and the machine's own floor beside it — and **§3x** publishes them all
+      side by side.
+- [x] `scripts/medians.py` and `scripts/check-published-figures.py` know the new reports and the
       new figures.
+- [x] **The sweep's report carries both worker counts** — the read's and the operators' — because
+      the constitution asks for the workers that *ran* and the two differ; **the seven sweep families
+      are re-measured** so that every report can say both, and the column whose meaning changed at
+      spec 020 is corrected where it was published. ADR-0051 records it.
+- [x] **The size curve is re-measured at all three sizes**, because the campaign had measured it on
+      the six-million-row file only and the size axis is the axis the curve exists for. The curve's
+      report now carries **the engine's estimate** of its working set and **the host's load
+      average**, and **§3i's estimate is corrected**: the published **391 MiB** was *derived* and the
+      engine's own figure is **377.7 MiB**. It is corrected in both the places that published it,
+      and ADR-0052 records it.
 
 ## Phase 5 — the policy, the record, the closure
 
-- [ ] `deny.toml`'s exemption is **kept or dropped for the reason that is true after the bump**.
-- [ ] `STATUS.md`, `README.md` and `CONTRIBUTING.md` say the versions they now use.
+- [x] `deny.toml`'s exemption is **kept or dropped for the reason that is true after the bump** —
+      `RUSTSEC-2026-0435` is **removed**, and the reason is recorded: the advisory's crate is not in
+      the graph's protocol sink.
+- [x] `STATUS.md`, `README.md` and `CONTRIBUTING.md` say the versions they now use.
 - [ ] The spec's **status is done**, and the record says **CI green on <sha>**.
 
 ## The gate
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` (and the same for `x86_64-apple-darwin`)
-- [ ] `cargo test --workspace --all-targets` and `cargo test --workspace --doc`
-- [ ] `cargo deny check`
-- [ ] `just check-wasm`
-- [ ] `cargo semver-checks` — the surface did not break
-- [ ] `./scripts/check-package.sh` — the four crates package, in the order their dependencies decide
-- [ ] `python3 scripts/medians.py` and `python3 scripts/check-published-figures.py`
-- [ ] `python3 scripts/check-links.py` and `python3 scripts/check-page.py`
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` (and the same for `x86_64-apple-darwin`)
+- [x] `cargo test --workspace --all-targets` and `cargo test --workspace --doc`
+- [x] `cargo deny check`
+- [x] `just check-wasm`
+- [x] `cargo semver-checks` — the surface did not break
+- [x] `./scripts/check-package.sh` — the four crates package, in the order their dependencies decide
+- [x] `python3 scripts/medians.py` and `python3 scripts/check-published-figures.py`
+- [x] `python3 scripts/check-links.py` and `python3 scripts/check-page.py`

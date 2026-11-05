@@ -106,6 +106,7 @@ pub fn run(
         sql: definition.sql_for_display(),
         mode: Mode::Cold.name().to_owned(),
         memory_budget_bytes: budget.bytes as u64,
+        host_load_average: columnar_bench::machine::host_load_average(),
         points,
     };
 
@@ -141,6 +142,10 @@ fn measure_point(
             .with_context(|| format!("the engine could not run the query on {}", path.display()))?;
     let engine_scan_ms = crate::scan_stage_ms(&result);
     let engine_operators_ms = crate::operator_stage_ms(&result);
+    // The engine's own estimate of the working set. It is the figure the
+    // budget was checked against, before a single row was read, so it is the
+    // number a reader compares with the budget the report carries.
+    let engine_estimate_bytes = u64::try_from(result.plan_output.estimated_bytes).ok();
 
     let (duckdb_ms, polars_ms, datafusion_ms) =
         measure_incumbents(definition, path, threads, iterations, answer_value(&result));
@@ -150,6 +155,7 @@ fn measure_point(
         scale_factor,
         rows,
         bytes,
+        engine_estimate_bytes,
         engine_ms,
         engine_scan_ms,
         engine_operators_ms,

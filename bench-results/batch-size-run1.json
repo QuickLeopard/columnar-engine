@@ -1,6 +1,6 @@
 {
   "batch_in_the_tree": 125000,
-  "commit": "8271054",
+  "commit": "4eebf78",
   "file": "data/lineitem.parquet",
   "host_load_average": 0.0,
   "iterations": 9,
@@ -12,11 +12,11 @@
       "candidates": [
         {
           "batch": 65536,
-          "scan_ms": 14.186125
+          "scan_ms": 13.131125
         },
         {
           "batch": 125000,
-          "scan_ms": 14.12275
+          "scan_ms": 13.289209
         }
       ],
       "limits": [
@@ -24,55 +24,55 @@
           "batch": 1024,
           "limit": 1024,
           "rows": 2178861,
-          "scan_ms": 18.887958
+          "scan_ms": 15.114042
         },
         {
           "batch": 2048,
           "limit": 2048,
           "rows": 2178861,
-          "scan_ms": 17.425833
+          "scan_ms": 14.233708
         },
         {
           "batch": 4096,
           "limit": 4096,
           "rows": 2178861,
-          "scan_ms": 16.591
+          "scan_ms": 14.671292000000001
         },
         {
           "batch": 8000,
           "limit": 8192,
           "rows": 2178861,
-          "scan_ms": 15.750832999999998
+          "scan_ms": 14.349667
         },
         {
           "batch": 15625,
           "limit": 16384,
           "rows": 2178861,
-          "scan_ms": 15.50425
+          "scan_ms": 13.604916999999999
         },
         {
           "batch": 31250,
           "limit": 32768,
           "rows": 2178861,
-          "scan_ms": 15.058542
+          "scan_ms": 13.288540999999999
         },
         {
           "batch": 62500,
           "limit": 65536,
           "rows": 2178861,
-          "scan_ms": 14.074833
+          "scan_ms": 13.213875
         },
         {
           "batch": 125000,
           "limit": 131072,
           "rows": 2178861,
-          "scan_ms": 14.114542
+          "scan_ms": 13.157958
         },
         {
           "batch": 250000,
           "limit": 262144,
           "rows": 2178861,
-          "scan_ms": 15.466792
+          "scan_ms": 13.277417
         }
       ],
       "shape": "one column, one predicate"
@@ -81,11 +81,11 @@
       "candidates": [
         {
           "batch": 65536,
-          "scan_ms": 19.043916
+          "scan_ms": 18.638624999999998
         },
         {
           "batch": 125000,
-          "scan_ms": 14.652083
+          "scan_ms": 14.656459
         }
       ],
       "limits": [
@@ -93,55 +93,55 @@
           "batch": 1024,
           "limit": 1024,
           "rows": 315203,
-          "scan_ms": 100.611042
+          "scan_ms": 121.468458
         },
         {
           "batch": 2048,
           "limit": 2048,
           "rows": 315203,
-          "scan_ms": 57.226333
+          "scan_ms": 67.116083
         },
         {
           "batch": 4096,
           "limit": 4096,
           "rows": 315203,
-          "scan_ms": 36.874207999999996
+          "scan_ms": 41.379917
         },
         {
           "batch": 8000,
           "limit": 8192,
           "rows": 315203,
-          "scan_ms": 25.687416000000002
+          "scan_ms": 29.316333
         },
         {
           "batch": 15625,
           "limit": 16384,
           "rows": 315203,
-          "scan_ms": 19.724625
+          "scan_ms": 20.745541
         },
         {
           "batch": 31250,
           "limit": 32768,
           "rows": 315203,
-          "scan_ms": 16.931207999999998
+          "scan_ms": 17.830917000000003
         },
         {
           "batch": 62500,
           "limit": 65536,
           "rows": 315203,
-          "scan_ms": 15.454458
+          "scan_ms": 17.030832999999998
         },
         {
           "batch": 125000,
           "limit": 131072,
           "rows": 315203,
-          "scan_ms": 14.598084
+          "scan_ms": 15.92375
         },
         {
           "batch": 250000,
           "limit": 262144,
           "rows": 315203,
-          "scan_ms": 14.688457999999999
+          "scan_ms": 15.3145
         }
       ],
       "shape": "the real Q6's predicate set"

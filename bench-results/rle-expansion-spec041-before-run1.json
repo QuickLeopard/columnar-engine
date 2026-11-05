@@ -1,0 +1,99 @@
+{
+  "bit_width": 4,
+  "commit": "8271054",
+  "derived_ms": {
+    "decode_by_subtraction": 3.8134930000000002,
+    "expansion_by_probe": 1.0181249999999995,
+    "expansion_share_of_decode": 46.94625111413604,
+    "expansion_share_of_query": 4.155693884320034,
+    "mask_minus_predicate": 0.4324110000000001,
+    "net_with_the_crates_decoder": 1.357881,
+    "net_with_the_probes_decoder": 0.7059639999999998,
+    "predicate_share_of_scan": 25.253708606727354,
+    "rle_gap": 0.6519170000000001
+  },
+  "dictionary_bytes_per_row_group": 88,
+  "dictionary_values": 11,
+  "file": "data/lineitem.parquet",
+  "host_load_average": 10.86,
+  "index_bytes_per_row_group": 502051,
+  "iterations": 5,
+  "machine": "14 logical cores",
+  "measurements_ms": {
+    "arrow_decode": 3.8493749999999998,
+    "engine_predicate": 1.2884229999999999,
+    "engine_query": 43.080459000000005,
+    "engine_scan": 5.101916,
+    "expansion": 1.790292,
+    "expansion_buffers": 0.207833,
+    "expansion_gather": 1.603583,
+    "mask_from_indices": 1.720834,
+    "parquet_decode": 6.89675,
+    "plain_arrow_decode": 4.624375,
+    "plain_decode": 6.692875,
+    "probe_decode": 6.244833,
+    "probe_indices": 5.226708,
+    "prototype": 7.74
+  },
+  "plain_file_bytes": 48025815,
+  "rows": 6000000,
+  "spreads_ms": {
+    "arrow_decode": [
+      3.7840830000000003,
+      4.310166
+    ],
+    "engine_predicate": [
+      1.254955,
+      1.3043779999999998
+    ],
+    "engine_query": [
+      42.648875000000004,
+      46.779875
+    ],
+    "engine_scan": [
+      4.885459,
+      5.498584
+    ],
+    "expansion": [
+      1.746708,
+      2.1970829999999997
+    ],
+    "expansion_buffers": [
+      0.206833,
+      0.210208
+    ],
+    "expansion_gather": [
+      1.553708,
+      1.642167
+    ],
+    "mask_from_indices": [
+      1.6907079999999999,
+      1.8884159999999999
+    ],
+    "parquet_decode": [
+      6.7996669999999995,
+      9.079417
+    ],
+    "plain_arrow_decode": [
+      4.400417,
+      4.870084
+    ],
+    "plain_decode": [
+      6.386374999999999,
+      10.181249999999999
+    ],
+    "probe_decode": [
+      6.131167,
+      6.898
+    ],
+    "probe_indices": [
+      4.690125,
+      5.419375
+    ],
+    "prototype": [
+      7.521791,
+      8.127667
+    ]
+  },
+  "survivors": 2178861
+}

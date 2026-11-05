@@ -1,98 +1,98 @@
 {
   "bit_width": 4,
-  "commit": "8271054",
+  "commit": "4eebf78",
   "derived_ms": {
-    "decode_by_subtraction": 3.9107520000000005,
-    "expansion_by_probe": 1.5565830000000007,
-    "expansion_share_of_decode": 46.31142552634378,
-    "expansion_share_of_query": 4.038786983765308,
-    "mask_minus_predicate": 0.4179600000000001,
-    "net_with_the_crates_decoder": 1.393165,
-    "net_with_the_probes_decoder": 0.3051650000000008,
-    "predicate_share_of_scan": 25.11186538047251,
-    "rle_gap": 1.0879999999999992
+    "decode_by_subtraction": 3.202628,
+    "expansion_by_probe": 2.1198750000000004,
+    "expansion_share_of_decode": 55.633998079077564,
+    "expansion_share_of_query": 4.28084464794951,
+    "mask_minus_predicate": 0.47491899999999987,
+    "net_with_the_crates_decoder": 1.306831,
+    "net_with_the_probes_decoder": 1.3081639999999999,
+    "predicate_share_of_scan": 28.664038311615997,
+    "rle_gap": -0.0013329999999998066
   },
   "dictionary_bytes_per_row_group": 88,
   "dictionary_values": 11,
   "file": "data/lineitem.parquet",
-  "host_load_average": 13.0,
+  "host_load_average": 9.69,
   "index_bytes_per_row_group": 502051,
   "iterations": 5,
   "machine": "14 logical cores",
   "measurements_ms": {
-    "arrow_decode": 4.292375,
-    "engine_predicate": 1.311373,
-    "engine_query": 44.843291,
-    "engine_scan": 5.222125,
-    "expansion": 1.811125,
-    "expansion_buffers": 0.217125,
-    "expansion_gather": 1.621667,
-    "mask_from_indices": 1.729333,
-    "parquet_decode": 7.609249999999999,
-    "plain_arrow_decode": 4.688541,
-    "plain_decode": 7.05625,
-    "probe_decode": 6.52125,
-    "probe_indices": 4.9646669999999995,
-    "prototype": 8.063832999999999
+    "arrow_decode": 3.525125,
+    "engine_predicate": 1.286872,
+    "engine_query": 41.621459,
+    "engine_scan": 4.4895,
+    "expansion": 1.78175,
+    "expansion_buffers": 0.21312499999999998,
+    "expansion_gather": 1.6032920000000002,
+    "mask_from_indices": 1.7617909999999999,
+    "parquet_decode": 6.56125,
+    "plain_arrow_decode": 4.409916,
+    "plain_decode": 6.836667,
+    "probe_decode": 6.562583,
+    "probe_indices": 4.442708,
+    "prototype": 7.527125
   },
-  "plain_file_bytes": 48025815,
+  "plain_file_bytes": 48018147,
   "rows": 6000000,
   "spreads_ms": {
     "arrow_decode": [
-      3.742708,
-      4.536209
+      3.133584,
+      4.100167
     ],
     "engine_predicate": [
-      1.265167,
-      1.3720830000000002
+      1.257871,
+      1.345
     ],
     "engine_query": [
-      43.020041,
-      45.376666
+      40.753916000000004,
+      43.042459
     ],
     "engine_scan": [
-      4.853416,
-      5.6131660000000005
+      4.429125,
+      4.927415999999999
     ],
     "expansion": [
-      1.72425,
-      2.025083
+      1.7384169999999999,
+      2.81675
     ],
     "expansion_buffers": [
-      0.203959,
-      0.228833
+      0.197083,
+      0.222125
     ],
     "expansion_gather": [
-      1.536417,
-      1.971
+      1.534542,
+      1.67225
     ],
     "mask_from_indices": [
-      1.717,
-      2.1782500000000002
+      1.6930420000000002,
+      1.911916
     ],
     "parquet_decode": [
-      7.565292,
-      7.796042000000001
+      6.238792,
+      6.721709000000001
     ],
     "plain_arrow_decode": [
-      4.360334000000001,
-      5.177917
+      4.065625,
+      4.950334
     ],
     "plain_decode": [
-      6.452375,
-      7.137333
+      6.345042,
+      8.136583
     ],
     "probe_decode": [
-      5.974125,
-      6.705542
+      6.113709,
+      7.093416
     ],
     "probe_indices": [
-      4.756083,
-      5.255458
+      4.384167,
+      4.840125
     ],
     "prototype": [
-      7.836417,
-      8.397875
+      7.131166,
+      7.886541
     ]
   },
   "survivors": 2178861
