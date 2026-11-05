@@ -15,7 +15,7 @@ Every increment is a **spec** under [`specs/`](specs/), with its requirements (R
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
 [`constitution.md`](constitution.md). **38 specs**, **47 ADRs** and **29 defects** so far, and every one
-of the specs but the last is closed.
+of the specs is closed.
 
 ---
 
@@ -365,18 +365,18 @@ for a pinned x86-64 runner; it has not run on one.
   `columnar-engine`** — the graph decides what it can and the list breaks the rest — and
   `cargo publish --dry-run -p columnar-store` passes. **The publish itself needs the account and the
   token**, which the repository does not have.
-- **The three crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
+- **The four crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
   research harness into a library: the surface is decided and written down (**46 names**, closed by the
-  rule that every type in a public signature is on the list), the three crates package **in the order
+  rule that every type in a public signature is on the list), the crates package **in the order
   their dependencies decide**, each carries its own README and licence, the research modules are
   reachable and undocumented, the enums that will grow are `#[non_exhaustive]`, and the embedder test
   imports **only** the facade. **What is left is the publish itself**: it needs a crates.io account and a
   token, it makes the code public, and it is **not** an act this repository can take on its own. The
-  three names are **free** — `columnar-core`, `columnar-kernels` and `columnar-engine` are all
-  unregistered — and the order is **core, then kernels, then engine**, with the commands in
-  [`docs/embedding.md`](docs/embedding.md). Until it is published, `cargo package` succeeds for
-  `columnar-core` and **waits** for its sibling for the other two, and the check says which sibling each
-  of them waits for.
+  four names are **free** — `columnar-core`, `columnar-kernels`, `columnar-store` and `columnar-engine`
+  are all unregistered — and the order is **core, then kernels, then store, then engine**, with the
+  commands in [`docs/embedding.md`](docs/embedding.md). Until it is published, `cargo package` succeeds
+  for `columnar-core` and for the store, and **waits** for its sibling for the other two, and the check
+  says which sibling each of them waits for.
 - **The comparison campaigns were taken again, and the published set stands.** Spec 034 changed no engine
   work, so the set the file publishes keeps its name and its figures, and the increment's re-measurement
   is published **beside** it: the same code on this host, and the code the increment replaces, measured

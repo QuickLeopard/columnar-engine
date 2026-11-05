@@ -1,7 +1,8 @@
 # Spec 040 — The source that reads a set of files
 
-**Status**: open
+**Status**: done
 **Started**: 2026-11-05
+**Finished**: 2026-11-05
 
 ## The problem
 

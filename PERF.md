@@ -3265,9 +3265,10 @@ is free.
 in order**, on the key column, and they match; and the same filtered plan over the file and over the set
 counts the same **3,184,637** rows.
 
-**And the single-file path did not move.** `execute_on` takes a `ParquetSource` exactly as it did, the
-published figures of the one-file read stay where they are, and the source is **additive**: a new name on
-the surface, not a change to the old one.
+**And the single-file path did not move.** `execute_on` takes a `ParquetSource` exactly as it did, and
+**the code that reads one file is the code that ran before** — the engine's internal source trait delegates
+to the file's own methods — **so the published figures of the one-file read stay where they are**, and the
+source is **additive**: a new name on the surface, not a change to the old one.
 
 The raw reports are committed under their own names, the figures above are derived from them by
 `python3 scripts/medians.py`, and the guard checks every one of them **inside this section**.
