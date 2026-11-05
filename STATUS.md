@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **37 specs**, **45 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **38 specs**, **45 ADRs** and **29 defects** so far, and every one
 of the specs but the last is closed.
 
 ---
@@ -319,10 +319,23 @@ for a pinned x86-64 runner; it has not run on one.
   available**: fed the published file's own rows, the store wrote **242,857,841** bytes — **the published
   file, byte for byte** — in every campaign. [§3t](PERF.md#3t-the-stores-own-write) has the tables, and
   [ADR-0044](docs/adr/0044-the-stores-half.md) records the decision.
+- **The file boundary's cost is measured, and it is free.** The store writes a table as **many** files and
+  the engine's only source is **one**, so what the boundary costs had to be measured before the engine was
+  taught to read the set. **The experiment was the published file's own six row groups** -- the same rows as
+  the published file -- written as six files and read **both ways**, through the engine's own reader, in the
+  same campaign: **66.003 ms** for the one file and **64.114 ms** for the six, and the difference is
+  **−1.152 ms**, inside the one file's own spread. **So the file boundary costs nothing measurable**, and
+  the rows are the same -- compared **row by row, in order**, on the key column. **And so the source's case
+  is correctness, not performance**: the naive way to read a store's table is **wrong** for a filter, an
+  aggregate and a join, and a source that reads the set as one table is what makes it right -- so it has to
+  be **correct, and free**.
+  [§3u](PERF.md#3u-the-file-boundarys-cost) has the tables, and
+  [ADR-0045](docs/adr/0045-the-file-boundarys-cost.md) records the decision.
 - **The measurement track's question is answered, and the next increment is the engine's side of the
   glue.** The store writes the files the engine reads, and **the engine's only source is one file** — so
   the source that reads a table which is **many** files is the next increment, with its own spec and its own
-  surface decision. **And the store's crate is not published yet**: its API is new, and that increment
+  surface decision. **And what it has to achieve is now measured**: the boundary is free, so the source
+  **may not cost anything either** — its whole case is that it is **correct**. **And the store's crate is not published yet**: its API is new, and that increment
   changes it. What is left besides them is the work the repository cannot take on its own: **the library's
   publish** — it needs a crates.io account and a token, and it makes the code public — and the
   **`parquet` bump**, whose target is known and whose own measurement has to be taken because Arrow's
