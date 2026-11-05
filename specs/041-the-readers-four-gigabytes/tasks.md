@@ -69,7 +69,7 @@ figure it replaces.
       `RUSTSEC-2026-0435` is **removed**, and the reason is recorded: the advisory's crate is not in
       the graph's protocol sink.
 - [x] `STATUS.md`, `README.md` and `CONTRIBUTING.md` say the versions they now use.
-- [ ] The spec's **status is done**, and the record says **CI green on <sha>**.
+- [x] The spec's **status is done**, and the record says **CI green on `ed3677a2`**.
 
 ## The gate
 

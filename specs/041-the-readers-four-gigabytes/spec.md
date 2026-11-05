@@ -1,8 +1,11 @@
 # Spec 041 — The reader's four gigabytes
 
-**Status**: open
-**Date**: 2026-11-05
+**Status**: done
+**Started**: 2026-11-05
+**Finished**: 2026-11-05
 **Predecessor**: [spec 040 — the source that reads a set of files](../040-the-source-that-reads-a-set-of-files/spec.md)
+
+**CI green on `ed3677a2`** -- run 42077956078, fifteen of fifteen jobs.
 
 ## The problem
 
