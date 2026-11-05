@@ -1,0 +1,42 @@
+[package]
+name = "columnar-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "An append-only store for the columnar engine: a writer, a manifest, and a commit"
+# The crate's own README, not the repository's. A reader on crates.io opens
+# the crate's front page, and the portfolio's front page is not the crate's.
+readme = "README.md"
+keywords = ["columnar", "storage", "parquet", "embedded-analytics"]
+categories = ["database-implementations", "data-structures"]
+# The crate's API is new, and the next increment changes it -- the engine has
+# to read a table that is many files, and the store's own surface will follow
+# that. So the crate is not published yet: a first published version is a
+# promise, and this one has not been reviewed by an embedder. The publish
+# waits for the token, and its place in the order is in STATUS.md.
+publish = false
+# The store's probe is this project's evidence harness, not an embedder's
+# example, so the package does not carry it.
+exclude = ["examples/**"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The store is *below* the engine: it writes the files the engine reads, and
+# it does not depend on the engine. So the engine's read path cannot move
+# because of anything here.
+parquet = { workspace = true }
+arrow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# The generator, for the test that says the store writes the file the
+# generator wrote. It is a benchmark fixture and is never published.
+columnar-testdata = { workspace = true }

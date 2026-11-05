@@ -536,6 +536,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "columnar-store"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "columnar-testdata",
+ "parquet",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "columnar-testdata"
 version = "0.1.0"
 dependencies = [

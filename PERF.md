@@ -3136,6 +3136,52 @@ does** — and the read side of this repository is the half that is measured to 
 above are derived from them by `python3 scripts/medians.py`; the guard checks every one of them **inside this
 section**.
 
+### 3t. The store's own write
+
+**The write side is measured, and the store is built.** Spec 038 built the store's half — the **writer**,
+the **manifest**, the **commit** and the **catalog** — and the acceptance is the strongest one available:
+**the store wrote the published file, byte for byte**.
+
+| | |
+|---|---|
+| **the file the store wrote** | **242,857,841 bytes — the published file, byte for byte** |
+| the rows | 6,000,000 |
+| the grid the rows arrived in | 65,536 |
+| the row groups | 1,000,000 |
+| | |
+| the store's write | **1793.670 ms** |
+| the store's commit | **9.270 ms** |
+| the store's own API, end to end | **1798.356 ms** |
+
+**And it is the same write that [§3s](#3s-the-write-side) measured.** The store's write of the published
+file is **1793.670 ms** and the write-side probe's is **1844.195 ms**: the same writer over the same rows,
+on two days, and the difference is the host's state — the load averages were **8.4**, **8.48** and **8.32**
+for the store's campaigns, against **7.87**, **7.57** and **7.99** for the probe's. **Which is why the load
+average travels with every figure in this file.**
+
+**And the store's commit is the five steps, measured.** The data file is made durable first, then the
+manifest that names it is written, made durable, and `rename`d over the old one, and the directory is made
+durable last. **9.270 ms**, against the probe's **7.651 ms** for the same protocol. **There is no write-ahead
+log and no rollback**: a commit is a rename, and the rename is the answer.
+
+**And the grid is a rule now, not a surprise.** The rows arrive in batches of **65,536** rows and the store
+**checks** it: a batch off the grid is refused with an error, because a file that comes out differently is
+not a bug in the store but a caller that batched differently — and the store would rather say so than write
+a file whose bytes nobody can predict. **That is the finding of [§3s](#3s-the-write-side) turned into a
+contract**, and the byte-identical file above is the contract holding.
+
+**And what the store is not, is named.** **No SQL. No transactions with rollback. No MVCC, no snapshot
+isolation. No concurrent writers. No row-level updates. No compaction. One writer.** A table grows by
+appending a file and committing it; it does not shrink, and it does not change in place.
+
+**And the store sits below the engine.** `columnar-store` does not depend on `columnar-engine`: it writes
+the files the engine reads, and the engine's read path cannot move because of anything here. **The glue
+between them is a path** — and the engine's side of that glue, the source that reads a table which is
+**many** files, is the next increment.
+
+The raw reports are committed under their own names, the figures above are derived from them by
+`python3 scripts/medians.py`, and the guard checks every one of them **inside this section**.
+
 ---
 
 ## 4. The defects the increments found
@@ -3495,6 +3541,17 @@ byte. The third argument is the batch size the rows arrive in, and it is the var
 the published file exactly, and the engine's own `125000` does not. The tables in
 [§3s](#3s-the-write-side) are derived from those reports by `python3 scripts/medians.py`, and the guard
 checks them like the rest.
+
+**And the store's own probe**, three campaigns:
+
+```bash
+just probe-store "data/lineitem.parquet" "bench-results/store-write-run1.json"
+```
+
+The probe writes the published file's own rows **through the store** -- the writer, the manifest and the
+commit -- and compares the file the store wrote with the published file **byte for byte**. The tables in
+[§3t](#3t-the-stores-own-write) are derived from those reports by `python3 scripts/medians.py`, and the
+guard checks them like the rest.
 
 The probe runs the engine's **own** plans through the engine's own entry point and checks the answers
 against the published ones before it times anything, so it is the same query the tables above publish.

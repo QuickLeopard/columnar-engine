@@ -24,6 +24,12 @@
 #                       v
 #                 columnar-cli
 #
+#   columnar-store      the write side: it writes the files the engine reads,
+#          |            and it depends on no other crate in this workspace
+#          |
+#          v
+#   (the engine reads what the store writes -- the glue is a path)
+#
 # `columnar-core` is the vocabulary. Everything else is an implementation of it.
 
 [workspace]
@@ -32,6 +38,7 @@ members = [
     "crates/columnar-core",
     "crates/columnar-kernels",
     "crates/columnar-engine",
+    "crates/columnar-store",
     "crates/columnar-testdata",
     "crates/columnar-bench",
     "crates/columnar-cli",
@@ -107,6 +114,7 @@ columnar-core = { path = "crates/columnar-core", version = "0.1.0" }
 columnar-kernels = { path = "crates/columnar-kernels", version = "0.1.0" }
 columnar-engine = { path = "crates/columnar-engine", version = "0.1.0" }
 columnar-testdata = { path = "crates/columnar-testdata", version = "0.1.0" }
+columnar-store = { path = "crates/columnar-store", version = "0.1.0" }
 columnar-bench = { path = "crates/columnar-bench", version = "0.1.0" }
 columnar-web = { path = "crates/columnar-web", version = "0.1.0" }
 

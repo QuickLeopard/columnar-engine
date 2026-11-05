@@ -328,6 +328,12 @@ probe-join data="data/lineitem.parquet" out="bench-results/join-cost-run1.json":
 probe-write data="data/lineitem.parquet" out="bench-results/write-cost-run1.json" batch="65536":
     cargo run --release -p columnar-engine --example write_cost_probe -- {{data}} --batch-rows {{batch}} --out {{out}}
 
+# Take the **store's own write** apart: the published file's own rows written
+# through the store, the commit's five steps, and the file the store wrote
+# compared with the published file **byte for byte**.
+probe-store data="data/lineitem.parquet" out="bench-results/store-write-run1.json":
+    cargo run --release -p columnar-store --example store_probe -- {{data}} --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

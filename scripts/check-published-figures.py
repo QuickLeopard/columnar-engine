@@ -1184,6 +1184,31 @@ WRITE_COST_CLAIMS = {
     "the engine's own batch size": "from byte 7",
 }
 
+# Spec 038: the store's own write. The store writes the published file's own
+# rows, and the file it wrote is compared with the published file byte for
+# byte -- so the store's claim is not "it wrote a file" but "it wrote the file
+# the generator wrote, and the two are equal".
+STORE_WRITE_REPORTS = sorted((ROOT / "bench-results").glob("store-write-run*.json"))
+SPEC038_SECTION = "### 3t"
+
+# The measurements the store's probe takes, and the places they are published.
+STORE_WRITE_SHAPES = (
+    ("write_file", 3),
+    ("commit", 3),
+    ("append", 3),
+)
+
+# The counts the section publishes beside them.
+STORE_WRITE_COUNTS = (
+    ("bytes_written", 0),
+    ("rows", 0),
+    ("batch_rows", 0),
+    ("row_group_rows", 0),
+)
+
+# The claim the store's file makes, and the sentence that carries it.
+STORE_WRITE_CLAIM = "the published file, byte for byte"
+
 
 def join_cost_floors(paths: list[Path], path: str) -> dict[str, object]:
     """The two floors, over one path's ladder.
@@ -3169,6 +3194,62 @@ def main() -> int:
             elif claim:
                 print(f"ok  {'PERF.md':<10} {f'{label}: the claim':<60} {claim}")
 
+    # Spec 038: the store's own write -- the file it wrote, its bytes, and
+    # the claim that it is the published file, byte for byte.
+    store_section = section_of(texts["PERF.md"], SPEC038_SECTION)
+    if store_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the store's own write "
+            f"({SPEC038_SECTION}) is not in the document"
+        )
+    else:
+        store_text = store_section.replace(",", "")
+        if len(STORE_WRITE_REPORTS) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the store's probe has {len(STORE_WRITE_REPORTS)} campaigns, "
+                f"and the method says {MIN_CAMPAIGNS}"
+            )
+        else:
+            store_runs = [json.loads(path.read_text()) for path in STORE_WRITE_REPORTS]
+
+            for name, places in STORE_WRITE_SHAPES:
+                values = [
+                    run["measurements_ms"][name]
+                    for run in store_runs
+                    if name in run.get("measurements_ms", {})
+                ]
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(store_section, rendered):
+                    failures.append(
+                        f"PERF.md: the store's probe measures {name} at {rendered} "
+                        f"by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'the store: {name}':<60} {rendered}")
+
+            for name, places in STORE_WRITE_COUNTS:
+                values = [run[name] for run in store_runs if name in run]
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(store_text, rendered):
+                    failures.append(
+                        f"PERF.md: the store's probe reports {name} as {rendered} "
+                        f"by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'the store: {name}':<60} {rendered}")
+
+            if STORE_WRITE_CLAIM not in store_section:
+                failures.append(
+                    f"PERF.md: the store's probe does not publish its claim: "
+                    f"the reports say {STORE_WRITE_CLAIM}"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {'the store: the claim':<60} {STORE_WRITE_CLAIM}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -3971,6 +4052,7 @@ def main() -> int:
         f"{len(SPEC035_FAMILIES) * (2 * (7 + 3 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
         f"{2 * (11 + 3 * len(SPEC035_LEAVES['cold'])) + 3 + 2 * (2 * len(SPEC035_LEAVES['cold']) + 6) + 3 * len(SPEC036_MOVED) + 6} of the file-state floor, "
         f"{len(WRITE_COST_FAMILIES) * (1 + len(WRITE_COST_SHAPES) + len(WRITE_COST_DERIVED) + 3 + 1)} of the write side, "
+        f"{len(STORE_WRITE_SHAPES) + len(STORE_WRITE_COUNTS) + 1} of the store's own write, "
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
     )
     return 0

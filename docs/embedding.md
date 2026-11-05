@@ -88,6 +88,35 @@ let dataset = Dataset::read_parquet(Path::new("data/lineitem.parquet"))?;
 
 ---
 
+## Writing the data: the store
+
+The engine **reads** Parquet files and it never writes one. **`columnar-store` is the crate that writes
+them**, and it keeps the catalog that says which files make up a table.
+
+- A **table** is a **set of files**. A commit appends a file and never modifies an old one.
+- The **manifest** is the table's truth: its files, their rows and their bytes, and the table's totals.
+- The **commit** is five steps — the data file made durable, the manifest written, made durable and
+  `rename`d over the old one, and the directory made durable — and **there is no write-ahead log**.
+
+```rust
+use columnar_store::Store;
+
+let store = Store::open("/tmp/warehouse")?;
+let manifest = store.append("lineitem", &batches)?;
+```
+
+**And the rows arrive on the store's grid.** Every batch but the last has to be **65,536** rows, and the
+store checks it: the Parquet writer cuts every batch it is handed into mini-batches of 1,024 values, and
+the dictionary's fallback to plain is decided at one of those boundaries, so **the same rows in a different
+batch size are a different file**. A batch off the grid is refused with an error rather than written.
+
+**And the store sits below the engine.** `columnar-store` does not depend on `columnar-engine`, so the
+engine's read path cannot move because of anything the store does. **The glue between them is a path** --
+and the engine's side of that glue, the source that reads a table which is *many* files, is not built yet:
+the engine's only source today is `ParquetSource`, which is one file.
+
+---
+
 ## Building a plan
 
 ### The plan struct

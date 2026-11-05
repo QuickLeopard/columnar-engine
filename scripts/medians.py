@@ -2076,6 +2076,41 @@ def print_write_side(sets: list[tuple[str, list[dict]]]) -> None:
             print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
 
 
+def print_store_write(runs: list[dict]) -> None:
+    """Print the store's own write: the file it wrote, and the claim it makes.
+
+    This is spec 038: the store writes the published file's own rows, and the
+    file it wrote is compared with the published file **byte for byte**. So the
+    store's claim is not "it wrote a file" but "**it wrote the file the
+    generator wrote, and the two are equal**".
+    """
+    if not runs:
+        return
+    print(f"\n=== THE STORE'S OWN WRITE ({len(runs)} campaigns) ===")
+    for name, heading in (
+        ("write_file", "the store's write"),
+        ("commit", "the store's commit"),
+        ("append", "the store's own API, end to end"),
+    ):
+        values = [run["measurements_ms"][name] for run in runs if name in run.get("measurements_ms", {})]
+        if values:
+            print(f"   {heading:<44} {median(values):10.3f} ms   ({min(values):.3f}-{max(values):.3f})")
+    for key, heading in (
+        ("rows", "the rows"),
+        ("batch_rows", "the grid the rows arrived in"),
+        ("row_group_rows", "the row groups"),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {int(median(values)):>10}")
+    identical = [run.get("identical") for run in runs]
+    bytes_written = [run.get("bytes_written") for run in runs if run.get("bytes_written")]
+    print(f"   the file the store wrote: {int(median(bytes_written))} bytes, identical: {all(identical)}")
+    loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+    if loads:
+        print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
 def print_excursion_hunt(runs: list[dict]) -> None:
     """Print the hunt: whether the file's state moved at all.
 
@@ -2389,6 +2424,11 @@ def main() -> int:
     ]
     if write_sets:
         print_write_side(write_sets)
+
+    # Spec 038: the store's own write -- the file it wrote, compared with the
+    # published file byte for byte.
+    store_runs = [load(p) for p in sorted(Path("bench-results").glob("store-write-run*.json"))]
+    print_store_write(store_runs)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))
