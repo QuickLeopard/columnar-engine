@@ -2,7 +2,7 @@
 
 **Status**: accepted
 **Date**: 2026-10-25
-**Depends on**: [spec 005](005-parallel-decode/spec.md) (the parallel lazy read), [spec 007](007-parallel-operators/spec.md) (the parallel operators)
+**Depends on**: [spec 005](../005-parallel-decode/spec.md) (the parallel lazy read), [spec 007](../007-parallel-operators/spec.md) (the parallel operators)
 (the parallel operators)
 
 ---

@@ -99,5 +99,5 @@ boundary's cost, and the figures stand.
 - [`PERF.md`](../../PERF.md) §3t — the store's own write, and the file it writes.
 - [`PERF.md`](../../PERF.md) §3u — the file boundary's cost.
 - [`ADR-0044`](0044-the-stores-half.md) — the store's shape, and the glue that is left.
-- [`spec 039`](../039-the-engine-reads-a-stores-table/spec.md) — the file boundary's cost, measured.
+- [`spec 039`](../../specs/039-the-engine-reads-a-stores-table/spec.md) — the file boundary's cost, measured.
 - [`STATUS.md`](../../STATUS.md) — where the project's open questions live.

@@ -23,8 +23,10 @@ categories = ["database-implementations", "data-structures"]
 #
 # **The publish itself is a separate act**, and it is the user's: it needs a
 # crates.io account and a token. The order is computed from the manifests by
-# `scripts/check-package.sh`, and the store depends on **nothing** in the
-# workspace, so it lands between the kernels and the engine.
+# `scripts/check-package.sh` -- from the **`[dependencies]`** only, because a
+# dev-dependency is dropped from the published manifest -- and the store's
+# library depends on **nothing** in the workspace, so it lands between the
+# kernels and the engine.
 publish = true
 # The store's probe is this project's evidence harness, not an embedder's
 # example, so the package does not carry it.
@@ -35,8 +37,10 @@ workspace = true
 
 [dependencies]
 # The store is *below* the engine: it writes the files the engine reads, and
-# it does not depend on the engine. So the engine's read path cannot move
-# because of anything here.
+# its **library** does not depend on the engine. So the engine's read path
+# cannot move because of anything here. (The **test** does depend on it --
+# the engine, to read what the store wrote -- and that edge is a dev-edge
+# only; see the dev-dependencies below.)
 parquet = { workspace = true }
 arrow = { workspace = true }
 serde = { workspace = true }
@@ -54,3 +58,18 @@ thiserror = { workspace = true }
 # "no matching package named `columnar-testdata` found" -- and the crate
 # could not be published at all.
 columnar-testdata = { path = "../../crates/columnar-testdata" }
+
+# The engine, for the test that says the store's table is read by the engine
+# as one table: the store writes the files, the engine reads the set, and the
+# composition is the claim the store's half rests on.
+#
+# The dependency is **path-only**, for the same reason the generator's is: a
+# path-only dependency is **dropped** from the published manifest, and a
+# dependency with a version is not. A versioned dev-dependency on the engine
+# would make `cargo package -p columnar-store` wait for the engine to be on
+# crates.io -- the engine is published with the others, and the publish is a
+# separate act, so the crate must not wait on it to be packaged.
+#
+# **The edge is test-only.** The engine never depends on the store, in any
+# section and for any reason: the glue is a list of paths.
+columnar-engine = { path = "../columnar-engine" }

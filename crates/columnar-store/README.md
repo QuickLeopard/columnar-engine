@@ -67,7 +67,8 @@ does not shrink, and it does not change in place.
 
 **Below the engine.** This crate does not depend on `columnar-engine`: it writes the files the engine
 reads, and the engine's read path cannot move because of anything here. It does not depend on
-`columnar-core` either -- it depends on nothing in this workspace.
+`columnar-core` either -- its library depends on nothing in this workspace. (Its *tests* depend on the
+engine, to read what the store wrote; that edge is test-only and it is not in the published crate.)
 
 **The glue is a list of paths.** The engine reads a table that is *many* files through one source over
 a set of files, and that source takes the list of paths. `Table::paths` is that list, in the table's

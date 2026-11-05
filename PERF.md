@@ -2562,7 +2562,7 @@ set's three campaigns, the join stage moved **4.731 ms**, and the machine's own 
 **The resolution that would be needed is a cold-path drift below 0.878 ms** — the yardstick the build
 side's gap is judged against — and that is **twelve times** narrower than the read's own drift. **The next
 question is the drift's own parts**, and it is written down in the README's Next row and in
-[`STATUS.md`](../../STATUS.md)'s last section.
+[`STATUS.md`](STATUS.md)'s last section.
 
 **And the same code, measured by the instrument that came before, published with it.** The leaves' old
 yardsticks and the verdict that instrument's own numbers give:

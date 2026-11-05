@@ -136,4 +136,4 @@ reason is that nobody can run a job for free.
 | R5 | **IV**, **V** | the x86-64 numbers carry their machine, their SIMD path and their conditions, and are derived by a checked-in script from committed reports |
 
 See [ADR-0024](../../docs/adr/0024-the-repository-goes-public.md) and
-[`PERF.md`](../PERF.md).
+[`PERF.md`](../../PERF.md).

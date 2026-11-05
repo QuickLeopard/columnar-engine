@@ -112,6 +112,6 @@ this one builds the store's half.
 - [`PERF.md`](../../PERF.md) §3s — the write side: the write, the commit, the bytes and the read-back.
 - [`PERF.md`](../../PERF.md) §3t — the store's own write: the file it wrote, and the claim it makes.
 - [`ADR-0043`](0043-the-write-side.md) — the decisions the write side's numbers make.
-- [`spec 037`](../037-the-write-side/spec.md) — the write side, measured.
-- [`spec 038`](../038-the-stores-half/spec.md) — the store's half.
+- [`spec 037`](../../specs/037-the-write-side/spec.md) — the write side, measured.
+- [`spec 038`](../../specs/038-the-stores-half/spec.md) — the store's half.
 - [`STATUS.md`](../../STATUS.md) — where the project's open questions live.

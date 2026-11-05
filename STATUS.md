@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **38 specs**, **47 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **38 specs**, **48 ADRs** and **29 defects** so far, and every one
 of the specs is closed.
 
 ---
@@ -365,6 +365,18 @@ for a pinned x86-64 runner; it has not run on one.
   `columnar-engine`** — the graph decides what it can and the list breaks the rest — and
   `cargo publish --dry-run -p columnar-store` passes. **The publish itself needs the account and the
   token**, which the repository does not have.
+- **The composition is a test, and the edge it needs is test-only.** The store's table, read by the
+  engine, as one table — that claim was checked **by hand**, and the hand check was **wrong the first
+  time**: it compared the set against one file, and the set holds both, so the counts differ by two.
+  The code was right and the assertion was wrong, and the wrong assertion was the only place the
+  composition was ever checked. **So it is in the suite now**: the store's own tests write two
+  commits, take the table's paths, open the set with the engine's source, and say that the set holds
+  the table's rows **row by row, in the files' order**, that the engine's predicate reaches **every**
+  file, and that the **sum** over the set is the files' sums added up. **And the tests have teeth**:
+  with the set reading one file instead of the table, all three fail. **And the edge the test needs
+  is a dev-dependency, path-only** — so the store's *library* still depends on nothing in this
+  workspace, the engine still never depends on the store, and the published manifest is unchanged.
+  [ADR-0048](docs/adr/0048-the-composition-is-a-test.md) records it.
 - **The four crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
   research harness into a library: the surface is decided and written down (**46 names**, closed by the
   rule that every type in a public signature is on the list), the crates package **in the order

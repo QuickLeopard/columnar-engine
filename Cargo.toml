@@ -25,7 +25,9 @@
 #                 columnar-cli
 #
 #   columnar-store      the write side: it writes the files the engine reads,
-#          |            and it depends on no other crate in this workspace
+#          |            and its library depends on no other crate in this
+#          |            workspace. Its *test* depends on the engine -- to read
+#          |            what the store wrote -- and that edge is test-only.
 #          |
 #          v
 #   (the engine reads what the store writes -- the glue is a path)

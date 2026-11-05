@@ -2,7 +2,7 @@
 
 **Status**: accepted
 **Date**: 2026-10-25
-**Depends on**: [spec 005](005-parallel-decode/spec.md) (the parallel read), [spec 006](006-arithmetic-aggregate/spec.md)
+**Depends on**: [spec 005](../005-parallel-decode/spec.md) (the parallel read), [spec 006](../006-arithmetic-aggregate/spec.md)
 (the arithmetic aggregate)
 
 ---

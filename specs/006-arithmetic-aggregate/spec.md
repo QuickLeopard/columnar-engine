@@ -2,8 +2,8 @@
 
 **Status**: accepted
 **Date**: 2026-10-25
-**Depends on**: [spec 002](002-lazy-columnar-scan/spec.md) (the lazy scan), [spec 003](003-kernel-pushdown/spec.md)
-(the pushdown runs the engine's kernel), [spec 005](005-parallel-decode/spec.md) (the parallel read)
+**Depends on**: [spec 002](../002-lazy-columnar-scan/spec.md) (the lazy scan), [spec 003](../003-kernel-pushdown/spec.md)
+(the pushdown runs the engine's kernel), [spec 005](../005-parallel-decode/spec.md) (the parallel read)
 
 ---
 

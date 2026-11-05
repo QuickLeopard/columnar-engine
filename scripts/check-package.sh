@@ -14,7 +14,7 @@
 # order is not a convention here; it is what the dependency graph decides.
 #
 # And the store is the one the graph does not place: it depends on **nothing
-# in the workspace**, so it is ready beside the core. **Where the graph does
+# in the published set**, so it is ready beside the core. **Where the graph does
 # not decide, the list does** -- and the list is written in the publish
 # order.
 #
@@ -74,9 +74,16 @@ note() {
 # Every internal dependency is read out of the manifests, and the order is
 # the topological sort. The graph is acyclic -- core depends on nothing,
 # kernels depends on core, engine depends on both, and the store depends on
-# nothing in the workspace -- and where it does not decide, the list does. A
+# nothing in the published set -- and where it does not decide, the list does. A
 # cycle, or a crate that depends on something outside the published set, fails
 # here.
+#
+# **Only the `[dependencies]` sections are read, and that is load-bearing.**
+# A dev-dependency is dropped from the published manifest -- cargo does not
+# publish it -- so it is not part of the published graph and it does not put
+# a crate later in the order. The store's test depends on the engine, and the
+# store is still published before it: the edge is test-only, and the published
+# crate does not carry it.
 
 echo "== the publish order, computed from the manifests"
 

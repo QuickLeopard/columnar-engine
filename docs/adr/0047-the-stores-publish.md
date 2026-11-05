@@ -78,8 +78,8 @@ publish script checks for every crate.
 - [`ADR-0044`](0044-the-stores-half.md) — the store's shape, and the two sentences this ADR corrects.
 - [`ADR-0046`](0046-the-source-over-a-set-of-files.md) — the source over a set of files, and the increment
   that settled the store's surface.
-- [`spec 038`](../038-the-stores-half/spec.md) — the store's half.
-- [`spec 040`](../040-the-source-that-reads-a-set-of-files/spec.md) — the source over a set of files, and the
+- [`spec 038`](../../specs/038-the-stores-half/spec.md) — the store's half.
+- [`spec 040`](../../specs/040-the-source-that-reads-a-set-of-files/spec.md) — the source over a set of files, and the
   glue.
 - [`docs/embedding.md`](../../docs/embedding.md) — the publish guide: the order and the commands.
 - [`STATUS.md`](../../STATUS.md) — where the project's open questions live.

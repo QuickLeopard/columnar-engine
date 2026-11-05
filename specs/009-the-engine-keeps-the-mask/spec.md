@@ -2,7 +2,7 @@
 
 **Status**: accepted
 **Date**: 2026-10-25
-**Related**: [ADR-0015](../../docs/adr/0015-the-engine-keeps-the-mask.md), [ADR-0010](../../docs/adr/0010-pushdown-equivalence.md), [spec 002](002-lazy-columnar-scan/spec.md), [spec 003](003-kernel-pushdown/spec.md)
+**Related**: [ADR-0015](../../docs/adr/0015-the-engine-keeps-the-mask.md), [ADR-0010](../../docs/adr/0010-pushdown-equivalence.md), [spec 002](../002-lazy-columnar-scan/spec.md), [spec 003](../003-kernel-pushdown/spec.md)
 
 ## 1. The problem, measured
 

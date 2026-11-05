@@ -592,6 +592,10 @@ the published crate resolves on crates.io rather than in the workspace — and t
 order mandatory: `columnar-kernels` cannot be published before `columnar-core` is on crates.io, and
 `columnar-engine` cannot be published before both are.
 
+**Only the `[dependencies]` decide the order.** A dev-dependency is dropped from the published
+manifest, so it is not part of the published graph: the store's *tests* depend on the engine, and the
+store is still published before it.
+
 **The store is the one the dependency graph does not place**, because it depends on nothing: it is
 ready beside the core. **Where the graph does not decide, the list does** — the list in
 `scripts/check-package.sh` is written in the publish order, and the script computes the rest. The

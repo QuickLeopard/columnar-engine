@@ -106,6 +106,6 @@ estimate puts on the build side's rows.
 - [`ADR-0044`](0044-the-stores-half.md) — the store's shape, and the glue that was left.
 - [`ADR-0045`](0045-the-file-boundarys-cost.md) — the boundary is free, so the source has to be correct and free
   — and the correction.
-- [`spec 039`](../039-the-engine-reads-a-stores-table/spec.md) — the file boundary's cost, measured.
-- [`spec 040`](../040-the-source-that-reads-a-set-of-files/spec.md) — the source over a set of files.
+- [`spec 039`](../../specs/039-the-engine-reads-a-stores-table/spec.md) — the file boundary's cost, measured.
+- [`spec 040`](../../specs/040-the-source-that-reads-a-set-of-files/spec.md) — the source over a set of files.
 - [`STATUS.md`](../../STATUS.md) — where the project's open questions live.
