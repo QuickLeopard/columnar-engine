@@ -377,6 +377,13 @@ for a pinned x86-64 runner; it has not run on one.
   is a dev-dependency, path-only** — so the store's *library* still depends on nothing in this
   workspace, the engine still never depends on the store, and the published manifest is unchanged.
   [ADR-0048](docs/adr/0048-the-composition-is-a-test.md) records it.
+- **The links are a gate now.** A link in a document is a claim about the tree, and **no other gate
+  reads a sentence's target** — the figures guard checks numbers, the page guard checks the browser's
+  promises — so a link could rot in place for increments before anyone looked, and **eighteen did**:
+  the ADRs' links to their specs, the older specs' links to each other, and PERF.md's link to STATUS.md.
+  They are repaired where they were published, and **`scripts/check-links.py` fails the build** when a
+  document's link does not resolve — a link to another host is left alone, because it is a claim about
+  another host.
 - **The four crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
   research harness into a library: the surface is decided and written down (**46 names**, closed by the
   rule that every type in a public signature is on the list), the crates package **in the order

@@ -65,6 +65,10 @@ the files it wrote, read by the reader they were written for -- belongs.
 - **The store's crate is still below the engine.** The edge is test-only and the direction of the
   *library* graph is unchanged: the store writes, the engine reads, and the glue is a list of
   paths.
+- **The links are guarded, not only repaired.** The repairs came with a gate:
+  `scripts/check-links.py` fails the build when a document's link does not resolve, and the CI job
+  "the documents' links resolve" runs it. **A link to another host is left alone** — it is a claim
+  about another host, and a gate that fetched it would be a network call.
 
 ## References
 

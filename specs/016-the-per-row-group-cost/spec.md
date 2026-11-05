@@ -91,7 +91,7 @@ batch** at the end of a row group.
 - [x] Every figure is the median of **three full campaigns**, with the spread, the raw reports
       committed, and the tables derived by `scripts/medians.py`.
 - [x] `scripts/check-published-figures.py` guards the figures that are quoted.
-- [x] [`PERF.md` §3j](../PERF.md#3j-the-row-group-count-and-what-it-costs) is updated: the defect
+- [x] [`PERF.md` §3j](../../PERF.md#3j-the-row-group-count-and-what-it-costs) is updated: the defect
       moves from *"a defect, and the mechanism is the next spec's question"* to what it is now.
 - [x] ADR-0023 records what was measured, whichever way it went.
 
@@ -126,7 +126,7 @@ batch** at the end of a row group.
   by round, and the *ratio* — **24% faster on the real Q6's predicate set** — is the claim.
 
 See [ADR-0023](../../docs/adr/0023-the-per-row-group-cost.md) and
-[`PERF.md` §3j](../PERF.md#3j-the-row-group-count-and-what-it-costs).
+[`PERF.md` §3j](../../PERF.md#3j-the-row-group-count-and-what-it-costs).
 
 ## The non-goals
 

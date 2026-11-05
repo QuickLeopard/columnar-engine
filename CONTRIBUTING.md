@@ -55,6 +55,7 @@ the official TPC-H SF-1 file.
 | `cargo test --workspace --all-targets` | every test passes |
 | `cargo deny check` | advisories denied, wildcards denied, `rand` denied |
 | `scripts/check-published-figures.py` | every quoted figure agrees with the committed reports |
+| `scripts/check-links.py` | every link in the tree's documents resolves |
 
 Two more checks matter on a machine that is not this one:
 

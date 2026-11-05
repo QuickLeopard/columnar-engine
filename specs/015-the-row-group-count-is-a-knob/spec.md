@@ -8,7 +8,7 @@
 
 ## The problem
 
-[`PERF.md` §2e](../PERF.md#2e-the-thread-count-sweep) publishes a curve that **flattens at six threads**, and the
+[`PERF.md` §2e](../../PERF.md#2e-the-thread-count-sweep) publishes a curve that **flattens at six threads**, and the
 explanation is the file's:
 
 > **The engine's parallelism is capped by the file, not by the machine.** The read splits the file's **row groups**
@@ -25,7 +25,7 @@ less far. The sentence says the opposite of the truth, and it is the kind of sen
 
 **The gap.** The row-group count is not a knob. The generator hard-codes a million rows per row group, so every
 file this repository has ever produced has **six** row groups per six million rows, and the claim *"the
-parallelism above the file's row-group count"* has never been measured — [`PERF.md` §5](../PERF.md#5-not-measured)
+parallelism above the file's row-group count"* has never been measured — [`PERF.md` §5](../../PERF.md#5-not-measured)
 says so, in a table row, with the reason: *"there is not one in this repository"*.
 
 So the increment has three parts: make the knob, measure the thing the knob opens, and correct the sentence.
@@ -70,7 +70,7 @@ So the increment has three parts: make the knob, measure the thing the knob open
 - [x] Every figure is the median of **three full campaigns**, with the spread, the raw reports committed, and
       the table derived by `scripts/medians.py`.
 - [x] `scripts/check-published-figures.py` guards the figures that are quoted.
-- [x] [`PERF.md` §5](../PERF.md#5-not-measured)'s row moves from *"not measured"* to *"measured"*, and the
+- [x] [`PERF.md` §5](../../PERF.md#5-not-measured)'s row moves from *"not measured"* to *"measured"*, and the
       **wrong sentence in §2e** is corrected.
 - [x] ADR-0022 records what was measured, whichever way it went.
 
@@ -104,4 +104,4 @@ So the increment has three parts: make the knob, measure the thing the knob open
   per-chunk setup, the dictionary read per column chunk, or something the engine does itself.
 
 See [ADR-0022](../../docs/adr/0022-the-parallelism-above-the-row-group-count.md) and
-[`PERF.md` §3j](../PERF.md#3j-the-row-group-count-and-what-it-costs).
+[`PERF.md` §3j](../../PERF.md#3j-the-row-group-count-and-what-it-costs).

@@ -22,7 +22,7 @@ build:
 # The last two are also CI jobs, but the local gate must not be weaker than
 # CI -- a private repository's Actions minutes are billed, and this account's
 # billing is currently blocked, so the local gate is the one that runs.
-check: fmt lint test check-published check-page check-package
+check: fmt lint test check-published check-page check-links check-package
 
 # Compile the x86-64 half of the kernel from this ARM64 machine.
 #
@@ -498,6 +498,19 @@ check-published:
 # checked rather than trusted. See ADR-0025 and ADR-0026.
 check-page:
     python3 scripts/check-page.py
+
+# Check that every link in the tree's documents resolves.
+#
+# A link in a document is a claim about the tree, and no other gate reads a
+# sentence's target -- the figures guard checks numbers, the page guard
+# checks the browser's promises. A link can rot in place for increments
+# before anyone looks, and a dozen did: the ADRs' links to their specs, the
+# older specs' links to each other, and PERF.md's link to STATUS.md.
+#
+# Links to other hosts are left alone: they are a claim about another host,
+# and a gate that fetched them would be a network call.
+check-links:
+    python3 scripts/check-links.py
 
 # Run everything that produces a published number.
 perf: bench compare

@@ -295,6 +295,22 @@ jobs:
       - name: Check the published figures against the reports
         run: python3 scripts/check-published-figures.py
 
+  documents-links:
+    name: the documents' links resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # A link in a document is a claim about the tree, and nothing else in
+      # this repository's gates reads a sentence's target: the figures guard
+      # checks numbers and the page guard checks the browser's promises. So a
+      # link can rot in place for increments before anyone looks -- and a
+      # dozen did. Every link to a document in the tree is checked here.
+      #
+      # Links to other hosts are left alone: they are a claim about another
+      # host, and a gate that fetched them would be a network call.
+      - name: Check that the documents' links resolve
+        run: python3 scripts/check-links.py
+
   browser-page:
     name: the browser page keeps its promises
     runs-on: ubuntu-latest
