@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **36 specs**, **43 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **36 specs**, **44 ADRs** and **29 defects** so far, and every one
 of the specs but the last is closed.
 
 ---
@@ -307,11 +307,32 @@ for a pinned x86-64 runner; it has not run on one.
   read many* pays for itself after about four full reads.
   [§3s](PERF.md#3s-the-write-side) has the tables, and
   [ADR-0043](docs/adr/0043-the-write-side.md) records the decision.
-- **The measurement track's question is answered, and the next increment is the store's own code.** What
-  is left besides it is the work the repository cannot take on its own: **the library's publish** — it
-  needs a crates.io account and a token, and it makes the code public — and the **`parquet` bump**, whose
-  target is known and whose own measurement has to be taken because Arrow's decode is what the published
-  figures measure. Both are written down below, and neither is a spec yet.
+- **The store's half is built, and it writes the published file byte for byte.** Spec 038 built
+  `columnar-store`: a **writer**, a **manifest**, a **commit** and a **catalog**. A table is a **set of
+  files** — a commit appends one and never modifies an old one — and the **manifest** is the table's
+  truth. The commit is the **five steps** spec 037 measured: the data file durable, the manifest written,
+  durable and renamed over the old one, the directory durable. **And there is no write-ahead log**: a
+  commit is a rename, and the rename is the answer. **And the batch size is a rule now, not a surprise**:
+  the grid is **65,536**, the store **checks** it, and a batch off the grid is refused with an error —
+  because a file that comes out differently is a caller that batched differently, and the store would rather
+  say so than write a file whose bytes nobody can predict. **And the acceptance is the strongest one
+  available**: fed the published file's own rows, the store wrote **242,857,841** bytes — **the published
+  file, byte for byte** — in every campaign. [§3t](PERF.md#3t-the-stores-own-write) has the tables, and
+  [ADR-0044](docs/adr/0044-the-stores-half.md) records the decision.
+- **The measurement track's question is answered, and the next increment is the engine's side of the
+  glue.** The store writes the files the engine reads, and **the engine's only source is one file** — so
+  the source that reads a table which is **many** files is the next increment, with its own spec and its own
+  surface decision. **And the store's crate is not published yet**: its API is new, and that increment
+  changes it. What is left besides them is the work the repository cannot take on its own: **the library's
+  publish** — it needs a crates.io account and a token, and it makes the code public — and the
+  **`parquet` bump**, whose target is known and whose own measurement has to be taken because Arrow's
+  decode is what the published figures measure. Both are written down below, and neither is a spec yet.
+- **The store's crate is not published, and its API is not finished.** The engine has to read a table
+  that is **many** files, and the store's own surface will follow that — so a first published version of
+  the store would be a promise this increment cannot keep yet. **The publish also needs the script's
+  order to learn a tie**: the store depends on the core, and so does the kernels, so two crates are ready
+  at once and `scripts/check-package.sh`'s total-order check refuses that today. **And the publish itself
+  needs the account and the token**, which the repository does not have.
 - **The three crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
   research harness into a library: the surface is decided and written down (**45 names**, closed by the
   rule that every type in a public signature is on the list), the three crates package **in the order
