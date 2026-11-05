@@ -115,6 +115,11 @@ engine's read path cannot move because of anything the store does. **The glue be
 and the engine's side of that glue, the source that reads a table which is *many* files, is not built yet:
 the engine's only source today is `ParquetSource`, which is one file.
 
+**And the crate is not published yet.** Its API is new, and the increment that teaches the engine to read
+a store's table changes it. A first published version is a promise, and this one has not been reviewed by
+an embedder -- so `columnar-store` carries `publish = false` for now, and the three crates below are the
+ones a `cargo add` can reach.
+
 ---
 
 ## Building a plan

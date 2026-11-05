@@ -437,6 +437,8 @@ crates/
   columnar-testdata  a seeded, reproducible TPC-H-shaped `lineitem` and `orders` generator
   columnar-engine    filter -> project -> [join] -> [sort] -> aggregate, with late
                      materialisation
+  columnar-store     the write side: a writer, a manifest, a commit and a catalog --
+                     the files the engine reads, and the truth about which ones
   columnar-bench     the kernel A/B, the machine spec, the external comparison driver,
                      the performance gate, the thread-count sweep
   columnar-cli       dataset / query / bench / compare / gate / sweep

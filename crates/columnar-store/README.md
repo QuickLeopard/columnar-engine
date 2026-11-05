@@ -68,6 +68,13 @@ does not shrink, and it does not change in place.
 **Below the engine.** This crate does not depend on `columnar-engine`: it writes the files the engine
 reads, and the engine's read path cannot move because of anything here. The glue between them is a path.
 
+## It is not published yet
+
+The crate's API is new, and the increment that teaches the engine to read a table that is *many* files
+changes it. A first published version is a promise, and this one has not been reviewed by an embedder --
+so the crate carries `publish = false` for now. It is in the tree, and the three published crates are the
+ones a `cargo add` can reach.
+
 ## The licence
 
 MIT, like the rest of this workspace.
