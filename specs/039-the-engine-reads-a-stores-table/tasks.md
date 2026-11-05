@@ -1,6 +1,6 @@
 # Spec 039 — The engine reads a store's table — tasks
 
-**Status**: open
+**Status**: done
 **Spec**: [spec.md](spec.md)
 
 ## Phase 1 — the instrument
@@ -33,10 +33,10 @@
 
 ## Phase 5 — the closure
 
-- [ ] The spec's status is `done` with the date it finished, and CI is green on the publish commit.
+- [x] The spec's status is `done` with the date it finished, and CI is green on the publish commit.
 
 ## The gate
 
 - [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check, the
       published-figures guard and the page checks all green.
-- [ ] CI green, and the spec's status is `done` with the date it finished.
+- [x] CI green, and the spec's status is `done` with the date it finished.

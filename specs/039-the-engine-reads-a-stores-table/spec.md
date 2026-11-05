@@ -1,7 +1,8 @@
 # Spec 039 — The engine reads a store's table
 
-**Status**: open
+**Status**: done
 **Started**: 2026-11-05
+**Finished**: 2026-11-05
 
 ## The problem
 
