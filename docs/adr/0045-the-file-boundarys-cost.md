@@ -68,6 +68,27 @@ two reads is the number of files.**
   and now, more than before, **the store is useful**: a table that is many files is a table the engine can
   be taught to read, and the cost of being taught is nothing.
 
+## The correction
+
+**The sentence about "the pruning over the union of the files' statistics" above was wrong about this
+engine, and it is corrected in [ADR-0046](0046-the-source-over-a-set-of-files.md)** — the increment that
+built the source found the claim to be false and recorded why.
+
+**The engine does not prune row groups by the file's statistics.** [ADR-0010](0010-pushdown-equivalence.md)
+accepted that cost as a deliberate choice — "the engine does not prune, and does not pretend to" — and
+[spec 028](../../specs/028-the-probes-remainder/spec.md) recorded the same about the reader's pruning: it
+"is not this spec's business". The statistics are used in two places, and **both of them are estimates,
+not reads**: the join's build side's range, and the bound the memory estimate puts on the build side's
+rows.
+
+**What the source owes instead is that the statistics it publishes are the table's**: the range is the
+union of the files' ranges, and the row groups are numbered across the files. **And that is a correctness
+requirement too** — a set that published one file's range would publish a range the other files' rows fall
+outside.
+
+**And the measurement this ADR records is not touched by the correction.** The boundary's cost is the
+boundary's cost, and the figures stand.
+
 ## References
 
 - [`constitution.md`](../../constitution.md) II — the method: measure first, and the figures are derived from

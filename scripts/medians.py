@@ -2113,6 +2113,61 @@ def print_many_files(runs: list[dict]) -> None:
         print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
 
 
+def print_file_set(runs: list[dict]) -> None:
+    """Print the source over a set of files: what it costs, and whether it is right.
+
+    This is spec 040: the store writes a table as a **set of files** and the
+    engine's only source is **one file**, so the engine gained a source that
+    reads the set as one table. The experiment is the published file's own six
+    row groups -- the same rows as the published file -- written as six files
+    and read three ways: as the one file, as six files read one by one, and as
+    six files read as one table.
+
+    **The yardstick is the one file's read**: the same rows in one file is the
+    ideal, and the set's read is measured against it. The six files read one
+    by one are measured too -- they are what the source replaces -- but they
+    do not answer the query, so they are not the yardstick.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE SOURCE OVER A SET OF FILES ({len(runs)} campaigns) ===")
+    for name, heading in (
+        ("read_one_file", "the read of the one file"),
+        ("read_six_files", "the read of the six files, one by one"),
+        ("read_file_set", "the read of the six files, as one table"),
+        ("read_one_file_parallel", "the parallel read of the one file"),
+        ("read_file_set_parallel", "the parallel read of the six, as one table"),
+        ("open_one_file", "the open of the one file"),
+        ("open_file_set", "the open of the six files"),
+    ):
+        values = [run["measurements_ms"][name] for run in runs if name in run.get("measurements_ms", {})]
+        if values:
+            print(f"   {heading:<44} {median(values):10.3f} ms   ({min(values):.3f}-{max(values):.3f})")
+    for key, heading in (
+        ("source_cost_ms", "the source's cost over the one file's read"),
+        ("source_cost_share", "the source's cost, as a share of that read"),
+        ("source_cost_parallel_ms", "the source's cost, in parallel"),
+        ("source_cost_parallel_share", "the source's cost, in parallel, as a share"),
+        ("naive_gap_ms", "the set over the six files read one by one"),
+        ("boundary_ms", "the boundary's cost, as spec 039 measured it"),
+        ("open_gap_ms", "the open of the six files over the open of the one"),
+    ):
+        values = [run["derived_ms"][key] for run in runs if key in run.get("derived_ms", {})]
+        if values:
+            print(f"   {heading:<44} {median(values):10.3f}")
+    for key, heading in (("files", "the files"), ("rows", "the rows")):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {int(median(values)):>10}")
+    identical = [run.get("identical") for run in runs]
+    print(f"   the same rows, row by row: {all(identical)}")
+    counts = [run.get("count_match") for run in runs]
+    print(f"   the filtered count agrees: {all(counts)}")
+    loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+    if loads:
+        print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
 def print_store_write(runs: list[dict]) -> None:
     """Print the store's own write: the file it wrote, and the claim it makes.
 
@@ -2471,6 +2526,11 @@ def main() -> int:
     # and as six.
     many_files_runs = [load(p) for p in sorted(Path("bench-results").glob("many-files-run*.json"))]
     print_many_files(many_files_runs)
+
+    # Spec 040: the source over a set of files -- the same rows, read as one
+    # file, as six files one by one, and as six files read as one table.
+    file_set_runs = [load(p) for p in sorted(Path("bench-results").glob("file-set-run*.json"))]
+    print_file_set(file_set_runs)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))

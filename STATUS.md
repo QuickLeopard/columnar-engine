@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **38 specs**, **45 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **38 specs**, **46 ADRs** and **29 defects** so far, and every one
 of the specs but the last is closed.
 
 ---
@@ -331,23 +331,37 @@ for a pinned x86-64 runner; it has not run on one.
   be **correct, and free**.
   [§3u](PERF.md#3u-the-file-boundarys-cost) has the tables, and
   [ADR-0045](docs/adr/0045-the-file-boundarys-cost.md) records the decision.
-- **The measurement track's question is answered, and the next increment is the engine's side of the
-  glue.** The store writes the files the engine reads, and **the engine's only source is one file** — so
-  the source that reads a table which is **many** files is the next increment, with its own spec and its own
-  surface decision. **And what it has to achieve is now measured**: the boundary is free, so the source
-  **may not cost anything either** — its whole case is that it is **correct**. **And the store's crate is not published yet**: its API is new, and that increment
-  changes it. What is left besides them is the work the repository cannot take on its own: **the library's
-  publish** — it needs a crates.io account and a token, and it makes the code public — and the
-  **`parquet` bump**, whose target is known and whose own measurement has to be taken because Arrow's
-  decode is what the published figures measure. Both are written down below, and neither is a spec yet.
-- **The store's crate is not published, and its API is not finished.** The engine has to read a table
-  that is **many** files, and the store's own surface will follow that — so a first published version of
-  the store would be a promise this increment cannot keep yet. **The publish also needs the script's
-  order to learn a tie**: the store depends on the core, and so does the kernels, so two crates are ready
-  at once and `scripts/check-package.sh`'s total-order check refuses that today. **And the publish itself
-  needs the account and the token**, which the repository does not have.
+- **The engine's side of the glue is built, and the source is free.** Spec 040 gave the engine a source
+  over a **set** of files: `FileSetSource` is **one new name** on the surface, `execute_on` takes a
+  `ParquetSource` exactly as it did, and the set reads the files **as one table** — the metadata merged,
+  the statistics the table's, the predicate reaching **every** file, the rows in the files' order. **And
+  it is free**: the set's read is **−0.599 ms** against the one file's — negative, and inside the one file's
+  own spread — and in parallel **0.133 ms** against **35.123 ms**, a share of **0.004**. **And the way it
+  is free is the way that matters**: the files' readers are **chained** and decoded in **one pass**, so the
+  rows are copied **once**; the first implementation merged the files' chunks instead, and the second copy
+  was worth **8.747 ms**, **13%** of the read. **And the answers are the engine's**: the set's rows are the
+  one file's, compared **row by row, in order**, and the same filtered plan counts the same **3,184,637**
+  rows over the file and over the set. [§3v](PERF.md#3v-the-source-over-a-set-of-files) has the tables, and
+  [ADR-0046](docs/adr/0046-the-source-over-a-set-of-files.md) records the decision.
+- **A published sentence was wrong about this engine, and it is corrected where it was published.** Specs
+  039 and 040 said the pushdown **prunes row groups by the file's statistics**, and that a row group which
+  cannot survive is not read. **The engine does neither**: ADR-0010 accepted that cost — "the engine does
+  not prune, and does not pretend to" — and the statistics are used in two places, and **both of them are
+  estimates, not reads**. The requirement is now what was true of this engine all along: the statistics a
+  set publishes are the **table's** — the range is the **union** of the files' ranges — and the engine's own
+  predicate reaches **every** file. It is corrected in both specs and in ADR-0045, and ADR-0046 records it.
+  **The measurement is not touched by the correction.**
+- **The store's table can be on the probe side of a join, and not on the build side.** `JoinSpec.build_path`
+  is one path, and the build side opens one file — so the build side is still the plan's shape and not the
+  source's, and it is named rather than left to be discovered.
+- **The store's crate is not published.** The engine can now read the store's tables, so the store's own
+  surface has its shape — but a first published version is still a promise that has not been reviewed by an
+  embedder. **The publish also needs the script's order to learn a tie**: the store depends on the core,
+  and so does the kernels, so two crates are ready at once and `scripts/check-package.sh`'s total-order
+  check refuses that today. **And the publish itself needs the account and the token**, which the
+  repository does not have.
 - **The three crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
-  research harness into a library: the surface is decided and written down (**45 names**, closed by the
+  research harness into a library: the surface is decided and written down (**46 names**, closed by the
   rule that every type in a public signature is on the list), the three crates package **in the order
   their dependencies decide**, each carries its own README and licence, the research modules are
   reachable and undocumented, the enums that will grow are `#[non_exhaustive]`, and the embedder test

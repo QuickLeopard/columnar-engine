@@ -61,14 +61,15 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::memory::{
-    estimate_lazy_read, estimate_plan_join, estimate_plan_sort, estimate_resolved,
+    estimate_lazy_read_for, estimate_plan_join, estimate_plan_sort, estimate_resolved,
 };
 use crate::pipeline::{scan_stage, BuildSide, Pipeline, StreamedJoin};
-use crate::plan::ColumnSchema;
 use crate::scan::{decide_scan, fetched_columns, pushdown_descriptions, streamed_join, ScanReport};
+use crate::source::EngineSource;
 
 pub use crate::dataset::{Dataset, DatasetError};
 pub use crate::explain::{Attribution, JoinReport, PlanOutput, SortReport, StageStats};
+pub use crate::file_set::FileSetSource;
 pub use crate::memory::{MemoryBudget, MemoryError};
 pub use crate::operators::aggregate::{AggregateResult, AggregateValue, Group};
 pub use crate::plan::{Aggregate, AggregateSpec, JoinSpec, QueryPlan, SortSpec};
@@ -150,6 +151,13 @@ pub enum EngineError {
         /// Why the reader could not open it.
         reason: String,
     },
+    /// The files of a set do not share a schema, so they are not one table.
+    ///
+    /// The error says **which file disagreed and how**, because the remedy is
+    /// to make the files agree, and a message that said only "the schemas do
+    /// not match" would leave the reader to find out which file it was.
+    #[error("the files do not share a schema: {0}")]
+    SchemaMismatch(String),
 }
 
 impl From<DatasetError> for EngineError {
@@ -311,6 +319,26 @@ pub fn execute_on(
     source: &ParquetSource,
     options: &ExecOptions,
 ) -> Result<AggregateResult, EngineError> {
+    execute_with(plan, source, options)
+}
+
+/// Runs a plan over a source.
+///
+/// This is the engine's **one** query path, and it is written once: a file
+/// and a set of files are read by the same path, over the same rules, and
+/// they differ only in what they read. The set's own entry point is
+/// [`FileSetSource::execute`], which comes here.
+///
+/// # Errors
+///
+/// Returns [`EngineError::Memory`] when the plan's estimated working set
+/// exceeds `options.memory_budget`, and the usual resolution errors when the
+/// plan does not fit the source's schema.
+pub(crate) fn execute_with<S: EngineSource>(
+    plan: &QueryPlan,
+    source: &S,
+    options: &ExecOptions,
+) -> Result<AggregateResult, EngineError> {
     // The clock starts before the plan is resolved: the plan output is the
     // engine's account of the **whole** query, and the plan's resolution is
     // part of it.
@@ -338,7 +366,7 @@ pub fn execute_on(
     // too: a plan that does not fit is refused before any of it is built.
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
-    let estimate = estimate_lazy_read(source, &decision.read, workers, grouped)
+    let estimate = estimate_lazy_read_for(source.rows(), source, &decision.read, workers, grouped)
         .saturating_add(estimate_plan_join(
             resolved.join.as_ref(),
             build.source(),

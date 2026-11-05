@@ -340,6 +340,13 @@ probe-store data="data/lineitem.parquet" out="bench-results/store-write-run1.jso
 probe-many-files data="data/lineitem.parquet" out="bench-results/many-files-run1.json":
     cargo run --release -p columnar-engine --example many_files_probe -- {{data}} --out {{out}}
 
+# Take the **source over a set of files**: the published file's own six row
+# groups written as six files, and the same rows read three ways -- as the one
+# file, as the six files one by one, and as the six files **read as one table**
+# through the engine's new source.
+probe-file-set data="data/lineitem.parquet" out="bench-results/file-set-run1.json":
+    cargo run --release -p columnar-engine --example file_set_probe -- {{data}} --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

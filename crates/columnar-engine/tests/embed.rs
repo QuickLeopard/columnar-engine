@@ -102,6 +102,27 @@ fn the_lazy_path_answers_the_question() {
     );
 }
 
+/// The set: a table that is **many files**, read as one table.
+///
+/// The surface's new name, written the way an embedder writes it: the paths
+/// are handed over, and the plan runs over the set. **This is what an
+/// append-only store's table needs** -- a commit appends a file, and the
+/// table is the set of them.
+#[test]
+fn a_set_of_files_is_read_as_one_table() {
+    let first = TempFile::new("set-first");
+    let second = TempFile::new("set-second");
+    let paths = vec![first.path().to_path_buf(), second.path().to_path_buf()];
+
+    let set = FileSetSource::open(&paths).expect("the set opens");
+    let result = set.execute(&count_over_two(), &ExecOptions::default()).expect("the query runs");
+    assert_eq!(
+        first_value(&result),
+        AggregateValue::Int(6),
+        "the set holds both files' rows, and three of each survive"
+    );
+}
+
 /// The eager path: the same plan over a decoded dataset.
 #[test]
 fn the_eager_path_answers_the_same_question() {

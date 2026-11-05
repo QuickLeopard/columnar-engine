@@ -255,6 +255,7 @@ prose is a promise that drifts.
 | | `NullBitmap` | which of a column's values are NULL |
 | **the data** | `Dataset` | the decoded columns, in memory |
 | | `ParquetSource` | the file |
+| | `FileSetSource` | the set: a table that is **many files**, read as one table |
 | | `SourceColumn` | a column of the file: its name and the engine's type for it |
 | | `RowGroupRange` | a row group's rows, and the range of a column's values in it |
 | | `MAX_READER_BATCH_ROWS` | the reader's batch size, in rows |

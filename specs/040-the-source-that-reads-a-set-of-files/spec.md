@@ -25,9 +25,11 @@ but slower than reading the files one by one would be a worse answer than the on
 1. **The metadata.** The scan is built around one file's row groups, its column index and its row-group
    ranges. A source over many files has to **merge** them, and the row groups have to be numbered across
    the files.
-2. **The pruning.** The pushdown prunes row groups by the statistics in the file's metadata. **A source
-   over many files has to prune against every file's statistics**, or a row group that cannot survive is
-   read anyway.
+2. **The statistics.** **The engine does not prune row groups by the file's statistics** — [ADR-0010]
+   accepted that cost, and the reader reads every page of the columns it needs — **so there is nothing to
+   prune across the files.** What the source owes is that the statistics it publishes are the **table's**:
+   the range is the union of the files' ranges, and the row groups are numbered across the files. **And the
+   engine's own predicate is applied to every file's rows**, not to the first one that answers.
 3. **The batches.** The reader's batch rule crosses the file boundary, and the rows come back **in the
    files' order** — file by file, and inside a file, row group by row group.
 4. **The answers.** The set's rows are the rows, in the same order, with the same `NULL` and `NaN`
@@ -48,11 +50,44 @@ The schema is the files' own, and **the files have to share it**: a set whose fi
 columns is not a table, and the error says so. The rows are the sum, the row groups are numbered across the
 files, and the row groups' rows are the concatenation.
 
-### R3 — The pruning sees the whole table
+### R3 — The statistics are the table's, and the predicate reaches every file
 
-The pruning is over **the union of the files' row groups**, and the statistics that decide it are the
-union of the files' statistics. **A row group that cannot survive is not read**, whichever file it is in —
-and the engine's own predicate is applied to every file's rows, not to the first one that answers.
+**The engine does not prune row groups by the file's statistics.** [ADR-0010] accepted that cost: the
+reader reads every page of the columns it needs, and the engine's own predicates are evaluated over the
+decoded batch. **So there is nothing to prune across the files, and nothing to merge for a pruning
+decision.** What the source owes instead is two things.
+
+**The statistics it publishes are the table's.** The range of a column over a set is the **union** of the
+files' ranges, and the row groups are the table's: the files' row groups, numbered across the files, with
+the files' own ranges and the files' own rows. A set that published one file's range would publish a
+range that the other files' rows fall outside.
+
+**And the engine's own predicate reaches every file.** The rows that survive are the rows of the whole
+table, not the rows of the first file that answers.
+
+### R3a — The amendment to R3, and why
+
+**R3 was published as "The pruning sees the whole table", and it was wrong about this engine.** It said
+that the pushdown prunes row groups by the file's statistics, and that a row group which cannot survive
+is not read. **The engine does neither.** ADR-0010 recorded the cost as a deliberate choice — "the engine
+does not prune, and does not pretend to" — and spec 028 recorded the same thing about the reader's
+pruning: it "is not this spec's business". The statistics are used in two places, and **both of them are
+estimates, not reads**: the join's build side's range, and the bound the memory estimate puts on the
+build side's rows.
+
+**So the requirement was amended, and the amendment is recorded here.** The requirement was not "prune
+across the files" but "the statistics are the table's, and the predicate reaches every file" — and the
+second half of that is a **correctness** requirement, which the original also had, and the first half is a
+correctness requirement too: a set that published one file's range would publish a range the other
+files' rows fall outside.
+
+**And the amendment does not change the increment's work.** The source merges the metadata, the predicate
+reaches every file, and the answers are the engine's. What changed is the name of the thing being merged
+and the reason it has to be merged.
+
+**The correction is recorded in [ADR-0046](../../docs/adr/0046-the-source-over-a-set-of-files.md)**, and
+the sentence it corrects is corrected where it was published: in [spec 039](../039-the-engine-reads-a-stores-table/spec.md)
+and in [ADR-0045](../../docs/adr/0045-the-file-boundarys-cost.md).
 
 ### R4 — The batches cross the boundary, and the rows keep the files' order
 
@@ -69,9 +104,15 @@ one-file read**: the same file, written as six, read as six, and compared row by
 
 ### R6 — The source may not cost anything
 
-**The set's read is level with the files read one by one**, and that is the published figure the source
-has to hold. **The boundary is free, so the source may not cost anything either** — its whole case is that
-it is correct.
+**The yardstick is the one-file read**: the same rows, in one file, is the ideal, and the set's read is
+measured against it. **The boundary is free, so the source may not cost anything either** — its whole
+case is that it is correct.
+
+**And the files read one by one are not the yardstick**, although the plan first named them as one. The
+naive way's read is **not the same answer**: it produces six answers, and the rows of a filtered table
+are split across them. It is measured anyway, because it is what the source replaces, and what it costs
+is published — but the figure that decides whether the source is free is the one against the one file's
+read.
 
 ### R7 — The surface carries the new name, and the rule holds
 
@@ -88,10 +129,10 @@ store's manifest — **the embedder hands it the paths**, and the engine does no
 
 Five phases, and the edges between them:
 
-1. **The source** — the merged metadata, the pruning over the union, the batches across the boundary, and
-   the rows in the files' order.
-2. **The tests** — the set's rows against the one file's, row by row, in order; the pruning over a union
-   that spans the files; the order across the boundary.
+1. **The source** — the merged metadata, the merged statistics, the batches across the boundary, and the
+   rows in the files' order.
+2. **The tests** — the set's rows against the one file's, row by row, in order; the statistics over a
+   union that spans the files; the order across the boundary.
 3. **The campaigns** — the source's read against the one-file read and against the files read one by one,
    the raw reports committed under their own names.
 4. **The publication** — the section that publishes the source's cost, the guard checks every figure inside
@@ -109,6 +150,7 @@ The edges: 1 → 2 → 3 → 4 → 5, and 3 → 4.
 | The store | **Unchanged.** It writes the files; the engine reads them; the glue is a list of paths. |
 | The published set | **The standing set does not slide.** The source's figures are new, in their own section, in their own family of reports. |
 | The surface | **One new name**, and the surface list is updated with it. |
+| The join's build side | **One file, still.** `JoinSpec.build_path` is one path, and the build side opens one file. **So a store's table can be on the probe side of a join, and not on the build side** — and that is a change to the plan's own shape, which is its own increment. |
 | The library's publish | **Not this increment's.** It is a separate act, with its own account, and it is written down as an open question. |
 
 ## The measurement

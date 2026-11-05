@@ -1232,6 +1232,41 @@ MANY_FILES_COUNTS = (
 
 MANY_FILES_CLAIM = "the file boundary costs nothing measurable"
 
+# Spec 040: the source over a set of files. The same rows, read as one file,
+# as six files one by one, and as six files read as one table -- so the only
+# difference between the three reads is how the files are read.
+FILE_SET_REPORTS = sorted((ROOT / "bench-results").glob("file-set-run*.json"))
+SPEC040_SECTION = "### 3v"
+
+FILE_SET_SHAPES = (
+    ("read_one_file", 3),
+    ("read_six_files", 3),
+    ("read_file_set", 3),
+    ("read_one_file_parallel", 3),
+    ("read_file_set_parallel", 3),
+    ("open_one_file", 3),
+    ("open_file_set", 3),
+)
+
+FILE_SET_DERIVED = (
+    ("source_cost_ms", 3),
+    ("source_cost_share", 3),
+    ("source_cost_parallel_ms", 3),
+    ("source_cost_parallel_share", 3),
+    ("naive_gap_ms", 3),
+    ("boundary_ms", 3),
+    ("open_gap_ms", 3),
+)
+
+FILE_SET_COUNTS = (
+    ("files", 0),
+    ("rows", 0),
+    ("count_one_file", 0),
+    ("count_file_set", 0),
+)
+
+FILE_SET_CLAIM = "reading a table that is many files costs nothing measurable"
+
 
 def join_cost_floors(paths: list[Path], path: str) -> dict[str, object]:
     """The two floors, over one path's ladder.
@@ -3336,6 +3371,70 @@ def main() -> int:
             else:
                 print(f"ok  {'PERF.md':<10} {'the boundary: the claim':<60} {MANY_FILES_CLAIM}")
 
+    # Spec 040: the source over a set of files -- the same rows, read as one
+    # file, as six files one by one, and as six files read as one table, in
+    # the section that publishes them.
+    file_set_section = section_of(texts["PERF.md"], SPEC040_SECTION)
+    if file_set_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the source's cost "
+            f"({SPEC040_SECTION}) is not in the document"
+        )
+    else:
+        file_set_text = file_set_section.replace(",", "")
+        if len(FILE_SET_REPORTS) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the source's probe has {len(FILE_SET_REPORTS)} campaigns, "
+                f"and the method says {MIN_CAMPAIGNS}"
+            )
+        else:
+            file_set_runs = [
+                json.loads(path.read_text()) for path in FILE_SET_REPORTS
+            ]
+
+            for table, places in (
+                (FILE_SET_SHAPES, "measurements_ms"),
+                (FILE_SET_DERIVED, "derived_ms"),
+            ):
+                for name, figure_places in table:
+                    values = [
+                        run[places][name]
+                        for run in file_set_runs
+                        if name in run.get(places, {})
+                    ]
+                    if not values:
+                        continue
+                    rendered = rendered_figure(statistics.median(values), figure_places)
+                    if not figure_in(file_set_section, rendered):
+                        failures.append(
+                            f"PERF.md: the source's probe measures {name} at "
+                            f"{rendered} by the reports but that figure does not appear "
+                            f"in the section"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {f'the source: {name}':<60} {rendered}")
+
+            for name, places in FILE_SET_COUNTS:
+                values = [run[name] for run in file_set_runs if name in run]
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(file_set_text, rendered):
+                    failures.append(
+                        f"PERF.md: the source's probe reports {name} as {rendered} "
+                        f"by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'the source: {name}':<60} {rendered}")
+
+            if FILE_SET_CLAIM not in file_set_section:
+                failures.append(
+                    f"PERF.md: the source's probe does not publish its claim: "
+                    f"the reports say {FILE_SET_CLAIM}"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {'the source: the claim':<60} {FILE_SET_CLAIM}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -4140,6 +4239,7 @@ def main() -> int:
         f"{len(WRITE_COST_FAMILIES) * (1 + len(WRITE_COST_SHAPES) + len(WRITE_COST_DERIVED) + 3 + 1)} of the write side, "
         f"{len(STORE_WRITE_SHAPES) + len(STORE_WRITE_COUNTS) + 1} of the store's own write, "
         f"{len(MANY_FILES_SHAPES) + len(MANY_FILES_DERIVED) + len(MANY_FILES_COUNTS) + 1} of the file boundary, "
+        f"{len(FILE_SET_SHAPES) + len(FILE_SET_DERIVED) + len(FILE_SET_COUNTS) + 1} of the source, "
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
     )
     return 0

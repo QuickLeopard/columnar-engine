@@ -3216,6 +3216,62 @@ above says what it has to achieve on the performance side: **nothing**. The boun
 The raw reports are committed under their own names, the figures above are derived from them by
 `python3 scripts/medians.py`, and the guard checks every one of them **inside this section**.
 
+### 3v. The source over a set of files
+
+**The boundary is free, so the engine gained a source that reads the set as one table** — `FileSetSource`,
+one new name on the surface — **and the question is what that source costs, and whether it is right.**
+
+**The experiment is the same one §3u used**: the published file's own six row groups, written as **six
+files**, and read **three ways** in the same campaign, on the same host — **the one file**, **the six files
+one by one**, and **the six files as one table**, the last through the engine's new source. **The rows are
+the same, the columns are the same, and the only difference is how the files are read.**
+
+| | |
+|---|---|
+| **the read of the one file** | **68.721 ms** |
+| **the read of the six files, one by one** | **65.846 ms** |
+| **the read of the six files, as one table** | **67.400 ms** |
+| **the source's cost over the one file's read** | **−0.599 ms** |
+| the source's cost, as a share of that read | **−0.009** |
+| the parallel read of the one file | **35.123 ms** |
+| the parallel read of the six, as one table | **35.399 ms** |
+| the source's cost, in parallel | **0.133 ms** |
+| the source's cost, in parallel, as a share | **0.004** |
+| the open of the one file | **0.064 ms** |
+| the open of the six files | **0.187 ms** |
+| the open of the six over the open of the one | **0.120 ms** |
+| the set over the six files read one by one | **2.010 ms** |
+| the boundary's cost, as §3u measured it | **−2.874 ms** |
+| the files | 6 |
+| the rows | 6,000,000 |
+| the filtered count, over the file and over the set | 3,184,637 |
+
+**And the source is free.** The set's read is **−0.599 ms** against the one file's — **negative**, and inside
+the one file's own spread of **67.998–69.901 ms** — and in parallel it is **0.133 ms** against **35.123 ms**,
+a share of **0.004**, inside the parallel read's own spread of **34.326–36.520 ms**.
+
+**So reading a table that is many files costs nothing measurable over reading the same rows in one file**,
+and the source's whole case — that it is *correct* — costs nothing.
+
+**And the open is nothing either.** Six files cost **0.187 ms** against one file's **0.064 ms**: the five
+extra footers are **0.120 ms**.
+
+**And the set costs 2.010 ms over the files read one by one** — and that is the price of **making one table
+out of six reads**. The naive way's read is not the same answer: it produces six answers, and the rows of a
+filtered table are split across them. **The yardstick is the one file's read**, and against it the source
+is free.
+
+**And the answers are the engine's.** The probe compares the set's rows with the one file's **row by row,
+in order**, on the key column, and they match; and the same filtered plan over the file and over the set
+counts the same **3,184,637** rows.
+
+**And the single-file path did not move.** `execute_on` takes a `ParquetSource` exactly as it did, the
+published figures of the one-file read stay where they are, and the source is **additive**: a new name on
+the surface, not a change to the old one.
+
+The raw reports are committed under their own names, the figures above are derived from them by
+`python3 scripts/medians.py`, and the guard checks every one of them **inside this section**.
+
 ---
 
 ## 4. The defects the increments found
@@ -3597,6 +3653,17 @@ The probe writes the published file's own **six row groups** as six files, and r
 one file and as six**, through the engine's own reader, in the same campaign. The tables in
 [§3u](#3u-the-file-boundarys-cost) are derived from those reports by `python3 scripts/medians.py`, and the
 guard checks them like the rest.
+
+**And the source's probe**, three campaigns:
+
+```bash
+just probe-file-set "data/lineitem.parquet" "bench-results/file-set-run1.json"
+```
+
+The probe writes the published file's own **six row groups** as six files, and reads the same rows **three
+ways**: as the one file, as the six files one by one, and as the six files **read as one table** through the
+engine's new source. The tables in [§3v](#3v-the-source-over-a-set-of-files) are derived from those reports
+by `python3 scripts/medians.py`, and the guard checks them like the rest.
 
 The probe runs the engine's **own** plans through the engine's own entry point and checks the answers
 against the published ones before it times anything, so it is the same query the tables above publish.

@@ -34,7 +34,7 @@
 use crate::operators::key::ArrowKeys;
 use crate::plan::ResolvedPlan;
 use crate::pushdown::{Pushdown, PushdownMetrics};
-use crate::source::{scan_projection, ParquetSource, ReadDecision};
+use crate::source::{scan_projection, EngineSource, ReadDecision};
 use crate::EngineError;
 
 /// The columns whose bytes were fetched from the file.
@@ -68,9 +68,9 @@ pub(crate) fn pushdown_descriptions(decision: &ReadDecision) -> Vec<String> {
 ///
 /// Returns [`EngineError::UnknownColumn`] when a predicate names a column the
 /// file does not have.
-pub(crate) fn decide_scan(
+pub(crate) fn decide_scan<S: EngineSource>(
     resolved: &ResolvedPlan,
-    source: &ParquetSource,
+    source: &S,
 ) -> Result<ReadDecision, EngineError> {
     source.decide_read(&resolved.materialised, &resolved.filter)
 }
@@ -83,10 +83,10 @@ pub(crate) fn decide_scan(
 /// so the filter stage has no work to do -- and the join's key is a type the
 /// probe reads. See
 /// [ADR-0030](../../../docs/adr/0030-the-scan-that-feeds-the-join.md).
-pub(crate) fn streamed_join(
+pub(crate) fn streamed_join<S: EngineSource>(
     resolved: &ResolvedPlan,
     decision: &ReadDecision,
-    source: &ParquetSource,
+    source: &S,
 ) -> Option<usize> {
     let join = resolved.join.as_ref()?;
     if !decision.fully_pushed {

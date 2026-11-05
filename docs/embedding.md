@@ -71,6 +71,34 @@ let catalog = Catalog::new()
 let source = open_table(&catalog, "lineitem")?;
 ```
 
+### A table that is many files
+
+`FileSetSource` reads a **set** of Parquet files as **one table**. It is what an append-only store's
+table needs: a commit appends a file and never modifies an old one, so the table is the set of them.
+
+```rust
+use columnar_engine::prelude::*;
+use std::path::PathBuf;
+
+let paths: Vec<PathBuf> = manifest.files.iter().map(PathBuf::from).collect();
+let set = FileSetSource::open(&paths)?;
+let result = set.execute(&plan, &ExecOptions::default())?;
+```
+
+**The files have to share their schema** -- their columns, their order, their types, and how their values
+are stored -- and a set whose files disagree is not a table: the error says which file disagreed and how.
+**The order of the paths is the table's order**: the rows come back file by file, and inside a file row
+group by row group.
+
+**And the set answers the same question the one file answers.** The same plan over the set and over the
+same rows in one file gives the same answer, and reading the set costs **nothing measurable** over reading
+the one file. The naive way -- open each file and run the query over each one -- is **wrong three times
+over**: the rows of a filtered table are split across the files, the groups of an aggregate are split
+across them, and the sides of a join are split across them.
+
+**And the join's build side is still one file.** `JoinSpec.build_path` is one path, so a store's table can
+be on the **probe** side of a join, and not on the **build** side.
+
 ### The eager path
 
 `Dataset::read_parquet` decodes the whole file into column chunks, in memory. The eager path runs
@@ -111,14 +139,13 @@ the dictionary's fallback to plain is decided at one of those boundaries, so **t
 batch size are a different file**. A batch off the grid is refused with an error rather than written.
 
 **And the store sits below the engine.** `columnar-store` does not depend on `columnar-engine`, so the
-engine's read path cannot move because of anything the store does. **The glue between them is a path** --
-and the engine's side of that glue, the source that reads a table which is *many* files, is not built yet:
-the engine's only source today is `ParquetSource`, which is one file.
+engine's read path cannot move because of anything the store does. **The glue between them is a list of
+paths** -- and the engine's side of that glue is built: `FileSetSource` reads the set as one table, and it
+costs nothing measurable over reading the same rows in one file.
 
-**And the crate is not published yet.** Its API is new, and the increment that teaches the engine to read
-a store's table changes it. A first published version is a promise, and this one has not been reviewed by
-an embedder -- so `columnar-store` carries `publish = false` for now, and the three crates below are the
-ones a `cargo add` can reach.
+**And the crate is not published yet.** Its API is new, and a first published version is a promise that has
+not been reviewed by an embedder -- so `columnar-store` carries `publish = false` for now, and the three
+crates below are the ones a `cargo add` can reach.
 
 ---
 

@@ -49,7 +49,7 @@ use std::path::{Path, PathBuf};
 use arrow::datatypes::{DataType as ArrowType, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use columnar_core::{DataType, ScalarValue};
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 use parquet::arrow::ProjectionMask;
 use parquet::file::metadata::ParquetMetaData;
 use parquet::file::statistics::Statistics;
@@ -207,13 +207,13 @@ pub struct ParquetSource {
 }
 
 /// A column's range over a whole file.
-type ColumnRange = (ScalarValue, ScalarValue);
+pub(crate) type ColumnRange = (ScalarValue, ScalarValue);
 
 /// The range of every column over a file.
-type ColumnRanges = HashMap<String, ColumnRange>;
+pub(crate) type ColumnRanges = HashMap<String, ColumnRange>;
 
 /// The range of every column over every row group.
-type RowGroupRanges = HashMap<String, Vec<RowGroupRange>>;
+pub(crate) type RowGroupRanges = HashMap<String, Vec<RowGroupRange>>;
 
 /// A column's range over one row group, and the row group's rows.
 #[derive(Debug, Clone)]
@@ -223,6 +223,61 @@ pub struct RowGroupRange {
     pub range: Option<(ScalarValue, ScalarValue)>,
     /// The row group's rows.
     pub rows: usize,
+}
+
+/// What the engine needs of a source, so that one query path serves a file and
+/// a set of files.
+///
+/// The trait is the engine's own **seam**, and it is crate-private: the
+/// surface carries the two sources themselves -- [`ParquetSource`] and
+/// [`crate::file_set::FileSetSource`] -- and the path that reads them. The
+/// trait is how that one path is written once.
+///
+/// **The trait is not a second set of rules.** Every method is the source's
+/// own method, and the file set's are the file's own rules applied to a set:
+/// the same decision, the same reader, the same batch rule.
+pub(crate) trait EngineSource: ColumnSchema {
+    /// How many rows the source holds.
+    fn rows(&self) -> usize;
+
+    /// The source's columns, in schema order.
+    fn columns(&self) -> &[SourceColumn];
+
+    /// The names of the columns at `indices`, in the order given.
+    fn column_names(&self, indices: &[usize]) -> Vec<String>;
+
+    /// How many workers a read of this source uses.
+    fn worker_count(&self, threads: usize) -> usize;
+
+    /// Decides what the read takes, and what it pushes into the reader.
+    ///
+    /// The rules are [`ParquetSource::decide_read`]'s, and they are the same
+    /// rules for every source: the plan's materialised set, and the plan's
+    /// predicates.
+    fn decide_read(
+        &self,
+        materialised: &[usize],
+        filters: &[ResolvedFilter],
+    ) -> Result<ReadDecision, EngineError>;
+
+    /// Reads the given columns, with the given predicates pushed down.
+    fn read(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        flavor: Flavor,
+        threads: usize,
+    ) -> Result<Dataset, DatasetError>;
+
+    /// Reads the given columns, with a filter, and the filter's rows.
+    fn read_filtered(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        filter: &(dyn BatchFilter + Sync),
+        flavor: Flavor,
+        threads: usize,
+    ) -> Result<ScanOutput, DatasetError>;
 }
 
 /// What a read of a file takes, and what it pushes into the reader.
@@ -338,6 +393,15 @@ impl ParquetSource {
     #[must_use]
     pub fn row_groups(&self) -> usize {
         self.row_groups
+    }
+
+    /// How many rows each of the file's row groups holds.
+    ///
+    /// This is the crate's own seam: the file set merges the row groups of
+    /// its files into one numbering, and it needs their rows to do it.
+    #[must_use]
+    pub(crate) fn row_group_row_counts(&self) -> &[usize] {
+        &self.row_group_rows
     }
 
     /// The file's columns, in schema order.
@@ -493,56 +557,7 @@ impl ParquetSource {
         materialised: &[usize],
         filters: &[ResolvedFilter],
     ) -> Result<ReadDecision, EngineError> {
-        let mut read = materialised.to_vec();
-        let mut pushdown = PushdownPlan::new();
-        let mut declined: Vec<ResolvedFilter> = Vec::new();
-        let mut fully_pushed = true;
-
-        for filter in filters {
-            let Some(column) = self.columns.get(filter.column) else {
-                return Err(EngineError::UnknownColumn(format!(
-                    "the plan reads column {}, and the file does not hold it",
-                    filter.column
-                )));
-            };
-            if read.contains(&filter.column) {
-                fully_pushed = false;
-                declined.push(filter.clone());
-                continue;
-            }
-            if !crate::pushdown::supports(&column.arrow_type) {
-                fully_pushed = false;
-                declined.push(filter.clone());
-                continue;
-            }
-            // Two predicates on the same column are one conjunction over that
-            // column, and the reader would decode the column once per
-            // predicate. They are pushed together.
-            match pushdown.for_column_mut(filter.column) {
-                Some(existing) => {
-                    existing.and(filter.predicate.op, filter.predicate.value.clone());
-                }
-                None => {
-                    pushdown.push(Pushdown::new(
-                        filter.column,
-                        &column.name,
-                        filter.predicate.op,
-                        filter.predicate.value.clone(),
-                    ));
-                }
-            }
-        }
-
-        for filter in &declined {
-            if !read.contains(&filter.column) {
-                read.push(filter.column);
-            }
-        }
-
-        read.sort_unstable();
-        read.dedup();
-
-        Ok(ReadDecision { read, pushdown, declined, fully_pushed })
+        decide_read(&self.columns, materialised, filters)
     }
 
     /// Reads the file, with the batch size the plan names.
@@ -710,17 +725,30 @@ impl ParquetSource {
         limit.min(smallest)
     }
 
-    /// Reads the given row groups -- or all of them, when `row_groups` is
-    /// `None`.
-    fn read_row_groups(
+    /// The file's schema.
+    ///
+    /// This is the crate's own seam: a set of files reads them as one table,
+    /// and the table's schema is the files' schema.
+    #[must_use]
+    pub(crate) fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
+
+    /// Builds the reader over the given row groups -- or all of them, when
+    /// `row_groups` is `None`.
+    ///
+    /// The reader is **the engine's own**: the same projection, the same
+    /// batch size, the same pushdown. A set of files chains its files'
+    /// readers and decodes them in one pass, so that the rows are copied
+    /// **once**, into the table's own columns -- and the copy a merge would
+    /// make is not made.
+    pub(crate) fn reader(
         &self,
         columns: &[usize],
         pushdown: &PushdownPlan,
-        filter: Option<&(dyn BatchFilter + Sync)>,
-        flavor: Flavor,
         row_groups: Option<Vec<usize>>,
-        plan: BatchPlan,
-    ) -> Result<ScanOutput, DatasetError> {
+        batch_rows: usize,
+    ) -> Result<ParquetRecordBatchReader, DatasetError> {
         let file = File::open(&self.path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .map_err(|error| DatasetError::Parquet(error.to_string()))?;
@@ -737,16 +765,30 @@ impl ParquetSource {
         // borrow therefore ends before the builder is consumed.
         let mask = ProjectionMask::roots(builder.parquet_schema(), projection.iter().copied());
 
-        let batch_rows = match plan {
-            BatchPlan::Fixed(rows) => rows,
-            BatchPlan::Derived(limit) => self.batch_rows_for(row_groups.as_deref(), limit),
-        };
         let mut builder = builder.with_projection(mask).with_batch_size(batch_rows);
         if let Some(row_groups) = row_groups {
             builder = builder.with_row_groups(row_groups);
         }
+        builder.build().map_err(|error| DatasetError::Parquet(error.to_string()))
+    }
 
-        let reader = builder.build().map_err(|error| DatasetError::Parquet(error.to_string()))?;
+    /// Reads the given row groups -- or all of them, when `row_groups` is
+    /// `None`.
+    fn read_row_groups(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        filter: Option<&(dyn BatchFilter + Sync)>,
+        flavor: Flavor,
+        row_groups: Option<Vec<usize>>,
+        plan: BatchPlan,
+    ) -> Result<ScanOutput, DatasetError> {
+        let batch_rows = match plan {
+            BatchPlan::Fixed(rows) => rows,
+            BatchPlan::Derived(limit) => self.batch_rows_for(row_groups.as_deref(), limit),
+        };
+        let reader = self.reader(columns, pushdown, row_groups, batch_rows)?;
+        let projection = scan_projection(columns, pushdown);
         decode_batches_filtered(
             reader,
             &self.schema,
@@ -846,7 +888,7 @@ fn statistics_range(statistics: &Statistics) -> Option<(ScalarValue, ScalarValue
 ///
 /// Two values of different types cannot be compared, and the engine never
 /// compares them: a column has one type, so its statistics have one type too.
-fn scalar_cmp(left: &ScalarValue, right: &ScalarValue) -> Ordering {
+pub(crate) fn scalar_cmp(left: &ScalarValue, right: &ScalarValue) -> Ordering {
     match (left, right) {
         (ScalarValue::Int64(left), ScalarValue::Int64(right)) => left.cmp(right),
         (ScalarValue::Float64(left), ScalarValue::Float64(right)) => left.total_cmp(right),
@@ -907,6 +949,126 @@ pub(crate) fn scan_projection(columns: &[usize], pushdown: &PushdownPlan) -> Vec
     projection.sort_unstable();
     projection.dedup();
     projection
+}
+
+/// Decides what a read takes, and what it pushes into the reader.
+///
+/// The rules are [`ReadDecision`]'s, and they are the same rules for **every**
+/// source: the plan's materialised columns are read, a predicate over a column
+/// that is already being read is declined, a predicate the pushdown cannot
+/// evaluate exactly is declined, and a declined predicate's column is read.
+///
+/// The rules live here, once, and every source asks this question through
+/// them: two copies of these rules could disagree, and the disagreement would
+/// show up as a plan that reads a different set of columns on each side of a
+/// join.
+///
+/// # Errors
+///
+/// Returns [`EngineError::UnknownColumn`] when a predicate names a column the
+/// source does not have.
+pub(crate) fn decide_read(
+    columns: &[SourceColumn],
+    materialised: &[usize],
+    filters: &[ResolvedFilter],
+) -> Result<ReadDecision, EngineError> {
+    let mut read = materialised.to_vec();
+    let mut pushdown = PushdownPlan::new();
+    let mut declined: Vec<ResolvedFilter> = Vec::new();
+    let mut fully_pushed = true;
+
+    for filter in filters {
+        let Some(column) = columns.get(filter.column) else {
+            return Err(EngineError::UnknownColumn(format!(
+                "the plan reads column {}, and the file does not hold it",
+                filter.column
+            )));
+        };
+        if read.contains(&filter.column) {
+            fully_pushed = false;
+            declined.push(filter.clone());
+            continue;
+        }
+        if !crate::pushdown::supports(&column.arrow_type) {
+            fully_pushed = false;
+            declined.push(filter.clone());
+            continue;
+        }
+        // Two predicates on the same column are one conjunction over that
+        // column, and the reader would decode the column once per
+        // predicate. They are pushed together.
+        match pushdown.for_column_mut(filter.column) {
+            Some(existing) => {
+                existing.and(filter.predicate.op, filter.predicate.value.clone());
+            }
+            None => {
+                pushdown.push(Pushdown::new(
+                    filter.column,
+                    &column.name,
+                    filter.predicate.op,
+                    filter.predicate.value.clone(),
+                ));
+            }
+        }
+    }
+
+    for filter in &declined {
+        if !read.contains(&filter.column) {
+            read.push(filter.column);
+        }
+    }
+
+    read.sort_unstable();
+    read.dedup();
+
+    Ok(ReadDecision { read, pushdown, declined, fully_pushed })
+}
+
+impl EngineSource for ParquetSource {
+    fn rows(&self) -> usize {
+        self.rows
+    }
+
+    fn columns(&self) -> &[SourceColumn] {
+        &self.columns
+    }
+
+    fn column_names(&self, indices: &[usize]) -> Vec<String> {
+        ParquetSource::column_names(self, indices)
+    }
+
+    fn worker_count(&self, threads: usize) -> usize {
+        ParquetSource::worker_count(self, threads)
+    }
+
+    fn decide_read(
+        &self,
+        materialised: &[usize],
+        filters: &[ResolvedFilter],
+    ) -> Result<ReadDecision, EngineError> {
+        self.decide_read(materialised, filters)
+    }
+
+    fn read(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        flavor: Flavor,
+        threads: usize,
+    ) -> Result<Dataset, DatasetError> {
+        ParquetSource::read(self, columns, pushdown, flavor, threads)
+    }
+
+    fn read_filtered(
+        &self,
+        columns: &[usize],
+        pushdown: &PushdownPlan,
+        filter: &(dyn BatchFilter + Sync),
+        flavor: Flavor,
+        threads: usize,
+    ) -> Result<ScanOutput, DatasetError> {
+        ParquetSource::read_filtered(self, columns, pushdown, filter, flavor, threads)
+    }
 }
 
 impl ColumnSchema for ParquetSource {

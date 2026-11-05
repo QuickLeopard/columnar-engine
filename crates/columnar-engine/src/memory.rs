@@ -82,7 +82,7 @@
 
 use columnar_core::{ComparisonOp, DataType, Encoding, Predicate, ScalarValue};
 
-use crate::plan::{QueryPlan, ResolvedJoin, ResolvedPlan, ResolvedSort};
+use crate::plan::{ColumnSchema, QueryPlan, ResolvedJoin, ResolvedPlan, ResolvedSort};
 use crate::source::ParquetSource;
 use crate::Dataset;
 
@@ -287,14 +287,29 @@ pub fn estimate_lazy_read(
     threads: usize,
     grouped: bool,
 ) -> usize {
-    let rows = source.rows();
+    estimate_lazy_read_for(source.rows(), source, read, threads, grouped)
+}
+
+/// The estimate of a lazy read, over a source's rows and a source's schema.
+///
+/// The one-file read and the set's read are estimated by the **same** rules,
+/// and the set's rows are the sum of its files' -- so a table that is many
+/// files is charged for the rows it holds, not for one file's share of them.
+#[must_use]
+pub fn estimate_lazy_read_for(
+    rows: usize,
+    schema: &dyn ColumnSchema,
+    read: &[usize],
+    threads: usize,
+    grouped: bool,
+) -> usize {
     if rows == 0 {
         return 0;
     }
 
     let mut dataset = 0usize;
     for &index in read {
-        let width = source.columns().get(index).map_or(8, |column| type_width(column.data_type));
+        let width = type_width(schema.column_type(index));
         dataset =
             dataset.saturating_add(rows.saturating_mul(width).saturating_add(rows.div_ceil(8)));
     }

@@ -22,9 +22,12 @@ one thing, it is four:
 1. **The metadata.** The scan is built around one file's row groups, its column index and its row-group
    ranges. A source over many files has to **merge** them, and the row groups have to be numbered across
    the files.
-2. **The pruning.** The pushdown prunes row groups by the statistics in the file's metadata. **A source
-   over many files has to prune against every file's statistics**, or a row group that cannot survive is
-   read anyway.
+2. **The statistics.** **The engine does not prune row groups by the file's statistics** — [ADR-0010]
+   accepted that cost, and the reader reads every page of the columns it needs — **so there is nothing to
+   prune across the files.** What a source over many files owes is that the statistics it publishes are the
+   **table's**: the range is the union of the files' ranges, and the row groups are numbered across them.
+   **And the engine's own predicate is applied to the rows of every file**, not to the first one that
+   answers.
 3. **The batches.** The reader's batch rule crosses the file boundary: the last batch of one file and the
    first of the next are one batch, or two — and the answer must be the same either way.
 4. **The cost.** The file boundary is not free: another file is another open, another footer, another
@@ -43,11 +46,20 @@ file and as six**, and the difference between the two is the file boundary's cos
 single-file path stays exactly as it is**, its published figures do not move, and the new source is
 **additive**: a new name on the surface, not a change to the old one.
 
-### R2 — The pushdown sees the whole table
+### R2 — The statistics are the table's, and the predicate reaches every file
 
-The pruning is over **the union of the files' row groups**, and the statistics that decide it are the
-union of the files' statistics. **A row group that cannot survive is not read**, whichever file it is in —
-and the engine's own predicate is applied to the rows of every file, not to the first one that answers.
+> **Corrected on 2026-11-05, and the correction is recorded in
+> [ADR-0046](../../docs/adr/0046-the-source-over-a-set-of-files.md).** This requirement was published as
+> "The pushdown sees the whole table", and it said that the pushdown prunes row groups by the file's
+> statistics. **The engine does not**: ADR-0010 accepted that cost — "the engine does not prune, and does
+> not pretend to" — and spec 028 recorded the same about the reader's pruning. The requirement is now
+> what was true of this engine all along: the statistics a set publishes are the **table's** statistics,
+> the range is the **union** of the files' ranges, and the engine's own predicate reaches **every** file.
+
+The statistics a set publishes are the **table's**: the range of a column is the **union** of the files'
+ranges, and the row groups are the files' row groups numbered across the files, with the files' own
+ranges and the files' own rows. **And the engine's own predicate is applied to the rows of every file**,
+not to the first one that answers.
 
 ### R3 — The answers are the engine's
 
@@ -102,7 +114,7 @@ Five phases, and the edges between them:
    engine's read of the one and of the six, in the same campaign.
 2. **The campaigns** — three campaigns of the probe, the raw reports committed under their own names.
 3. **The source** — **moved to spec 040** by the amendment above: the engine's source over a set of
-   files, with the merged metadata, the pruning over the union, and the batches across the boundary.
+   files, with the merged metadata, the merged statistics, and the batches across the boundary.
 4. **The publication** — the section that publishes the boundary's cost and the answers that did not
    change, the guard checks every figure inside it, and the ADR records the source's shape.
 5. **The closure** — the spec's status is `done` with the date it finished, and CI is green on the publish
