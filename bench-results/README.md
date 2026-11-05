@@ -38,6 +38,8 @@ python3 scripts/medians.py
 | `join-cost-spec036-run1.json` … `join-cost-spec036-run3.json` | the **file-state floor**: the probe with **both floors measured in the iteration**. The **machine's own measure** is the memory-bound loop the probe cannot go below, over the probe's own fresh column, right after the probe that used it -- so it reads nothing of its own and perturbs nothing. The **file-state floor** is the build side's read through the engine's own reader, with the engine's own predicates, over the engine's own columns, taken **right after** the machine's own measure -- so the file's state and the machine's movement are in the same iteration, and the report carries **how far apart the two were taken**. The report carries **every part's per-iteration values**, as it always did. |
 | `join-cost-spec036-before-run1.json` … `join-cost-spec036-before-run3.json` | the same probe against the **code spec 036 replaces** -- a worktree at `02ba709` -- measured back to back on this host with the campaigns above, **three campaigns each, interleaved**, so that the figures that moved because the **instrument** changed are separated from the machine's. |
 | `join-cost-spec036-hunt-run1.json` … `join-cost-spec036-hunt-run9.json` | the **hunt**: nine more campaigns of the same instrument, on a quieter host. They are published because they say whether the file's state moved at all -- each campaign's own spread of the file's own read, and of the machine's own movement, is what an **excursion** looks like -- and it did not. |
+| `write-cost-run1.json` … `write-cost-run3.json` | the **write side**, in the batch size the published file was written in: **65,536** rows. The probe reads the published file's own rows once, writes them back out through the Parquet writer in the file's own row groups of a million rows with the file's own writer properties, **commits** the result the way an append-only store commits it -- the data file's `fsync`, the manifest written and `fsync`ed, the `rename`, the directory's `fsync` -- and reads it back through the **engine's own reader**. The report carries **the bytes**: the original's, the file the probe wrote's, and the plain file's, the one written with the dictionary off -- and **the verdict on the identity**, the two files compared byte for byte. In this set the file the probe wrote **is** the published file, byte for byte. |
+| `write-cost-engine-batch-run1.json` … `write-cost-engine-batch-run3.json` | the **same rows, in the engine's own batch size**: **125,000** rows, which is 122 x 1,024 + 192 and not a multiple of the writer's 1,024-value mini-batch. The bytes depend on it -- the dictionary's fallback to plain lands on a mini-batch boundary, and the boundaries drift -- so the file the probe wrote here is **not** the published file, and the report says **where** the two first differ. |
 | `join-cost-spec029-run1.json` … `join-cost-spec029-run3.json` | the probe as it stood at spec 029's close -- against the code spec 029 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
 | `join-cost-spec029-before-run1.json` … `join-cost-spec029-before-run3.json` | the set spec 029 measured against the code it replaced, with the instrument of that day. Kept under its own name, for the same reason. |
 | `join-cost-spec028-run1.json` … `join-cost-spec028-run3.json` | the probe as it stood at spec 028's close -- against the code spec 028 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
@@ -164,6 +166,7 @@ questions.
 | §3o | *what is in the join's stage, what the remainder's parts are, what the context is made of, and how far the machine drifts under it* | `join-cost-run*.json`, `join-cost-spec030-run*.json`, `join-cost-spec030-before-run*.json`, `join-cost-spec029-run*.json`, `join-cost-spec029-before-run*.json`, `join-cost-spec028-run*.json`, `join-cost-spec028-before-run*.json` |
 | §3p | *the join's stage, measured again, and the code's share of the difference* | `join-cost-spec034-run*.json`, `join-cost-spec034-before-run*.json` |
 | §3r | *the file-state floor: the two floors in the iteration, the yardstick that sees the file's state, and the correction* | `join-cost-spec036-run*.json`, `join-cost-spec036-before-run*.json`, `join-cost-spec036-hunt-run*.json` |
+| §3s | *the write side: the write, the commit, the bytes and the read-back, in the two batch sizes* | `write-cost-run*.json`, `write-cost-engine-batch-run*.json` |
 | §2h | *the same-moment A/B, and the resident movement it cannot explain* | `compare-ab-old-run1.json`, `compare-ab-new-run1.json` |
 
 The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and
@@ -296,6 +299,23 @@ just probe-join "data/lineitem.parquet" \
 The reason is recorded in [spec 036](../specs/036-the-file-state-floor/spec.md): the set
 the file publishes keeps its name and its figures, and the instrument's new figures are
 published **beside** it.
+
+**And the write-side probe's two sets are named for the variable between them.** The
+batch size the rows arrive in decides the bytes -- the writer cuts its mini-batches, and
+the dictionary's fallback with them, at the caller's batch boundary -- so the set in the
+published file's own batch size takes `write-cost-run*.json` and the set in the engine's
+takes `write-cost-engine-batch-run*.json`:
+
+```bash
+just probe-write "data/lineitem.parquet" \
+    "bench-results/write-cost-run1.json" 65536
+just probe-write "data/lineitem.parquet" \
+    "bench-results/write-cost-engine-batch-run1.json" 125000
+```
+
+The reason is recorded in [spec 037](../specs/037-the-write-side/spec.md): the write side is
+measured **before** the store is built, and the two sets are the same rows under the two
+batch sizes, so that the batch size's effect on the bytes is a figure.
 
 The **operator probe** writes its own two reports, one per code version:
 

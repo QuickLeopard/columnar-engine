@@ -317,6 +317,17 @@ probe-sort data="data/lineitem.parquet" out="bench-results/sort-cost-run1.json":
 probe-join data="data/lineitem.parquet" out="bench-results/join-cost-run1.json":
     cargo run --release -p columnar-engine --example join_cost_probe -- {{data}} --out {{out}}
 
+# Take the **write side** apart: the published file's own rows written back out
+# in the file's own row groups, with the file's own writer properties; the
+# commit's five steps, one at a time; and the file read back through the
+# engine's own reader -- and compared with the original byte for byte.
+#
+# The batch size the rows arrive in is an argument, because the bytes depend on
+# it: 65536 is the size the published file was written in, and it reproduces the
+# file exactly; the engine's own 125000 does not.
+probe-write data="data/lineitem.parquet" out="bench-results/write-cost-run1.json" batch="65536":
+    cargo run --release -p columnar-engine --example write_cost_probe -- {{data}} --batch-rows {{batch}} --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

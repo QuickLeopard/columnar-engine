@@ -1982,6 +1982,100 @@ def print_file_state_floor(sets: list[tuple[str, list[dict]]]) -> None:
                     )
 
 
+WRITE_SIDE_SHAPES = (
+    ("write_row_group", "the write of one row group"),
+    ("write_file", "the write of the whole file"),
+    ("write_plain", "the write of the whole file, the dictionary off"),
+    ("write_manifest", "writing the manifest"),
+    ("fsync_data", "the fsync of the data file"),
+    ("fsync_manifest", "the fsync of the manifest"),
+    ("rename_manifest", "the rename of the manifest"),
+    ("fsync_dir", "the fsync of the directory"),
+    ("commit", "the commit, all five steps"),
+    ("read_scan_original", "the read of the original, two columns"),
+    ("read_scan_written", "the read of the file the probe wrote, two columns"),
+    ("read_scan_plain", "the read of the plain file, two columns"),
+    ("read_all_original", "the read of the original, all sixteen columns"),
+    ("read_all_written", "the read of the file the probe wrote, all sixteen columns"),
+    ("read_all_plain", "the read of the plain file, all sixteen columns"),
+)
+
+WRITE_SIDE_DERIVED = (
+    ("ms_per_row_group", "the cost of one row group"),
+    ("write_over_read_all", "the write over a full read"),
+    ("write_over_read_scan", "the write over a two-column read"),
+    ("commit_over_write", "the commit's share of the write"),
+    ("fsyncs_over_commit", "the fsyncs' share of the commit"),
+    ("bytes_per_row_original", "the bytes a row takes, the original"),
+    ("bytes_per_row_written", "the bytes a row takes, the file the probe wrote"),
+    ("bytes_per_row_plain", "the bytes a row takes, the plain file"),
+)
+
+
+def print_write_side(sets: list[tuple[str, list[dict]]]) -> None:
+    """Print the write side: the write, the commit, the bytes and the read-back.
+
+    This is spec 037: the write side of an embedded store, measured. The
+    probe writes the published file's own rows back out, in the file's own
+    row groups, with the file's own writer properties -- and it compares the
+    result with the original **byte for byte**, so the question "does the
+    store's writer reproduce the file" is answered rather than assumed.
+
+    The two sets are the same rows in two batch sizes: the one the published
+    file was written in, and the engine's own. The batch size is what decides
+    the bytes, because the Parquet writer cuts its mini-batches -- and the
+    dictionary's fallback with them -- at the caller's batch boundary.
+    """
+    for label, runs in sets:
+        if not runs:
+            continue
+        print(f"\n=== THE WRITE SIDE -- {label} ({len(runs)} campaigns) ===")
+        batches = sorted({run.get("batch_rows") for run in runs})
+        print(f"   the batch size the rows arrive in: {', '.join(str(b) for b in batches)}")
+        identical = [run.get("identical") for run in runs]
+        print(f"   the file the probe wrote is the original: {all(identical)}")
+        for key in ("bytes_original", "bytes_written", "bytes_plain"):
+            values = [run.get(key) for run in runs if run.get(key) is not None]
+            if values:
+                print(f"   {key:<44} {int(median(values)):>12} bytes")
+
+        for name, heading in WRITE_SIDE_SHAPES:
+            values = [run["measurements_ms"][name] for run in runs if name in run["measurements_ms"]]
+            if not values:
+                continue
+            print(
+                f"   {heading:<44} {median(values):9.3f} ms"
+                f"   ({min(values):.3f}-{max(values):.3f})"
+            )
+
+        for key, heading in WRITE_SIDE_DERIVED:
+            values = [run["derived_ms"][key] for run in runs if key in run.get("derived_ms", {})]
+            if not values:
+                continue
+            print(f"   {heading:<44} {median(values):12.3f}")
+
+        def measured(key: str) -> list[float]:
+            return [run["measurements_ms"][key] for run in runs if key in run.get("measurements_ms", {})]
+
+        def counted(key: str) -> list[float]:
+            return [run[key] for run in runs if key in run]
+
+        print("\n-- the plain file over the dictionary file --")
+        for heading, numerator, denominator in (
+            ("the bytes", counted("bytes_plain"), counted("bytes_written")),
+            ("the write", measured("write_plain"), measured("write_file")),
+            ("the read, all sixteen columns", measured("read_all_plain"), measured("read_all_original")),
+        ):
+            if numerator and denominator:
+                print(
+                    f"   {heading:<44} {median(numerator) / median(denominator):12.2f}"
+                )
+
+        loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+        if loads:
+            print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
 def print_excursion_hunt(runs: list[dict]) -> None:
     """Print the hunt: whether the file's state moved at all.
 
@@ -2282,6 +2376,19 @@ def main() -> int:
     # they say whether the file's state moved at all on this host.
     hunt = [load(p) for p in sorted(Path("bench-results").glob("join-cost-spec036-hunt-run*.json"))]
     print_excursion_hunt(hunt)
+
+    # Spec 037: the write side -- the write, the commit, the bytes and the
+    # read-back, in the two batch sizes the same rows were written in.
+    write_sets = [
+        (label, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
+        for label, pattern in (
+            ("the batch the published file was written in", "write-cost-run*.json"),
+            ("the engine's own batch size", "write-cost-engine-batch-run*.json"),
+        )
+        if sorted(Path("bench-results").glob(pattern))
+    ]
+    if write_sets:
+        print_write_side(write_sets)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))

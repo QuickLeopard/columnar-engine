@@ -1132,6 +1132,58 @@ SPEC036_MOVED = (
     ("the file's own read", JOIN_COST_FILE_FLOOR, 3),
 )
 
+# Spec 037: the write side. The same rows, written out twice -- in the batch
+# size the published file was written in, and in the engine's own batch size --
+# because the batch size is what decides the bytes.
+WRITE_COST_REPORTS = sorted((ROOT / "bench-results").glob("write-cost-run*.json"))
+WRITE_COST_ENGINE_BATCH_REPORTS = sorted(
+    (ROOT / "bench-results").glob("write-cost-engine-batch-run*.json")
+)
+SPEC037_SECTION = "### 3s"
+
+WRITE_COST_FAMILIES = (
+    ("the batch the published file was written in", WRITE_COST_REPORTS),
+    ("the engine's own batch size", WRITE_COST_ENGINE_BATCH_REPORTS),
+)
+
+# The measurements the probe takes, and the places they are published in.
+WRITE_COST_SHAPES = (
+    ("write_row_group", 3),
+    ("write_file", 3),
+    ("write_plain", 3),
+    ("write_manifest", 3),
+    ("fsync_data", 3),
+    ("fsync_manifest", 3),
+    ("rename_manifest", 3),
+    ("fsync_dir", 3),
+    ("commit", 3),
+    ("read_scan_original", 3),
+    ("read_scan_written", 3),
+    ("read_scan_plain", 3),
+    ("read_all_original", 3),
+    ("read_all_written", 3),
+    ("read_all_plain", 3),
+)
+
+# The figures the probe derives from them.
+WRITE_COST_DERIVED = (
+    ("ms_per_row_group", 3),
+    ("write_over_read_all", 2),
+    ("write_over_read_scan", 2),
+    ("commit_over_write", 3),
+    ("fsyncs_over_commit", 3),
+    ("bytes_per_row_original", 2),
+    ("bytes_per_row_written", 2),
+    ("bytes_per_row_plain", 2),
+)
+
+# The claim each set makes about the file it wrote, and the sentence that
+# carries it in the section that publishes it.
+WRITE_COST_CLAIMS = {
+    "the batch the published file was written in": "the published file, byte for byte",
+    "the engine's own batch size": "from byte 7",
+}
+
 
 def join_cost_floors(paths: list[Path], path: str) -> dict[str, object]:
     """The two floors, over one path's ladder.
@@ -1536,6 +1588,52 @@ def leaf_state_in_rows(rows: list[str], state: str) -> bool | None:
     if not words:
         return None
     return state in words
+
+
+def write_cost_ratios(runs: list[dict]) -> list[tuple[str, float]]:
+    """The plain file over the dictionary file, on the bytes, the write, the read.
+
+    The dictionary's trade is a measurement rather than a rule (PERF.md's
+    section 3h), and it is measured on both sides of the write here: the file
+    written plain, against the file written with the dictionary on.
+    """
+    ratios: list[tuple[str, float]] = []
+
+    def median_measured(key: str) -> float | None:
+        values = [
+            run["measurements_ms"][key]
+            for run in runs
+            if key in run.get("measurements_ms", {})
+        ]
+        if not values:
+            return None
+        return statistics.median(values)
+
+    def median_counted(key: str) -> float | None:
+        values = [run[key] for run in runs if key in run]
+        if not values:
+            return None
+        return statistics.median(values)
+
+    plain_bytes = median_counted("bytes_plain")
+    written_bytes = median_counted("bytes_written")
+    if plain_bytes and written_bytes:
+        ratios.append(
+            ("the plain file's bytes over the dictionary file's", plain_bytes / written_bytes)
+        )
+    plain_write = median_measured("write_plain")
+    written_write = median_measured("write_file")
+    if plain_write and written_write:
+        ratios.append(
+            ("the plain file's write over the dictionary file's", plain_write / written_write)
+        )
+    plain_read = median_measured("read_all_plain")
+    original_read = median_measured("read_all_original")
+    if plain_read and original_read:
+        ratios.append(
+            ("the plain file's read over the dictionary file's", plain_read / original_read)
+        )
+    return ratios
 
 
 def section_of(text: str, heading: str) -> str | None:
@@ -2958,6 +3056,119 @@ def main() -> int:
                 else:
                     print(f"ok  {'PERF.md':<10} {f'the hunt: {label}':<60} {rendered}")
 
+    # Spec 037: the write side -- the write, the commit, the bytes and the
+    # read-back, in the section that publishes them. Two sets: the same rows
+    # written in two batch sizes, because the batch size decides the bytes.
+    write_section = section_of(texts["PERF.md"], SPEC037_SECTION)
+    if write_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the write side "
+            f"({SPEC037_SECTION}) is not in the document"
+        )
+    else:
+        # The bytes and the batch sizes are written with thousands separators,
+        # so the integer checks look at the section with the separators taken
+        # out -- the same way the typographic minus is normalised on the way in.
+        write_text = write_section.replace(",", "")
+        for label, paths in WRITE_COST_FAMILIES:
+            if len(paths) < MIN_CAMPAIGNS:
+                failures.append(
+                    f"the write probe's {label} has {len(paths)} campaigns, "
+                    f"and the method says {MIN_CAMPAIGNS}"
+                )
+                continue
+            write_runs = [json.loads(path.read_text()) for path in paths]
+
+            # The batch size the rows arrived in: it is what the two sets
+            # differ by, and it has to be in the section that publishes them.
+            for batch in sorted(
+                {run.get("batch_rows") for run in write_runs if run.get("batch_rows")}
+            ):
+                rendered = str(batch)
+                if not figure_in(write_text, rendered):
+                    failures.append(
+                        f"PERF.md: the write probe's {label} wrote the rows in batches of "
+                        f"{rendered}, and that batch size does not appear in the section"
+                    )
+                else:
+                    print(
+                        f"ok  {'PERF.md':<10} {f'{label}: the batch size':<60} {rendered}"
+                    )
+
+            # The measurements themselves.
+            for name, places in WRITE_COST_SHAPES:
+                values = [
+                    run["measurements_ms"][name]
+                    for run in write_runs
+                    if name in run.get("measurements_ms", {})
+                ]
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(write_section, rendered):
+                    failures.append(
+                        f"PERF.md: the write probe's {label} measures {name} at {rendered} "
+                        f"by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{label}: {name}':<60} {rendered}")
+
+            # The figures the probe derives from them.
+            for name, places in WRITE_COST_DERIVED:
+                values = [
+                    run["derived_ms"][name]
+                    for run in write_runs
+                    if name in run.get("derived_ms", {})
+                ]
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(write_section, rendered):
+                    failures.append(
+                        f"PERF.md: the write probe's {label} derives {name} at {rendered} "
+                        f"by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{label}: {name}':<60} {rendered}")
+
+            # The bytes: the original, the file the probe wrote, and the file
+            # it wrote with the dictionary off.
+            for key in ("bytes_original", "bytes_written", "bytes_plain"):
+                values = [run[key] for run in write_runs if key in run]
+                if not values:
+                    continue
+                rendered = str(int(statistics.median(values)))
+                if not figure_in(write_text, rendered):
+                    failures.append(
+                        f"PERF.md: the write probe's {label} reports {key} as {rendered} "
+                        f"by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{label}: {key}':<60} {rendered}")
+
+            # The two encodings, side by side: the plain file over the
+            # dictionary file, on the bytes, on the write and on the read.
+            ratios = write_cost_ratios(write_runs)
+            for name, value in ratios:
+                rendered = rendered_figure(value, 2)
+                if not figure_in(write_section, rendered):
+                    failures.append(
+                        f"PERF.md: the write probe's {label} stands at {rendered} for {name} "
+                        f"by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{label}: {name}':<60} {rendered}")
+
+            # The claim each set makes about the file it wrote.
+            claim = WRITE_COST_CLAIMS.get(label)
+            if claim and claim not in write_section:
+                failures.append(
+                    f"PERF.md: the write probe's {label} does not publish its claim: "
+                    f"the reports say {claim}"
+                )
+            elif claim:
+                print(f"ok  {'PERF.md':<10} {f'{label}: the claim':<60} {claim}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -3759,6 +3970,7 @@ def main() -> int:
         f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe, "
         f"{len(SPEC035_FAMILIES) * (2 * (7 + 3 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
         f"{2 * (11 + 3 * len(SPEC035_LEAVES['cold'])) + 3 + 2 * (2 * len(SPEC035_LEAVES['cold']) + 6) + 3 * len(SPEC036_MOVED) + 6} of the file-state floor, "
+        f"{len(WRITE_COST_FAMILIES) * (1 + len(WRITE_COST_SHAPES) + len(WRITE_COST_DERIVED) + 3 + 1)} of the write side, "
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
     )
     return 0

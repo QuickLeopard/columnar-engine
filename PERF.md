@@ -3028,6 +3028,114 @@ as well as the machine's **exists**, and it is the yardstick this section publis
 drift, the file-state floor's drift, and the larger of them. **Which of them is larger is a property of
 the host's state on the day** — and on this day they were **0.258 ms** and **0.361 ms**.
 
+### 3s. The write side
+
+**Every figure in this file so far is a figure about reading.** The scan's decode, the join's probe, the
+sort's heap, the drift's own parts — thirty-four specs of them, all of them measured on the read side of
+the engine. **Nothing in the tree writes a table.** The one writer is `columnar-testdata`'s dataset
+generator: a benchmark fixture, `publish = false`, with a fixed TPC-H schema and a scale factor as its only
+parameter. It is not a write path, and it was never measured as one.
+
+**And an embedded store is made of three things the engine does not have** — a **write path**, a **commit
+protocol**, and a **catalog that survives the process** — and none of the three has a measurement. So this
+section prices them, and the three numbers that come out decide the store's shape: how long a row group takes
+to write, what a commit costs, and what the write does to the file's bytes.
+
+**The instrument**: `crates/columnar-engine/examples/write_cost_probe.rs`. It reads the published file's
+**own rows** once, writes them back out through the Parquet writer in the file's **own row groups** of a
+million rows with the file's **own writer properties**, commits the result the way an append-only store
+commits it, reads it back through the **engine's own reader**, and compares it with the original **byte for
+byte**. The write is timed without the read that fed it: the store's caller brings the rows, and the caller
+pays for bringing them.
+
+**And the same rows are written twice**, in two batch sizes: the one the published file was written in, and
+the engine's own. The batch size is the variable, and the reason is in the writer.
+
+| | **the batch the published file was written in** | **the engine's own batch size** |
+|---|---|---|
+| **the batch size the rows arrived in** | **65,536** | **125,000** |
+| | | |
+| the write of one row group | **313.043 ms** | 309.584 ms |
+| the write of the whole file | **1844.195 ms** | 1845.596 ms |
+| the write of the whole file, the dictionary off | 1989.261 ms | 1994.069 ms |
+| | | |
+| writing the manifest | **0.210 ms** | 0.154 ms |
+| the `fsync` of the data file | **2.118 ms** | 2.054 ms |
+| the `fsync` of the manifest | **2.382 ms** | 2.219 ms |
+| the `rename` of the manifest | **0.217 ms** | 0.183 ms |
+| the `fsync` of the directory | **2.587 ms** | 2.301 ms |
+| **the commit, all five steps** | **7.651 ms** | 7.739 ms |
+| the commit's share of the write | **0.004** | 0.004 |
+| the `fsync`s' share of the commit | **0.910** | 0.921 |
+| | | |
+| the read of the original, two columns | **77.188 ms** | 75.592 ms |
+| the read of the file the probe wrote, two columns | **76.583 ms** | 75.772 ms |
+| the read of the plain file, two columns | **79.485 ms** | 73.564 ms |
+| the read of the original, all sixteen columns | **548.445 ms** | 542.860 ms |
+| the read of the file the probe wrote, all sixteen columns | **536.682 ms** | 541.009 ms |
+| the read of the plain file, all sixteen columns | **1427.515 ms** | 1422.425 ms |
+| | | |
+| the cost of one row group | **306.230 ms** | 307.589 ms |
+| the write over a full read | **3.36×** | 3.40× |
+| the write over a two-column read | **24.04×** | 24.37× |
+| | | |
+| the bytes on disk, the original | **242,857,841** | 242,857,841 |
+| the bytes on disk, the file the probe wrote | **242,857,841** | 242,856,197 |
+| the bytes on disk, the plain file | **376,933,328** | 376,935,096 |
+| the bytes a row takes, the original | **40.48** | 40.48 |
+| the bytes a row takes, the file the probe wrote | **40.48** | 40.48 |
+| the bytes a row takes, the plain file | **62.82** | 62.82 |
+| the plain file's bytes over the dictionary file's | **1.55** | 1.55 |
+| the plain file's write over the dictionary file's | **1.08** | 1.08 |
+| the plain file's read over the dictionary file's | **2.60** | 2.62 |
+
+**And the batch size decides the bytes.** In the first column the file the probe wrote
+**is the published file, byte for byte** — **242,857,841** bytes, compared byte for byte and found equal. In
+the second column it is **242,856,197** bytes, and the two differ **from byte 7** — which is the third byte
+of the first page header, the page's uncompressed size.
+
+**The mechanism is in the writer.** The Parquet writer splits **every batch it is handed** into
+mini-batches of `DEFAULT_WRITE_BATCH_SIZE` — **1,024** values — and the dictionary's fallback to plain, the
+point where the dictionary page crosses its one-megabyte limit, is decided at one of those boundaries. **65,536
+is 64 × 1,024**, so the boundaries land on the same value indices every time and the file comes out the same.
+**125,000 is 122 × 1,024 + 192**, so they drift: the fallback lands later, the dictionary page holds **131,685**
+values instead of **131,616**, and the file is **1,644 bytes** shorter. **So the writer's output is a function
+of the caller's batch size**, and a store that promises reproducible files has to fix it.
+
+**And the encoding is the larger decision.** The same rows written with the dictionary off take **376,933,328**
+bytes against **242,857,841** — **1.55×** the bytes — and cost **1989.261 ms** to write against
+**1844.195 ms**, so **1.08×** the write time. **And they read back 2.60× slower**: **1427.515 ms** against
+**548.445 ms** for the whole file. §3h measured the dictionary's trade on the **read** side and found it a measurement rather than a
+rule; here it is measured on **both** sides, and the dictionary wins on the read by more than it loses on the
+write.
+
+**And the commit is cheap.** The whole five-step sequence — the `fsync` of the data file, the manifest
+written and `fsync`ed, the `rename`, the `fsync` of the directory — is **7.651 ms**, which is **0.004** of the
+write. **So the protocol's shape is not constrained by the flush on this host**, and the store's commit can be
+the simple one: the data durable first, then the manifest that names it, then the `rename`, then the directory.
+
+**And the `fsync` measured here is the platform's `fsync`, not a drive's flush.** On APFS the two are
+different: `fsync` makes the file's data durable with respect to the operating system, while `F_FULLFSYNC`
+additionally flushes the drive's write cache. Rust's `File::sync_all` is the former. The **2.118 ms** above is
+therefore the **logical** flush's cost, and the durability it buys on this platform is weaker than the number
+suggests. **The commit protocol has to be checked on the platform it will ship on.**
+
+**And the four decisions the numbers make.** The **row groups** are a million rows — the file's own — and one
+of them costs **306.230 ms** to write. The **commit** is a manifest commit of five steps at **7.651 ms**, and
+nothing in its shape is forced by the flush here. The **encoding** keeps the dictionary on: **55%** fewer
+bytes and **2.60×** faster to read for **1.08×** the write time. And the **batch size** is fixed at **65,536**,
+because the bytes depend on it.
+
+**And the answer to the question the store's premise rests on.** The write costs **3.36×** a full read of the
+file and **24.04×** a two-column read of it. So *write once, read many* pays for itself after about **four**
+full reads, or about **twenty-five** scans. **For a bulk-loaded analytical table that is read many times, it
+does** — and the read side of this repository is the half that is measured to a tenth of a millisecond.
+
+**The host was busy**: the load averages were **7.87**, **7.57** and **7.99** for the first set and **9.63**,
+**7.64** and **9.00** for the second. The raw reports are committed under their own names, and the figures
+above are derived from them by `python3 scripts/medians.py`; the guard checks every one of them **inside this
+section**.
+
 ---
 
 ## 4. The defects the increments found
@@ -3371,6 +3479,22 @@ just probe-join "data/lineitem.parquet" "bench-results/join-cost-spec036-before-
 # the hunt: nine more campaigns of the same instrument
 just probe-join "data/lineitem.parquet" "bench-results/join-cost-spec036-hunt-run1.json"
 ```
+
+**And the write-side probe**, in the two batch sizes, three campaigns each:
+
+```bash
+just probe-write "data/lineitem.parquet" \
+    "bench-results/write-cost-run1.json" 65536
+just probe-write "data/lineitem.parquet" \
+    "bench-results/write-cost-engine-batch-run1.json" 125000
+```
+
+The probe writes the published file's own rows back out, commits the file the way an append-only store
+commits it, reads it back through the engine's own reader, and compares it with the original byte for
+byte. The third argument is the batch size the rows arrive in, and it is the variable: `65536` reproduces
+the published file exactly, and the engine's own `125000` does not. The tables in
+[§3s](#3s-the-write-side) are derived from those reports by `python3 scripts/medians.py`, and the guard
+checks them like the rest.
 
 The probe runs the engine's **own** plans through the engine's own entry point and checks the answers
 against the published ones before it times anything, so it is the same query the tables above publish.
