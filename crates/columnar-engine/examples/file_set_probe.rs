@@ -155,7 +155,7 @@ fn writer_properties() -> WriterProperties {
     WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_dictionary_enabled(true)
-        .set_max_row_group_size(ROW_GROUP_ROWS)
+        .set_max_row_group_row_count(Some(ROW_GROUP_ROWS))
         .set_statistics_enabled(EnabledStatistics::Chunk)
         .set_writer_version(WriterVersion::PARQUET_1_0)
         .set_bloom_filter_enabled(false)

@@ -142,8 +142,8 @@ anyhow = "1.0" # binaries and the bench harness only; never in columnar-core.
 # Only the I/O boundary uses Parquet. The engine's internal representation
 # (column chunks, encodings, batches) is its own, and nothing above the
 # reader knows Parquet exists -- see ADR-0005.
-parquet = { version = "54", default-features = false, features = ["arrow", "snap"] }
-arrow = { version = "54", default-features = false }
+parquet = { version = "58.4.1", default-features = false, features = ["arrow", "snap"] }
+arrow = { version = "58.4.1", default-features = false }
 
 # --- C++ FFI seam ----------------------------------------------------------
 # Builds the comparison kernel. The `cc` crate drives the host C++ compiler;

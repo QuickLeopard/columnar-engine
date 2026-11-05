@@ -1303,7 +1303,7 @@ mod tests {
         // so it is set to the first batch's row count: the groups are then
         // the batches, and the last one holds the remainder.
         let properties = WriterProperties::builder()
-            .set_max_row_group_size(row_counts.first().copied().unwrap_or(1))
+            .set_max_row_group_row_count(Some(row_counts.first().copied().unwrap_or(1)))
             .build();
         let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(properties))
             .expect("the writer is built");

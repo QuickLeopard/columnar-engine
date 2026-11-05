@@ -638,7 +638,7 @@ fn write_counterfactual(path: &Path, name: &str, style: Style, values: &[f64]) {
     let schema = Arc::new(Schema::new(vec![Field::new(name, ArrowType::Float64, false)]));
     let mut builder = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
-        .set_max_row_group_size(ROW_GROUP_ROWS)
+        .set_max_row_group_row_count(Some(ROW_GROUP_ROWS))
         .set_statistics_enabled(EnabledStatistics::Chunk)
         .set_writer_version(WriterVersion::PARQUET_1_0);
     builder = match style {

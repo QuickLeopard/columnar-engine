@@ -60,7 +60,7 @@ fn column_encodings(path: &Path, column: usize) -> Vec<Encoding> {
     let mut encodings = Vec::new();
     for row_group in metadata.row_groups() {
         let chunk = row_group.columns().get(column).expect("the row group has the column");
-        encodings.extend(chunk.encodings().iter().copied());
+        encodings.extend(chunk.encodings());
     }
     encodings
 }

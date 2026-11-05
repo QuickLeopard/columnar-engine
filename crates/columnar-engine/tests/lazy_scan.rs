@@ -109,7 +109,7 @@ fn write_row_groups(path: &Path, batches: &[RecordBatch]) {
         .set_dictionary_enabled(true)
         // One row group per batch: the writer flushes the current row group
         // when it already holds this many rows.
-        .set_max_row_group_size(rows)
+        .set_max_row_group_row_count(Some(rows))
         .build();
     let file = File::create(path).expect("the temporary file can be created");
     let mut writer = ArrowWriter::try_new(file, first.schema(), Some(properties))

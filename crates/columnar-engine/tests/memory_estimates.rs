@@ -82,7 +82,8 @@ fn write_file(path: &Path) {
     let file = File::create(path).expect("the file is created");
     // The writer buffers rows and flushes a row group when it reaches the
     // limit, so the limit is what decides how many row groups the file has.
-    let properties = WriterProperties::builder().set_max_row_group_size(GROUP_ROWS).build();
+    let properties =
+        WriterProperties::builder().set_max_row_group_row_count(Some(GROUP_ROWS)).build();
     let mut writer =
         ArrowWriter::try_new(file, schema.clone(), Some(properties)).expect("the writer is built");
     for group in 0..DAYS {

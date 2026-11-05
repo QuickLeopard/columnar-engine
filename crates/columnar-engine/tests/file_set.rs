@@ -127,7 +127,8 @@ fn schema() -> Arc<Schema> {
 fn write(path: &Path, first: usize, count: usize, row_group_rows: usize) {
     let schema = schema();
     let file = File::create(path).expect("the file is created");
-    let properties = WriterProperties::builder().set_max_row_group_size(row_group_rows).build();
+    let properties =
+        WriterProperties::builder().set_max_row_group_row_count(Some(row_group_rows)).build();
     let mut writer =
         ArrowWriter::try_new(file, schema.clone(), Some(properties)).expect("the writer is built");
     for start in (0..count).step_by(row_group_rows) {

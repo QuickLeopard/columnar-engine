@@ -85,7 +85,7 @@ fn write_row_groups(path: &Path, batches: &[RecordBatch]) {
     let properties = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_dictionary_enabled(true)
-        .set_max_row_group_size(rows)
+        .set_max_row_group_row_count(Some(rows))
         .build();
     let file = File::create(path).expect("the temporary file can be created");
     let mut writer = ArrowWriter::try_new(file, first.schema(), Some(properties))
