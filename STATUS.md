@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **35 specs**, **42 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **35 specs**, **43 ADRs** and **29 defects** so far, and every one
 of the specs but the last is closed.
 
 ---
@@ -294,11 +294,24 @@ for a pinned x86-64 runner; it has not run on one.
   **38.640 ms** is not re-attributed, and what the increment makes true is that **the next time the
   file's state moves, the two will be measured apart, in the same iteration.**
   [§3r](PERF.md#3r-the-file-state-floor) has the tables.
-- **The measurement track's question is answered, and what is left is the work the repository cannot take
-  on its own.** The next increment is **the library's publish** — it needs a crates.io account and a
-  token, and it makes the code public — or the **`parquet` bump**, whose target is known and whose own
-  measurement has to be taken because Arrow's decode is what the published figures measure. Both are
-  written down below, and neither is a spec yet.
+- **The write side is measured, and the store's shape is decided by figures.** Spec 037 priced the half
+  of the engine that no figure had ever measured. The write of the published file is **1844.195 ms**, one
+  row group costs **306.230 ms**, and the **commit** — the data file's `fsync`, the manifest written and
+  `fsync`ed, the `rename`, the directory's `fsync` — is **7.651 ms**, which is **0.004** of the write:
+  **the protocol's shape is not constrained by the flush on this host**, so the store needs no write-ahead
+  log and no rollback to be affordable. **And the dictionary stays on**: the same rows written plain take
+  **1.55×** the bytes and read back **2.60×** slower. **And the batch size is a property of the bytes**:
+  at **65,536** rows the probe's file **is** the published file, byte for byte, and at the engine's own
+  **125,000** it differs **from byte 7** — the writer cuts its mini-batches, and the dictionary's fallback
+  with them, at the caller's batch boundary. **And the write costs 3.36× a full read**, so *write once,
+  read many* pays for itself after about four full reads.
+  [§3s](PERF.md#3s-the-write-side) has the tables, and
+  [ADR-0043](docs/adr/0043-the-write-side.md) records the decision.
+- **The measurement track's question is answered, and the next increment is the store's own code.** What
+  is left besides it is the work the repository cannot take on its own: **the library's publish** — it
+  needs a crates.io account and a token, and it makes the code public — and the **`parquet` bump**, whose
+  target is known and whose own measurement has to be taken because Arrow's decode is what the published
+  figures measure. Both are written down below, and neither is a spec yet.
 - **The three crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
   research harness into a library: the surface is decided and written down (**45 names**, closed by the
   rule that every type in a public signature is on the list), the three crates package **in the order
