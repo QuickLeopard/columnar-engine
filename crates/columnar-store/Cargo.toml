@@ -13,12 +13,19 @@ description = "An append-only store for the columnar engine: a writer, a manifes
 readme = "README.md"
 keywords = ["columnar", "storage", "parquet", "embedded-analytics"]
 categories = ["database-implementations", "data-structures"]
-# The crate's API is new, and the next increment changes it -- the engine has
-# to read a table that is many files, and the store's own surface will follow
-# that. So the crate is not published yet: a first published version is a
-# promise, and this one has not been reviewed by an embedder. The publish
-# waits for the token, and its place in the order is in STATUS.md.
-publish = false
+# The crate is published with the others.
+#
+# It was held back while its API was still moving: the engine had to learn to
+# read a table that is many files, and the store's own surface was going to
+# follow that. **Spec 040 settled both** -- the engine has `FileSetSource`, and
+# the store's `Table::paths` is the list of paths it takes -- so the reason is
+# spent and the crate is publishable.
+#
+# **The publish itself is a separate act**, and it is the user's: it needs a
+# crates.io account and a token. The order is computed from the manifests by
+# `scripts/check-package.sh`, and the store depends on **nothing** in the
+# workspace, so it lands between the kernels and the engine.
+publish = true
 # The store's probe is this project's evidence harness, not an embedder's
 # example, so the package does not carry it.
 exclude = ["examples/**"]
@@ -39,4 +46,11 @@ thiserror = { workspace = true }
 [dev-dependencies]
 # The generator, for the test that says the store writes the file the
 # generator wrote. It is a benchmark fixture and is never published.
-columnar-testdata = { workspace = true }
+#
+# The dependency is **path-only**, and that is not a style choice: a
+# path-only dependency is **dropped** from the published manifest, and a
+# dependency with a version is not. `columnar-testdata` is not on crates.io,
+# so a versioned dev-dependency on it makes `cargo package` fail with
+# "no matching package named `columnar-testdata` found" -- and the crate
+# could not be published at all.
+columnar-testdata = { path = "../../crates/columnar-testdata" }

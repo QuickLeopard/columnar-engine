@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **38 specs**, **46 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **38 specs**, **47 ADRs** and **29 defects** so far, and every one
 of the specs but the last is closed.
 
 ---
@@ -354,12 +354,17 @@ for a pinned x86-64 runner; it has not run on one.
 - **The store's table can be on the probe side of a join, and not on the build side.** `JoinSpec.build_path`
   is one path, and the build side opens one file — so the build side is still the plan's shape and not the
   source's, and it is named rather than left to be discovered.
-- **The store's crate is not published.** The engine can now read the store's tables, so the store's own
-  surface has its shape — but a first published version is still a promise that has not been reviewed by an
-  embedder. **The publish also needs the script's order to learn a tie**: the store depends on the core,
-  and so does the kernels, so two crates are ready at once and `scripts/check-package.sh`'s total-order
-  check refuses that today. **And the publish itself needs the account and the token**, which the
-  repository does not have.
+- **The store's crate is publishable, and the publish is the user's.** The engine can now read the store's
+  tables, and `Table::paths` hands it the list of paths it takes, so the store's own surface has its shape.
+  **And the crate could not even be packaged** until now: its dev-dependency on the generator carried a
+  version, and the generator is not on crates.io, so `cargo package` failed with *"no matching package named
+  `columnar-testdata` found"* — a **path-only** dependency is dropped from the published manifest and a
+  versioned one is not. **And the two reasons ADR-0044 gave for holding the store back were wrong**: the
+  store does **not** depend on the core (it depends on nothing in this workspace), and the increment that
+  was named is done. **The publish order is `columnar-core`, `columnar-kernels`, `columnar-store`,
+  `columnar-engine`** — the graph decides what it can and the list breaks the rest — and
+  `cargo publish --dry-run -p columnar-store` passes. **The publish itself needs the account and the
+  token**, which the repository does not have.
 - **The three crates are ready to publish, and the publish is a separate act.** Spec 034 turned the
   research harness into a library: the surface is decided and written down (**46 names**, closed by the
   rule that every type in a public signature is on the list), the three crates package **in the order

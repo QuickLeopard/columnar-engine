@@ -133,6 +133,20 @@ let store = Store::open("/tmp/warehouse")?;
 let manifest = store.append("lineitem", &batches)?;
 ```
 
+**And the table hands the engine its files.** `Table::paths` is the glue: the list of paths, in the
+table's order, is what the engine's source over a set of files takes.
+
+```rust
+use columnar_engine::prelude::*;
+use columnar_store::Store;
+
+let store = Store::open("/tmp/warehouse")?;
+let table = store.table("lineitem")?.expect("the table is there");
+
+let set = FileSetSource::open(&table.paths())?;
+let result = set.execute(&plan, &ExecOptions::default())?;
+```
+
 **And the rows arrive on the store's grid.** Every batch but the last has to be **65,536** rows, and the
 store checks it: the Parquet writer cuts every batch it is handed into mini-batches of 1,024 values, and
 the dictionary's fallback to plain is decided at one of those boundaries, so **the same rows in a different
@@ -143,9 +157,9 @@ engine's read path cannot move because of anything the store does. **The glue be
 paths** -- and the engine's side of that glue is built: `FileSetSource` reads the set as one table, and it
 costs nothing measurable over reading the same rows in one file.
 
-**And the crate is not published yet.** Its API is new, and a first published version is a promise that has
-not been reviewed by an embedder -- so `columnar-store` carries `publish = false` for now, and the three
-crates below are the ones a `cargo add` can reach.
+**And the crate publishes with the others.** It was held back while its API was still moving, and the
+increment that settled it — the engine's source over a set of files — is done. **The publish itself is a
+separate act** and it needs a crates.io account and a token: the order and the commands are below.
 
 ---
 
@@ -565,19 +579,25 @@ change the moment the struct grew.
 
 ---
 
-## Publishing the three crates
+## Publishing the four crates
 
-The three crates publish in the order their dependencies decide — **`columnar-core`, then
-`columnar-kernels`, then `columnar-engine`** — because the dependency direction is total and
-acyclic. `columnar-core` → `columnar-kernels` → `columnar-engine`.
+The four crates publish in the order their dependencies decide — **`columnar-core`, then
+`columnar-kernels`, then `columnar-store`, then `columnar-engine`**.
 
 `columnar-core` depends on nothing in the workspace. `columnar-kernels` depends on
-`columnar-core`. `columnar-engine` depends on both. Each internal dependency carries a `version`
-beside its `path`, so the published crate resolves on crates.io rather than in the workspace — and
-that is what makes the order mandatory: `columnar-kernels` cannot be published before
-`columnar-core` is on crates.io, and `columnar-engine` cannot be published before both are.
+`columnar-core`. `columnar-engine` depends on both. `columnar-store` depends on **nothing** in the
+workspace — it is below the engine and below the core, and it writes files rather than reading them
+through the engine's vocabulary. Each internal dependency carries a `version` beside its `path`, so
+the published crate resolves on crates.io rather than in the workspace — and that is what makes the
+order mandatory: `columnar-kernels` cannot be published before `columnar-core` is on crates.io, and
+`columnar-engine` cannot be published before both are.
 
-Each crate's `--dry-run` is run first, and the three are published in that order:
+**The store is the one the dependency graph does not place**, because it depends on nothing: it is
+ready beside the core. **Where the graph does not decide, the list does** — the list in
+`scripts/check-package.sh` is written in the publish order, and the script computes the rest. The
+order is therefore `columnar-core`, `columnar-kernels`, `columnar-store`, `columnar-engine`.
+
+Each crate's `--dry-run` is run first, and the four are published in that order:
 
 ```bash
 # 1. columnar-core -- it depends on nothing in the workspace.
@@ -588,7 +608,11 @@ cargo publish -p columnar-core
 cargo publish --dry-run -p columnar-kernels
 cargo publish -p columnar-kernels
 
-# 3. columnar-engine -- it depends on both, which are now published.
+# 3. columnar-store -- it depends on nothing in the workspace, so it goes here.
+cargo publish --dry-run -p columnar-store
+cargo publish -p columnar-store
+
+# 4. columnar-engine -- it depends on both, which are now published.
 cargo publish --dry-run -p columnar-engine
 cargo publish -p columnar-engine
 ```

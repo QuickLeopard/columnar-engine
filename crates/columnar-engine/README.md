@@ -112,6 +112,12 @@ probe side's row order.
 
 **Two runs produce the same output in the same order.** The same plan over the same data, twice.
 
+**A table that is many files is one table.** `FileSetSource` reads a **set** of Parquet files as one
+table: the metadata merged, the statistics the table's, the predicate reaching every file, and the rows
+in the files' order. It costs **nothing measurable** over reading the same rows in one file, and the
+naive way — open each file and run the query over each one — is wrong for a filter, an aggregate and a
+join.
+
 ---
 
 ## The boundaries

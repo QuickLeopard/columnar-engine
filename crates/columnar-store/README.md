@@ -66,14 +66,26 @@ does not shrink, and it does not change in place.
 ## Where it sits
 
 **Below the engine.** This crate does not depend on `columnar-engine`: it writes the files the engine
-reads, and the engine's read path cannot move because of anything here. The glue between them is a path.
+reads, and the engine's read path cannot move because of anything here. It does not depend on
+`columnar-core` either -- it depends on nothing in this workspace.
 
-## It is not published yet
+**The glue is a list of paths.** The engine reads a table that is *many* files through one source over
+a set of files, and that source takes the list of paths. `Table::paths` is that list, in the table's
+order -- and the table's order is the order the rows come back in.
 
-The crate's API is new, and the increment that teaches the engine to read a table that is *many* files
-changes it. A first published version is a promise, and this one has not been reviewed by an embedder --
-so the crate carries `publish = false` for now. It is in the tree, and the three published crates are the
-ones a `cargo add` can reach.
+```rust
+use columnar_store::Store;
+
+let store = Store::open("/tmp/warehouse")?;
+let table = store.table("lineitem")?.expect("the table is there");
+let paths = table.paths();
+```
+
+## It publishes with the others
+
+It was held back while its API was still moving, and the increment that settled it -- the engine's
+source over a set of files -- is done. **The publish itself is a separate act**: it needs a crates.io
+account and a token, and the order and the commands are in the repository's `docs/embedding.md`.
 
 ## The licence
 

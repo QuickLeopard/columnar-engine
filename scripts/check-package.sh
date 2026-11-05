@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 #
-# check-package.sh -- the three crates package, in the order their
+# check-package.sh -- the four crates package, in the order their
 # dependencies decide, and what they carry is what an embedder needs.
 #
 # # The problem
 #
-# A crate that cannot be packaged is a crate nobody can depend on. The three
+# A crate that cannot be packaged is a crate nobody can depend on. The four
 # published crates here depend on each other -- `columnar-engine` depends on
 # `columnar-core` and `columnar-kernels` -- and cargo resolves a packaged
-# crate's dependencies from crates.io, not from the workspace. So the three
-# crates package in exactly one order: `columnar-core`, then
-# `columnar-kernels`, then `columnar-engine`. The order is not a convention
-# here; it is what the dependency graph decides.
+# crate's dependencies from crates.io, not from the workspace. So the crates
+# package in the order the dependency graph decides: `columnar-core`, then
+# `columnar-kernels`, then `columnar-store`, then `columnar-engine`. The
+# order is not a convention here; it is what the dependency graph decides.
+#
+# And the store is the one the graph does not place: it depends on **nothing
+# in the workspace**, so it is ready beside the core. **Where the graph does
+# not decide, the list does** -- and the list is written in the publish
+# order.
 #
 # The second thing a package gets wrong is what it *carries*. A research
 # harness that ships as a library is a library with fourteen measurement
@@ -22,8 +27,10 @@
 #
 # 1. **The order.** The publish order is *computed* from the manifests, not
 #    written down here: every internal dependency is read out of the
-#    manifests, and the order is the topological sort of them. If the graph
-#    ever stops being a total order, this fails.
+#    manifests, and the order is the topological sort of them. **Where the
+#    graph does not decide -- a crate that depends on nothing in the
+#    published set is ready beside the crate that depends on nothing -- the
+#    list decides**, and the list is the publish order for those ties.
 # 2. **The tree.** For each crate, `cargo package --list` prints the files
 #    that would ship. The tree must hold the crate's **own** README, its
 #    `src/`, and a licence file -- and it must hold **no probe, no dataset
@@ -47,9 +54,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-# The crates that are published. The order they are listed in is *not* the
-# publish order -- the publish order is computed below, from the manifests.
-PUBLISHED=(columnar-core columnar-kernels columnar-engine)
+# The crates that are published. The publish order is computed below, from the
+# manifests -- and where the manifests do not decide, **this list does**: it
+# is written in the publish order, so the crate that depends on nothing in
+# the workspace lands between the kernels and the engine.
+PUBLISHED=(columnar-core columnar-kernels columnar-store columnar-engine)
 
 fail() {
     echo "FAIL: $*" >&2
@@ -63,10 +72,11 @@ note() {
 # --- the publish order, computed ------------------------------------------
 #
 # Every internal dependency is read out of the manifests, and the order is
-# the topological sort. The graph is total and acyclic -- core depends on
-# nothing, kernels depends on core, engine depends on both -- so the sort
-# has exactly one answer. A cycle, or a crate that depends on something
-# outside the published set, fails here.
+# the topological sort. The graph is acyclic -- core depends on nothing,
+# kernels depends on core, engine depends on both, and the store depends on
+# nothing in the workspace -- and where it does not decide, the list does. A
+# cycle, or a crate that depends on something outside the published set, fails
+# here.
 
 echo "== the publish order, computed from the manifests"
 
@@ -99,8 +109,10 @@ while remaining:
     ready = [c for c in remaining if all(d in order for d in dependencies[c])]
     if not ready:
         raise SystemExit(f"the dependency graph has a cycle among {remaining}")
-    if len(ready) > 1:
-        raise SystemExit(f"the dependency graph is not a total order: {ready} are ready at once")
+    # Where the graph does not decide, the list does. The list is written in
+    # the publish order, so the tie is broken the way the publish is meant to
+    # happen -- and the graph still decides everything it can.
+    ready.sort(key=crates.index)
     order.append(ready[0])
     remaining.remove(ready[0])
 
@@ -203,5 +215,5 @@ for crate in "${publish_order[@]}"; do
 done
 
 echo
-echo "The three crates are ready to publish, in the order above."
+echo "The four crates are ready to publish, in the order above."
 echo "The publish itself is a separate act: see docs/embedding.md."

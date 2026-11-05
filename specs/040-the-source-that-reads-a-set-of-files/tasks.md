@@ -29,6 +29,17 @@
 - [x] Three campaigns: the set's read against the one-file read and against the files read one by one.
 - [x] The host's load average published with each, and the spread beside every median.
 
+## Phase 3a — the glue, and the store's publish
+
+- [x] The **glue is one call**: `Table::paths` hands the engine the list of paths it takes, in the table's
+      order, and the store's scope is amended with the reason recorded in the spec.
+- [x] The **crate packages**: the dev-dependency on the generator is **path-only**, so it is dropped from
+      the published manifest, and the store carries its own `LICENSE`.
+- [x] The **publish order** is computed from the manifests, and the tie the graph cannot break -- the
+      store depends on nothing -- is broken by the list.
+- [x] The **record is corrected**: ADR-0044's two wrong sentences are corrected where they were published,
+      and ADR-0047 records the decision.
+
 ## Phase 4 — the publication
 
 - [x] `PERF.md` publishes the source's cost, and the guard checks every figure **inside the section that

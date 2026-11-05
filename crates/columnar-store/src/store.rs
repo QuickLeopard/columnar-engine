@@ -183,6 +183,24 @@ impl Table {
         &self.manifest.files
     }
 
+    /// The table's files' **paths**, in the order they were committed.
+    ///
+    /// **This is the glue.** The engine reads a table that is **many files**
+    /// through one source over a set of files, and that source takes the list
+    /// of paths -- so this list is what the embedder hands it:
+    ///
+    /// ```text
+    /// let paths = table.paths();
+    /// let set = FileSetSource::open(&paths)?;
+    /// ```
+    ///
+    /// The order is the table's order, and it is the order the rows come back
+    /// in.
+    #[must_use]
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.manifest.files.iter().map(|entry| self.dir.join(&entry.name)).collect()
+    }
+
     /// The rows in the table.
     #[must_use]
     pub fn rows(&self) -> u64 {

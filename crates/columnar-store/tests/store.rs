@@ -130,6 +130,26 @@ fn a_second_append_adds_a_file_and_keeps_the_first() {
 }
 
 #[test]
+fn the_table_hands_the_engine_the_paths_of_its_files() {
+    let batches = rows_of(generated());
+    let store = Store::open(scratch("paths")).expect("the store opens");
+    store
+        .append_with("lineitem", &batches, writer_properties(&[COMMENT_COLUMN]))
+        .expect("the first append");
+    store
+        .append_with("lineitem", &batches, writer_properties(&[COMMENT_COLUMN]))
+        .expect("the second append");
+
+    let table = store.table("lineitem").expect("the table reads").expect("the table is there");
+    let paths = table.paths();
+    assert_eq!(paths.len(), 2, "the table is two files");
+    for (path, entry) in paths.iter().zip(table.files()) {
+        assert_eq!(path, &table.file_path(&entry.name), "the path is the file's own");
+        assert!(path.exists(), "the path is a file on disk");
+    }
+}
+
+#[test]
 fn the_grid_is_checked() {
     let batches = rows_of(generated());
     let store = Store::open(scratch("grid")).expect("the store opens");

@@ -20,6 +20,24 @@ wildcards = "deny"
 # Nothing is denied by name. See the `rand` note below for why the one ban
 # this file used to carry was not expressible as a graph rule.
 deny = []
+# A **path** dependency may be a wildcard, and the reason is what a path
+# dependency is.
+#
+# The rule above is about reproducibility: a wildcard version requirement means
+# "whatever is newest at resolve time". **A path dependency is not that** -- it
+# names exactly one crate, at a known path, in this tree, and it resolves to
+# that crate or to nothing.
+#
+# And one dependency here has to be path-only, for the publish's sake:
+# `columnar-store`'s **dev-dependency** on the dataset generator. A dependency
+# with a version has to resolve on crates.io, and the generator is not
+# published, so a versioned one makes `cargo package` fail with "no matching
+# package named `columnar-testdata` found" -- and the crate could not be
+# published at all. **A path-only dependency is dropped from the published
+# manifest**, which is exactly what a dev-dependency on a fixture wants.
+#
+# A **registry** dependency may not be a wildcard, and that is unchanged.
+allow-wildcard-paths = true
 # Skipped lints: skip nothing here on purpose -- we want `bans` fully applied.
 skip-tree = []
 

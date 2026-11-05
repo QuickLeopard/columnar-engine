@@ -125,6 +125,36 @@ is on the list holds, and the list is checked.
 store's manifest — **the embedder hands it the paths**, and the engine does not depend on `columnar-store`
 — and it does not read a file that is not Parquet.
 
+### R9 — The amendment to the scope, and why
+
+**The scope said the store is unchanged, and it was wrong about the glue.** The store's `Table::files` and
+`Table::file_path` were already there, so the embedder *could* build the list of paths -- but the glue is
+**a list of paths**, and the engine's source takes exactly that, so the store handing it over is one call
+rather than a loop in every embedder.
+
+**So the scope was amended: the store gains `Table::paths`, and nothing else.** It writes the files, it
+names them, and it hands the engine the list.
+
+**And the amendment does not change the increment's shape.** The source is the engine's, the measurement is
+the engine's, and the store's one method is the last inch of the glue.
+
+### R10 — The store's publish, and the record that was wrong about it
+
+**The store's crate could not be packaged**, and the reason was a **versioned dev-dependency** on a crate
+that is not on crates.io: a versioned dependency has to resolve there, and a **path-only** one is dropped
+from the published manifest. **And the package carried no licence file**, which every other published crate
+carries.
+
+**And ADR-0044's reason for holding the store back was wrong in two ways.** It said the store depends on
+the core -- **it depends on nothing in this workspace** -- and it said the increment that would change the
+store's API is the one that reads a table of many files -- **that increment did not change the store's API
+at all**, and it is this one.
+
+**So the store publishes with the others**, the publish order is computed from the manifests with the tie
+the graph cannot break broken by the list, and **the publish itself is the user's act**. The record is
+[ADR-0047](../../docs/adr/0047-the-stores-publish.md), and the two wrong sentences are corrected where
+they were published.
+
 ## The plan's shape
 
 Five phases, and the edges between them:
@@ -147,7 +177,7 @@ The edges: 1 → 2 → 3 → 4 → 5, and 3 → 4.
 | | |
 |---|---|
 | The engine's own work | **The single-file path does not move.** The new source is additive, and the published figures of the old one stay where they are. |
-| The store | **Unchanged.** It writes the files; the engine reads them; the glue is a list of paths. |
+| The store | **One method.** It writes the files; the engine reads them; the glue is a list of paths. **And the list is the store's to hand over**: `Table::paths` is it, in the table's order. The scope said "unchanged", and the **amendment** is recorded in [R9](#r9--the-amendment-to-the-scope-and-why). |
 | The published set | **The standing set does not slide.** The source's figures are new, in their own section, in their own family of reports. |
 | The surface | **One new name**, and the surface list is updated with it. |
 | The join's build side | **One file, still.** `JoinSpec.build_path` is one path, and the build side opens one file. **So a store's table can be on the probe side of a join, and not on the build side** — and that is a change to the plan's own shape, which is its own increment. |

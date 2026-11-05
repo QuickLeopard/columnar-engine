@@ -70,12 +70,18 @@ this one builds the store's half.
    No MVCC, no snapshot isolation. No concurrent writers. No row-level updates. No compaction. One writer.**
    A table grows by appending a file and committing it; it does not shrink, and it does not change in place.
 
-9. **The crate is not published yet.** `publish = false`, and the reason is in the manifest: the crate's API
-   is new, and **the next increment changes it** — the engine has to read a table that is many files, and
-   the store's own surface will follow that. A first published version is a promise, and this one has not
-   been reviewed by an embedder. **The publish waits for the token**, and its place in the order is in
-   `STATUS.md`: the store depends on the core, and so does the kernels, so two crates are ready at once and
-   the publish script's total-order check has to learn a tie before the store can join it.
+9. **The crate was not published yet — and the two reasons for it were wrong.** `publish = false`, and the
+   reason in the manifest was: the crate's API is new, and **the next increment changes it** — the engine has
+   to read a table that is many files, and the store's own surface will follow that. **And the publish
+   script's total-order check had to learn a tie**, because the store depends on the core and so does the
+   kernels, so two crates are ready at once.
+
+   **Both sentences are corrected in [ADR-0047](0047-the-stores-publish.md).** The increment that was named
+   — spec 040 — is done, and **the store's own surface did not have to move for it**: `Table::files` and
+   `Table::file_path` were already there, and `Table::paths` now hands the engine the list of paths it takes.
+   **And the store does not depend on the core** — it depends on nothing in this workspace — so the tie is
+   beside the core, not after it, and the publish script breaks it by the list rather than refusing it.
+   **The crate is published with the others now**, and the publish itself is the user's act.
 
 ## Consequences
 
@@ -89,8 +95,9 @@ this one builds the store's half.
 - **The store cannot be read by the engine yet.** A table is many files and the engine's only source is one
   file, so **the engine's side of the glue is the next increment**, with its own spec and its own surface
   decision. Until then, the store is usable for the single-file case — a table committed once.
-- **The crate is not published, and the publish act is still the user's.** The three published crates still
-  need an account and a token; the store needs that too, and the script's order has to learn a tie first.
+- **The crate is published with the others, and the publish act is still the user's.** The four crates still
+  need an account and a token. **The two reasons this ADR gave for holding the store back were wrong**, and
+  they are corrected in [ADR-0047](0047-the-stores-publish.md).
 - **The commit's durability is still the open question spec 037 named.** The `fsync` measured on this host
   is APFS's **logical** flush, not `F_FULLFSYNC`, so the crash behaviour of the five steps is not yet proven
   anywhere.
