@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **35 specs**, **43 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **36 specs**, **43 ADRs** and **29 defects** so far, and every one
 of the specs but the last is closed.
 
 ---
