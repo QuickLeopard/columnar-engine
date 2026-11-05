@@ -1209,6 +1209,29 @@ STORE_WRITE_COUNTS = (
 # The claim the store's file makes, and the sentence that carries it.
 STORE_WRITE_CLAIM = "the published file, byte for byte"
 
+# Spec 039: the file boundary's cost. The same rows, read as one file and as
+# six, on the same host, in the same campaign -- so the only difference
+# between the two reads is the number of files.
+MANY_FILES_REPORTS = sorted((ROOT / "bench-results").glob("many-files-run*.json"))
+SPEC039_SECTION = "### 3u"
+
+MANY_FILES_SHAPES = (
+    ("read_one_file", 3),
+    ("read_six_files", 3),
+)
+
+MANY_FILES_DERIVED = (
+    ("boundary_ms", 3),
+    ("boundary_share", 3),
+)
+
+MANY_FILES_COUNTS = (
+    ("files", 0),
+    ("rows", 0),
+)
+
+MANY_FILES_CLAIM = "the file boundary costs nothing measurable"
+
 
 def join_cost_floors(paths: list[Path], path: str) -> dict[str, object]:
     """The two floors, over one path's ladder.
@@ -3250,6 +3273,69 @@ def main() -> int:
             else:
                 print(f"ok  {'PERF.md':<10} {'the store: the claim':<60} {STORE_WRITE_CLAIM}")
 
+    # Spec 039: the file boundary's cost -- the same rows, read as one file and
+    # as six, in the section that publishes them.
+    many_files_section = section_of(texts["PERF.md"], SPEC039_SECTION)
+    if many_files_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the file boundary's cost "
+            f"({SPEC039_SECTION}) is not in the document"
+        )
+    else:
+        many_files_text = many_files_section.replace(",", "")
+        if len(MANY_FILES_REPORTS) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the file boundary's probe has {len(MANY_FILES_REPORTS)} campaigns, "
+                f"and the method says {MIN_CAMPAIGNS}"
+            )
+        else:
+            many_files_runs = [
+                json.loads(path.read_text()) for path in MANY_FILES_REPORTS
+            ]
+
+            for table, places in (
+                (MANY_FILES_SHAPES, "measurements_ms"),
+                (MANY_FILES_DERIVED, "derived_ms"),
+            ):
+                for name, figure_places in table:
+                    values = [
+                        run[places][name]
+                        for run in many_files_runs
+                        if name in run.get(places, {})
+                    ]
+                    if not values:
+                        continue
+                    rendered = rendered_figure(statistics.median(values), figure_places)
+                    if not figure_in(many_files_section, rendered):
+                        failures.append(
+                            f"PERF.md: the file boundary's probe measures {name} at "
+                            f"{rendered} by the reports but that figure does not appear "
+                            f"in the section"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {f'the boundary: {name}':<60} {rendered}")
+
+            for name, places in MANY_FILES_COUNTS:
+                values = [run[name] for run in many_files_runs if name in run]
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(many_files_text, rendered):
+                    failures.append(
+                        f"PERF.md: the file boundary's probe reports {name} as {rendered} "
+                        f"by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'the boundary: {name}':<60} {rendered}")
+
+            if MANY_FILES_CLAIM not in many_files_section:
+                failures.append(
+                    f"PERF.md: the file boundary's probe does not publish its claim: "
+                    f"the reports say {MANY_FILES_CLAIM}"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {'the boundary: the claim':<60} {MANY_FILES_CLAIM}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -4053,6 +4139,7 @@ def main() -> int:
         f"{2 * (11 + 3 * len(SPEC035_LEAVES['cold'])) + 3 + 2 * (2 * len(SPEC035_LEAVES['cold']) + 6) + 3 * len(SPEC036_MOVED) + 6} of the file-state floor, "
         f"{len(WRITE_COST_FAMILIES) * (1 + len(WRITE_COST_SHAPES) + len(WRITE_COST_DERIVED) + 3 + 1)} of the write side, "
         f"{len(STORE_WRITE_SHAPES) + len(STORE_WRITE_COUNTS) + 1} of the store's own write, "
+        f"{len(MANY_FILES_SHAPES) + len(MANY_FILES_DERIVED) + len(MANY_FILES_COUNTS) + 1} of the file boundary, "
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
     )
     return 0

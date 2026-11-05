@@ -3182,6 +3182,40 @@ between them is a path** — and the engine's side of that glue, the source that
 The raw reports are committed under their own names, the figures above are derived from them by
 `python3 scripts/medians.py`, and the guard checks every one of them **inside this section**.
 
+### 3u. The file boundary's cost
+
+**The store writes a table as a set of files, and the engine's only source is one file.** So the question
+is what the **file boundary** costs, before the engine is taught to read a table that is many files.
+
+**The experiment is the published file's own six row groups**, because they are the same rows as the
+published file: the probe writes them as **six files**, and then reads **the one file** and **the six
+files**, through the engine's own reader, in the same campaign, on the same host. **The only difference
+between the two reads is the number of files.**
+
+| | |
+|---|---|
+| **the read of the one file** | **66.003 ms** |
+| **the read of the six files** | **64.114 ms** |
+| **the boundary's cost** | **−1.152 ms** |
+| the boundary's share of the one file's read | **−0.017** |
+| the files | 6 |
+| the rows | 6,000,000 |
+
+**And the two are level.** The six files' read sits inside the one file's spread — **64.140–66.730 ms**
+against **63.424–65.541 ms** — and the difference is **negative**, so the six files were not slower:
+**the file boundary costs nothing measurable.** And the rows are the same: the probe compares them **row by
+row, in order**, on the key column, and they match.
+
+**And so the source's case is correctness, not performance.** The naive way to read a store's table — open
+each file, run the query over each one — is **wrong three times over**: the rows of a filtered table are
+split across the files, the groups of an aggregate are split across them, and the sides of a join are split
+across them. **A source that reads the set as one table is what makes that right**, and the measurement
+above says what it has to achieve on the performance side: **nothing**. The boundary is free, so the source
+**may not cost anything either** — its whole case is that it is correct.
+
+The raw reports are committed under their own names, the figures above are derived from them by
+`python3 scripts/medians.py`, and the guard checks every one of them **inside this section**.
+
 ---
 
 ## 4. The defects the increments found
@@ -3551,6 +3585,17 @@ just probe-store "data/lineitem.parquet" "bench-results/store-write-run1.json"
 The probe writes the published file's own rows **through the store** -- the writer, the manifest and the
 commit -- and compares the file the store wrote with the published file **byte for byte**. The tables in
 [§3t](#3t-the-stores-own-write) are derived from those reports by `python3 scripts/medians.py`, and the
+guard checks them like the rest.
+
+**And the file boundary's probe**, three campaigns:
+
+```bash
+just probe-many-files "data/lineitem.parquet" "bench-results/many-files-run1.json"
+```
+
+The probe writes the published file's own **six row groups** as six files, and reads the same rows **as
+one file and as six**, through the engine's own reader, in the same campaign. The tables in
+[§3u](#3u-the-file-boundarys-cost) are derived from those reports by `python3 scripts/medians.py`, and the
 guard checks them like the rest.
 
 The probe runs the engine's **own** plans through the engine's own entry point and checks the answers

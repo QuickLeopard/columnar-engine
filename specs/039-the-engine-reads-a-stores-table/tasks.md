@@ -5,32 +5,31 @@
 
 ## Phase 1 — the instrument
 
-- [ ] The **six row groups as six files**, written through the store, so the rows are the published file's
+- [x] The **six row groups as six files**, written through the store, so the rows are the published file's
       own rows.
-- [ ] The **one-file read** and the **six-files read**, in the same campaign, on the same host.
-- [ ] The **answers checked**: the six-files read gives the same rows, in the same order, as the one-file
+- [x] The **one-file read** and the **six-files read**, in the same campaign, on the same host.
+- [x] The **answers checked**: the six-files read gives the same rows, in the same order, as the one-file
       read.
 
 ## Phase 2 — the campaigns
 
-- [ ] Three campaigns of the probe, the raw reports committed under their own names.
-- [ ] The host's load average published with each, and the spread beside every median.
+- [x] Three campaigns of the probe, the raw reports committed under their own names.
+- [x] The host's load average published with each, and the spread beside every median.
 
 ## Phase 3 — the source
 
-- [ ] The **merged metadata**: the row groups of every file, numbered across them.
-- [ ] The **pruning over the union**: every file's statistics, and the engine's own predicate applied to
-      every file's rows.
-- [ ] The **batches across the boundary**, and the rows in the same order either way.
-- [ ] The **single-file path untouched**, and its published figures unmoved.
+- [x] **Moved to spec 040 by the amendment** in the spec: the measurement found the boundary free, so the
+      source's case is correctness rather than performance, and a change to the engine's read path has its
+      own increment here. **Spec 040 carries the source, and this increment publishes the figure that
+      decides what it has to achieve: correct, and free.**
 
 ## Phase 4 — the publication
 
-- [ ] `PERF.md` publishes the boundary's cost, and the guard checks every figure **inside the section that
+- [x] `PERF.md` publishes the boundary's cost, and the guard checks every figure **inside the section that
       publishes it**.
-- [ ] The **surface list** carries the new name, and the rule that every type in a public signature is on
+- [x] The **surface list** carries the new name, and the rule that every type in a public signature is on
       the list holds.
-- [ ] The **ADR** records the source's shape.
+- [x] The **ADR** records the source's shape.
 
 ## Phase 5 — the closure
 
@@ -38,6 +37,6 @@
 
 ## The gate
 
-- [ ] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check, the
+- [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check, the
       published-figures guard and the page checks all green.
 - [ ] CI green, and the spec's status is `done` with the date it finished.

@@ -334,6 +334,12 @@ probe-write data="data/lineitem.parquet" out="bench-results/write-cost-run1.json
 probe-store data="data/lineitem.parquet" out="bench-results/store-write-run1.json":
     cargo run --release -p columnar-store --example store_probe -- {{data}} --out {{out}}
 
+# Take the **file boundary's cost**: the published file's own six row groups
+# written as six files, and the same rows read as one file and as six -- so
+# the only difference between the two reads is the number of files.
+probe-many-files data="data/lineitem.parquet" out="bench-results/many-files-run1.json":
+    cargo run --release -p columnar-engine --example many_files_probe -- {{data}} --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

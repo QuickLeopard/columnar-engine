@@ -2076,6 +2076,43 @@ def print_write_side(sets: list[tuple[str, list[dict]]]) -> None:
             print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
 
 
+def print_many_files(runs: list[dict]) -> None:
+    """Print the file boundary's cost: the same rows, as one file and as six.
+
+    This is spec 039: the store writes a table as a **set of files** and the
+    engine's only source is **one file**, so the cost of the file boundary is
+    measured before the engine is taught to read the set. The experiment is
+    the published file's own six row groups -- the same rows as the published
+    file -- written as six files and read both ways.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE FILE BOUNDARY'S COST ({len(runs)} campaigns) ===")
+    for name, heading in (
+        ("read_one_file", "the read of the one file"),
+        ("read_six_files", "the read of the six files"),
+    ):
+        values = [run["measurements_ms"][name] for run in runs if name in run.get("measurements_ms", {})]
+        if values:
+            print(f"   {heading:<44} {median(values):10.3f} ms   ({min(values):.3f}-{max(values):.3f})")
+    for key, heading in (
+        ("boundary_ms", "the boundary's cost"),
+        ("boundary_share", "the boundary's share of the one file's read"),
+    ):
+        values = [run["derived_ms"][key] for run in runs if key in run.get("derived_ms", {})]
+        if values:
+            print(f"   {heading:<44} {median(values):10.3f}")
+    for key, heading in (("files", "the files"), ("rows", "the rows")):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {int(median(values)):>10}")
+    identical = [run.get("identical") for run in runs]
+    print(f"   the same rows, row by row: {all(identical)}")
+    loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+    if loads:
+        print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
 def print_store_write(runs: list[dict]) -> None:
     """Print the store's own write: the file it wrote, and the claim it makes.
 
@@ -2429,6 +2466,11 @@ def main() -> int:
     # published file byte for byte.
     store_runs = [load(p) for p in sorted(Path("bench-results").glob("store-write-run*.json"))]
     print_store_write(store_runs)
+
+    # Spec 039: the file boundary's cost -- the same rows, read as one file
+    # and as six.
+    many_files_runs = [load(p) for p in sorted(Path("bench-results").glob("many-files-run*.json"))]
+    print_many_files(many_files_runs)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))

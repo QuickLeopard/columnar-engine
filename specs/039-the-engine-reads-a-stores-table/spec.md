@@ -72,6 +72,27 @@ If the many-files read is within reach of the one-file read, the source is built
 much it costs. If it is not, **the refusal is published**, the store's tables are read file by file, and
 that is written down as what they are.
 
+**Amended by the measurement: the many-files read is level with the one-file read, so the source is
+built** — in the increment that follows this one, with its own measurement, because a change to the
+engine's read path has one every time. **This increment publishes the figure that decides what it has to
+achieve: correct, and free.**
+
+## The amendment
+
+**The increment was narrowed by its own measurement, and the reason is recorded here.**
+
+The plan's third phase was to build the source. **The probe found that the file boundary is free**: the
+six files' read is **level** with the one file's read, inside its spread, and the difference is negative.
+**So the source's case is correctness, not performance** — the naive way of reading a store's table (open
+each file, run the query over each one) is *wrong* for a filter, an aggregate and a join, and the source is
+what makes it right, but **there is no performance prize at the boundary to win**.
+
+**And a change to the engine's read path wants its own increment and its own measurement**, the way every
+other change to that path in this repository has had one. So the source is **spec 040**, and this increment
+is the measurement that decides **what it has to achieve**: **correct, and free**. R6 below is amended
+accordingly: the source **is** built, and this increment publishes the figure that says what building it
+costs.
+
 ## The plan's shape
 
 Five phases, and the edges between them:
@@ -79,8 +100,8 @@ Five phases, and the edges between them:
 1. **The instrument** — the probe: the published file's six row groups written as six files, and the
    engine's read of the one and of the six, in the same campaign.
 2. **The campaigns** — three campaigns of the probe, the raw reports committed under their own names.
-3. **The source** — the engine's source over a set of files, with the merged metadata, the pruning over
-   the union, and the batches across the boundary.
+3. **The source** — **moved to spec 040** by the amendment above: the engine's source over a set of
+   files, with the merged metadata, the pruning over the union, and the batches across the boundary.
 4. **The publication** — the section that publishes the boundary's cost and the answers that did not
    change, the guard checks every figure inside it, and the ADR records the source's shape.
 5. **The closure** — the spec's status is `done` with the date it finished, and CI is green on the publish
