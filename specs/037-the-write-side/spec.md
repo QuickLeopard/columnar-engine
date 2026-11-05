@@ -1,7 +1,8 @@
 # Spec 037 — The write side
 
-**Status**: open
+**Status**: done
 **Started**: 2026-11-05
+**Finished**: 2026-11-05
 
 ## The problem
 
