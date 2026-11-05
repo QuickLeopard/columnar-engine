@@ -1267,6 +1267,19 @@ FILE_SET_COUNTS = (
 
 FILE_SET_CLAIM = "reading a table that is many files costs nothing measurable"
 
+# Spec 041: the reader's four gigabytes. A real Parquet file with one
+# hostile page header -- the statistics field declares a length -- read
+# through the engine's own reader, with a counting global allocator around
+# it. So the figure is the **largest single allocation the reader asked
+# for**, and the declared length is a curve.
+HOSTILE_REPORTS = sorted((ROOT / "bench-results").glob("hostile-metadata-run*.json"))
+SPEC041_SECTION = "### 3w"
+
+HOSTILE_CLAIM = "the reader asks for exactly what the file declares"
+
+# The declared lengths the probe sweeps: the curve the figure is read by.
+HOSTILE_ROWS = 4
+
 
 def join_cost_floors(paths: list[Path], path: str) -> dict[str, object]:
     """The two floors, over one path's ladder.
@@ -3435,6 +3448,123 @@ def main() -> int:
             else:
                 print(f"ok  {'PERF.md':<10} {'the source: the claim':<60} {FILE_SET_CLAIM}")
 
+    # Spec 041: the reader's four gigabytes -- a real file with one hostile
+    # page header, read through the engine's own reader, and the largest
+    # single allocation the reader asked for, in the section that publishes
+    # them.
+    hostile_section = section_of(texts["PERF.md"], SPEC041_SECTION)
+    if hostile_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the hostile file's cost "
+            f"({SPEC041_SECTION}) is not in the document"
+        )
+    else:
+        hostile_text = hostile_section.replace(",", "")
+        if len(HOSTILE_REPORTS) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the hostile file's probe has {len(HOSTILE_REPORTS)} campaigns, "
+                f"and the method says {MIN_CAMPAIGNS}"
+            )
+        else:
+            hostile_runs = [json.loads(path.read_text()) for path in HOSTILE_REPORTS]
+
+            # The control: the honest file, and what the reader asked for it.
+            control = [
+                run["control"]["largest_allocation_bytes"]
+                for run in hostile_runs
+                if "control" in run
+            ]
+            if control:
+                rendered = rendered_figure(statistics.median(control), 0)
+                if not figure_in(hostile_text, rendered):
+                    failures.append(
+                        f"PERF.md: the honest file's largest allocation is {rendered} "
+                        f"by the reports but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {'the hostile file: the honest file':<60} {rendered}")
+
+            # Each declared length: the largest allocation the reader asked
+            # for, and the share of the declared length that is.
+            for index, row in enumerate(hostile_runs[0].get("hostile", [])):
+                declared = row["declared_bytes"]
+                values = [
+                    run["hostile"][index]["largest_allocation_bytes"]
+                    for run in hostile_runs
+                    if len(run.get("hostile", [])) > index
+                ]
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), 0)
+                if not figure_in(hostile_text, rendered):
+                    failures.append(
+                        f"PERF.md: a declared {declared} asks for {rendered} by the reports "
+                        f"but that figure does not appear in the section"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'the hostile file: a declared {declared}':<60} {rendered}")
+
+                shares = [
+                    run["hostile"][index]["largest_allocation_bytes"] / declared
+                    for run in hostile_runs
+                    if len(run.get("hostile", [])) > index and declared
+                ]
+                if shares:
+                    rendered = rendered_figure(statistics.median(shares), 1)
+                    if not figure_in(hostile_section, rendered):
+                        failures.append(
+                            f"PERF.md: a declared {declared} asks for a share of {rendered} "
+                            f"by the reports but that figure does not appear in the section"
+                        )
+                    else:
+                        print(
+                            f"ok  {'PERF.md':<10} "
+                            f"{f'the hostile file: the share of a declared {declared}':<60} {rendered}"
+                        )
+
+                times = [
+                    run["hostile"][index]["elapsed_ms"]
+                    for run in hostile_runs
+                    if len(run.get("hostile", [])) > index
+                ]
+                if times:
+                    rendered = rendered_figure(statistics.median(times), 3)
+                    if not figure_in(hostile_section, rendered):
+                        failures.append(
+                            f"PERF.md: a declared {declared} reads in {rendered} by the reports "
+                            f"but that figure does not appear in the section"
+                        )
+                    else:
+                        print(
+                            f"ok  {'PERF.md':<10} "
+                            f"{f'the hostile file: the read of a declared {declared}':<60} {rendered}"
+                        )
+
+            # The honest file's own read time, beside the hostile ones.
+            control_times = [
+                run["control"]["elapsed_ms"] for run in hostile_runs if "control" in run
+            ]
+            if control_times:
+                rendered = rendered_figure(statistics.median(control_times), 3)
+                if not figure_in(hostile_section, rendered):
+                    failures.append(
+                        f"PERF.md: the honest file reads in {rendered} by the reports "
+                        f"but that figure does not appear in the section"
+                    )
+                else:
+                    print(
+                        f"ok  {'PERF.md':<10} "
+                        f"{'the hostile file: the honest file\'s read':<60} {rendered}"
+                    )
+
+            if HOSTILE_CLAIM not in hostile_section:
+                failures.append(
+                    f"PERF.md: the hostile file's probe does not publish its claim: "
+                    f"the reports say {HOSTILE_CLAIM}"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {'the hostile file: the claim':<60} {HOSTILE_CLAIM}")
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -4240,6 +4370,7 @@ def main() -> int:
         f"{len(STORE_WRITE_SHAPES) + len(STORE_WRITE_COUNTS) + 1} of the store's own write, "
         f"{len(MANY_FILES_SHAPES) + len(MANY_FILES_DERIVED) + len(MANY_FILES_COUNTS) + 1} of the file boundary, "
         f"{len(FILE_SET_SHAPES) + len(FILE_SET_DERIVED) + len(FILE_SET_COUNTS) + 1} of the source, "
+        f"{2 + 3 * HOSTILE_ROWS + 1} of the hostile file, "
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
     )
     return 0

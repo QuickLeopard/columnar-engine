@@ -132,12 +132,23 @@ ignore = true
 #
 # **And the related weakness is named here rather than hidden.** The compact
 # protocol's own `read_bytes` allocates the declared length eagerly, bounded by
-# a u32 -- so a hostile Parquet file's metadata can ask for four gigabytes
-# before a byte of payload is read. That is a *different* path, it **is**
-# reachable, and the fix is upstream (`thrift` >= 0.23), which `parquet` 54 does
-# not allow: its manifest pins `thrift = "0.17"`. It is written down as an open
-# question in `STATUS.md` and as an exclusion in spec 034, because a `parquet`
-# bump moves the published figures and wants its own measurement.
+# a u32 -- so a hostile Parquet file's **page headers** can ask for four
+# gigabytes before a byte of payload is read. That is a *different* path, it
+# **is** reachable, and it is written down as an open question in `STATUS.md`
+# and in spec 034, because a `parquet` bump moves the published figures and
+# wants its own measurement.
+#
+# **And the sentence is corrected where it was published, and the measurement
+# is in [ADR-0049](docs/adr/0049-the-readers-four-gigabytes.md).** The hole is
+# in the **page headers** and **not** in the file's metadata: the footer is read
+# through the reader's own *slice* protocol, which refuses a declared length
+# larger than the bytes that remain **before** it allocates -- so a hostile
+# footer asks for 8 KiB, and the honest file's own figure. **And the fix is not
+# `thrift` >= 0.23**: that limit is opt-in (`max_string_size`), the default
+# configuration sets it to none, and `parquet` asks for none either. What
+# closes the hole is `parquet`'s own reader, from **58.4.1**, which does not
+# read the page statistics by default -- so the declared length is never
+# parsed at all.
 ignore = ["RUSTSEC-2024-0436", "RUSTSEC-2026-0435"]
 
 # ---------------------------------------------------------------------------

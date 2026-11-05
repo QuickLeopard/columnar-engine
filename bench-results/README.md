@@ -43,6 +43,7 @@ python3 scripts/medians.py
 | `store-write-run1.json` … `store-write-run3.json` | the **store's own write**: the published file's own rows written **through the store** -- the writer, the manifest and the commit -- and the file the store wrote compared with the published file **byte for byte**. The report carries the store's own write, its commit and its API end to end, and **the verdict on the identity**. In every campaign the store's file **is** the published file. |
 | `many-files-run1.json` … `many-files-run3.json` | the **file boundary's cost**: the published file's own **six row groups** written as six files, and the same rows read **as one file and as six**, through the engine's own reader, in the same campaign -- so the only difference between the two reads is the number of files. The report carries both reads, the boundary's cost in milliseconds and in share, and **the verdict on the rows**, which are compared row by row, in order, on the key column. |
 | `file-set-run1.json` … `file-set-run3.json` | the **source over a set of files**: the published file's own **six row groups** written as six files, and the same rows read **three ways** -- as the one file, as the six files one by one, and as the six files **read as one table** through the engine's new source -- in the same campaign, on the same host. The report carries the three reads, the parallel pair, the two opens, the source's cost against the one file's read in milliseconds and in share, **and the verdict on the rows**: the set's rows are compared with the one file's row by row, in order, on the key column, and the same filtered plan is counted over the file and over the set. |
+| `hostile-metadata-run1.json` … `hostile-metadata-run3.json` | the **hostile file**: a real Parquet file -- one column, one row group, one page -- with that page's header replaced by a hand-written one whose statistics field **declares a length**, read through the **engine's own reader** with a counting global allocator around it. The report carries the **largest single allocation the reader asked for** at each declared length (1 MiB, 64 MiB, 1 GiB, 4 GiB), the share of the declared length that is, the read's time, and **the honest file as the control**: the same file, unpatched, so the figure says what the reader asks for when there is nothing hostile in it. |
 | `join-cost-spec029-run1.json` … `join-cost-spec029-run3.json` | the probe as it stood at spec 029's close -- against the code spec 029 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
 | `join-cost-spec029-before-run1.json` … `join-cost-spec029-before-run3.json` | the set spec 029 measured against the code it replaced, with the instrument of that day. Kept under its own name, for the same reason. |
 | `join-cost-spec028-run1.json` … `join-cost-spec028-run3.json` | the probe as it stood at spec 028's close -- against the code spec 028 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
@@ -173,6 +174,7 @@ questions.
 | §3t | *the store's own write: the file it wrote, its bytes, and the claim that it is the published file* | `store-write-run*.json` |
 | §3u | *the file boundary's cost: the same rows read as one file and as six* | `many-files-run*.json` |
 | §3v | *the source over a set of files: the same rows read as one file, as six files one by one, and as six files read as one table* | `file-set-run*.json` |
+| §3w | *the reader's four gigabytes: a real file with one hostile page header, and the largest single allocation the reader asked for* | `hostile-metadata-run*.json` |
 | §2h | *the same-moment A/B, and the resident movement it cannot explain* | `compare-ab-old-run1.json`, `compare-ab-new-run1.json` |
 
 The **row-group cost** reports carry two published tables: the **ladder** of reader batch sizes, and
@@ -354,6 +356,9 @@ as six files one by one, and as six files read as one table.
 ```bash
 just probe-file-set "data/lineitem.parquet" \
     "bench-results/file-set-run1.json"
+
+just probe-hostile \
+    "bench-results/hostile-metadata-run1.json"
 ```
 
 The reason is recorded in [spec 040](../specs/040-the-source-that-reads-a-set-of-files/spec.md):

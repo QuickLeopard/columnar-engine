@@ -189,11 +189,20 @@ provide**. So the trust boundary is published rather than implied:
 
 - The README states that the engine reads **Parquet files**, opens **no transport**, and speaks no
   binary protocol — and it names the `thrift` advisory the dependency policy exempts, with the reason.
-- **And the related weakness is published, not hidden.** The compact protocol the reader does use
-  allocates the declared length eagerly, bounded by a u32, so a **hostile file's metadata can ask for
-  four gigabytes before a byte of payload is read**. The engine does not fix it — the fix is
-  upstream — but a reader who cannot see it cannot decide whether to read an untrusted file, and the
-  library's whole claim is that it says what it is.
+- **And the related weakness is published, not hidden.** The compact protocol the reader's **page
+  headers** are read with allocates the declared length eagerly, bounded by a u32, so a **hostile
+  file's page header can ask for four gigabytes before a byte of payload is read**. The engine does
+  not fix it — the fix is upstream — but a reader who cannot see it cannot decide whether to read an
+  untrusted file, and the library's whole claim is that it says what it is.
+
+  **And the sentence is corrected where it was published, and the measurement is in
+  [ADR-0049](../../docs/adr/0049-the-readers-four-gigabytes.md).** The hole is in the **page
+  headers** and **not** in the metadata: the footer is read through the reader's own *slice*
+  protocol, which refuses a declared length larger than the bytes that remain **before** it
+  allocates, so a hostile footer asks for **8 KiB** and not for four gigabytes. **And the fix is
+  `parquet`'s own reader, not `thrift` ≥ 0.23** — that limit is opt-in, `parquet` does not ask for
+  it, and from **58.4.1** the reader does not read the page statistics at all, so the declared
+  length is never parsed. The figure is in [`PERF.md` §3w](../../PERF.md#3w-the-readers-four-gigabytes).
 
 The finding is in `STATUS.md`'s open questions as well, and it is **not** this increment's to fix: see
 the scope.

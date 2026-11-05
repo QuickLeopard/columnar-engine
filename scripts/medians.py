@@ -2168,6 +2168,57 @@ def print_file_set(runs: list[dict]) -> None:
         print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
 
 
+def print_hostile(runs: list[dict]) -> None:
+    """Print what a hostile file asks of the reader.
+
+    This is spec 041: the reader is the trust boundary, and the published
+    record said a hostile file could ask for four gigabytes. The experiment is
+    a **real file with one hostile page header** -- the page's header is
+    replaced by a hand-written one whose statistics field declares a length --
+    read through the engine's own reader, with a counting global allocator
+    around it, so the figure is the **largest single allocation the reader
+    asked for**.
+
+    **The declared length is a curve**, and an honest file is the control: a
+    reader that allocates what it is told draws a straight line through the
+    declared lengths, and a reader that refuses the file asks for the same
+    small thing every time.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE HOSTILE FILE ({len(runs)} campaigns) ===")
+    control = [run["control"]["largest_allocation_bytes"] for run in runs if "control" in run]
+    if control:
+        print(f"   {'the honest file, the largest allocation':<44} {int(median(control)):>10}")
+    for index, row in enumerate(runs[0].get("hostile", [])):
+        declared = row["declared_bytes"]
+        largest = [
+            run["hostile"][index]["largest_allocation_bytes"]
+            for run in runs
+            if len(run.get("hostile", [])) > index
+        ]
+        times = [
+            run["hostile"][index]["elapsed_ms"]
+            for run in runs
+            if len(run.get("hostile", [])) > index
+        ]
+        header = row["hostile_header_bytes"]
+        if largest:
+            share = median(largest) / declared if declared else 0.0
+            print(
+                f"   {f'a declared {declared:,} bytes, the largest allocation':<44} "
+                f"{int(median(largest)):>10}   share {share:.3f}"
+            )
+        if times:
+            print(
+                f"   {f'  its read, and the header is {header} bytes':<44} "
+                f"{median(times):10.3f} ms   ({min(times):.3f}-{max(times):.3f})"
+            )
+    loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+    if loads:
+        print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
 def print_store_write(runs: list[dict]) -> None:
     """Print the store's own write: the file it wrote, and the claim it makes.
 
@@ -2531,6 +2582,11 @@ def main() -> int:
     # file, as six files one by one, and as six files read as one table.
     file_set_runs = [load(p) for p in sorted(Path("bench-results").glob("file-set-run*.json"))]
     print_file_set(file_set_runs)
+
+    # Spec 041: the reader's four gigabytes -- a real file with one hostile
+    # page header, and the largest single allocation the reader asked for.
+    hostile_runs = [load(p) for p in sorted(Path("bench-results").glob("hostile-metadata-run*.json"))]
+    print_hostile(hostile_runs)
 
     # The x86-64 kernel A/B, from the GitHub-hosted runner.
     avx2_paths = sorted(Path("bench-results").glob("avx2-run*.json"))

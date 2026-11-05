@@ -3275,6 +3275,63 @@ The raw reports are committed under their own names, the figures above are deriv
 
 ---
 
+### 3w. The reader's four gigabytes
+
+**A library is read by people who did not write it, and it reads files its users provide** — so what a
+hostile file can ask of the reader is not a detail, it is the trust boundary. **The published record
+said a hostile file can ask for four gigabytes, and this is the measurement of what it actually
+asks.**
+
+**The hostile file is a real file with one hostile page header.** The probe writes a real Parquet
+file — one column, one row group, one page — with `parquet`'s own writer, and then replaces that
+page's header with a hand-written one: a Thrift compact header whose statistics field **declares a
+length** and then stops. **The footer is untouched**, so the file's metadata still describes it and
+the reader walks it exactly as it walks an honest one. **The declared length is a curve** — 1 MiB,
+64 MiB, 1 GiB, 4 GiB — and **an honest file is the control**, so the figure says what the reader
+asks for when there is nothing hostile in it.
+
+| | |
+|---|---|
+| **the largest allocation, for a declared 1 MiB** | **1,048,576** |
+| **the largest allocation, for a declared 64 MiB** | **67,108,864** |
+| **the largest allocation, for a declared 1 GiB** | **1,073,741,824** |
+| **the largest allocation, for a declared 4 GiB** | **4,294,967,295** |
+| **the share of the declared length the reader asked for** | **1.0** |
+| **the largest allocation, for an honest file** | **8,192** |
+| the hostile header's size | 25 bytes |
+| the read's time, for the declared 1 MiB | 0.076 ms |
+| the read's time, for the declared 64 MiB | 0.059 ms |
+| the read's time, for the declared 1 GiB | 0.062 ms |
+| the read's time, for the declared 4 GiB | 0.089 ms |
+| the honest file's read time | 0.300 ms |
+
+**And the reader asks for exactly what the file declares — all of it.** At every declared length the
+largest single allocation **is** the declared length, and the share is **1.0**: a **25-byte** header
+in a file of a few hundred bytes makes the reader ask for **4,294,967,295** bytes. **And the cost is
+address space, not time** — the read takes **0.089 ms**, *less* than the honest file's own
+**0.300 ms**, because four gigabytes of untouched pages cost the reader almost nothing to ask for
+and everything to carry.
+
+**And the hole is in the page headers, not in the metadata.** The record said the *metadata*: a
+hostile file's footer declaring a four-gigabyte string. **It does not** — `parquet` reads the
+footer through its own **slice** protocol, which asks the slice for the declared range and refuses
+it when the bytes are not there, *before* it allocates anything, so the largest allocation made
+while opening a hostile footer is **8 KiB**, the same as an honest file's. **The page headers are the
+reachable path**: they are read one after another as the reader walks a row group, through thrift's
+**streaming** compact protocol, and there `read_bytes` does `vec![0u8; len]` — it allocates the
+declared length before it reads a byte of it.
+
+**And the fix the record named would not have closed it.** `thrift` ≥ 0.23 refuses an over-long
+declared length **only if the caller asks it to**: the limit is `max_string_size`, and the default
+configuration sets it to **none**. `parquet` sets no limit either. **What closes it is `parquet`'s
+own reader**: from **58.4.1** it does not read the page statistics by default, so the hostile
+declared length is never parsed at all.
+
+The raw reports are committed under their own names, the figures above are derived from them by
+`python3 scripts/medians.py`, and the guard checks every one of them **inside this section**.
+
+---
+
 ## 4. The defects the increments found
 
 Twenty-nine, all found by measurement, all recorded with their before-and-after numbers in the ADRs

@@ -347,6 +347,16 @@ probe-many-files data="data/lineitem.parquet" out="bench-results/many-files-run1
 probe-file-set data="data/lineitem.parquet" out="bench-results/file-set-run1.json":
     cargo run --release -p columnar-engine --example file_set_probe -- {{data}} --out {{out}}
 
+# Take what a **hostile file** asks of the reader: a real Parquet file with
+# one page header whose statistics field declares a length, read through the
+# engine's own reader, and the largest single allocation it asked for.
+#
+# The declared length is a curve -- 1 MiB, 64 MiB, 1 GiB, 4 GiB -- and an
+# honest file is the control, so the figure says whether the reader asks for
+# what the file declares.
+probe-hostile out="bench-results/hostile-metadata-run1.json":
+    cargo run --release -p columnar-engine --example hostile_metadata_probe -- --out {{out}}
+
 # Sweep the **size** of the data: this engine and every incumbent, at every
 # size, on the same file for each size.
 #

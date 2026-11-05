@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **38 specs**, **48 ADRs** and **29 defects** so far, and every one
-of the specs is closed.
+[`constitution.md`](constitution.md). **39 specs**, **49 ADRs** and **29 defects** so far, and every one
+of the specs but one is closed.
 
 ---
 
@@ -404,16 +404,26 @@ for a pinned x86-64 runner; it has not run on one.
   and this one is the **host's**: the incumbents, which the increment cannot have touched, moved with it.
   [§2i](PERF.md#2i-the-same-code-measured-again) and [§3p](PERF.md#3p-the-joins-stage-measured-again) have
   the tables.
-- **A hostile Parquet file can ask for four gigabytes before a byte of payload is read.** The reader
-  speaks the Thrift **compact** protocol, whose `read_bytes` allocates the declared length eagerly,
-  bounded by a u32 — so a file's metadata can declare a four-gigabyte string. The engine does not fix
-  it: the fix is upstream (`thrift` ≥ 0.23), and `parquet` 54 pins `thrift = "0.17"`, so the fix is a
-  **`parquet` bump** — and a `parquet` bump moves the published figures, because Arrow's decode is
-  measured. **And the target is known, not guessed**: `parquet` **58.4.1** takes **`thrift` ^0.23**, and
-  **59.0.0** and **60.0.0** drop `thrift` altogether — but every one of them takes `arrow` with it
-  (**58.4.1**, **59.0.0**, **60.0.0**), and Arrow's decode is what is measured, so the bump is its own
-  increment with its own figures. **It is named in `deny.toml` with the reason**, and it is written down
-  as [`spec 034`](specs/034-the-engine-as-a-library/spec.md)'s R10 rather than left in the reader.
+- **A hostile Parquet file can ask for four gigabytes before a byte of payload is read — and the
+  sentence that said so was wrong about where, and wrong about the fix.** The reader speaks the Thrift
+  **compact** protocol, whose `read_bytes` allocates the declared length eagerly, bounded by a u32.
+  **And the measurement says the hole is in the file's page headers, not in its metadata**: the
+  footer is read through the reader's own *slice* protocol, which refuses a declared length larger
+  than the bytes that remain **before** it allocates — so a hostile footer asks for **8 KiB**, the
+  same as an honest file's — while the **page headers**, read one after another as the reader walks a
+  row group, go through the *streaming* protocol, and there the declared length is allocated before a
+  byte of it is read. **The probe writes a real file with one hand-written page header and reads it
+  through the engine's own reader**: the largest single allocation the reader asks for is **the
+  declared length, exactly** — 1,048,576 at 1 MiB, 67,108,864 at 64 MiB, 1,073,741,824 at 1 GiB and
+  **4,294,967,295 at 4 GiB**, a share of **1.0** at every length, from a **25-byte** header — and
+  **the cost is address space, not time**: the read takes **0.089 ms**, less than the honest file's own
+  **0.300 ms**. **And the fix the sentence named would not have closed it**: `thrift` ≥ 0.23 refuses
+  an over-long length only if the caller asks it to, the default asks for nothing, and `parquet`
+  asks for nothing either. **What closes it is `parquet`'s own reader, from 58.4.1**, which does not
+  read the page statistics by default — so the declared length is never parsed at all. **The
+  sentence is corrected where it was published** — in [`spec 034`](specs/034-the-engine-as-a-library/spec.md)'s
+  R10, here and in `deny.toml` — and [ADR-0049](docs/adr/0049-the-readers-four-gigabytes.md) records
+  the correction. The figure is in [§3w](PERF.md#3w-the-readers-four-gigabytes).
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a
