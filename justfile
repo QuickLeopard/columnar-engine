@@ -347,6 +347,15 @@ probe-join data="data/lineitem.parquet" out="bench-results/join-cost-run1.json":
 probe-join-parts data="data/lineitem.parquet" iterations="6" threads="1" out="bench-results/join-parts-run1.json":
     cargo run --release -p columnar-cli -- join-parts --data {{data}} --iterations {{iterations}} --threads {{threads}} --out {{out}}
 
+# Take the **build side's keys as a filter** apart: the ladder, the two shapes
+# the filter can take, and the prize.
+#
+# It is spec 047's instrument. The probe side's column is materialised afresh
+# in every iteration, and the candidates are the engine's own probe, line for
+# line -- so the engine's own probe is measured beside them, as the control.
+probe-key-filter data="data/lineitem.parquet" out="bench-results/key-filter-run1.json":
+    cargo run --release -p columnar-engine --example key_filter_probe -- --data {{data}} --out {{out}}
+
 # Take the **write side** apart: the published file's own rows written back out
 # in the file's own row groups, with the file's own writer properties; the
 # commit's five steps, one at a time; and the file read back through the
