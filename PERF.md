@@ -4643,6 +4643,149 @@ the guard **inside this section**. The reports are `bench-results/join-parts-run
 **8.54** and **8.77** — and the host's own drift is published with every difference, because a
 difference of two medians would let the drift land on both sides.
 
+
+### 3ad. The build side's keys as a filter
+
+**What this section is**: what a filter over the build side's keys costs, and what it saves — the question
+[§3ac](#3ac-the-join-orders-query-on-both-sides-taken-apart) named and did not answer.
+
+**The question was this.** The engine's join is **+6.898 ms** behind `DuckDB`'s, and `DuckDB` joins
+**216,783** rows where the engine joins **6,000,000**, because `DuckDB` pushes the build side's keys into
+the probe side's scan as a filter and the engine has no such filter. `DuckDB`'s own filter costs its scan
+**5.827 ms** over six million rows and saves its join **51.422 ms**. **The engine's prize, if its filter
+costs what `DuckDB`'s costs, is the whole of its own join — 14.625 ms — less what the filter would cost
+it.**
+
+**This section does not build the filter. It measures what the filter costs, and the measurement decides
+what is built.** A filter is not built because it is a good idea; it is built because it pays.
+
+#### The instrument
+
+`crates/columnar-engine/examples/key_filter_probe.rs`, driven by `just probe-key-filter`. It is the house's
+ladder, and every rung is measured **in the iteration**:
+
+| the rung | what it is |
+|---|---|
+| **the table's own construction** | the table's own bytes, and the build side's keys over them |
+| **the filter's own construction** | the filter's own bits, and the build side's keys over them |
+| **the table's own load** | the byte, one a probe row: the lookup with nothing else in it |
+| **the filter's own load** | the bit, one a probe row: the test with nothing else in it |
+| **the probe as it is** | the engine's own probe, line for line, without the filter |
+| **the filter in front of the table** | the engine's own probe, line for line, with the filter in the lookup |
+| **the filter compacting the rows** | the filter's test over every row, and the survivors alone probed |
+| **the probe over the survivors alone** | the join the engine would be left with if the rows were kept out of it |
+| **the engine's own probe** | the control: the engine's own probe, over the same column, beside them |
+
+**And the control is what makes the rest of the table a statement about the engine.** The candidates are
+the engine's `probe_direct`, **line for line**, and the engine's own probe is measured in the same
+iteration, over the same column: **7.622 ms** against the candidate's **7.967 ms**. A rung that is not the
+engine's probe would price a shape the engine does not have.
+
+**The probe side's column is materialised afresh in every iteration**, and it is not copied. The engine's
+own query materialises the probe column and then probes it, so the column it probes is one the reader has
+**just written**; a column held warm across the iterations would be a column the engine does not pay for.
+**And that is the whole of the filter's case.** The table is **5,999,995** bytes and the filter
+**750,000**; the filter only wins if the probe column's stream evicts the table and leaves the filter. A
+column kept warm would not evict anything, and the filter would be measured on a shape that does not
+exist.
+
+**And the order alternates.** The six orders are chosen so that **every pair** of candidates is measured
+back to back in **four of the six** iterations, **two in each direction** — a rotation of three would have
+put one pair back to back four times and another twice.
+
+#### The parts
+
+| the rung | the median | the least | the most |
+|---|---|---|---|
+| the table's own construction | 0.672 ms | 0.620 ms | 1.310 ms |
+| the filter's own construction | 0.201 ms | 0.179 ms | 0.307 ms |
+| **the table's own load** | **4.399** ms | 4.049 ms | 5.308 ms |
+| **the filter's own load** | **5.222** ms | 5.082 ms | 5.788 ms |
+| **the probe as it is** | **7.967** ms | 7.005 ms | 16.887 ms |
+| the filter in front of the table | 10.770 ms | 9.085 ms | 21.516 ms |
+| the filter compacting the rows | 8.141 ms | 7.837 ms | 8.799 ms |
+| the probe over the survivors alone | 0.906 ms | 0.858 ms | 1.227 ms |
+| the engine's own probe (the control) | 7.622 ms | 7.103 ms | 9.369 ms |
+
+#### The paired differences
+
+The two sides of every difference are measured **back to back in the same iteration**, so the machine's
+drift cannot land on one side. **The difference is the paired one**, not the difference of two medians.
+
+| the difference, in the same iteration | the median | the least | the most |
+|---|---|---|---|
+| **the filter in front of the table, less the probe as it is** | **+2.318** ms | −3.925 ms | +12.974 ms |
+| **the filter compacting the rows, less the probe as it is** | **+0.547** ms | −8.444 ms | +1.188 ms |
+| **the prize: the probe as it is, less the probe over the survivors** | **+6.981** ms | +6.110 ms | +16.029 ms |
+
+**The sign is what carries the claim, and the filter in front of the table has one.** Ten of its twelve
+paired samples are positive, and the two that are not are the two iterations this host stalled in: in one
+of them the stall landed on the filter's own measurement and in the other on the probe's, and the
+difference moved with it. **The filter's own load is more than the table's own load — 5.222 ms against
+4.399 ms** — and that is the whole of the claim.
+
+**And the shape that replaces the whole probe is a wash.** The filter compacting the rows costs
+**+0.547 ms** at the median, and **four of its twelve paired samples are negative**: the sign is not
+established, and a wash is not a win.
+
+#### The finding
+
+**The prize is real. The prize is unreachable. And the reason is that the engine's lookup is already the
+cheapest membership test there is.**
+
+1. **The prize is worth +6.981 ms.** The probe over the survivors alone costs **0.906 ms**, against the
+   probe as it is at **7.967 ms**: if the rows that cannot match never reached the probe, the engine's
+   join would be **6.981 ms** smaller. **That is the prize §3ac named**, and it is measured, not assumed.
+2. **And a filter's test costs more than the lookup it would replace.** The filter's own load over the
+   same six million rows is **5.222 ms**; the table's own load — one random access into the table's own
+   bytes — is **4.399 ms**. **Both are one random access, and the bitmap's test carries a shift and a
+   mask on top of the access the byte does not.** The direct-addressed table's byte **is** the membership
+   test: the key's own range addresses it, and it consults nothing. **A filter can only be consulted in
+   addition to it, and what it is consulted in addition to is cheaper than it is.**
+3. **And the probe is not much more than the test.** The probe as it is costs **7.967 ms** over six
+   million rows, and the whole of it would have to go for the filter to pay: the filter's own test is
+   **5.222 ms** of that, before its construction (**0.201 ms**) and before the branch that skips the
+   table's byte. **The shape that replaces the whole probe — the filter compacting the rows, so that the
+   survivors alone are probed — is a wash at +0.547 ms.**
+4. **So the filter is not built.** Not in front of the table, and not compacting the rows. The engine
+   keeps no filter, the memory estimate does not move, and the increment changed **no engine work at all**.
+
+**And what survives the refusal is the mechanism, and it is a statement about `DuckDB` too.**
+`DuckDB`'s filter costs its scan **5.827 ms** over six million rows — the same order as this filter's
+**5.222 ms** — and it saves its join **51.422 ms**. **The same test, in the same place, is worth two
+orders of magnitude more.** The difference is not the test: it is what the test replaces. `DuckDB`'s
+filter replaces a **hash join**, which costs **+44.190 ms** more than the engine's lookup over the same
+six million rows; a filter here would replace **a lookup that is already a single load with no hash**.
+**`DuckDB`'s filter is the price of `DuckDB`'s join, and the engine does not have that join to pay for.**
+
+#### What this changes
+
+**The next question is not "how can a filter be made cheaper". It is "where does the engine's join spend
+the rest of its time".**
+
+The engine's join part is **14.625 ms**; its probe over six million rows is **7.967 ms** and its table's
+construction is **0.672 ms**, and the filter is not where the rest of it is — a filter cannot make the
+lookup cheaper, because the lookup **is** the membership test. **And the engine's advantage over
+`DuckDB` is already taken: `DuckDB`'s join is four times dearer a row, and that is why its filter is
+worth having.**
+
+So the next increment has to find the join's other work — the part the probe does not account for — and
+ask what it is. **That is the next question, and this section does not answer it.**
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by
+the guard **inside this section**. The reports are `bench-results/key-filter-run1.json`,
+`bench-results/key-filter-run2.json` and `bench-results/key-filter-run3.json`, and the probe is
+`crates/columnar-engine/examples/key_filter_probe.rs`, driven by `just probe-key-filter`. The decision is
+in [ADR-0059](docs/adr/0059-the-build-side-s-keys-as-a-filter.md).
+
+**The conditions**: three campaigns of six iterations, on one host, with the load average between **5.85**
+and **6.37** — and the host's own drift is published with every difference, because a difference of two
+medians would let the drift land on both sides. **Three of the eighteen iterations carried a host stall
+of about eight milliseconds**, and they are in the spreads above: one landed on the probe as it is, one on
+the filter's own measurement, and one on the probe's again. **The medians are what the house publishes,
+and the medians do not move for a stall in three of eighteen.**
+
+
 ---
 
 ## 4. The defects the increments found

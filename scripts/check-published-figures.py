@@ -753,6 +753,55 @@ JOIN_PARTS_DIFFERENCES = (
     ),
 )
 
+# Spec 047's instrument: the build side's keys as a filter. The ladder's nine
+# rungs, and the three paired verdicts -- the two sides of each measured back
+# to back in the same iteration, with the order alternated, so the machine's
+# drift cannot land on one side.
+#
+# The figures are looked for **inside** the section that publishes them, so a
+# figure that happens to equal an unrelated number elsewhere in the document
+# cannot satisfy the check by accident.
+KEY_FILTER_REPORTS = sorted((ROOT / "bench-results").glob("key-filter-run*.json"))
+KEY_FILTER_SECTION = "### 3ad"
+
+# The campaigns the method calls for. A set with fewer is a failure: a set that
+# is not there is not a set of zero figures, it is the absence of the evidence.
+KEY_FILTER_CAMPAIGNS = 3
+
+# The ladder's rungs, and the label the section publishes each under:
+# (measurement, label, places).
+KEY_FILTER_RUNGS = (
+    ("table_build_ms", "the table's own construction", 3),
+    ("filter_build_ms", "the filter's own construction", 3),
+    ("floor_table_ms", "the table's own load", 3),
+    ("floor_filter_ms", "the filter's own load", 3),
+    ("candidate_table_ms", "the probe as it is", 3),
+    ("candidate_filter_ms", "the filter in front of the table", 3),
+    ("candidate_compacted_ms", "the filter compacting the rows", 3),
+    ("candidate_survivors_ms", "the probe over the survivors alone", 3),
+    ("engine_probe_ms", "the engine's own probe (the control)", 3),
+)
+
+# The paired verdicts, and the label the section publishes each under:
+# (measurement, label, places).
+KEY_FILTER_VERDICTS = (
+    (
+        "the_filter_s_verdict_ms",
+        "the filter in front of the table, less the probe as it is",
+        3,
+    ),
+    (
+        "the_compaction_s_verdict_ms",
+        "the filter compacting the rows, less the probe as it is",
+        3,
+    ),
+    (
+        "the_prize_ms",
+        "the prize: the probe as it is, less the probe over the survivors",
+        3,
+    ),
+)
+
 # (document, label, report, measurement, places)
 #
 # Spec 021's instrument is the **operator probe**, and its figures are the
@@ -1210,6 +1259,22 @@ def _join_parts_one(arm: dict, key: str) -> float | None:
     parts = arm.get("parts") or {}
     value = parts.get(key)
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def _key_filter_samples(runs: list[dict], key: str) -> list[float]:
+    """One family's samples, pooled over every campaign.
+
+    The pooling is the house's rule: every iteration of every campaign is a
+    sample, and the published figure is the median of the pooled samples. The
+    verdict families carry the paired difference already computed -- the two
+    sides of each are measured back to back in the same iteration, with the
+    order alternated -- so they are pooled the same way.
+    """
+    samples: list[float] = []
+    for run in runs:
+        series = run.get(key) or {}
+        samples.extend(float(value) for value in series.get("samples", []))
+    return samples
 
 
 def join_cost_drift(parts: dict[str, list[float]]) -> dict[str, float]:
@@ -3155,6 +3220,65 @@ def main() -> int:
                     )
                 else:
                     print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+
+    # Spec 047: the build side's keys as a filter -- the ladder's nine rungs,
+    # and the three paired verdicts.
+    #
+    # A family that is missing, or that has fewer campaigns than the method
+    # says, is a **failure**, for the reason the join-parts probe's family is:
+    # the evidence is what the figures are derived from.
+    if not KEY_FILTER_REPORTS:
+        failures.append("the key-filter probe's set is missing")
+    elif len(KEY_FILTER_REPORTS) < KEY_FILTER_CAMPAIGNS:
+        failures.append(
+            f"the key-filter probe's set has {len(KEY_FILTER_REPORTS)} campaigns, "
+            f"and the method says {KEY_FILTER_CAMPAIGNS}"
+        )
+
+    if KEY_FILTER_REPORTS:
+        key_filter_runs = [json.loads(path.read_text()) for path in KEY_FILTER_REPORTS]
+        published = section_of(texts["PERF.md"], KEY_FILTER_SECTION)
+        if published is None:
+            failures.append(
+                f"PERF.md: the section that publishes the key-filter probe's figures "
+                f"({KEY_FILTER_SECTION}) is not in the document"
+            )
+        else:
+            for key, label, places in KEY_FILTER_RUNGS + KEY_FILTER_VERDICTS:
+                values = _key_filter_samples(key_filter_runs, key)
+                if not values:
+                    failures.append(
+                        f"PERF.md: no figure for {label} in the key-filter probe's reports"
+                    )
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+
+        # The correctness: a filter that changed the answer would not be a
+        # filter, so a report that says the rows do not agree is a failure.
+        #
+        # The check is on the **reports** and not on the section's prose: the
+        # section is written against these reports, and a guard that matched
+        # wording it had to guess at would fire on a reworded sentence and say
+        # nothing about the evidence the figures come from.
+        for key, label in (
+            ("the_rows_agree", "the rows agree"),
+            ("the_engine_agrees", "the engine agrees"),
+        ):
+            states = {bool(run.get(key)) for run in key_filter_runs}
+            if states == {True}:
+                print(f"ok  {'PERF.md':<10} {label + ', in every campaign':<44} true")
+            else:
+                failures.append(
+                    f"PERF.md: {label} is not true in every key-filter report: "
+                    f"{sorted(states)}"
+                )
 
     # Spec 034's re-measurement: the same code, and the code it replaces,
     # measured back to back on this host. The published figures stand; the
@@ -5304,6 +5428,7 @@ def main() -> int:
         f"{len(SORT_COST_CHECKS)} of the sort probe, "
         f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe, "
         f"{len(JOIN_PARTS_PARTS) + len(JOIN_PARTS_DIFFERENCES)} of the join-parts probe, "
+        f"{len(KEY_FILTER_RUNGS) + len(KEY_FILTER_VERDICTS)} of the key-filter probe, "
         f"{len(SPEC035_FAMILIES) * (2 * (7 + 3 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
         f"{2 * (11 + 3 * len(SPEC035_LEAVES['cold'])) + 3 + 2 * (2 * len(SPEC035_LEAVES['cold']) + 6) + 3 * len(SPEC036_MOVED) + 6} of the file-state floor, "
         f"{len(WRITE_COST_FAMILIES) * (1 + len(WRITE_COST_SHAPES) + len(WRITE_COST_DERIVED) + 3 + 1)} of the write side, "

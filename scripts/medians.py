@@ -2029,6 +2029,126 @@ def _join_parts_rows(iterations: list[dict], side: str) -> list[int]:
     return values
 
 
+# The key-filter probe's ladder: the rungs, and the label each is published
+# under.
+KEY_FILTER_RUNGS = (
+    ("table_build_ms", "the table's own construction"),
+    ("filter_build_ms", "the filter's own construction"),
+    ("floor_table_ms", "the table's own load"),
+    ("floor_filter_ms", "the filter's own load"),
+    ("candidate_table_ms", "the probe as it is"),
+    ("candidate_filter_ms", "the filter in front of the table"),
+    ("candidate_compacted_ms", "the filter compacting the rows"),
+    ("candidate_survivors_ms", "the probe over the survivors alone"),
+    ("engine_probe_ms", "the engine's own probe (the control)"),
+)
+
+# The paired verdicts: the two sides of each are measured back to back in the
+# same iteration, with the order alternated, and the report carries the
+# difference already computed.
+KEY_FILTER_VERDICTS = (
+    (
+        "the_filter_s_verdict_ms",
+        "the filter in front of the table, less the probe as it is",
+    ),
+    (
+        "the_compaction_s_verdict_ms",
+        "the filter compacting the rows, less the probe as it is",
+    ),
+    (
+        "the_prize_ms",
+        "the prize: the probe as it is, less the probe over the survivors",
+    ),
+)
+
+
+def _key_filter_samples(runs: list[dict], key: str) -> list[float]:
+    """One family's samples, pooled over every campaign.
+
+    The pooling is the house's rule: every iteration of every campaign is a
+    sample, and the published figure is the median of the pooled samples --
+    the same rule the join-parts probe follows.
+    """
+    samples: list[float] = []
+    for run in runs:
+        series = run.get(key) or {}
+        samples.extend(float(value) for value in series.get("samples", []))
+    return samples
+
+
+def print_key_filter(runs: list[dict]) -> None:
+    """Print the key-filter probe's ladder, and its paired verdicts.
+
+    This is spec 047: what a filter over the build side's keys costs, and
+    what it saves. The ladder is the house's -- the two constructions, the two
+    floors, the probe as it is, the two filter shapes and the control -- and
+    the differences are the **paired** ones: both sides are measured back to
+    back in the same iteration and the order is alternated, so the machine's
+    drift cannot land on one side.
+
+    The rows the filter lets through are printed with the figures, because a
+    filter that changed the answer would not be a filter.
+    """
+    if not runs:
+        return
+
+    iterations = [
+        iteration
+        for run in runs
+        for iteration in run.get("the_iterations", [])
+    ]
+    campaigns = len(runs)
+    probe = runs[0].get("probe", "key-filter")
+
+    print(
+        f"\n=== THE KEY FILTER ({probe} probe, "
+        f"{campaigns} campaigns, {len(iterations)} iterations) ==="
+    )
+    print(
+        f"the probe's {runs[0].get('probe_rows', '?')} rows over the build side's "
+        f"{runs[0].get('build_keys', '?')} keys"
+    )
+
+    print("\n-- the ladder --")
+    print(f"{'the rung':<46}{'median':>11}{'min':>11}{'max':>11}")
+    for key, label in KEY_FILTER_RUNGS:
+        values = _key_filter_samples(runs, key)
+        if not values:
+            continue
+        print(
+            f"{label:<46}{statistics.median(values):>11.3f}"
+            f"{min(values):>11.3f}{max(values):>11.3f}"
+        )
+
+    print("\n-- the paired differences, same iteration, back to back --")
+    print(f"{'the difference':<64}{'median':>11}{'min':>11}{'max':>11}{'samples':>10}")
+    for key, label in KEY_FILTER_VERDICTS:
+        values = _key_filter_samples(runs, key)
+        if not values:
+            continue
+        print(
+            f"{label:<64}{statistics.median(values):>11.3f}"
+            f"{min(values):>11.3f}{max(values):>11.3f}{len(values):>10}"
+        )
+
+    print("\n-- the correctness --")
+    rows_agree = {bool(run.get("the_rows_agree")) for run in runs}
+    engine_agrees = {bool(run.get("the_engine_agrees")) for run in runs}
+    print(f"the rows agree in every campaign: {rows_agree == {True}}")
+    print(f"the engine agrees in every campaign: {engine_agrees == {True}}")
+    through = [value for run in runs for value in run.get("rows_through", [])]
+    if through:
+        print(f"the rows the filter lets through: {min(through)} - {max(through)}")
+
+    loads = [
+        iteration["load_average"]
+        for iteration in iterations
+        if iteration.get("load_average") is not None
+    ]
+    if loads:
+        print(f"{'the host load average':<46}{min(loads):>12.2f} - {max(loads):>12.2f}")
+
+
 def print_drift_ladder(sets: list[tuple[str, list[dict]]]) -> None:
     """Print the drift's own parts: the ladder, and the movement that makes it.
 
@@ -3034,6 +3154,12 @@ def main() -> int:
     join_parts_paths = sorted(Path("bench-results").glob("join-parts-run*.json"))
     if join_parts_paths:
         print_join_parts([load(p) for p in join_parts_paths])
+
+    # Spec 047's key-filter probe: the build side's keys as a filter -- the
+    # ladder's rungs, and the paired verdicts.
+    key_filter_paths = sorted(Path("bench-results").glob("key-filter-run*.json"))
+    if key_filter_paths:
+        print_key_filter([load(p) for p in key_filter_paths])
 
     # Spec 035's ladder: the drift's own parts, over the set the file publishes,
     # the set spec 034 measured beside it, and the set spec 036 measured.

@@ -14,7 +14,7 @@ filter** over the build side's key set — so the rows that reach its join are t
 The engine has no such filter: its probe looks up every row the reader hands it.
 
 **And the engine's lookup is the cheaper of the two.** `DuckDB`'s own join, over the same six million
-rows, costs **+44.190 ms** more than the engine's ([§3ac](PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart)).
+rows, costs **+44.190 ms** more than the engine's ([§3ac](../../PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart)).
 So the engine is not behind because it looks up slowly. **It is behind because it looks up every row
 where `DuckDB` tests a bit.**
 
@@ -25,7 +25,7 @@ six million rows. If a filter cost the engine the same, the engine's **14.625 ms
 ### Why this is not the filter spec 021 refused
 
 **Spec 021 built "a bitmap in front of the table" and measured it at three sizes — 8 KiB, 32 KiB and
-256 KiB — and it was never better than the table alone** ([§2h](PERF.md#2h-the-hot-paths-taken-apart)).
+256 KiB — and it was never better than the table alone** ([§2h](../../PERF.md#2h-the-hot-paths-taken-apart)).
 
 **Those sizes are saturated**, and the house said so at the time: *"with 216,345 keys a filter needs
 about six million bits before it rejects anything at all — a filter with fewer bits than keys is

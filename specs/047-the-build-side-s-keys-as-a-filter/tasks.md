@@ -1,6 +1,6 @@
 # Spec 047 — The build side's keys as a filter — tasks
 
-**Status**: planned
+**Status**: implemented
 **Started**: 2026-11-06
 **Spec**: [spec.md](spec.md)
 

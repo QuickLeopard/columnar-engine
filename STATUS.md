@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **44 specs**, **58 ADRs** and **29 defects** so far, and every one
-of the specs is closed. **And the status has a page**:
+[`constitution.md`](constitution.md). **45 specs**, **59 ADRs** and **29 defects** so far, and every one
+of the specs but the one in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
 cannot go stale.
@@ -206,7 +206,8 @@ By kind:
   that the query does not pay.
 
 And the ones the measurement **refused** — the direct-addressed table's own shape, the probe's hash,
-owning the Parquet decode, expanding the predicate's column, a bitmap in front of the table — are
+owning the Parquet decode, expanding the predicate's column, a bitmap in front of the table, a
+filter over the build side's keys — are
 refusals with the numbers that refused them, published as the finding.
 
 ---
@@ -303,8 +304,33 @@ whole is at the noise, with the engine ahead in **three** of the eighteen iterat
 closes to 0.0000 ms on every iteration.** **What would answer the next question:** what a filter over
 the build side's keys costs the engine's scan and what it saves its join — DuckDB's own filter costs
 **5.827 ms** over six million rows, and the engine's prize is the whole of its **14.625 ms** join less
-what its filter would cost. **That is the next increment, and this one does not build it.**
-[§3ac](PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart) has the tables.
+what its filter would cost.
+
+**Spec 047 measured that, and the answer is that the filter does not pay.** The ladder is the house's,
+every rung is measured **in the iteration**, and the candidates are the engine's own probe **line for
+line** — the engine's own probe is measured beside them as the control, **7.622 ms** against the
+candidate's **7.967 ms** — and the probe side's column is **materialised afresh in every iteration**,
+because a column held warm would not evict the table and would not be the shape the filter's case
+depends on. **The prize is real and it is +6.981 ms**: the probe over the survivors alone costs
+**0.906 ms** against the probe as it is at **7.967 ms**. **And it is unreachable, because the engine's
+lookup is already the cheapest membership test there is.** The filter's own load over the same six
+million rows is **5.222 ms** and the table's own load is **4.399 ms** — **both are one random access,
+and the bitmap's test carries a shift and a mask on top of the access the byte does not.** The
+direct-addressed table's byte **is** the membership test: the key's own range addresses it and it
+consults nothing, so a filter can only be consulted **in addition** to it, and what it is consulted in
+addition to is cheaper than it is. **The filter in front of the table is +2.318 ms — a loss — and the
+filter compacting the rows, which keeps the rejected rows out of the probe's own work as well, is
++0.547 ms: a wash, with four of its twelve paired samples negative.** **No engine work changed**: the
+filter is not built, the estimate does not move, and the engine's diff in the increment is empty.
+**And the same test is worth two orders of magnitude more in DuckDB** — its filter costs its scan
+**5.827 ms** and saves its join **51.422 ms** — **because it replaces a hash join, and the engine has
+no hash join to pay for.** **What would answer the next question:** the engine's join part is
+**14.625 ms**, its probe over six million rows is **7.967 ms** and its table's construction is
+**0.672 ms** — **a filter cannot make the lookup cheaper, because the lookup is the membership test** —
+**so the join's other work has to be found and named.** That is the next increment, and this one does
+not answer it.
+[§3ac](PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart) and
+[§3ad](PERF.md#3ad-the-build-side-s-keys-as-a-filter) have the tables.
 
 **4. The morsel driver.** The pushdown leaves the operators nothing to do on the cold path, so a
 morsel driver has nothing to drive there. It has not been built, and nothing measured so far says
@@ -570,6 +596,19 @@ for a pinned x86-64 runner; it has not run on one.
   closes to 0.0000 ms on every iteration**. **No engine work changed**: the measurement decides what is
   built, and the next increment is the filter.
   [ADR-0058](docs/adr/0058-the-join-orders-query-on-both-sides-taken-apart.md) records it.
+- **A filter over the build side's keys was measured, and it does not pay.** Spec 047 measured the two
+  shapes a filter can take — **in front of the table**, and **compacting the rows** so that the survivors
+  alone are probed — against the engine's own probe as the control, over a column materialised afresh in
+  every iteration. **The prize is real: +6.981 ms**, the probe over the survivors alone against the
+  probe as it is. **And it is unreachable.** The filter's own load is **5.222 ms** over six million rows
+  and the table's own load is **4.399 ms**: **the direct-addressed table's byte is already the membership
+  test** — the key's own range addresses it, and it consults nothing — **so a filter can only be
+  consulted in addition to it, and what it is consulted in addition to is cheaper than it is.** The
+  filter in front of the table is **+2.318 ms**, a loss; the filter compacting the rows is **+0.547 ms**,
+  a wash. **No engine work changed.** **And the same test is worth two orders of magnitude more in
+  DuckDB** — its filter costs its scan **5.827 ms** and saves its join **51.422 ms** — **because it
+  replaces a hash join, and the engine has no hash join to pay for.**
+  [ADR-0059](docs/adr/0059-the-build-side-s-keys-as-a-filter.md) records it.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a
