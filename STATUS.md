@@ -320,7 +320,7 @@ direct-addressed table's byte **is** the membership test: the key's own range ad
 consults nothing, so a filter can only be consulted **in addition** to it, and what it is consulted in
 addition to is cheaper than it is. **The filter in front of the table is +2.318 ms — a loss — and the
 filter compacting the rows, which keeps the rejected rows out of the probe's own work as well, is
-+0.547 ms: a wash, with four of its twelve paired samples negative.** **No engine work changed**: the
++0.547 ms: a wash, with five of its twelve paired samples negative.** **No engine work changed**: the
 filter is not built, the estimate does not move, and the engine's diff in the increment is empty.
 **And the same test is worth two orders of magnitude more in DuckDB** — its filter costs its scan
 **5.827 ms** and saves its join **51.422 ms** — **because it replaces a hash join, and the engine has

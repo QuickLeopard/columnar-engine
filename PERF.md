@@ -4718,14 +4718,14 @@ drift cannot land on one side. **The difference is the paired one**, not the dif
 | **the filter compacting the rows, less the probe as it is** | **+0.547** ms | −8.444 ms | +1.188 ms |
 | **the prize: the probe as it is, less the probe over the survivors** | **+6.981** ms | +6.110 ms | +16.029 ms |
 
-**The sign is what carries the claim, and the filter in front of the table has one.** Ten of its twelve
-paired samples are positive, and the two that are not are the two iterations this host stalled in: in one
-of them the stall landed on the filter's own measurement and in the other on the probe's, and the
-difference moved with it. **The filter's own load is more than the table's own load — 5.222 ms against
-4.399 ms** — and that is the whole of the claim.
+**The sign is what carries the claim, and the filter in front of the table has one.** Eleven of its
+twelve paired samples are positive, and the one that is not is an iteration this host stalled in: the
+stall landed on the probe's own measurement, which reads **16.887 ms** against a spread of about eight,
+and the difference moved with it. **The filter's own load is more than the table's own load — 5.222 ms
+against 4.399 ms** — and that is the whole of the claim.
 
 **And the shape that replaces the whole probe is a wash.** The filter compacting the rows costs
-**+0.547 ms** at the median, and **four of its twelve paired samples are negative**: the sign is not
+**+0.547 ms** at the median, and **five of its twelve paired samples are negative**: the sign is not
 established, and a wash is not a win.
 
 #### The finding

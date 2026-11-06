@@ -57,8 +57,8 @@ the question named would have refused that shape and left the question open.
    is not in the build side — the table decides that one — but it may **never** refuse a key that is in
    it, and the comparison is what says so.
 
-6. **The filter is not built.** The filter in front of the table is **+2.318 ms** — a loss, in ten of
-   twelve paired samples — and the filter compacting the rows is **+0.547 ms**, a **wash**, with four of
+6. **The filter is not built.** The filter in front of the table is **+2.318 ms** — a loss, in eleven of
+   twelve paired samples — and the filter compacting the rows is **+0.547 ms**, a **wash**, with five of
    its twelve paired samples negative. **A wash is not a win**, and the engine keeps no filter: the
    lookup stays as it is, and the memory estimate does not move.
 
@@ -92,3 +92,10 @@ find the join's **other** work — the part the probe does not account for — a
 
 **And the open question in `STATUS.md` is rewritten**, because the old one ("what would answer it: the
 parts, not the total") has been answered and the new one is narrower.
+
+**And a sentence was corrected where it was published.** The publication first said that **ten** of the
+filter's twelve paired samples were positive and that **four** of the compaction's twelve were negative.
+**The reports say eleven and five**: the one negative sample of the filter's verdict is the iteration the
+host stalled in, and five of the compaction's are negative. **The figures were right — the medians, the
+spreads and the verdicts were derived from the reports and the guard checks them — and the counts around
+them were not.** They are corrected in `PERF.md` §3ad and in `STATUS.md`, here, and nowhere else.
