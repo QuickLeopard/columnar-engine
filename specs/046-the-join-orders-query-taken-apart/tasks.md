@@ -1,6 +1,6 @@
 # Spec 046 — The join-orders query, on both sides, taken apart — tasks
 
-**Status**: implemented
+**Status**: done
 **Started**: 2026-11-06
 **Spec**: [spec.md](spec.md)
 
@@ -66,4 +66,4 @@ has said what to change.
 
 - [x] `cargo fmt`, clippy on arm64 and x86-64, the whole test suite, `cargo deny`, the wasm32 check, the
       published-figures guard, the links check, the package check and the dashboard check all green.
-- [ ] CI green, and the spec's status is `done` with the date it finished.
+- [x] CI green, and the spec's status is `done` with the date it finished.

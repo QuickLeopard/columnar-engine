@@ -1,8 +1,11 @@
 # Spec 046 — The join-orders query, on both sides, taken apart
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-06
+**Finished**: 2026-11-06
 **Predecessor**: [spec 045 — the status dashboard](../045-the-status-dashboard/spec.md)
+
+**CI green on `b7efb2f`** -- run 42241899945, sixteen of sixteen jobs.
 
 ## The problem
 
