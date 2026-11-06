@@ -60,8 +60,13 @@ pub struct AggregateSpec {
 /// The join's shape.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JoinSpec {
-    /// The Parquet file of the **build side** -- the table on the right.
-    pub build_path: PathBuf,
+    /// The Parquet files of the **build side** -- the table on the right.
+    ///
+    /// **One file is still one file**: a build side named by a single path is
+    /// opened as one file, and the set is the case beside it. Several paths
+    /// are read as one table -- file by file, and inside a file row group by
+    /// row group -- and the hash table is built over all of them at once.
+    pub build_paths: Vec<PathBuf>,
     /// The probe side's key column: the left table's.
     pub probe_key: String,
     /// The build side's key column: the right table's.

@@ -957,7 +957,7 @@ fn build_whole_sample(
 /// iteration as the query's own open.
 fn build_open_sample(spec: &JoinSpec) -> Sample {
     let started = Instant::now();
-    let opened = ParquetSource::open(&spec.build_path).expect("the build side opens");
+    let opened = ParquetSource::open(build_path(spec)).expect("the build side opens");
     let elapsed = started.elapsed();
     std::hint::black_box(&opened);
     Sample::of(started, elapsed)
@@ -974,7 +974,7 @@ fn build_cold_whole(
     spec: &JoinSpec,
     flavor: columnar_kernels::Flavor,
 ) -> Result<Duration, Box<dyn std::error::Error>> {
-    let source = ParquetSource::open(&spec.build_path)?;
+    let source = ParquetSource::open(build_path(spec))?;
     let started = Instant::now();
     let table = build_table(&source, spec, flavor, 1)?;
     let elapsed = started.elapsed();
@@ -1487,6 +1487,10 @@ fn candidate_counts(keys: &[i64], base: i64, width: usize) -> Vec<u8> {
 /// It is the generator's own rule: the file named `lineitem` is joined by the
 /// file named `orders`, beside it. The rule belongs to the generator, and the
 /// probe mirrors it rather than repeating it in the engine.
+fn build_path(spec: &JoinSpec) -> &Path {
+    spec.build_paths.first().expect("the plan names a build side")
+}
+
 fn build_path_for(path: &Path) -> PathBuf {
     let stem = path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
     let orders_stem = match stem.strip_prefix("lineitem") {
@@ -1590,7 +1594,7 @@ fn build_parts(
     spec: &JoinSpec,
     flavor: columnar_kernels::Flavor,
 ) -> Result<BuildParts, Box<dyn std::error::Error>> {
-    let build_source = ParquetSource::open(&spec.build_path)?;
+    let build_source = ParquetSource::open(build_path(spec))?;
     let build_key_index =
         build_source.column_index(BUILD_KEY).ok_or_else(|| format!("no {BUILD_KEY} column"))?;
     let pushdown = build_pushdown(&build_source);
@@ -1967,7 +1971,7 @@ fn measure(path: &Path, code: &str) -> Result<Measured, Box<dyn std::error::Erro
     let build_cold = build_cold_whole(spec, flavor)?;
 
     // The build side's source, opened once, and the table the probe uses.
-    let build_source = ParquetSource::open(&spec.build_path)?;
+    let build_source = ParquetSource::open(build_path(spec))?;
     let build_key_index =
         build_source.column_index(BUILD_KEY).ok_or_else(|| format!("no {BUILD_KEY} column"))?;
     let pushdown = build_pushdown(&build_source);

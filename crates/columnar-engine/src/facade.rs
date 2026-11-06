@@ -60,10 +60,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::memory::{
-    estimate_lazy_read_for, estimate_plan_join, estimate_plan_sort, estimate_resolved,
-};
-use crate::pipeline::{scan_stage, BuildSide, Pipeline, StreamedJoin};
+use crate::memory::{estimate_lazy_read_for, estimate_plan_sort, estimate_resolved};
+use crate::pipeline::{scan_stage, BuildSide, Outcome, Output, Pipeline, StreamedJoin};
 use crate::scan::{decide_scan, fetched_columns, pushdown_descriptions, streamed_join, ScanReport};
 use crate::source::EngineSource;
 
@@ -233,21 +231,62 @@ pub fn execute(
     dataset: &Dataset,
     options: &ExecOptions,
 ) -> Result<AggregateResult, EngineError> {
+    match execute_output(plan, dataset, options, Output::Aggregate)? {
+        Outcome::Aggregate(result) => Ok(*result),
+        Outcome::Rows(_) => {
+            Err(EngineError::InvalidPlan("the plan's aggregate was not the output".to_owned()))
+        }
+    }
+}
+
+/// Runs a plan and hands its **rows** out.
+///
+/// This is the write path's way into the engine: the rows a plan produces are
+/// the rows a store's table can hold. The rows are the plan's **projection**,
+/// gathered -- and a plan with an aggregation is refused, because the
+/// aggregate folds the rows into groups and there is nothing left to write.
+///
+/// The rows come back as a [`Dataset`]: the engine's own vocabulary, a column
+/// chunk with an encoding and a validity mask. A store that writes Parquet
+/// turns them into Arrow's own.
+///
+/// # Errors
+///
+/// Returns [`EngineError::InvalidPlan`] when the plan has an aggregation, and
+/// the usual resolution errors when the plan does not fit the dataset's
+/// schema.
+pub fn execute_rows(
+    plan: &QueryPlan,
+    dataset: &Dataset,
+    options: &ExecOptions,
+) -> Result<Dataset, EngineError> {
+    match execute_output(plan, dataset, options, Output::Rows)? {
+        Outcome::Rows(rows) => Ok(rows),
+        Outcome::Aggregate(_) => {
+            Err(EngineError::InvalidPlan("the plan's aggregate was not the output".to_owned()))
+        }
+    }
+}
+
+/// Runs a plan over a dataset, for either output.
+fn execute_output(
+    plan: &QueryPlan,
+    dataset: &Dataset,
+    options: &ExecOptions,
+    output: Output,
+) -> Result<Outcome, EngineError> {
     // The clock starts before the plan is resolved: the plan output is the
     // engine's account of the **whole** query, and the plan's resolution is
     // part of it.
     let started = std::time::Instant::now();
     let resolved = plan.resolve(dataset)?;
+    refuse_an_aggregate(&resolved, output)?;
     let build = BuildSide::open(resolved.join.as_ref())?;
 
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = estimate_resolved(&resolved, dataset, grouped)
-        .saturating_add(estimate_plan_join(
-            resolved.join.as_ref(),
-            build.source(),
-            options.threads.unwrap_or(1),
-        ))
+        .saturating_add(build.estimate(resolved.join.as_ref(), options.threads.unwrap_or(1)))
         .saturating_add(estimate_plan_sort(resolved.sort.as_ref(), dataset.len()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
@@ -279,8 +318,27 @@ pub fn execute(
         estimate,
         workers: 1,
         streamed: None,
+        output,
     }
     .run()
+}
+
+/// Refuses a plan that has an aggregation, when the rows are what is wanted.
+///
+/// The aggregate folds the rows into groups. **There is nothing left to
+/// write**: the rows the plan produced are the groups, and a group is not a
+/// row of a table.
+fn refuse_an_aggregate(
+    resolved: &crate::plan::ResolvedPlan,
+    output: Output,
+) -> Result<(), EngineError> {
+    if output == Output::Rows && resolved.aggregate.is_some() {
+        return Err(EngineError::InvalidPlan(
+            "a plan with an aggregation has no rows to write: the aggregate folds them into groups"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Executes `plan` over a Parquet file, reading only what the plan needs.
@@ -319,7 +377,39 @@ pub fn execute_on(
     source: &ParquetSource,
     options: &ExecOptions,
 ) -> Result<AggregateResult, EngineError> {
-    execute_with(plan, source, options)
+    match execute_on_output(plan, source, options, Output::Aggregate)? {
+        Outcome::Aggregate(result) => Ok(*result),
+        Outcome::Rows(_) => {
+            Err(EngineError::InvalidPlan("the plan's aggregate was not the output".to_owned()))
+        }
+    }
+}
+
+/// Runs a plan over a Parquet file and hands its **rows** out.
+///
+/// This is the lazy path's way into the write path: only the columns the plan
+/// reads are fetched, the plan's **projection** is gathered, and the rows come
+/// back as a [`Dataset`].
+///
+/// A plan with an aggregation is refused, for the same reason the eager path
+/// refuses it: the aggregate folds the rows into groups, and there is nothing
+/// left to write.
+///
+/// # Errors
+///
+/// Returns [`EngineError::InvalidPlan`] when the plan has an aggregation, and
+/// the usual resolution errors when the plan does not fit the file's schema.
+pub fn execute_rows_on(
+    plan: &QueryPlan,
+    source: &ParquetSource,
+    options: &ExecOptions,
+) -> Result<Dataset, EngineError> {
+    match execute_on_output(plan, source, options, Output::Rows)? {
+        Outcome::Rows(rows) => Ok(rows),
+        Outcome::Aggregate(_) => {
+            Err(EngineError::InvalidPlan("the plan's aggregate was not the output".to_owned()))
+        }
+    }
 }
 
 /// Runs a plan over a source.
@@ -339,11 +429,27 @@ pub(crate) fn execute_with<S: EngineSource>(
     source: &S,
     options: &ExecOptions,
 ) -> Result<AggregateResult, EngineError> {
+    match execute_source(plan, source, options, Output::Aggregate)? {
+        Outcome::Aggregate(result) => Ok(*result),
+        Outcome::Rows(_) => {
+            Err(EngineError::InvalidPlan("the plan's aggregate was not the output".to_owned()))
+        }
+    }
+}
+
+/// Runs a plan over a source, for either output.
+pub(crate) fn execute_source<S: EngineSource>(
+    plan: &QueryPlan,
+    source: &S,
+    options: &ExecOptions,
+    output: Output,
+) -> Result<Outcome, EngineError> {
     // The clock starts before the plan is resolved: the plan output is the
     // engine's account of the **whole** query, and the plan's resolution is
     // part of it.
     let started = std::time::Instant::now();
     let resolved = plan.resolve_against(source)?;
+    refuse_an_aggregate(&resolved, output)?;
     let decision = decide_scan(&resolved, source)?;
     let build = BuildSide::open(resolved.join.as_ref())?;
 
@@ -367,11 +473,7 @@ pub(crate) fn execute_with<S: EngineSource>(
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
     let estimate = estimate_lazy_read_for(source.rows(), source, &decision.read, workers, grouped)
-        .saturating_add(estimate_plan_join(
-            resolved.join.as_ref(),
-            build.source(),
-            options.threads.unwrap_or(1),
-        ))
+        .saturating_add(build.estimate(resolved.join.as_ref(), options.threads.unwrap_or(1)))
         .saturating_add(estimate_plan_sort(resolved.sort.as_ref(), source.rows()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
@@ -457,8 +559,19 @@ pub(crate) fn execute_with<S: EngineSource>(
         estimate,
         workers,
         streamed,
+        output,
     }
     .run()
+}
+
+/// Runs a plan over a Parquet file, for either output.
+fn execute_on_output(
+    plan: &QueryPlan,
+    source: &ParquetSource,
+    options: &ExecOptions,
+    output: Output,
+) -> Result<Outcome, EngineError> {
+    execute_source(plan, source, options, output)
 }
 
 /// Opens a Parquet file for the lazy path.
@@ -640,7 +753,10 @@ struct PendingJoin<'a> {
 ///
 /// // The build side's name is a path now.
 /// let Ok(plan) = plan else { panic!("the catalog holds both names") };
-/// assert_eq!(plan.join.expect("the plan has a join").build_path.to_str(), Some("data/part.parquet"));
+/// assert_eq!(
+///     plan.join.expect("the plan has a join").build_paths[0].to_str(),
+///     Some("data/part.parquet")
+/// );
 /// ```
 #[derive(Debug, Clone)]
 pub struct PlanBuilder<'a> {
@@ -761,7 +877,7 @@ impl<'a> PlanBuilder<'a> {
             Some(pending) => Some(JoinSpec {
                 // The resolution: a name becomes a path here, and nowhere
                 // else. Nothing is read, and nothing is opened.
-                build_path: self.catalog.resolve(pending.table)?,
+                build_paths: vec![self.catalog.resolve(pending.table)?],
                 probe_key: pending.probe_key,
                 build_key: pending.build_key,
                 build_filter: pending.build_filter,

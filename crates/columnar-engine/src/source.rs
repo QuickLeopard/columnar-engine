@@ -243,6 +243,25 @@ pub(crate) trait EngineSource: ColumnSchema {
     /// The source's columns, in schema order.
     fn columns(&self) -> &[SourceColumn];
 
+    /// The index of a named column, if the source has one.
+    ///
+    /// The build side looks its key up by name, and the estimate charges the
+    /// key's range: both are the same question, asked of any source.
+    fn column_index(&self, name: &str) -> Option<usize>;
+
+    /// The range of a named column over the whole source.
+    ///
+    /// A file's range is the file's own. A set's range is the **union** of the
+    /// files' ranges -- the range the set's rows actually span, which is what
+    /// a direct-addressed table over that key is sized by.
+    fn column_range(&self, name: &str) -> Option<ColumnRange>;
+
+    /// The range of a named column over each of the source's row groups.
+    ///
+    /// The estimate's bound on the rows a filter lets through is made over
+    /// these, and a set's are the files' own, in the files' order.
+    fn row_group_ranges(&self, name: &str) -> &[RowGroupRange];
+
     /// The names of the columns at `indices`, in the order given.
     fn column_names(&self, indices: &[usize]) -> Vec<String>;
 
@@ -1031,6 +1050,18 @@ impl EngineSource for ParquetSource {
 
     fn columns(&self) -> &[SourceColumn] {
         &self.columns
+    }
+
+    fn column_index(&self, name: &str) -> Option<usize> {
+        ParquetSource::column_index(self, name)
+    }
+
+    fn column_range(&self, name: &str) -> Option<ColumnRange> {
+        ParquetSource::column_range(self, name)
+    }
+
+    fn row_group_ranges(&self, name: &str) -> &[RowGroupRange] {
+        ParquetSource::row_group_ranges(self, name)
     }
 
     fn column_names(&self, indices: &[usize]) -> Vec<String> {

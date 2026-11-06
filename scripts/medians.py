@@ -2302,6 +2302,121 @@ def print_store_write(runs: list[dict]) -> None:
         print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
 
 
+def print_engine_rows(runs: list[dict]) -> None:
+    """Print the engine's own rows, through the store.
+
+    This is spec 042's write path: the engine's rows reach a store's table, and
+    the file that comes out is compared with the published file **byte for
+    byte**. Three files are compared, and each answers a different question:
+
+    - the store's own Arrow path writes the published file byte for byte --
+      that is the store's claim, and it is the reference;
+    - the store's **conversion** under the published file's own schema writes
+      it byte for byte too, which says the rows are the same and the
+      conversion is exact;
+    - the store's own `append_rows` writes the engine's rows under the
+      **store's** schema rule, and that is a different file, because the
+      engine's vocabulary says which rows are NULL and not whether a column
+      may be.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE ENGINE'S OWN ROWS, THROUGH THE STORE ({len(runs)} campaigns) ===")
+    for name, heading in (
+        ("engine_read", "the engine's eager read"),
+        ("convert", "the conversion: the vocabulary to Arrow's"),
+        ("append", "the store's own API, end to end"),
+        ("arrow_path", "the store's own Arrow path"),
+        ("plan_read", "a plan's rows: the read"),
+        ("plan_append", "a plan's rows: the write"),
+    ):
+        values = [
+            run["measurements_ms"][name]
+            for run in runs
+            if name in run.get("measurements_ms", {})
+        ]
+        if values:
+            print(f"   {heading:<44} {median(values):10.3f} ms   ({min(values):.3f}-{max(values):.3f})")
+    for key, heading in (
+        ("bytes_published", "the published file"),
+        ("bytes_engine_rows", "the engine's rows, the store's schema rule"),
+        ("bytes_converted_rows", "the engine's rows, the file's own schema"),
+        ("bytes_arrow_rows", "Arrow's rows"),
+        ("bytes_plan_rows", "a plan's rows"),
+        ("rows_engine_rows", "the rows of the engine's own rows"),
+        ("rows_plan_rows", "the rows of a plan's rows"),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {int(median(values)):>12}")
+    for key, heading in (
+        ("identical_to_published", "the engine's rows are the published file"),
+        ("converted_identical_to_published", "the conversion alone is the published file"),
+        ("arrow_identical_to_published", "Arrow's rows are the published file"),
+    ):
+        verdicts = [run.get(key) for run in runs if run.get(key) is not None]
+        if verdicts:
+            print(f"   {heading:<44} {str(all(verdicts)):>12}")
+    differences = [
+        run.get("first_difference") for run in runs if run.get("first_difference") is not None
+    ]
+    if differences:
+        print(f"   the engine's rows first differ at             {int(median(differences)):>12}")
+    loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+    if loads:
+        print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
+def print_build_set(runs: list[dict]) -> None:
+    """Print the join's build side, over a set of files.
+
+    This is spec 042's build side: the same rows, built as one file and as six
+    files, in the same campaign. The **pairs** are what matter -- one file
+    against six, measured together -- because the host's own movement is the
+    same for both sides of the pair.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE BUILD SIDE, OVER A SET OF FILES ({len(runs)} campaigns) ===")
+    for name, heading in (
+        ("build_one_file", "the table's construction, one file"),
+        ("build_six_files", "the table's construction, six files"),
+        ("open_one_file", "the build side's open, one file"),
+        ("open_six_files", "the build side's open, six files"),
+    ):
+        values = [
+            run["measurements_ms"][name]
+            for run in runs
+            if name in run.get("measurements_ms", {})
+        ]
+        if values:
+            print(f"   {heading:<44} {median(values):10.3f} ms   ({min(values):.3f}-{max(values):.3f})")
+    for key, heading in (
+        ("rows_one_file", "the join's rows, one file"),
+        ("rows_six_files", "the join's rows, six files"),
+        ("range_one_file", "the key's range, one file"),
+        ("range_six_files", "the key's range, the union"),
+        ("estimate_one_file", "the estimate, one file"),
+        ("estimate_six_files", "the estimate, six files"),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {int(median(values)):>12}")
+    verdicts = [run.get("identical") for run in runs if run.get("identical") is not None]
+    if verdicts:
+        print(f"   {'the same rows and the same answer':<44} {str(all(verdicts)):>12}")
+    for key, heading in (
+        ("direct_one_file", "the direct table, one file"),
+        ("direct_six_files", "the direct table, six files"),
+    ):
+        values = [run.get(key) for run in runs if run.get(key) is not None]
+        if values:
+            print(f"   {heading:<44} {str(all(values)):>12}")
+    loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+    if loads:
+        print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
 def print_excursion_hunt(runs: list[dict]) -> None:
     """Print the hunt: whether the file's state moved at all.
 
@@ -2649,6 +2764,16 @@ def main() -> int:
     # file, as six files one by one, and as six files read as one table.
     file_set_runs = [load(p) for p in sorted(Path("bench-results").glob("file-set-run*.json"))]
     print_file_set(file_set_runs)
+
+    # Spec 042: the set on both sides -- the engine's own rows through the
+    # store, and the join's build side over a set of files.
+    engine_rows_runs = [
+        load(p) for p in sorted(Path("bench-results").glob("engine-rows-run*.json"))
+    ]
+    print_engine_rows(engine_rows_runs)
+
+    build_set_runs = [load(p) for p in sorted(Path("bench-results").glob("build-set-run*.json"))]
+    print_build_set(build_set_runs)
 
     # Spec 041: the reader's four gigabytes -- a real file with one hostile
     # page header, and the largest single allocation the reader asked for.

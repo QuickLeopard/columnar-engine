@@ -1,21 +1,32 @@
 # The baseline of the public surface.
 #
-# `cargo semver-checks` compares the crate's public API against a baseline
+# `cargo-semver-checks` compares the crate's public API against a baseline
 # and fails the build when the API has broken. The baseline it prefers is the
 # last **published** version of the crate on crates.io -- that is the version
 # an embedder depends on, and it is the one that must not break.
 #
 # The three crates are not published yet. Until they are, the baseline is the
-# revision that established the surface: the commit where spec 034's public
-# API was decided. A commit after that one that removes a name, changes a
-# signature or adds a variant to a frozen enum fails the build here.
+# revision that established the surface: the commit where the public API was
+# decided. A commit after that one that removes a name, changes a signature or
+# adds a variant to a frozen enum fails the build here.
 #
 # The revision is written below, on one line, and nothing else. It is the
-# commit that established the surface -- `42f08b4`, the code commit of spec
-# 034 -- and it is written here, in the commit that publishes the surface,
-# because a commit cannot contain its own SHA. Before this line was written
-# the CI job said so rather than pretending to have run a check.
+# commit that established the surface, and it is written here, in the commit
+# that publishes the surface, because a commit cannot contain its own SHA.
+# Before this line was written the CI job said so rather than pretending to
+# have run a check.
 #
 # When the crates are published, this file becomes redundant: the published
 # version is the better baseline, and the CI job prefers it.
-42f08b4
+#
+# **Spec 042 re-established the surface.** `JoinSpec.build_path` became
+# `JoinSpec.build_paths` -- the one breaking change on the public surface, and
+# it was made while the crates were unpublished, so no embedder depended on
+# the old name. **The revision below is therefore empty**, and the CI job says
+# so rather than pretending to have run a check: the baseline is written in
+# the commit that follows the one that changes the surface, because a commit
+# cannot contain its own SHA. **Every commit after that one is gated** against
+# the new surface.
+#
+# The revision before that was `42f08b4`, the code commit of spec 034, which
+# established the surface spec 042 replaced.

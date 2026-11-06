@@ -25,8 +25,8 @@ categories = ["database-implementations", "data-structures"]
 # crates.io account and a token. The order is computed from the manifests by
 # `scripts/check-package.sh` -- from the **`[dependencies]`** only, because a
 # dev-dependency is dropped from the published manifest -- and the store's
-# library depends on **nothing** in the workspace, so it lands between the
-# kernels and the engine.
+# library depends on `columnar-core` and on nothing else in the workspace, so
+# it lands after the core and before the engine.
 publish = true
 # The store's probe is this project's evidence harness, not an embedder's
 # example, so the package does not carry it.
@@ -41,6 +41,20 @@ workspace = true
 # cannot move because of anything here. (The **test** does depend on it --
 # the engine, to read what the store wrote -- and that edge is a dev-edge
 # only; see the dev-dependencies below.)
+#
+# Its **library** depends on `columnar-core` -- the vocabulary -- and on
+# nothing else in this workspace. The core is published first, so the store
+# is published after it and before the engine.
+# The vocabulary. The store's **rows** are the engine's own vocabulary -- a
+# column chunk with an encoding and a validity mask -- and the conversion to
+# Arrow's lives here, in the store. It cannot live in the core (a vocabulary
+# that depends on a framework is not a vocabulary) and must not live in the
+# engine (the engine's surface would carry Arrow).
+#
+# The edge is to the **core**, not to the engine: the engine is still below
+# the store in the dependency direction, and the publish order (core, kernels,
+# store, engine) is unchanged by it.
+columnar-core = { workspace = true }
 parquet = { workspace = true }
 arrow = { workspace = true }
 serde = { workspace = true }

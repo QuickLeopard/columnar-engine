@@ -36,7 +36,7 @@ use arrow::array::{
     Array, DictionaryArray, Float64Array, Int64Array, LargeStringArray, StringArray,
 };
 use arrow::datatypes::{DataType as ArrowType, Int32Type, SchemaRef};
-use columnar_core::{ColumnChunk, DataType, Encoding, NullBitmap};
+use columnar_core::{BatchColumn, ColumnChunk, DataType, Encoding, NullBitmap};
 use columnar_kernels::Flavor;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
@@ -91,6 +91,21 @@ impl Dataset {
     #[must_use]
     pub fn with_rows(chunks: Vec<ColumnChunk>, rows: usize) -> Self {
         Self { chunks, rows }
+    }
+
+    /// A dataset over the given **materialised** columns.
+    ///
+    /// The columns are the engine's own gathered columns -- the projection's
+    /// output -- and each one becomes a chunk of the dataset's own
+    /// vocabulary: a name, an encoding, a validity mask and a length.
+    ///
+    /// The encoding is **plain**: the gather reads a dictionary and writes the
+    /// values out, so a materialised column has lost its dictionary. That is
+    /// not a loss the conversion makes; it is what the gather did.
+    #[must_use]
+    pub(crate) fn from_materialised(columns: &[BatchColumn]) -> Self {
+        let chunks = columns.iter().map(chunk_from_materialised).collect();
+        Self::from_chunks(chunks)
     }
 
     /// Reads a Parquet file into column chunks.
@@ -216,6 +231,24 @@ impl Dataset {
     #[must_use]
     pub fn column_names(&self) -> Vec<String> {
         self.chunks.iter().map(|chunk| chunk.name.clone()).collect()
+    }
+}
+
+/// One materialised column, as a chunk of the dataset's own vocabulary.
+///
+/// The values are dense already -- the gather made them dense -- so the
+/// conversion is the values and the mask, with nothing else to do.
+fn chunk_from_materialised(column: &BatchColumn) -> ColumnChunk {
+    let encoding = match &column.data {
+        columnar_core::BatchData::Int64(values) => Encoding::Int64 { values: values.clone() },
+        columnar_core::BatchData::Float64(values) => Encoding::Float64 { values: values.clone() },
+        columnar_core::BatchData::Utf8(values) => Encoding::Utf8 { values: values.clone() },
+    };
+    ColumnChunk {
+        name: column.name.clone(),
+        encoding,
+        validity: column.validity.clone(),
+        len: column.data.len(),
     }
 }
 

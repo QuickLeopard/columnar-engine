@@ -349,6 +349,12 @@ impl<'a> Materialised<'a> {
         self.gathered.get(&index).expect("the column was gathered just above")
     }
 
+    /// The gathered column at `index`, if it was gathered.
+    #[must_use]
+    pub fn gathered(&self, index: usize) -> Option<&BatchColumn> {
+        self.gathered.get(&index)
+    }
+
     /// The gathered column at `index`.
     ///
     /// # Panics

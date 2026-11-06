@@ -82,7 +82,7 @@ let plan = catalog
 
 // The name is a path now, and the plan carries the path.
 let join = plan.join.as_ref().expect("the plan has a join");
-assert_eq!(join.build_path, std::path::Path::new("data/orders.parquet"));
+assert_eq!(join.build_paths, vec![std::path::PathBuf::from("data/orders.parquet")]);
 ```
 
 ---

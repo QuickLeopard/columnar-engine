@@ -154,8 +154,8 @@ fn the_catalog_resolves_a_name_when_the_plan_is_built() {
 
     let join = plan.join.expect("the plan has a join");
     assert_eq!(
-        join.build_path,
-        Path::new("data/part.parquet"),
+        join.build_paths,
+        vec![Path::new("data/part.parquet").to_path_buf()],
         "the name is resolved to a path when the plan is built"
     );
 }

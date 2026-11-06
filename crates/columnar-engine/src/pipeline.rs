@@ -23,6 +23,7 @@ use std::time::Instant;
 use columnar_kernels::Flavor;
 
 use crate::explain::{self, PlanOutput, StageStats};
+use crate::file_set::FileSetSource;
 use crate::operators;
 use crate::operators::aggregate::{AggregateResult, Group};
 use crate::plan;
@@ -63,6 +64,30 @@ pub(crate) fn scan_stage(
     stage("scan", Some((rows(rows_in), rows(rows_out))), elapsed)
 }
 
+/// What the pipeline is asked for.
+///
+/// The same stages run either way; the **output** is what they are run for.
+/// An aggregate folds the rows into groups, and there is nothing left to
+/// write. The rows path keeps the rows themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Output {
+    /// The plan's aggregate.
+    Aggregate,
+    /// The plan's rows.
+    Rows,
+}
+
+/// What the pipeline produced.
+///
+/// The aggregate is **boxed**: it is a good deal larger than the rows, and an
+/// enum pays for its largest variant.
+pub(crate) enum Outcome {
+    /// The plan's aggregate.
+    Aggregate(Box<AggregateResult>),
+    /// The plan's rows.
+    Rows(Dataset),
+}
+
 /// What the pipeline is given to run.
 ///
 /// Every stage reads the same context: the plan, the dataset it runs over, the
@@ -84,6 +109,8 @@ pub(crate) struct Pipeline<'a> {
     /// and a flavor decided twice is a flavor that could be decided twice
     /// differently.
     pub(crate) flavor: Flavor,
+    /// What the pipeline is asked for.
+    pub(crate) output: Output,
     /// The join's build side, when the plan has a join.
     pub(crate) build: &'a BuildSide,
     /// The clock the **whole** query is measured against.
@@ -104,14 +131,65 @@ pub(crate) struct Pipeline<'a> {
     pub(crate) streamed: Option<StreamedJoin>,
 }
 
+/// The join's build side: one file, or a set of files.
+///
+/// One path opens a [`ParquetSource`] and several open a [`FileSetSource`],
+/// and **the rules are the same either way**: the source is the engine's own
+/// seam, and every rule the build side follows is a rule the source publishes.
+///
+/// One path is still one path. The one-file build side is opened, read and
+/// charged exactly as it was before the set existed.
+pub(crate) enum BuildSource {
+    /// One file.
+    File(ParquetSource),
+    /// A set of files, read as one table.
+    Set(FileSetSource),
+}
+
+impl BuildSource {
+    /// Opens the build side's files.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::InvalidPlan`] when the plan names no file at
+    /// all, and the usual open errors when a file cannot be read.
+    fn open(paths: &[std::path::PathBuf]) -> Result<Self, EngineError> {
+        match paths {
+            [] => Err(EngineError::InvalidPlan("the join's build side names no file".to_owned())),
+            [path] => Ok(Self::File(ParquetSource::open(path)?)),
+            many => Ok(Self::Set(FileSetSource::open(many)?)),
+        }
+    }
+
+    /// The source's columns, in schema order.
+    fn columns(&self) -> &[crate::source::SourceColumn] {
+        match self {
+            Self::File(source) => source.columns(),
+            Self::Set(source) => source.columns(),
+        }
+    }
+
+    /// The build side's estimate, in bytes.
+    fn estimate(&self, join: Option<&plan::ResolvedJoin>, threads: usize) -> usize {
+        match self {
+            Self::File(source) => {
+                crate::memory::estimate_plan_join_over(join, Some(source), threads)
+            }
+            Self::Set(source) => {
+                crate::memory::estimate_plan_join_over(join, Some(source), threads)
+            }
+        }
+    }
+}
+
 /// The join's build side: the file, and how long it took to open it.
 ///
 /// The opening is the join's own work, so it is reported in the join's
 /// stage: the plan output accounts for the whole query, and a file opened
 /// outside every stage is a hole in that account.
 pub(crate) struct BuildSide {
-    /// The build side's file, when the plan has a join.
-    source: Option<ParquetSource>,
+    /// The build side's source, when the plan has a join.
+    source: Option<BuildSource>,
     /// How long it took to open it.
     opened: std::time::Duration,
 }
@@ -132,7 +210,7 @@ impl BuildSide {
         let started = std::time::Instant::now();
         let source = match join {
             Some(join) => {
-                let source = ParquetSource::open(&join.spec.build_path)?;
+                let source = BuildSource::open(&join.spec.build_paths)?;
                 let build_type = build_key_type(&source, &join.spec.build_key)?;
                 require_same_key_type(join.probe_type, build_type)?;
                 Some(source)
@@ -142,12 +220,22 @@ impl BuildSide {
         Ok(Self { source, opened: started.elapsed() })
     }
 
-    /// The build side's file, when the plan has a join.
+    /// The build side's source, when the plan has a join.
     ///
-    /// The estimate and the scan-that-feeds-the-join path both need the file
-    /// itself, and neither of them may reach past this type to take it.
-    pub(crate) fn source(&self) -> Option<&ParquetSource> {
+    /// The estimate and the scan-that-feeds-the-join path both need the build
+    /// side itself, and neither of them may reach past this type to take it.
+    pub(crate) fn source(&self) -> Option<&BuildSource> {
         self.source.as_ref()
+    }
+
+    /// The build side's estimate, in bytes.
+    ///
+    /// A plan with no join has no build side, and costs nothing here.
+    pub(crate) fn estimate(&self, join: Option<&plan::ResolvedJoin>, threads: usize) -> usize {
+        match self.source() {
+            Some(source) => source.estimate(join, threads),
+            None => 0,
+        }
     }
 }
 
@@ -189,12 +277,20 @@ impl BuildSide {
             return Ok(None);
         };
         let started = std::time::Instant::now();
-        let table = operators::join::build_table(
-            build_source,
-            &spec.spec,
-            flavor,
-            build_source.worker_count(options.threads.unwrap_or(1)),
-        )?;
+        let table = match build_source {
+            BuildSource::File(source) => operators::join::build_table_over(
+                source,
+                &spec.spec,
+                flavor,
+                source.worker_count(options.threads.unwrap_or(1)),
+            )?,
+            BuildSource::Set(source) => operators::join::build_table_over(
+                source,
+                &spec.spec,
+                flavor,
+                source.worker_count(options.threads.unwrap_or(1)),
+            )?,
+        };
         Ok(Some(StreamedTable { table, key, elapsed: started.elapsed() }))
     }
 }
@@ -255,7 +351,7 @@ impl StreamedJoin {
 /// resolved.
 impl Pipeline<'_> {
     /// Runs the stages, in the plan's order.
-    pub(crate) fn run(mut self) -> Result<AggregateResult, EngineError> {
+    pub(crate) fn run(mut self) -> Result<Outcome, EngineError> {
         // How many workers the operators may use. The filter's blocks are
         // 64-row aligned and the projection's are larger, so the two can end up
         // with different worker counts -- and the plan reports the count that
@@ -322,8 +418,20 @@ impl Pipeline<'_> {
         // made is never made. See
         // [ADR-0016](../../../docs/adr/0016-the-aggregate-reads-in-place.md).
         let project_started = std::time::Instant::now();
-        let (aggregate_rows, fusable) =
-            project_stage(self.resolved, self.dataset, &mut materialised, ordered.as_ref());
+        let (aggregate_rows, fusable) = match self.output {
+            Output::Aggregate => {
+                project_stage(self.resolved, self.dataset, &mut materialised, ordered.as_ref())
+            }
+            Output::Rows => (
+                project_rows_stage(
+                    self.resolved,
+                    self.dataset,
+                    &mut materialised,
+                    ordered.as_ref(),
+                ),
+                Vec::new(),
+            ),
+        };
         // The projection does not change the row count: the join and the sort
         // do, and they report their own counts.
         //
@@ -349,18 +457,23 @@ impl Pipeline<'_> {
         // column, so the aggregate's NULL rules, its type rules and its
         // saturation all keep working, and the differential tests that cover them
         // cover this path too.
-        let (computed, evaluate_stats) =
-            evaluate_stage(self.resolved, &materialised, aggregate_rows)?;
+        let (computed, evaluate_stats) = match self.output {
+            Output::Aggregate => evaluate_stage(self.resolved, &materialised, aggregate_rows)?,
+            Output::Rows => (Vec::new(), None),
+        };
 
         // --- aggregate --------------------------------------------------------
-        let (groups, aggregate_stats) = aggregate_stage(
-            self.resolved.aggregate.as_ref(),
-            self.dataset,
-            &materialised,
-            &computed,
-            &fusable,
-            aggregate_rows,
-        );
+        let (groups, aggregate_stats) = match self.output {
+            Output::Aggregate => aggregate_stage(
+                self.resolved.aggregate.as_ref(),
+                self.dataset,
+                &materialised,
+                &computed,
+                &fusable,
+                aggregate_rows,
+            ),
+            Output::Rows => (Vec::new(), None),
+        };
 
         // The stages are reported in the **plan's** order -- scan, filter,
         // project, join, sort, aggregate -- and not in the order the work ran
@@ -403,7 +516,70 @@ impl Pipeline<'_> {
             attribution: explain::Attribution::of(self.started.elapsed(), &stages),
         };
 
-        Ok(AggregateResult { groups, stages, plan_output })
+        match self.output {
+            Output::Aggregate => {
+                Ok(Outcome::Aggregate(Box::new(AggregateResult { groups, stages, plan_output })))
+            }
+            Output::Rows => {
+                Ok(Outcome::Rows(gathered_rows(self.resolved, self.dataset, &materialised)))
+            }
+        }
+    }
+}
+
+/// The plan's rows, gathered.
+///
+/// The projection's columns, and only those: the join's key and the sort's
+/// column are the stages' own columns, and a row does not carry the stage
+/// that decided it.
+fn gathered_rows(
+    resolved: &plan::ResolvedPlan,
+    dataset: &Dataset,
+    materialised: &operators::project::Materialised<'_>,
+) -> Dataset {
+    let columns = projected_columns(resolved, dataset);
+    let gathered: Vec<columnar_core::BatchColumn> =
+        columns.iter().filter_map(|&index| materialised.gathered(index).cloned()).collect();
+    Dataset::from_materialised(&gathered)
+}
+
+/// The columns the plan's rows carry.
+///
+/// The plan's **projection**, or every column when the projection is empty.
+/// The join's key and the sort's column are not in it: they are the stages'
+/// own columns, and a row does not carry the stage that decided it.
+fn projected_columns(resolved: &plan::ResolvedPlan, dataset: &Dataset) -> Vec<usize> {
+    if resolved.projection.is_empty() {
+        (0..dataset.chunks.len()).collect()
+    } else {
+        resolved.projection.clone()
+    }
+}
+
+/// Materialises the plan's rows.
+///
+/// Every projected column is gathered, over the rows the stages behind the
+/// filter decided -- the join's output rows, the sort's order, or the
+/// filter's survivors.
+fn project_rows_stage(
+    resolved: &plan::ResolvedPlan,
+    dataset: &Dataset,
+    materialised: &mut operators::project::Materialised<'_>,
+    ordered: Option<&Ordered>,
+) -> usize {
+    for column in projected_columns(resolved, dataset) {
+        match ordered {
+            Some(ordered) => {
+                materialised.gather_rows(column, &ordered.rows);
+            }
+            None => {
+                materialised.gather(column);
+            }
+        }
+    }
+    match ordered {
+        Some(ordered) => ordered.rows.len(),
+        None => materialised.selection().len(),
     }
 }
 
@@ -508,7 +684,7 @@ pub(crate) fn join_outcome(
         let report = explain::JoinReport {
             probe_key: spec.spec.probe_key.clone(),
             build_key: spec.spec.build_key.clone(),
-            build_file: file_name(&spec.spec.build_path),
+            build_file: build_names(&spec.spec.build_paths),
             build_rows: streamed.build_rows,
             output_rows: streamed.rows.len(),
             probe_in_scan: true,
@@ -528,12 +704,20 @@ pub(crate) fn join_outcome(
     // spent on what. The clock is two reads and one subtraction, and what it
     // costs is measured against the floor.
     let build_started = std::time::Instant::now();
-    let table = operators::join::build_table(
-        source,
-        &spec.spec,
-        pipeline.flavor,
-        source.worker_count(pipeline.options.threads.unwrap_or(1)),
-    )?;
+    let table = match source {
+        BuildSource::File(source) => operators::join::build_table_over(
+            source,
+            &spec.spec,
+            pipeline.flavor,
+            source.worker_count(pipeline.options.threads.unwrap_or(1)),
+        )?,
+        BuildSource::Set(source) => operators::join::build_table_over(
+            source,
+            &spec.spec,
+            pipeline.flavor,
+            source.worker_count(pipeline.options.threads.unwrap_or(1)),
+        )?,
+    };
     let build_elapsed = build_started.elapsed();
     let keys = key_column(pipeline.dataset, spec.probe_key)?;
     // The probe reads the survivors' rows as it needs them. A selection
@@ -555,7 +739,7 @@ pub(crate) fn join_outcome(
     let report = explain::JoinReport {
         probe_key: spec.spec.probe_key.clone(),
         build_key: spec.spec.build_key.clone(),
-        build_file: file_name(&spec.spec.build_path),
+        build_file: build_names(&spec.spec.build_paths),
         build_rows: table.rows(),
         output_rows: matched.len(),
         probe_in_scan: false,
@@ -668,7 +852,7 @@ pub(crate) fn require_same_key_type(
 /// type, and typing it `Int64` would let a plan join against a column that
 /// does not exist.
 pub(crate) fn build_key_type(
-    source: &ParquetSource,
+    source: &BuildSource,
     build_key: &str,
 ) -> Result<columnar_core::DataType, EngineError> {
     source
@@ -677,6 +861,15 @@ pub(crate) fn build_key_type(
         .find(|column| column.name == build_key)
         .map(|column| column.data_type)
         .ok_or_else(|| EngineError::UnknownColumn(build_key.to_owned()))
+}
+
+/// The build side's names, for the plan output.
+///
+/// One file is named by its own name, exactly as it was before the set
+/// existed. A set is named by **all** of its files' names, because a reader
+/// who wants to know which files were read should not have to guess.
+pub(crate) fn build_names(paths: &[std::path::PathBuf]) -> String {
+    paths.iter().map(|path| file_name(path)).collect::<Vec<_>>().join(", ")
 }
 
 /// The name of a file, without its directory.

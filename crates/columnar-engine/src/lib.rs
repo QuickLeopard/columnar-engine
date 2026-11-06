@@ -184,10 +184,11 @@ pub(crate) mod scan;
 // the facade's: one source of truth, two paths to it.
 pub use facade::{col, lit};
 pub use facade::{
-    execute, execute_on, open_source, open_table, Aggregate, AggregateResult, AggregateSpec,
-    AggregateValue, ArithOp, Attribution, Catalog, ColumnChunk, ColumnExpr, ComparisonOp, DataType,
-    Dataset, DatasetError, Encoding, EngineError, ExecOptions, Expr, FileSetSource, Flavor, Group,
-    JoinReport, JoinSpec, MemoryBudget, MemoryError, NullBitmap, Operand, ParquetSource,
-    PlanBuilder, PlanOutput, Predicate, PushdownMetrics, QueryPlan, RowGroupRange, ScalarValue,
-    SortReport, SortSpec, SourceColumn, StageStats, TableAddress, MAX_READER_BATCH_ROWS,
+    execute, execute_on, execute_rows, execute_rows_on, open_source, open_table, Aggregate,
+    AggregateResult, AggregateSpec, AggregateValue, ArithOp, Attribution, Catalog, ColumnChunk,
+    ColumnExpr, ComparisonOp, DataType, Dataset, DatasetError, Encoding, EngineError, ExecOptions,
+    Expr, FileSetSource, Flavor, Group, JoinReport, JoinSpec, MemoryBudget, MemoryError,
+    NullBitmap, Operand, ParquetSource, PlanBuilder, PlanOutput, Predicate, PushdownMetrics,
+    QueryPlan, RowGroupRange, ScalarValue, SortReport, SortSpec, SourceColumn, StageStats,
+    TableAddress, MAX_READER_BATCH_ROWS,
 };

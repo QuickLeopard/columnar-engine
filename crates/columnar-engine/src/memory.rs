@@ -83,7 +83,7 @@
 use columnar_core::{ComparisonOp, DataType, Encoding, Predicate, ScalarValue};
 
 use crate::plan::{ColumnSchema, QueryPlan, ResolvedJoin, ResolvedPlan, ResolvedSort};
-use crate::source::ParquetSource;
+use crate::source::{EngineSource, ParquetSource};
 use crate::Dataset;
 
 /// The default memory budget: 256 MiB.
@@ -387,6 +387,40 @@ pub fn estimate_build_side(
     build_filter: &[Predicate],
     threads: usize,
 ) -> usize {
+    estimate_build_side_over(source, build_key, build_filter, threads)
+}
+
+/// The build side's estimate, over a **set** of files.
+///
+/// The set's charge is the same three facts a file's is, taken from the set:
+/// the **rows** are the sum of the files' rows, the **range** is the union of
+/// the files' ranges, and the **workers** are the set's own.
+///
+/// # Panics
+///
+/// This function does not panic.
+#[must_use]
+pub fn estimate_build_side_set(
+    source: &crate::file_set::FileSetSource,
+    build_key: &str,
+    build_filter: &[Predicate],
+    threads: usize,
+) -> usize {
+    estimate_build_side_over(source, build_key, build_filter, threads)
+}
+
+/// The build side's estimate, over **any** source.
+///
+/// The set's charge is the same three facts a file's is, taken from the set:
+/// the **rows** are the sum of the files' rows, the **range** is the union of
+/// the files' ranges, and the **workers** are the set's own.
+#[must_use]
+pub(crate) fn estimate_build_side_over<S: EngineSource>(
+    source: &S,
+    build_key: &str,
+    build_filter: &[Predicate],
+    threads: usize,
+) -> usize {
     let rows = source.rows();
     if rows == 0 {
         return 0;
@@ -431,7 +465,11 @@ struct BuildRead {
 /// key the file does not have, or a predicate whose column it does not have
 /// -- falls back to the key alone: the plan is refused before the read
 /// anyway, and refusing a plan is not the estimate's job.
-fn build_read(source: &ParquetSource, build_key: &str, build_filter: &[Predicate]) -> BuildRead {
+fn build_read<S: EngineSource>(
+    source: &S,
+    build_key: &str,
+    build_filter: &[Predicate],
+) -> BuildRead {
     let Some(key) = source.column_index(build_key) else {
         return BuildRead { columns: Vec::new(), declined: false };
     };
@@ -451,7 +489,7 @@ fn build_read(source: &ParquetSource, build_key: &str, build_filter: &[Predicate
 /// An **integer** key is collected into a vector of `i64`s: eight bytes a key.
 /// Every other key is collected into a vector of the join's own key type,
 /// which holds a string header beside the value: thirty-two bytes a key.
-fn key_width(source: &ParquetSource, build_key: &str) -> usize {
+fn key_width<S: EngineSource>(source: &S, build_key: &str) -> usize {
     let data_type = source
         .columns()
         .iter()
@@ -478,7 +516,7 @@ fn key_width(source: &ParquetSource, build_key: &str) -> usize {
 /// The one case the estimate cannot cover is a key **outside** the range the
 /// file's statistics claim: the statistics are wrong, the join notices, and
 /// the hash table takes over -- which the estimate did not charge for.
-fn build_table_bytes(source: &ParquetSource, build_key: &str, survivors: usize) -> usize {
+fn build_table_bytes<S: EngineSource>(source: &S, build_key: &str, survivors: usize) -> usize {
     match direct_table_bytes(source, build_key) {
         Some(bytes) => bytes.saturating_add(overflow_map_bytes(survivors)),
         None => survivors.saturating_mul(HASH_ENTRY_BYTES),
@@ -501,7 +539,7 @@ fn overflow_map_bytes(survivors: usize) -> usize {
 /// statistics. A key that is not an integer, or whose range does not fit
 /// [`DIRECT_TABLE_LIMIT`], is not built as a direct-addressed table at all,
 /// and the table is then the hash table's.
-fn direct_table_bytes(source: &ParquetSource, build_key: &str) -> Option<usize> {
+fn direct_table_bytes<S: EngineSource>(source: &S, build_key: &str) -> Option<usize> {
     let (min, max) = source.column_range(build_key)?;
     let (ScalarValue::Int64(min), ScalarValue::Int64(max)) = (min, max) else {
         return None;
@@ -539,7 +577,7 @@ pub fn direct_table_fits(range: u64) -> bool {
 /// A filter column with no statistics, or a predicate the statistics cannot
 /// be compared against, gives no bound, and the rows of the whole file are
 /// used for that column.
-fn surviving_rows(source: &ParquetSource, build_filter: &[Predicate], rows: usize) -> usize {
+fn surviving_rows<S: EngineSource>(source: &S, build_filter: &[Predicate], rows: usize) -> usize {
     let mut bound = rows;
     for column in distinct_columns(build_filter) {
         let Some(column_bound) = column_bound(source, column, build_filter) else {
@@ -567,7 +605,7 @@ fn distinct_columns(filter: &[Predicate]) -> Vec<&str> {
 /// be satisfied by some value inside the row group's own range. A row group
 /// with no statistics for the column cannot be bounded, so all of its rows
 /// are counted.
-fn column_bound(source: &ParquetSource, column: &str, filter: &[Predicate]) -> Option<usize> {
+fn column_bound<S: EngineSource>(source: &S, column: &str, filter: &[Predicate]) -> Option<usize> {
     let groups = source.row_group_ranges(column);
     if groups.is_empty() {
         return None;
@@ -705,10 +743,20 @@ pub fn estimate_plan_join(
     source: Option<&ParquetSource>,
     threads: usize,
 ) -> usize {
+    estimate_plan_join_over(join, source, threads)
+}
+
+/// The join's build side's estimate, over **any** source.
+#[must_use]
+pub(crate) fn estimate_plan_join_over<S: EngineSource>(
+    join: Option<&ResolvedJoin>,
+    source: Option<&S>,
+    threads: usize,
+) -> usize {
     let (Some(join), Some(source)) = (join, source) else {
         return 0;
     };
-    estimate_build_side(source, &join.spec.build_key, &join.spec.build_filter, threads)
+    estimate_build_side_over(source, &join.spec.build_key, &join.spec.build_filter, threads)
 }
 
 /// Estimates the working set of a plan's **sort**, in bytes.

@@ -474,7 +474,7 @@ fn a_plan_with_a_join_carries_the_row_positions() {
     let plain = QueryPlan::new(Vec::new(), vec!["k".to_owned()], None);
     let joined = QueryPlan {
         join: Some(JoinSpec {
-            build_path: file_path("positions-join"),
+            build_paths: vec![file_path("positions-join")],
             probe_key: "k".to_owned(),
             build_key: "k".to_owned(),
             build_filter: Vec::new(),

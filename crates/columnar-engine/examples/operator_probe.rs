@@ -320,7 +320,7 @@ fn read_build_side(path: &Path) -> Vec<i64> {
 /// filter.
 fn engine_table(path: &Path) -> join::BuildTable {
     let spec = JoinSpec {
-        build_path: path.to_path_buf(),
+        build_paths: vec![path.to_path_buf()],
         probe_key: PROBE_KEY.to_owned(),
         build_key: BUILD_KEY.to_owned(),
         build_filter: vec![

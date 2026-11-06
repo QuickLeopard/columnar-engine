@@ -347,7 +347,7 @@ fn join_orders_plan(build: &Path) -> QueryPlan {
             aggregates: vec![Aggregate::Sum { expr: Expr::column("l_extendedprice") }],
         }),
         join: Some(JoinSpec {
-            build_path: build.to_path_buf(),
+            build_paths: vec![build.to_path_buf()],
             probe_key: "l_orderkey".to_owned(),
             build_key: "o_orderkey".to_owned(),
             build_filter: vec![

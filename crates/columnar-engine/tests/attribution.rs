@@ -277,7 +277,7 @@ fn the_join_is_handed_the_same_rows_and_the_account_holds() {
             aggregates: vec![Aggregate::CountStar],
         }),
         join: Some(columnar_engine::JoinSpec {
-            build_path: build.clone(),
+            build_paths: vec![build.clone()],
             probe_key: "k".to_owned(),
             build_key: "o_orderkey".to_owned(),
             build_filter: Vec::new(),

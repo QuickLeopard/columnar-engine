@@ -66,9 +66,12 @@ does not shrink, and it does not change in place.
 ## Where it sits
 
 **Below the engine.** This crate does not depend on `columnar-engine`: it writes the files the engine
-reads, and the engine's read path cannot move because of anything here. It does not depend on
-`columnar-core` either -- its library depends on nothing in this workspace. (Its *tests* depend on the
-engine, to read what the store wrote; that edge is test-only and it is not in the published crate.)
+reads, and the engine's read path cannot move because of anything here. It depends on `columnar-core` --
+the vocabulary, and nothing else in this workspace -- because **the engine's rows can be written**: the
+conversion from the engine's own chunks to Arrow's cannot live in the core (a vocabulary that depends on
+a framework is not a vocabulary) and must not live in the engine (the engine's surface would carry
+Arrow), so it lives here. (Its *tests* depend on the engine, to read what the store wrote; that edge is
+test-only and it is not in the published crate.)
 
 **The glue is a list of paths.** The engine reads a table that is *many* files through one source over
 a set of files, and that source takes the list of paths. `Table::paths` is that list, in the table's

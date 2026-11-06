@@ -153,6 +153,39 @@ impl Store {
         commit(&dir, &manifest)?;
         Ok(manifest)
     }
+
+    /// Appends the **engine's rows** to a table, and commits them.
+    ///
+    /// The rows are the engine's own vocabulary -- a column chunk with an
+    /// encoding and a validity mask -- and the store turns them into Arrow's,
+    /// re-batches them on the writer's grid, writes them with the store's own
+    /// writer and the caller's policy, and commits. **It is the same rule as
+    /// the Arrow append, with one implementation**: the batches the Arrow
+    /// append writes are the batches this one makes.
+    ///
+    /// **The grid is the store's**, and the rows are re-batched here. The
+    /// engine does not learn the grid -- its own reader's batch is its own
+    /// business -- and a batch that cannot be on the grid is still an error.
+    ///
+    /// The **schema** is the store's own: a column that holds no NULL is
+    /// written REQUIRED, and a column that holds one is written OPTIONAL. The
+    /// engine's rows say which rows are NULL and not whether a column may
+    /// be, and the Parquet writer makes that difference visible in the bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Name`] if the table's name is not one a store can hold,
+    /// [`Error::NoRows`] if there are no rows, and [`Error::Io`] if the file
+    /// system refuses.
+    pub fn append_rows(
+        &self,
+        name: &str,
+        rows: &[columnar_core::ColumnChunk],
+        properties: WriterProperties,
+    ) -> Result<Manifest> {
+        let batches = crate::rows::batches(rows)?;
+        self.append_with(name, &batches, properties)
+    }
 }
 
 /// A table: its manifest, and the directory it lives in.

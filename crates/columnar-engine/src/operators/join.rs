@@ -60,7 +60,7 @@ use crate::operators::filter::filter_all;
 use crate::operators::key::{ArrowKeys, KeyColumn, KeySource, KeyValue};
 use crate::plan::{JoinSpec, ResolvedFilter};
 use crate::pushdown::RowMask;
-use crate::source::{BatchFilter, ParquetSource};
+use crate::source::{BatchFilter, EngineSource, ParquetSource};
 use crate::EngineError;
 
 /// The hash the join's table uses.
@@ -422,6 +422,26 @@ impl HashedTable {
 /// does not have the column's type.
 pub fn build_table(
     source: &ParquetSource,
+    spec: &JoinSpec,
+    flavor: Flavor,
+    threads: usize,
+) -> Result<BuildTable, EngineError> {
+    build_table_over(source, spec, flavor, threads)
+}
+
+/// Reads the build side and hashes it, over **any** source.
+///
+/// The one-file path and the set path are the same path: the source is the
+/// seam, and every rule below is the source's own rule -- the same decision,
+/// the same reader, the same batch rule.
+///
+/// # Errors
+///
+/// Returns [`EngineError::UnknownColumn`] when the build side has no such
+/// column, and [`EngineError::TypeMismatch`] when a predicate's threshold
+/// does not have the column's type.
+pub(crate) fn build_table_over<S: EngineSource>(
+    source: &S,
     spec: &JoinSpec,
     flavor: Flavor,
     threads: usize,

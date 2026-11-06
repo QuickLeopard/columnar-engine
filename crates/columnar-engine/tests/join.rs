@@ -127,7 +127,7 @@ fn join_plan(build_path: &Path, build_filter: Vec<Predicate>) -> QueryPlan {
             ],
         }),
         join: Some(JoinSpec {
-            build_path: build_path.to_path_buf(),
+            build_paths: vec![build_path.to_path_buf()],
             probe_key: "l_orderkey".to_owned(),
             build_key: "o_orderkey".to_owned(),
             build_filter,

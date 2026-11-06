@@ -629,6 +629,18 @@ impl EngineSource for FileSetSource {
         &self.columns
     }
 
+    fn column_index(&self, name: &str) -> Option<usize> {
+        FileSetSource::column_index(self, name)
+    }
+
+    fn column_range(&self, name: &str) -> Option<crate::source::ColumnRange> {
+        FileSetSource::column_range(self, name)
+    }
+
+    fn row_group_ranges(&self, name: &str) -> &[RowGroupRange] {
+        FileSetSource::row_group_ranges(self, name)
+    }
+
     fn column_names(&self, indices: &[usize]) -> Vec<String> {
         FileSetSource::column_names(self, indices)
     }

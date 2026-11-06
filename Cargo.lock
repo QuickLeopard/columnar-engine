@@ -540,6 +540,7 @@ name = "columnar-store"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "columnar-core",
  "columnar-engine",
  "columnar-testdata",
  "parquet",

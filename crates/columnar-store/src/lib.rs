@@ -49,6 +49,7 @@
 pub mod commit;
 pub mod error;
 pub mod manifest;
+pub mod rows;
 pub mod store;
 pub mod writer;
 
