@@ -295,6 +295,21 @@ jobs:
       - name: Check the published figures against the reports
         run: python3 scripts/check-published-figures.py
 
+  status-dashboard:
+    name: the status dashboard is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The status dashboard is **generated** from the project's own documents,
+      # so it holds no figure of its own -- and a generated page is only
+      # current if it is rebuilt. This job rebuilds it and compares it with
+      # the committed one, and fails when they differ: a change that moves the
+      # status cannot merge with a stale page. See ADR-0057.
+      - name: Rebuild the status dashboard
+        run: python3 scripts/build-dashboard.py
+      - name: Check that the committed dashboard is the one the documents describe
+        run: python3 scripts/build-dashboard.py --check
+
   documents-links:
     name: the documents' links resolve
     runs-on: ubuntu-latest

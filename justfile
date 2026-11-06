@@ -22,7 +22,7 @@ build:
 # The last two are also CI jobs, but the local gate must not be weaker than
 # CI -- a private repository's Actions minutes are billed, and this account's
 # billing is currently blocked, so the local gate is the one that runs.
-check: fmt lint test check-published check-page check-links check-package
+check: fmt lint test check-published check-page check-links check-package check-dashboard
 
 # Compile the x86-64 half of the kernel from this ARM64 machine.
 #
@@ -83,6 +83,22 @@ verify-avx2:
 # Check the dependency policy.
 deny:
     cargo deny check
+
+# Build the status dashboard: the project's status as one page.
+#
+# The page is **generated** from the project's own documents, so it holds no
+# figure of its own, and it is rebuilt whenever those documents change. See
+# ADR-0057.
+dashboard:
+    python3 scripts/build-dashboard.py
+
+# Check that the status dashboard is up to date.
+#
+# The page is rebuilt and compared with the committed one, and the check fails
+# when they differ. **This is what keeps the page from going stale**: a change
+# that moves the status and does not rebuild the page does not pass the gate.
+check-dashboard:
+    python3 scripts/build-dashboard.py --check
 
 # Check the package: the three published crates, in the order their
 # dependencies decide, and what each of them carries.

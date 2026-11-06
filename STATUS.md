@@ -14,8 +14,11 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **42 specs**, **56 ADRs** and **29 defects** so far, and every one
-of the specs is closed.
+[`constitution.md`](constitution.md). **43 specs**, **57 ADRs** and **29 defects** so far, and every one
+of the specs but the one in flight is closed. **And the status has a page**:
+[`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
+shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
+cannot go stale.
 
 ---
 
@@ -434,6 +437,13 @@ for a pinned x86-64 runner; it has not run on one.
   public break**: the surface does not move, so the crates can be published with this in them.
   [ADR-0055](docs/adr/0055-the-sets-rows-are-handed-out.md) and
   [ADR-0056](docs/adr/0056-the-rows-are-handed-out-as-they-lie.md) record it.
+- **The status is a page now, and the page cannot go stale.** `docs/status.html` is the project's status
+  as one screen: the headline comparisons, the tree's shape, the gates, the increments and the open
+  questions. **It is generated** — `scripts/build-dashboard.py` reads `STATUS.md`, `PERF.md` and the
+  specs and writes it — **so it holds no figure of its own**: every number on it is rendered from the
+  document that publishes it, the way the figures guard already insists for the prose. **And it cannot
+  go stale**: the same script with `--check` rebuilds the page and fails when it differs, so a change
+  that moves the status and does not rebuild the page does not merge. ADR-0057 records it.
 - **The rows path does not copy the table any more, and the round trip is the file.** The rows the engine
   hands out are **the rows that were read** when no row was removed and nothing reordered them: the engine's
   own chunks, with their own encodings, and **the gather is gone for a plan that filters nothing**. **The lazy
