@@ -1,0 +1,55 @@
+# Continuous performance tracking with CodSpeed.
+#
+# Unlike `bench.yml` and `bench-avx2.yml`, this workflow does not publish a
+# wall-clock number from a shared runner. It runs the divan benchmarks in
+# `crates/columnar-bench/benches` under CodSpeed's CPU simulation instrument,
+# which counts the work the code does rather than timing it, so the results
+# are stable enough on `ubuntu-latest` to compare a pull request against its
+# base branch.
+#
+# The benchmarks cover the comparison kernels (every flavor, both value
+# types, with and without a validity mask) and the engine end to end (every
+# builtin query on the eager and the lazy path, the Parquet decode and the
+# dataset generator). The tables they run over are generated at start-up by
+# `columnar-testdata`, so no dataset is committed.
+
+name: CodSpeed
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # `workflow_dispatch` lets CodSpeed trigger backtest runs to build up
+  # initial history.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # OpenID Connect authentication with CodSpeed
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same pin as `ci.yml`.
+  RUST_TOOLCHAIN: 1.97.1
+
+jobs:
+  codspeed:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Install cargo-codspeed
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-codspeed
+      - name: Build the benchmarks
+        run: cargo codspeed build -m simulation -p columnar-bench
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@v5
+        with:
+          mode: simulation
+          run: cargo codspeed run -p columnar-bench
