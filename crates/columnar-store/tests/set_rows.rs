@@ -101,9 +101,9 @@ fn on_the_grid(arrays: &[ArrayRef], schema: &SchemaRef, rows: usize) -> Vec<Reco
 /// The file's data region: everything before the file's metadata.
 ///
 /// A Parquet file ends with the metadata, its length, and the magic. **The metadata is where the Arrow
-/// schema lives**, and the Arrow schema is the one thing the engine's rows cannot carry -- the gather
-/// materialises the dictionary away, and the footer records what the columns were. **So the data region is
-/// what the round trip has to reproduce exactly**, and the metadata is what it cannot.
+/// schema lives**, and the Arrow schema is the one thing the engine's rows cannot carry -- the rows say
+/// which rows are NULL and not whether a column may be. **So the data region is what the round trip has
+/// to reproduce exactly**, and the metadata is what the store's own rule changes.
 fn data_region(path: &Path) -> Vec<u8> {
     let bytes = fs::read(path).expect("the file reads");
     let (metadata_start, _) = split_metadata(&bytes);
@@ -128,26 +128,6 @@ fn split_metadata(bytes: &[u8]) -> (usize, usize) {
     let length = bytes.get(bytes.len() - 8..bytes.len() - 4).expect("the length is there");
     let metadata_len = u32::from_le_bytes(length.try_into().expect("four bytes")) as usize;
     (bytes.len() - 8 - metadata_len, metadata_len)
-}
-
-/// The file's own schema, with the dictionary materialised away.
-///
-/// The engine's rows are gathered, and the gather materialises the dictionary away: the rows are plain
-/// columns where the file's own schema says a dictionary. **The schema that describes them is the file's
-/// own schema with that one difference**, and the file's own nullability.
-fn gathered_schema(schema: &SchemaRef) -> SchemaRef {
-    let fields: Vec<arrow::datatypes::Field> = schema
-        .fields()
-        .iter()
-        .map(|field| {
-            let data_type = match field.data_type() {
-                arrow::datatypes::DataType::Dictionary(_, value) => value.as_ref().clone(),
-                other => other.clone(),
-            };
-            arrow::datatypes::Field::new(field.name(), data_type, field.is_nullable())
-        })
-        .collect();
-    std::sync::Arc::new(arrow::datatypes::Schema::new(fields))
 }
 
 /// Writes the engine's rows back into the store under the file's own schema.
@@ -191,9 +171,12 @@ fn write_tables(store: &Store, batches: &[RecordBatch]) {
 }
 
 #[test]
-fn the_round_trip_is_the_files_data() {
+fn the_round_trip_is_the_file() {
     let generated = generated();
-    let schema = gathered_schema(&source_schema(generated));
+    // The rows the engine hands out are **the rows that were read**, so they keep the file's own
+    // encodings: a dictionary column is a dictionary column. **So the schema that describes them is the
+    // file's own schema**, and the file that comes out of the round trip is the file they came from.
+    let schema = source_schema(generated);
     let store = Store::open(scratch("set-rows-exact")).expect("the store opens");
     let batches = read_source(generated);
     write_tables(&store, &batches);
@@ -207,19 +190,46 @@ fn the_round_trip_is_the_files_data() {
         data_region(&written),
         "the rows the engine read out of the table do not write the data the file holds"
     );
-    // And the metadata is not the file's metadata: the footer records the Arrow schema, and the gather
-    // materialised the dictionary away, so the two schemas differ.
-    assert_ne!(
+    // And the metadata is the file's metadata too: the rows are the rows that were read, so they keep
+    // the dictionary, and the footer records the dictionary the file holds.
+    assert_eq!(
         metadata(generated),
         metadata(&written),
-        "the round trip's metadata is the file's metadata, and the dictionary was not materialised away"
+        "the round trip's metadata is not the file's metadata: the dictionary did not survive the rows"
     );
+    // So the file is the file, byte for byte: not the data region alone, the whole file.
+    assert!(
+        files_identical(generated, &written),
+        "the round trip's file is not the file the rows came from, byte for byte"
+    );
+}
+
+#[test]
+fn the_rows_keep_the_dictionary() {
+    let generated = generated();
+    let store = Store::open(scratch("set-rows-dictionary")).expect("the store opens");
+    let batches = read_source(generated);
+    write_tables(&store, &batches);
+
+    // The rows the set hands out are the rows that were read, so the dictionary is still there.
+    let table = store.table("one-file").expect("the table is there").expect("the table is there");
+    let set = FileSetSource::open(&table.paths()).expect("the set opens");
+    let rows = set.execute_rows(&plan(), &ExecOptions::default()).expect("the rows come out");
+    let dictionaries = rows
+        .chunks
+        .iter()
+        .filter(|chunk| matches!(chunk.encoding, columnar_core::Encoding::Utf8Dict { .. }))
+        .count();
+    assert!(dictionaries > 0, "the rows came out plain: the dictionary was materialised away");
 }
 
 #[test]
 fn the_sets_rows_are_the_files_rows() {
     let generated = generated();
-    let schema = gathered_schema(&source_schema(generated));
+    // The rows the engine hands out are **the rows that were read**, so they keep the file's own
+    // encodings: a dictionary column is a dictionary column. **So the schema that describes them is the
+    // file's own schema**, and the file that comes out of the round trip is the file they came from.
+    let schema = source_schema(generated);
     let store = Store::open(scratch("set-rows-set")).expect("the store opens");
     let batches = read_source(generated);
     write_tables(&store, &batches);

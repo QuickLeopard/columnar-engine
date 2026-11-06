@@ -18,8 +18,11 @@
 //! them, so the pipeline's own entry point takes **one** argument instead of
 //! ten, and a new stage is handed the same context as the others.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::time::Instant;
 
+use columnar_core::ColumnChunk;
 use columnar_kernels::Flavor;
 
 use crate::explain::{self, PlanOutput, StageStats};
@@ -99,7 +102,12 @@ pub(crate) struct Pipeline<'a> {
     /// The plan, resolved.
     pub(crate) resolved: &'a plan::ResolvedPlan,
     /// The dataset the plan runs over.
-    pub(crate) dataset: &'a Dataset,
+    ///
+    /// The rows path may hand the dataset's **own** columns out, and a copy
+    /// of a dictionary is not a copy of nothing. So the pipeline **owns** the
+    /// dataset when the engine read it -- the lazy path read it, and the
+    /// engine gives it away -- and borrows it when the caller owns it.
+    pub(crate) dataset: Cow<'a, Dataset>,
     /// The options the query was given.
     pub(crate) options: &'a ExecOptions,
     /// The kernel flavor the query runs with.
@@ -350,6 +358,15 @@ impl StreamedJoin {
 /// output accounts for the query, so the account starts before the plan is
 /// resolved.
 impl Pipeline<'_> {
+    /// The dataset the plan runs over.
+    ///
+    /// The pipeline holds it by value when the engine read it and by
+    /// reference when the caller owns it, and this is the one place that
+    /// turns either into a `&Dataset`.
+    fn data(&self) -> &Dataset {
+        &self.dataset
+    }
+
     /// Runs the stages, in the plan's order.
     pub(crate) fn run(mut self) -> Result<Outcome, EngineError> {
         // How many workers the operators may use. The filter's blocks are
@@ -359,34 +376,9 @@ impl Pipeline<'_> {
         let operator_workers = self.options.threads.unwrap_or(1).max(1);
 
         // --- filter -----------------------------------------------------------
-        // A predicate that was pushed into the reader has already been applied,
-        // and its column is not in the dataset. The filters left here are the
-        // ones the reader did not take, and the conjunction is separable, so
-        // applying them now gives the same answer.
-        //
-        // A plan with no filter at all does not run the filter: every row
-        // survives, and the selection is built here rather than by the filter
-        // operator -- the core's own "every row" selection leaves the padding
-        // bits of its last word set, and walking it would visit rows past the
-        // end of the batch.
-        let filter_started = std::time::Instant::now();
-        let (selection, filter_stats) = if self.resolved.filter.is_empty() {
-            (columnar_core::SelectionVector::all(self.dataset.len()), None)
-        } else {
-            let (selection, stats) = operators::filter::filter_all_with_workers(
-                self.dataset,
-                &self.resolved.filter,
-                self.flavor,
-                operator_workers,
-            )?;
-            (selection, Some(stats))
-        };
+        let (selection, filter_stats, filter_stage) =
+            filter_stage(self.data(), &self.resolved.filter, self.flavor, operator_workers)?;
         let filter_workers = filter_stats.as_ref().map_or(1, |stats| stats.workers);
-        let filter_stage = stage(
-            "filter",
-            filter_stats.map(|stats| (stats.rows_in, stats.rows_out)),
-            filter_started.elapsed(),
-        );
 
         // --- join and sort ----------------------------------------------------
         // The two optional stages decide which rows the aggregate reads, so they
@@ -398,11 +390,20 @@ impl Pipeline<'_> {
         let streamed = self.streamed.take();
         let ordered = ordered_stage(&self, streamed, &selection)?;
 
+        // The dataset is taken **out** of the pipeline here. The rows path may
+        // hand the dataset's own columns out -- the lazy path moves them -- and
+        // the pipeline's own fields are moved out below, so the dataset cannot
+        // stay inside it: a partly moved value cannot be borrowed.
+        let dataset = self.dataset;
+
+        // The rows the plan hands out are the rows that were read, when they are.
+        let as_they_lie = rows_lie(&dataset, &selection, ordered.as_ref());
+
         // The materialisation set is built **after** the filter, because it needs
         // the filter's selection: the columns it gathers are the survivors'
         // rows.
         let mut materialised = operators::project::Materialised::with_workers(
-            self.dataset,
+            &dataset,
             selection,
             self.options.threads.unwrap_or(1),
         );
@@ -420,14 +421,15 @@ impl Pipeline<'_> {
         let project_started = std::time::Instant::now();
         let (aggregate_rows, fusable) = match self.output {
             Output::Aggregate => {
-                project_stage(self.resolved, self.dataset, &mut materialised, ordered.as_ref())
+                project_stage(self.resolved, &dataset, &mut materialised, ordered.as_ref())
             }
             Output::Rows => (
                 project_rows_stage(
                     self.resolved,
-                    self.dataset,
+                    &dataset,
                     &mut materialised,
                     ordered.as_ref(),
+                    as_they_lie,
                 ),
                 Vec::new(),
             ),
@@ -466,7 +468,7 @@ impl Pipeline<'_> {
         let (groups, aggregate_stats) = match self.output {
             Output::Aggregate => aggregate_stage(
                 self.resolved.aggregate.as_ref(),
-                self.dataset,
+                &dataset,
                 &materialised,
                 &computed,
                 &fusable,
@@ -521,10 +523,130 @@ impl Pipeline<'_> {
                 Ok(Outcome::Aggregate(Box::new(AggregateResult { groups, stages, plan_output })))
             }
             Output::Rows => {
-                Ok(Outcome::Rows(gathered_rows(self.resolved, self.dataset, &materialised)))
+                let rows = if as_they_lie {
+                    // The materialisation set borrows the dataset, and the
+                    // dataset's own columns are taken out of it here -- so it
+                    // goes first.
+                    drop(materialised);
+                    rows_as_they_lie(self.resolved, dataset)
+                } else {
+                    gathered_rows(self.resolved, &dataset, &materialised)
+                };
+                Ok(Outcome::Rows(rows))
             }
         }
     }
+}
+
+/// The filter stage: the plan's own predicates, and the rows that survived.
+///
+/// A predicate that was pushed into the reader has already been applied, and
+/// its column is not in the dataset. The filters left here are the ones the
+/// reader did not take, and the conjunction is separable, so applying them now
+/// gives the same answer.
+///
+/// A plan with no filter at all does not run the filter: every row survives,
+/// and the selection is built here rather than by the filter operator -- the
+/// core's own "every row" selection leaves the padding bits of its last word
+/// set, and walking it would visit rows past the end of the batch.
+fn filter_stage(
+    dataset: &Dataset,
+    filters: &[plan::ResolvedFilter],
+    flavor: Flavor,
+    operator_workers: usize,
+) -> Result<
+    (columnar_core::SelectionVector, Option<operators::filter::FilterStats>, Option<StageStats>),
+    EngineError,
+> {
+    let started = std::time::Instant::now();
+    let (selection, stats) = if filters.is_empty() {
+        (columnar_core::SelectionVector::all(dataset.len()), None)
+    } else {
+        let (selection, stats) =
+            operators::filter::filter_all_with_workers(dataset, filters, flavor, operator_workers)?;
+        (selection, Some(stats))
+    };
+    let stage =
+        stage("filter", stats.map(|stats| (stats.rows_in, stats.rows_out)), started.elapsed());
+    Ok((selection, stats, stage))
+}
+
+/// Whether the plan's rows are **the rows that were read**.
+///
+/// Two things have to hold:
+///
+/// - **No row was removed.** The filter's selection holds the survivors in
+///   the order they were read, and the selection's rows are distinct, so a
+///   selection as long as the dataset *is* every row -- whether the plan has
+///   no filter or a filter that kept everything.
+/// - **Nothing reordered them.** A join's output and a sort's output are new
+///   rows, in a new order.
+///
+/// The test is about the **rows** and not about where they came from: the
+/// eager path and the lazy path make the same one. They can answer it
+/// differently, because the *read* is different -- the lazy path pushes the
+/// plan's predicates into the reader, so a predicate the reader took has
+/// already removed its rows.
+fn rows_lie(
+    dataset: &Dataset,
+    selection: &columnar_core::SelectionVector,
+    ordered: Option<&Ordered>,
+) -> bool {
+    ordered.is_none() && selection.total() == dataset.len() && selection.len() == dataset.len()
+}
+
+/// The plan's rows, as they lie.
+///
+/// The rows are the rows that were read, so there is **nothing to gather**:
+/// the columns are handed out with the encodings the reader produced, so a
+/// dictionary column stays a dictionary column.
+///
+/// **The lazy path moves them** -- the engine read them, and the engine gives
+/// them away -- **and the eager path clones them**, because the caller owns
+/// the dataset there. Neither is a gather: a gather materialises the
+/// dictionary away, and that is the copy this path does not make.
+fn rows_as_they_lie(resolved: &plan::ResolvedPlan, dataset: Cow<'_, Dataset>) -> Dataset {
+    let indices = projected_columns(resolved, &dataset);
+    let chunks = match dataset {
+        Cow::Owned(dataset) => take_columns(dataset, &indices),
+        Cow::Borrowed(dataset) => clone_columns(dataset, &indices),
+    };
+    Dataset::from_chunks(chunks)
+}
+
+/// The projected columns, taken out of the dataset's own columns.
+///
+/// The columns are taken in the **projection's** order, and a column's own
+/// values keep the order they were read in.
+fn take_columns(dataset: Dataset, indices: &[usize]) -> Vec<ColumnChunk> {
+    let mut pool: Vec<Option<ColumnChunk>> = dataset.chunks.into_iter().map(Some).collect();
+    let mut chunks: Vec<ColumnChunk> = Vec::with_capacity(indices.len());
+    let mut first: HashMap<usize, usize> = HashMap::new();
+    for &index in indices {
+        let chunk = if let Some(chunk) = pool.get_mut(index).and_then(Option::take) {
+            chunk
+        } else {
+            // The projection names the same column twice: the second copy is a
+            // copy of the first, exactly as the gather handed it out twice.
+            let position = first.get(&index).copied().unwrap_or_default();
+            chunks.get(position).expect("the first copy of the column was taken").clone()
+        };
+        first.entry(index).or_insert(chunks.len());
+        chunks.push(chunk);
+    }
+    chunks
+}
+
+/// The projected columns, copied out of the dataset's own columns.
+///
+/// The copy is **the caller's**: the eager path's caller owns the dataset, so
+/// the rows are a copy of it. It is a copy of the columns and not a gather of
+/// them, so the encodings survive it.
+fn clone_columns(dataset: &Dataset, indices: &[usize]) -> Vec<ColumnChunk> {
+    indices
+        .iter()
+        .map(|&index| dataset.chunks.get(index).expect("a projected column is in range").clone())
+        .collect()
 }
 
 /// The plan's rows, gathered.
@@ -561,13 +683,26 @@ fn projected_columns(resolved: &plan::ResolvedPlan, dataset: &Dataset) -> Vec<us
 /// Every projected column is gathered, over the rows the stages behind the
 /// filter decided -- the join's output rows, the sort's order, or the
 /// filter's survivors.
+///
+/// **Unless the rows are the rows that were read.** Then there is nothing to
+/// gather: the columns are handed out as they lie. They are still **read**,
+/// so the plan output still names them -- a column the query read is a column
+/// the query read, whether or not the engine materialised it.
 fn project_rows_stage(
     resolved: &plan::ResolvedPlan,
     dataset: &Dataset,
     materialised: &mut operators::project::Materialised<'_>,
     ordered: Option<&Ordered>,
+    as_they_lie: bool,
 ) -> usize {
-    for column in projected_columns(resolved, dataset) {
+    let columns = projected_columns(resolved, dataset);
+    if as_they_lie {
+        for column in columns {
+            materialised.note_read_in_place(column);
+        }
+        return materialised.selection().len();
+    }
+    for column in columns {
         match ordered {
             Some(ordered) => {
                 materialised.gather_rows(column, &ordered.rows);
@@ -719,7 +854,7 @@ pub(crate) fn join_outcome(
         )?,
     };
     let build_elapsed = build_started.elapsed();
-    let keys = key_column(pipeline.dataset, spec.probe_key)?;
+    let keys = key_column(pipeline.data(), spec.probe_key)?;
     // The probe reads the survivors' rows as it needs them. A selection
     // that holds every row is the **range**, and the range is handed over
     // as a range: the probe's own loop then keeps its state where it can
@@ -781,7 +916,7 @@ pub(crate) fn sort_outcome(
     };
 
     let started = std::time::Instant::now();
-    let keys = key_column(pipeline.dataset, spec.column)?;
+    let keys = key_column(pipeline.data(), spec.column)?;
     let handed = joined.map_or(selection.len(), <[u32]>::len);
     // The sort is handed the rows the join produced, when there is a join,
     // and the filter's survivors when there is not. Both are the dataset's

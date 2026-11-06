@@ -64,9 +64,16 @@ let manifest = store.append_rows("lineitem-copy", &rows.chunks, writer_propertie
 ```
 
 **The rows are the file's rows**: the set's rows and one file's rows are the same rows, in the same order,
-and the two write the same file. **What the round trip does not carry is the schema** -- the nullability
-(below) and the dictionary, because the rows are gathered and the gather materialises the dictionary away.
+and the two write the same file. **What the round trip does not carry is the nullability** (below): the
+rows say which rows are NULL and not whether a column may be, and the store's own rule decides that.
 **The figures are in [PERF.md §3aa](https://github.com/QuickLeopard/columnar-engine/blob/main/PERF.md#3aa-the-sets-rows).**
+
+**The dictionary does come back.** The engine hands out the rows that were read **as they lie** when the
+plan removes nothing, so a dictionary column is still a dictionary column -- and the store's conversion
+takes both shapes, the dictionary and the plain one. A plan that removes rows in the engine, a join and a
+sort make new rows, and those rows are gathered: the dictionary is materialised away, and the store takes
+those too. **So the shape of the rows depends on the plan, and the caller can see which shape it got**:
+the encoding says so.
 
 **The grid is still the store's**: the rows are re-batched inside the store, and the engine does not
 learn the number 65,536. **The conversion is the store's**, because it cannot live in `columnar-core` (a

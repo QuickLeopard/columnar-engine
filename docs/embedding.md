@@ -196,9 +196,10 @@ store.append_rows("lineitem-copy", &rows.chunks, writer_properties(&[]))?;
 ```
 
 **The rows are the file's rows**: the set's rows and one file's rows are the same rows, in the same order,
-and the two write the same file. **What the round trip does not carry is the schema** -- the nullability
-above, and the dictionary, because the rows the engine hands out are gathered and the gather materialises
-the dictionary away. **The figures are in
+and the two write the same file. **What the round trip does not carry is the nullability** above -- the
+rows say which rows are NULL and not whether a column may be. **The dictionary does come back**: the
+engine hands out the rows that were read **as they lie** when the plan removes nothing, and the store's
+conversion takes both that shape and the gathered one. **The figures are in
 [PERF.md §3aa](https://github.com/QuickLeopard/columnar-engine/blob/main/PERF.md#3aa-the-sets-rows).**
 
 **And the crate publishes with the others.** It was held back while its API was still moving, and the

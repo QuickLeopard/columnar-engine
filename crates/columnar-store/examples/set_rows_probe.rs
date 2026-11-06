@@ -38,12 +38,12 @@
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use arrow::array::RecordBatchReader;
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
+use columnar_core::Encoding;
 use columnar_engine::memory::estimate_lazy_read_for;
 use columnar_engine::{
     execute_rows_on, open_source, ExecOptions, FileSetSource, MemoryBudget, QueryPlan,
@@ -236,26 +236,6 @@ fn options() -> ExecOptions {
     ExecOptions { memory_budget: MemoryBudget { bytes: BUDGET_BYTES }, flavor: None, threads: None }
 }
 
-/// The file's own schema, with the dictionary materialised away.
-///
-/// **The engine's rows are gathered, and the gather materialises the dictionary away**: the rows are
-/// plain columns where the file's own schema says a dictionary. This is the schema that describes them —
-/// the file's own schema, with that one difference, and the file's own nullability.
-fn gathered_schema(schema: &SchemaRef) -> SchemaRef {
-    let fields: Vec<Field> = schema
-        .fields()
-        .iter()
-        .map(|field| {
-            let data_type = match field.data_type() {
-                DataType::Dictionary(_, value) => value.as_ref().clone(),
-                other => other.clone(),
-            };
-            Field::new(field.name(), data_type, field.is_nullable())
-        })
-        .collect();
-    Arc::new(Schema::new(fields))
-}
-
 /// Compares two files byte for byte, and says where they first differ.
 ///
 /// **The first differing byte is the first byte that differs.** The files may be different lengths, and
@@ -405,6 +385,10 @@ fn write_rows_under(
 struct Arm {
     /// The rows the engine handed out.
     rows: usize,
+    /// The rows' columns that carry a dictionary.
+    dictionary_columns: usize,
+    /// The rows' columns that do not.
+    plain_columns: usize,
     /// The file the store wrote, under the store's own rule.
     rule: PathBuf,
     /// The file the store wrote, under the file's own schema.
@@ -428,15 +412,33 @@ fn arm(
 
     let own = write_rows_under(store_own, "round-trip", &rows.chunks, schema);
     let count = rows.rows;
-    (Arm { rows: count, rule, own }, read_elapsed, write_elapsed)
+    // The shape of the rows: the columns that carry a dictionary, and the ones that do not.
+    let mut dictionary_columns = 0;
+    let mut plain_columns = 0;
+    for chunk in &rows.chunks {
+        match chunk.encoding {
+            Encoding::Int64Dict { .. }
+            | Encoding::Float64Dict { .. }
+            | Encoding::Utf8Dict { .. } => {
+                dictionary_columns += 1;
+            }
+            Encoding::Int64 { .. }
+            | Encoding::Float64 { .. }
+            | Encoding::Utf8 { .. }
+            | Encoding::BoolRle { .. } => {
+                plain_columns += 1;
+            }
+        }
+    }
+    (Arm { rows: count, dictionary_columns, plain_columns, rule, own }, read_elapsed, write_elapsed)
 }
 
 /// The engine's eager read of the published file, and the rows it hands out.
 ///
-/// **This is the decomposition of the read.** The lazy path's read is the scan **and the gather**, and the
-/// gather copies every column of the table: the rows the engine hands out are a copy of what it read. The
-/// eager path's read is the decode alone, and the eager path's rows are the decode **and the same
-/// gather** -- so the difference between them is the gather, measured on the same rows.
+/// **This is the decomposition of the read.** The lazy path's read is the scan, and the rows are the
+/// columns that were read -- moved out, not copied. The eager path's read is the decode alone, and the
+/// eager path's rows are the decode **and a copy of the columns**, because the caller owns the dataset
+/// there -- so the difference between them is that copy, measured on the same rows.
 fn eager_pair(file: &Path) -> (Duration, Duration) {
     let started = Instant::now();
     let dataset = columnar_engine::Dataset::read_parquet(file).expect("the engine reads the file");
@@ -525,7 +527,7 @@ fn campaign(
     work_dir: &Path,
     one_source: &columnar_engine::ParquetSource,
     set: &FileSetSource,
-    gathered: &SchemaRef,
+    own: &SchemaRef,
 ) -> Campaign {
     let mut campaign = Campaign::default();
     for iteration in 0..ITERATIONS {
@@ -549,13 +551,13 @@ fn campaign(
                 },
                 &store_rule,
                 &store_own,
-                gathered,
+                own,
             );
             let six = arm(
                 &mut || set.execute_rows(&plan(), &options()).expect("the rows come out"),
                 &store_rule,
                 &store_own,
-                gathered,
+                own,
             );
             (one.0, one.1, one.2, six.0, six.1, six.2)
         } else {
@@ -563,7 +565,7 @@ fn campaign(
                 &mut || set.execute_rows(&plan(), &options()).expect("the rows come out"),
                 &store_rule,
                 &store_own,
-                gathered,
+                own,
             );
             let one = arm(
                 &mut || {
@@ -571,7 +573,7 @@ fn campaign(
                 },
                 &store_rule,
                 &store_own,
-                gathered,
+                own,
             );
             (one.0, one.1, one.2, six.0, six.1, six.2)
         };
@@ -656,11 +658,13 @@ fn main() {
     println!("six files: {}", files.len());
     println!();
 
-    let gathered = gathered_schema(&source_schema(&file));
+    // The rows the engine hands out are the rows that were read, so they keep the file's own
+    // encodings -- and **the schema that describes them is the file's own schema**.
+    let own = source_schema(&file);
     let one_source = open_source(&file).expect("the one file opens");
     let set = FileSetSource::open(&files).expect("the set opens");
 
-    let campaign = campaign(&file, &work_dir, &one_source, &set, &gathered);
+    let campaign = campaign(&file, &work_dir, &one_source, &set, &own);
     let (medians, spreads) = summaries(&campaign);
     print_the_measurements(&medians, &campaign.facts);
 
@@ -719,6 +723,10 @@ struct Facts {
     arrow_schema_identical_own: bool,
     /// Whether the two files keep the same Parquet schema.
     parquet_schema_identical_own: bool,
+    /// The rows' columns that carry a dictionary.
+    dictionary_columns: usize,
+    /// The rows' columns that do not.
+    plain_columns: usize,
     /// Where the published file's metadata starts.
     metadata_start: u64,
     /// The bytes the store's rule wrote.
@@ -744,6 +752,8 @@ impl Facts {
         self.data_identical_own = data_regions_match(&one.own, published);
         self.arrow_schema_identical_own = arrow_schema(&one.own) == arrow_schema(published);
         self.parquet_schema_identical_own = parquet_schema(&one.own) == parquet_schema(published);
+        self.dictionary_columns = one.dictionary_columns;
+        self.plain_columns = one.plain_columns;
         self.metadata_start = metadata_start(published);
         self.bytes_rule = file_bytes(&one.rule);
         self.bytes_own = file_bytes(&one.own);
@@ -764,13 +774,17 @@ fn print_the_measurements(medians: &serde_json::Map<String, serde_json::Value>, 
         let median = medians.get(name).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
         println!("{name:<18}: {median:>10.3} ms");
     }
-    let gather = medians.get("eager_rows").and_then(serde_json::Value::as_f64).unwrap_or(0.0)
+    let copy = medians.get("eager_rows").and_then(serde_json::Value::as_f64).unwrap_or(0.0)
         - medians.get("eager_read").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
-    println!("the gather       : {gather:>10.3} ms");
+    println!("the copy         : {copy:>10.3} ms");
     println!();
     println!("--- the identity ---");
     println!("the rows: {} against {}", facts.rows_one, facts.rows_six);
     println!("the two files are the same: {}", facts.identical_arms);
+    println!(
+        "the rows' shape: {} dictionary columns, {} plain",
+        facts.dictionary_columns, facts.plain_columns
+    );
     println!();
     println!("--- the round trip ---");
     println!("the store's rule: {} bytes", facts.bytes_rule);
@@ -820,6 +834,8 @@ fn report(
         "data_identical_own_schema": facts.data_identical_own,
         "arrow_schema_identical_own_schema": facts.arrow_schema_identical_own,
         "parquet_schema_identical_own_schema": facts.parquet_schema_identical_own,
+        "dictionary_columns": facts.dictionary_columns,
+        "plain_columns": facts.plain_columns,
         "metadata_start": facts.metadata_start,
         "bytes_rule": facts.bytes_rule,
         "bytes_own_schema": facts.bytes_own,

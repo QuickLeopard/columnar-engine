@@ -90,7 +90,7 @@ assert_eq!(join.build_paths, vec![std::path::PathBuf::from("data/orders.parquet"
 ## The rows, and the store that writes them
 
 The engine reads files and it does not write them, but **it can hand its rows to something that does**:
-`execute_rows` and `execute_rows_on` return the plan's **projection**, gathered, as a `Dataset`.
+`execute_rows` and `execute_rows_on` return the plan's **projection**, as a `Dataset`.
 
 ```rust
 use columnar_engine::prelude::*;
@@ -113,6 +113,22 @@ let rows = set.execute_rows(&plan, &ExecOptions::default())?;
 A plan with an **aggregation** is refused: the aggregate folds the rows into groups, and there is
 nothing left to write. The rows are the engine's own vocabulary -- a column chunk with an encoding and a
 validity mask -- and `columnar-store` turns them into Parquet.
+
+### The shape of the rows
+
+**The rows are the rows that were read, when they are.** A plan that removes nothing hands out the
+columns **as they lie**: the reader's own encodings, the dictionary included. A plan that removes rows in
+the engine, a join and a sort make new rows, and those rows are **gathered**: copied out, with the
+dictionary materialised away.
+
+The rule is about the **rows**, not about where they came from, so the two paths can answer it
+differently. The lazy path pushes the plan's predicates into the reader, and a predicate the reader took
+has already removed its rows -- so those rows are the rows that were read, and they come out as they lie.
+The eager path reads everything and filters in the engine, so the survivors are scattered through the
+dataset and they are gathered.
+
+**So the caller can see which shape it got**: the encoding says so. `Encoding::Utf8Dict` is a dictionary
+column and `Encoding::Utf8` is a plain one, and the store takes both.
 
 ## The guarantees
 

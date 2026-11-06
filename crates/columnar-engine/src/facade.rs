@@ -57,6 +57,7 @@
 //! read. The engine does not fix it — the fix is upstream — and a reader who
 //! cannot see it cannot decide whether to read an untrusted file.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -306,7 +307,9 @@ fn execute_output(
     // probe cannot happen inside the scan: there is no scan to feed.
     Pipeline {
         resolved: &resolved,
-        dataset,
+        // The caller owns the dataset here, so the pipeline borrows it: the
+        // rows path copies the columns it hands out.
+        dataset: Cow::Borrowed(dataset),
         options,
         // The flavor is resolved once, here, and the pipeline runs the same
         // kernels the caller asked for.
@@ -572,7 +575,9 @@ pub(crate) fn execute_source<S: EngineSource>(
 
     Pipeline {
         resolved: &effective,
-        dataset: &dataset,
+        // The engine read the dataset, so the engine owns it: the rows path
+        // hands the columns out **as they lie**, without a copy of them.
+        dataset: Cow::Owned(dataset),
         options,
         // The same flavor the read used, so the operators run the same
         // kernels over the same values.
