@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **39 specs**, **52 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **40 specs**, **54 ADRs** and **29 defects** so far, and every one
 of the specs is closed.
 
 ---
@@ -404,17 +404,34 @@ for a pinned x86-64 runner; it has not run on one.
   set publishes are the **table's** — the range is the **union** of the files' ranges — and the engine's own
   predicate reaches **every** file. It is corrected in both specs and in ADR-0045, and ADR-0046 records it.
   **The measurement is not touched by the correction.**
-- **The store's table can be on the probe side of a join, and not on the build side.** `JoinSpec.build_path`
-  is one path, and the build side opens one file — so the build side is still the plan's shape and not the
-  source's, and it is named rather than left to be discovered.
+- **The engine's rows reach a store's table, and the file comes out the same.** The store's claim was
+  measured through Arrow alone; spec 042 measured it through the **engine's** rows, which are the engine's
+  own vocabulary. **The conversion is exact**: the store's conversion, under the published file's own
+  schema, writes the published file **byte for byte** — 242,859,461 bytes, no differing byte — so the
+  engine's rows are the file's rows. **And the one thing the rows cannot carry is a column's
+  nullability**: the engine says which rows are NULL and not whether a column may be, and the Parquet
+  writer makes that difference visible in the bytes. So the store's rule is stated rather than
+  discovered — **a column that holds no NULL is written REQUIRED** — and the file it writes from the
+  engine's rows is 242,854,029 bytes, first difference at 20,566,725, and **every byte of the difference
+  is the schema**. The conversion costs **149.809 ms** against a **1,826.588 ms** write. The engine gained
+  the way to hand a plan's rows out (`execute_rows`, `execute_rows_on`), and **a plan with an aggregation
+  is refused**, because the aggregate folds the rows and there is nothing left to write. The **grid is
+  the store's** and the engine does not learn it.
+  [ADR-0054](docs/adr/0054-the-engines-rows-reach-a-stores-table.md) records it.
+- **The store's table can be on the build side of a join, and on the probe side.** `JoinSpec.build_paths`
+  is a list of paths: one path is one file, exactly as it was, and several are read as one table — so the
+  build side is now the **source's** shape and not the plan's, and it is named rather than left to be
+  discovered. **The change to the plan's own shape is one public break**, and it was made while the crates
+  were still unpublished, so it cost nothing. [ADR-0053](docs/adr/0053-the-build-side-takes-a-set.md)
+  records it.
 - **The store's crate is publishable, and the publish is the user's.** The engine can now read the store's
   tables, and `Table::paths` hands it the list of paths it takes, so the store's own surface has its shape.
   **And the crate could not even be packaged** until now: its dev-dependency on the generator carried a
   version, and the generator is not on crates.io, so `cargo package` failed with *"no matching package named
   `columnar-testdata` found"* — a **path-only** dependency is dropped from the published manifest and a
   versioned one is not. **And the two reasons ADR-0044 gave for holding the store back were wrong**: the
-  store does **not** depend on the core (it depends on nothing in this workspace), and the increment that
-  was named is done. **The publish order is `columnar-core`, `columnar-kernels`, `columnar-store`,
+  store does **not** depend on the core (it depended on nothing in this workspace then), and the increment
+  that was named is done. **The publish order is `columnar-core`, `columnar-kernels`, `columnar-store`,
   `columnar-engine`** — the graph decides what it can and the list breaks the rest — and
   `cargo publish --dry-run -p columnar-store` passes. **The publish itself needs the account and the
   token**, which the repository does not have.
@@ -427,8 +444,8 @@ for a pinned x86-64 runner; it has not run on one.
   the table's rows **row by row, in the files' order**, that the engine's predicate reaches **every**
   file, and that the **sum** over the set is the files' sums added up. **And the tests have teeth**:
   with the set reading one file instead of the table, all three fail. **And the edge the test needs
-  is a dev-dependency, path-only** — so the store's *library* still depends on nothing in this
-  workspace, the engine still never depends on the store, and the published manifest is unchanged.
+  is a dev-dependency, path-only** — so the store's *library* depends on the core and on nothing else in
+  this workspace, the engine still never depends on the store, and the published manifest says so.
   [ADR-0048](docs/adr/0048-the-composition-is-a-test.md) records it.
 - **The links are a gate now.** A link in a document is a claim about the tree, and **no other gate
   reads a sentence's target** — the figures guard checks numbers, the page guard checks the browser's

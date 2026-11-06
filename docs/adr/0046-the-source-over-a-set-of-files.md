@@ -63,6 +63,9 @@ estimate puts on the build side's rows.
 7. **The join's build side is one file, still.** `JoinSpec.build_path` is one path, and the build side opens one
    file. **So a store's table can be on the probe side of a join, and not on the build side** — and that is a
    change to the plan's own shape, which is its own increment.
+   **That was true when it was written, and it is not true now**: spec 042 gave the build side a set, and
+   `JoinSpec.build_paths` is a list of paths. It is corrected in
+   [ADR-0053](0053-the-build-side-takes-a-set.md).
 
 8. **The measurement is the acceptance.** The source is **free**: the set's read is **−0.599 ms** against the
    one file's — negative, and inside the one file's own spread — and in parallel **0.133 ms** against

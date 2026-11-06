@@ -1349,6 +1349,54 @@ SPEC041X_ROWS = (
 )
 
 
+# Spec 042: the set on both sides. Two probes, two sections, and **both are
+# pairs measured in the same campaign** -- one file against six files, the
+# engine's rows against Arrow's -- so the host's own movement is in both
+# sides of every pair.
+BUILD_SET_REPORTS = sorted((ROOT / "bench-results").glob("build-set-run*.json"))
+BUILD_SET_SECTION = "### 3y"
+
+# (label, the report's key, the decimal places)
+#
+# The four costs are in `measurements_ms`; the four facts are at the top of
+# the report.
+BUILD_SET_COSTS = (
+    ("the table's construction, one file", "build_one_file", 3),
+    ("the table's construction, six files", "build_six_files", 3),
+    ("the build side's open, one file", "open_one_file", 3),
+    ("the build side's open, six files", "open_six_files", 3),
+)
+
+BUILD_SET_FACTS = (
+    ("the join's rows", "rows_one_file", 0),
+    ("the key's range", "range_one_file", 0),
+    ("the estimate", "estimate_one_file", 0),
+    ("the answer", "answer_one_file", 2),
+)
+
+ENGINE_ROWS_REPORTS = sorted((ROOT / "bench-results").glob("engine-rows-run*.json"))
+ENGINE_ROWS_SECTION = "### 3z"
+
+ENGINE_ROWS_COSTS = (
+    ("the engine's eager read", "engine_read", 3),
+    ("the conversion", "convert", 3),
+    ("the store's own API", "append", 3),
+    ("the store's own Arrow path", "arrow_path", 3),
+    ("a plan's rows: the read", "plan_read", 3),
+    ("a plan's rows: the write", "plan_append", 3),
+)
+
+ENGINE_ROWS_BYTES = (
+    ("the published file", "bytes_published", 0),
+    ("the engine's rows", "bytes_engine_rows", 0),
+    ("the conversion alone", "bytes_converted_rows", 0),
+    ("Arrow's rows", "bytes_arrow_rows", 0),
+    ("a plan's rows", "bytes_plan_rows", 0),
+    ("the rows of a plan's rows", "rows_plan_rows", 0),
+    ("the first differing byte", "first_difference", 0),
+)
+
+
 def spec041x_figures(family: str, suffix: str) -> dict[str, float] | None:
     """The headline figure of every family, for the set `suffix` names.
 
@@ -4624,6 +4672,138 @@ def main() -> int:
     else:
         failures.append("STATUS.md is not in the tree")
 
+    # Spec 042: the set on both sides. **Every figure is checked inside the
+    # section that publishes it**, and the two pairs -- one file against six,
+    # the engine's rows against Arrow's -- are checked as the reports state
+    # them, so the table cannot drift from the evidence.
+    if BUILD_SET_REPORTS:
+        build_reports = [json.loads(path.read_text()) for path in BUILD_SET_REPORTS]
+        build_section = section_of(texts["PERF.md"], BUILD_SET_SECTION)
+        if build_section is None:
+            failures.append(
+                f"PERF.md: the build side's figures ({BUILD_SET_SECTION}) are not in the document"
+            )
+        else:
+            for label, key, places in BUILD_SET_COSTS:
+                values = [
+                    report["measurements_ms"][key]
+                    for report in build_reports
+                    if key in report.get("measurements_ms", {})
+                ]
+                if not values:
+                    failures.append(f"PERF.md: no figure for {label} in the build side's reports")
+                    continue
+                rendered = f"{statistics.median(values):,.{places}f}"
+                if rendered not in build_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+            for label, key, places in BUILD_SET_FACTS:
+                values = [report[key] for report in build_reports if key in report]
+                if not values:
+                    failures.append(f"PERF.md: no figure for {label} in the build side's reports")
+                    continue
+                rendered = f"{statistics.median(values):,.{places}f}"
+                if rendered not in build_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+            # The two differences the section publishes: the pairs, side by side.
+            for label, one, many, places in (
+                ("the difference in the construction", "build_one_file", "build_six_files", 3),
+                ("the difference in the open", "open_one_file", "open_six_files", 3),
+            ):
+                one_median = statistics.median(
+                    [report["measurements_ms"][one] for report in build_reports]
+                )
+                many_median = statistics.median(
+                    [report["measurements_ms"][many] for report in build_reports]
+                )
+                rendered = f"{many_median - one_median:+,.{places}f}"
+                if rendered.lstrip("+") not in build_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+            identities = [report.get("identical") for report in build_reports]
+            if identities and not all(identities):
+                failures.append(
+                    "PERF.md: the build side's reports do not agree on the identity, and the "
+                    "section publishes that they do"
+                )
+            elif identities:
+                print(f"ok  {'PERF.md':<10} {'the same rows and the same answer':<60} True")
+
+    if ENGINE_ROWS_REPORTS:
+        engine_reports = [json.loads(path.read_text()) for path in ENGINE_ROWS_REPORTS]
+        engine_section = section_of(texts["PERF.md"], ENGINE_ROWS_SECTION)
+        if engine_section is None:
+            failures.append(
+                f"PERF.md: the engine's rows ({ENGINE_ROWS_SECTION}) are not in the document"
+            )
+        else:
+            for label, key, places in ENGINE_ROWS_COSTS:
+                values = [
+                    report["measurements_ms"][key]
+                    for report in engine_reports
+                    if key in report.get("measurements_ms", {})
+                ]
+                if not values:
+                    failures.append(f"PERF.md: no figure for {label} in the engine's rows' reports")
+                    continue
+                rendered = f"{statistics.median(values):,.{places}f}"
+                if rendered not in engine_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+            for label, key, places in ENGINE_ROWS_BYTES:
+                values = [report[key] for report in engine_reports if key in report]
+                if not values:
+                    failures.append(f"PERF.md: no figure for {label} in the engine's rows' reports")
+                    continue
+                rendered = f"{statistics.median(values):,.{places}f}"
+                if rendered not in engine_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+            # The three verdicts the section publishes: the Arrow path and the
+            # conversion are the published file; the store's own append is not,
+            # and the reason is the schema's nullability.
+            for label, key in (
+                ("the store's Arrow path is the published file", "arrow_identical_to_published"),
+                ("the conversion alone is the published file", "converted_identical_to_published"),
+            ):
+                verdicts = [report.get(key) for report in engine_reports]
+                if verdicts and all(verdicts):
+                    print(f"ok  {'PERF.md':<10} {label:<60} True")
+                else:
+                    failures.append(
+                        f"PERF.md: the reports do not say that {label}, and the section "
+                        f"publishes that they do"
+                    )
+            verdicts = [report.get("identical_to_published") for report in engine_reports]
+            if verdicts and any(verdicts):
+                failures.append(
+                    "PERF.md: the store's own append is the published file in some campaign, "
+                    "and the section publishes that it is not"
+                )
+            elif verdicts:
+                print(f"ok  {'PERF.md':<10} {'the store\'s own append is not the published file':<60} True")
+
     if failures:
         print()
         for failure in failures:
@@ -4651,7 +4831,9 @@ def main() -> int:
         f"{len(MANY_FILES_SHAPES) + len(MANY_FILES_DERIVED) + len(MANY_FILES_COUNTS) + 1} of the file boundary, "
         f"{len(FILE_SET_SHAPES) + len(FILE_SET_DERIVED) + len(FILE_SET_COUNTS) + 1} of the source, "
         f"{2 + 3 * HOSTILE_ROWS + 1} of the hostile file, "
-        f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status"
+        f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status, "
+        f"{len(BUILD_SET_COSTS) + len(BUILD_SET_FACTS) + 3} of the build side, "
+        f"{len(ENGINE_ROWS_COSTS) + len(ENGINE_ROWS_BYTES) + 3} of the engine's rows"
     )
     return 0
 

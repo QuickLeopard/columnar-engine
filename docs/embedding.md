@@ -96,8 +96,9 @@ the one file. The naive way -- open each file and run the query over each one --
 over**: the rows of a filtered table are split across the files, the groups of an aggregate are split
 across them, and the sides of a join are split across them.
 
-**And the join's build side is still one file.** `JoinSpec.build_path` is one path, so a store's table can
-be on the **probe** side of a join, and not on the **build** side.
+**And the join's build side takes a set.** `JoinSpec.build_paths` is a list of paths: one path is one
+file, exactly as it was, and several are read as one table — so a store's table can be on the **build**
+side of a join as well as on the **probe** side.
 
 ### The eager path
 
@@ -156,6 +157,26 @@ batch size are a different file**. A batch off the grid is refused with an error
 engine's read path cannot move because of anything the store does. **The glue between them is a list of
 paths** -- and the engine's side of that glue is built: `FileSetSource` reads the set as one table, and it
 costs nothing measurable over reading the same rows in one file.
+
+**And the engine's rows go the other way.** The engine's rows are the engine's own vocabulary, and
+the store takes them: `execute_rows_on` gives the plan's rows, and `append_rows` writes them, re-batches
+them on the store's grid, and commits them. **The glue is two lines**, and the grid stays the store's.
+
+```rust
+use columnar_engine::prelude::*;
+use columnar_store::Store;
+
+let source = open_source("data/lineitem.parquet")?;
+let rows = execute_rows_on(&plan, &source, &ExecOptions::default())?;
+
+let store = Store::open("/tmp/warehouse")?;
+store.append_rows("lineitem", &rows.chunks, writer_properties(&[]))?;
+```
+
+**A plan with an aggregation is refused**, because the aggregate folds the rows into groups and there is
+nothing left to write. **And the schema is the store's**: a column that holds no NULL is written
+REQUIRED, and a column that holds one is written OPTIONAL -- the engine's rows say which rows are NULL
+and not whether a column may be.
 
 **And the crate publishes with the others.** It was held back while its API was still moving, and the
 increment that settled it — the engine's source over a set of files — is done. **The publish itself is a
@@ -585,9 +606,9 @@ The four crates publish in the order their dependencies decide — **`columnar-c
 `columnar-kernels`, then `columnar-store`, then `columnar-engine`**.
 
 `columnar-core` depends on nothing in the workspace. `columnar-kernels` depends on
-`columnar-core`. `columnar-engine` depends on both. `columnar-store` depends on **nothing** in the
-workspace — it is below the engine and below the core, and it writes files rather than reading them
-through the engine's vocabulary. Each internal dependency carries a `version` beside its `path`, so
+`columnar-core`. `columnar-engine` depends on both. `columnar-store` depends on `columnar-core` — the
+vocabulary, and nothing else in this workspace — and it writes files rather than reading them through
+the engine's vocabulary. Each internal dependency carries a `version` beside its `path`, so
 the published crate resolves on crates.io rather than in the workspace — and that is what makes the
 order mandatory: `columnar-kernels` cannot be published before `columnar-core` is on crates.io, and
 `columnar-engine` cannot be published before both are.
@@ -596,10 +617,10 @@ order mandatory: `columnar-kernels` cannot be published before `columnar-core` i
 manifest, so it is not part of the published graph: the store's *tests* depend on the engine, and the
 store is still published before it.
 
-**The store is the one the dependency graph does not place**, because it depends on nothing: it is
-ready beside the core. **Where the graph does not decide, the list does** — the list in
-`scripts/check-package.sh` is written in the publish order, and the script computes the rest. The
-order is therefore `columnar-core`, `columnar-kernels`, `columnar-store`, `columnar-engine`.
+**The store and the kernels are ready at once**, because both depend on the core and on nothing else:
+**where the graph does not decide, the list does** — the list in `scripts/check-package.sh` is written in
+the publish order, and the script computes the rest. The order is therefore `columnar-core`,
+`columnar-kernels`, `columnar-store`, `columnar-engine`.
 
 Each crate's `--dry-run` is run first, and the four are published in that order:
 
@@ -612,7 +633,7 @@ cargo publish -p columnar-core
 cargo publish --dry-run -p columnar-kernels
 cargo publish -p columnar-kernels
 
-# 3. columnar-store -- it depends on nothing in the workspace, so it goes here.
+# 3. columnar-store -- it depends on columnar-core, which is now published.
 cargo publish --dry-run -p columnar-store
 cargo publish -p columnar-store
 

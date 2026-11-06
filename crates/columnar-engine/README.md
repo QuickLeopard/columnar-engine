@@ -87,6 +87,22 @@ assert_eq!(join.build_paths, vec![std::path::PathBuf::from("data/orders.parquet"
 
 ---
 
+## The rows, and the store that writes them
+
+The engine reads files and it does not write them, but **it can hand its rows to something that does**:
+`execute_rows` and `execute_rows_on` return the plan's **projection**, gathered, as a `Dataset`.
+
+```rust
+use columnar_engine::prelude::*;
+
+let source = open_source("data/lineitem.parquet")?;
+let rows = execute_rows_on(&plan, &source, &ExecOptions::default())?;
+```
+
+A plan with an **aggregation** is refused: the aggregate folds the rows into groups, and there is
+nothing left to write. The rows are the engine's own vocabulary -- a column chunk with an encoding and a
+validity mask -- and `columnar-store` turns them into Parquet.
+
 ## The guarantees
 
 **A NULL never matches.** Not in the filter, not in the join, not in a `!=`. A NULL is the

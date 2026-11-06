@@ -4165,6 +4165,126 @@ Every figure in this table is derived from the committed reports by `scripts/med
 checked by the guard **inside this section**, and every one of them is published in the section
 that owns it as well.
 
+### 3y. The build side takes a set
+
+**What this section is**: the join's **build side** -- the right-hand table, the one the hash table is
+built from before the probe looks anything up -- read from **a set of files** instead of one. The
+question is what the set costs, and what it does not.
+
+**The experiment.** The published file's own **six row groups** are written as **six files** -- the
+experiment spec 039 already used -- and the build side is built twice in the same campaign: once from
+the **one file**, and once from the **six files**. The probe side is the same in both, so the only thing
+that moves is the build side. The build side is `data/lineitem.parquet` -- six million rows, six row
+groups -- and the probe side is `data/orders.parquet`.
+
+| | the one file | the six files | the difference |
+|---|---|---|---|
+| the table's construction | **60.956 ms** | **62.578 ms** | **+1.622 ms** |
+| the build side's open | **0.141 ms** | **0.317 ms** | **+0.176 ms** |
+
+**The set costs 1.622 ms to build, and 0.176 ms to open.** The open is six footers against one, and it
+is the only part that scales with the number of files; the construction reads the same six million keys
+either way. The medians are of three campaigns, and the spreads are 60.186-61.670 ms and 60.801-64.448
+ms for the construction and 0.139-0.170 ms and 0.303-0.353 ms for the open. **The host's load average
+in those campaigns was 8.33, 7.89 and 8.86** -- a busy host, and the pairs are measured **together**, so
+the host's own movement is in both sides of every pair above.
+
+**The identity is exact, and it was measured.** The same **1,501,215** rows come out of the join, and
+the same **79,530,106,032.52** comes out of the sum -- the one file and the six files, the same answer
+to the bit. A set that gave a different answer would be a different table, and the plan output's own
+row count would say so.
+
+**The table's shape does not change, and the estimate does not change with it.** The key's range is
+**5,999,997** keys wide, one file and six files alike: a set's range is the **union** of the files'
+ranges, and the union of a partition's parts is the partition. So the direct-addressed table fits in
+both cases -- the direct table is the cheap one -- and the estimate is **103,875,021 bytes** both ways.
+That is the estimate's three facts, unchanged: the rows are the sum of the files' rows, the range is the
+union of the files' ranges, and the workers are the set's own.
+
+**What this cost.** The plan's own shape: `JoinSpec.build_path` became `JoinSpec.build_paths`, a list of
+paths. One path is one file, exactly as it was -- the one-file path is opened, read and charged as it
+always was, and the published figures in §3 do not move. That is **one public break**, and it was made
+while the crates were still unpublished, so it cost nothing. [ADR-0053](docs/adr/0053-the-build-side-takes-a-set.md)
+records it.
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked
+by the guard **inside this section**. The reports are `bench-results/build-set-run1.json`,
+`bench-results/build-set-run2.json` and `bench-results/build-set-run3.json`, and the probe is
+`crates/columnar-engine/examples/build_set_probe.rs`.
+
+---
+
+### 3z. The engine's rows reach a store's table
+
+**What this section is**: the store's claim -- *"fed the same rows, it writes the same file, byte for
+byte"* -- measured through the **engine's** rows instead of Arrow's. The engine holds its rows in its
+own vocabulary, a column chunk with an encoding and a validity mask; the store writes Arrow's. Somebody
+turns one into the other, and that somebody's cost and the file it produces are what this section
+publishes.
+
+**The two shapes of the engine's rows.** The **file's own rows** are the engine's eager read of the
+published file -- the rows as they lie, dictionaries and all. **A plan's rows** are the rows that
+survive a filter, gathered by the engine's own projection: the gather materialises the dictionary away,
+so those rows are plain columns and their file is a different file by construction. Both are measured.
+
+| | the cost | the bytes |
+|---|---|---|
+| the engine's eager read | **547.734 ms** | -- |
+| the conversion: the engine's vocabulary to Arrow's | **149.809 ms** | -- |
+| the store's own API, end to end | **1,826.588 ms** | **242,854,029** |
+| the store's own Arrow path, for comparison | **2,266.358 ms** | **242,859,461** |
+| a plan's rows: the read | **76.748 ms** | -- |
+| a plan's rows: the write | **15.059 ms** | **982,089** |
+
+The published file is **242,859,461** bytes. **The conversion is 8.2% of the write it serves** -- 149.809
+ms against 1,826.588 ms -- and the engine's own rows cost **149.809 ms** to convert and the store's API
+**1,826.588 ms** to write and commit them. The medians are of three campaigns; the spreads are
+540.566-548.960 ms, 146.647-152.991 ms, 1,799.650-1,827.949 ms and 2,241.475-2,297.386 ms. **The host's
+load average in those campaigns was 8.33, 7.89 and 8.86** -- a busy host, and the two paths are measured
+**in the same campaign**, so the host's movement is in both.
+
+**Three files, three questions.**
+
+1. **The store's Arrow path writes the published file byte for byte.** That is the store's claim, and it
+   is unchanged: **242,859,461** bytes, no differing byte.
+2. **The store's conversion, under the published file's own schema, writes it byte for byte too.**
+   **242,859,461** bytes, no differing byte. **So the engine's rows are the file's rows, and the
+   conversion is exact, value for value.** The engine's dictionary -- one dictionary for the whole file,
+   merged from every batch -- does not decide the bytes: the Parquet writer interns the values again,
+   per row group, and the first appearance order is the rows' own order.
+3. **The store's own `append_rows` writes a different file**: **242,854,029** bytes, and the first
+   difference is at byte **20,566,725**. **The difference is the schema's nullability, and nothing
+   else** -- 5,432 bytes of it. The published file declares two columns optional that hold no NULL, and
+   the store's rule -- *a column that holds no NULL is written REQUIRED* -- writes them required. A
+   required column carries no definition levels and an optional one does, and that is what the bytes
+   see.
+
+**That rule is the store's, and it is published.** The engine's rows say **which rows are NULL**; they
+do not say **whether a column may be NULL**, because the engine's vocabulary does not carry it. So the
+store's rule is stated rather than discovered: **a column that holds no NULL is written REQUIRED, and a
+column that holds one is written OPTIONAL.** A caller who needs a schema the rows cannot carry writes
+through the Arrow path, where the schema comes with the rows.
+
+**A plan's rows are a different file by construction**: **115,821** rows in **982,089** bytes, with the
+dictionary materialised away. The engine gained the way to hand a plan's rows out -- `execute_rows` and
+`execute_rows_on` -- and **a plan with an aggregation is refused**, because the aggregate folds the rows
+into groups and there is nothing left to write. The embedder's glue is two lines: hand the engine's rows
+to the store. The **grid is the store's** -- the rows are re-batched inside the store, and the engine
+does not learn it.
+
+**What this cost.** The store depends on `columnar-core` -- the vocabulary, and nothing else in this
+workspace -- because the conversion cannot live in the core (a vocabulary that depends on a framework is
+not a vocabulary) and must not live in the engine (the engine's surface would carry Arrow). The
+dependency rule that ADR-0044, ADR-0047, `STATUS.md`, the store's manifest, its README and
+`docs/embedding.md` published is **corrected in each of the places that published it**, and
+[ADR-0054](docs/adr/0054-the-engines-rows-reach-a-stores-table.md) records the correction and the
+decision.
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked
+by the guard **inside this section**. The reports are `bench-results/engine-rows-run1.json`,
+`bench-results/engine-rows-run2.json` and `bench-results/engine-rows-run3.json`, and the probe is
+`crates/columnar-store/examples/engine_rows_probe.rs`.
+
 ---
 
 ## 4. The defects the increments found

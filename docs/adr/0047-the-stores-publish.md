@@ -23,6 +23,10 @@ before the store can join it."* **The store does not depend on the core.** It de
 `serde`, `serde_json` and `thiserror`, and on **nothing in this workspace** -- the store is below the engine
 and below the core, and it writes files rather than reading them through the engine's vocabulary. **The tie
 is real and the reason is not**: the store is ready **beside the core**, because both depend on nothing.
+**That was true when it was written, and it is not true now**: spec 042 gave the store the engine's rows to
+write, and the conversion that takes them lives in the store, so the store depends on the core -- and the
+tie is real again, because the store and the kernels both depend on the core and on nothing else. It is
+corrected in [ADR-0054](0054-the-engines-rows-reach-a-stores-table.md).
 
 **And two things the record did not know were found by trying to publish the crate.** The store **could not
 be packaged at all**: `cargo package -p columnar-store` failed with *"no matching package named

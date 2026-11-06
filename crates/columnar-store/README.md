@@ -35,6 +35,31 @@ for file in &manifest.files {
 The rows arrive as Arrow batches, and **every batch but the last has to be on the store's grid** —
 `BATCH_ROWS`, 65,536 rows. The last may be shorter, because it is the end of the stream.
 
+## The engine's rows
+
+The rows the **engine** produces are the engine's own vocabulary -- a `ColumnChunk` with an encoding and
+a validity mask -- and the store takes them:
+
+```rust
+use columnar_store::Store;
+
+let store = Store::open("/tmp/warehouse")?;
+
+// The engine's rows, in the engine's own vocabulary.
+let rows = columnar_engine::execute_rows_on(&plan, &source, &options)?;
+let manifest = store.append_rows("lineitem", &rows.chunks, writer_properties(&[]))?;
+```
+
+**The grid is still the store's**: the rows are re-batched inside the store, and the engine does not
+learn the number 65,536. **The conversion is the store's**, because it cannot live in `columnar-core` (a
+vocabulary that depends on a framework is not a vocabulary) and must not live in the engine (the
+engine's surface would carry Arrow) -- so the store depends on the core, and on nothing else in this
+workspace.
+
+**The schema is the store's too**: a column that holds no NULL is written **REQUIRED**, and a column that
+holds one is written **OPTIONAL**. The engine's rows say which rows are NULL and not whether a column
+may be, and the Parquet writer makes that difference visible in the bytes.
+
 ## The grid, and why it is a rule
 
 **The file's bytes depend on the batch size the rows arrive in.** The Parquet writer splits every batch it

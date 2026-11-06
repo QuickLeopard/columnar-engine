@@ -22,11 +22,8 @@
 # **Spec 042 re-established the surface.** `JoinSpec.build_path` became
 # `JoinSpec.build_paths` -- the one breaking change on the public surface, and
 # it was made while the crates were unpublished, so no embedder depended on
-# the old name. **The revision below is therefore empty**, and the CI job says
-# so rather than pretending to have run a check: the baseline is written in
-# the commit that follows the one that changes the surface, because a commit
-# cannot contain its own SHA. **Every commit after that one is gated** against
-# the new surface.
-#
-# The revision before that was `42f08b4`, the code commit of spec 034, which
+# the old name. **The revision below is therefore the commit that made the
+# change**, and every commit after it is gated against the new surface. The
+# revision before that was `42f08b4`, the code commit of spec 034, which
 # established the surface spec 042 replaced.
+387a14f

@@ -81,6 +81,9 @@ this one builds the store's half.
    `Table::file_path` were already there, and `Table::paths` now hands the engine the list of paths it takes.
    **And the store does not depend on the core** — it depends on nothing in this workspace — so the tie is
    beside the core, not after it, and the publish script breaks it by the list rather than refusing it.
+   **That sentence was true when it was written, and it is not true now**: spec 042 gave the store the
+   engine's rows to write, and the conversion that takes them lives in the store, so the store depends on
+   the core. It is corrected in [ADR-0054](0054-the-engines-rows-reach-a-stores-table.md).
    **The crate is published with the others now**, and the publish itself is the user's act.
 
 ## Consequences
