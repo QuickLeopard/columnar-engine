@@ -1,6 +1,6 @@
 # Spec 044 — The rows as they lie — the tasks
 
-**Status**: implemented
+**Status**: done
 **Started**: 2026-11-06
 
 The order is the house's: **build, then measure, then publish.** The rows path changes first, and the
@@ -55,4 +55,4 @@ publication waits for the measurement — which is what moves the figures.
 - [x] `./scripts/check-package.sh` — the four crates package, in the order their dependencies decide.
 - [x] `python3 scripts/medians.py` and `python3 scripts/check-published-figures.py`
 - [x] `python3 scripts/check-links.py` and `python3 scripts/check-page.py`
-- [ ] **CI green**, and the closure commit says on which commit.
+- [x] **CI green**, and the closure commit says on which commit.

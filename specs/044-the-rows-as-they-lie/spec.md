@@ -1,8 +1,11 @@
 # Spec 044 — The rows as they lie
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-06
+**Finished**: 2026-11-06
 **Predecessor**: [spec 043 — the set's rows](../043-the-sets-rows/spec.md)
+
+**CI green on `3b2ac50`** -- run 42224024673, fifteen of fifteen jobs.
 
 ## The problem
 
