@@ -1,8 +1,11 @@
 # Spec 047 — The build side's keys as a filter
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-06
+**Finished**: 2026-11-06
 **Predecessor**: [spec 046 — the join-orders query, on both sides, taken apart](../046-the-join-orders-query-taken-apart/spec.md)
+
+**CI green on `67b6d33`** -- run 42260740267, sixteen of sixteen jobs.
 
 ## The problem
 
@@ -53,65 +56,84 @@ refused it — the house's own record has five of them already, and this would b
 
 ### R1 — The filter is a bitmap over the key's own range, one bit a key
 
-- The filter covers **the same range the direct-addressed table addresses**: the key column's own
-  statistics, so the estimate can be made before a row is read and the two are the same number.
-- **One bit a key**, so the filter is **an eighth** of the table's size.
-- **No hash.** The table is addressed by the key itself and consults nothing; a filter that had to
-  compute a hash would pay for one the table does not.
+- [ ] The filter covers **the same range the direct-addressed table addresses**: the key column's own
+      statistics, so the estimate can be made before a row is read and the two are the same number.
+- [ ] **One bit a key**, so the filter is **an eighth** of the table's size.
+- [ ] **No hash.** The table is addressed by the key itself and consults nothing; a filter that had to
+      compute a hash would pay for one the table does not.
+
+> **Not done, and not to be done.** The increment was refused on the measurement, and the requirement is
+> the shape the refused increment would have had. The shape was **prototyped and measured** anyway --
+> the instrument builds the filter over the build side's keys, one bit a key over the key's own range,
+> with no hash -- because a refusal without a measured alternative is an argument. **The filter's own
+> load is 5.222 ms over the six million rows, against the table's own load of 4.399 ms: the filter's test
+> costs more than the lookup it would replace**, because both are one random access and the bitmap's test
+> carries a shift and a mask on top of the access the byte does not. See
+> [ADR-0059](../../docs/adr/0059-the-build-side-s-keys-as-a-filter.md) and `PERF.md` §3ad.
 
 ### R2 — The filter is consulted **before** the table, and a rejected row never touches the table
 
-- The filter answers one question: **may this key be in the build side at all?**
-- A row the filter rejects does not read the table's byte, does not consult the table's overflow map,
-  and does not push an output row.
-- The table still decides. **The filter is a filter, not a replacement.**
+- [ ] The filter answers one question: **may this key be in the build side at all?**
+- [ ] A row the filter rejects does not read the table's byte, does not consult the table's overflow map,
+      and does not push an output row.
+- [ ] The table still decides. **The filter is a filter, not a replacement.**
+
+> **Not done, and not to be done**, for the same reason as R1: the filter is consulted before the table
+> in the instrument's candidate, and the candidate is the engine's own probe **line for line**, and it
+> **is a loss**: **+2.318 ms** at the median, in eleven of its twelve paired samples. The engine's probe
+> beside it reads **7.622 ms** against the candidate's **7.967 ms**, so the control says the candidate is
+> the engine's probe.
 
 ### R3 — The filter can only be wrong in one direction
 
-- **Every key in the build side sets its bit**, so a key that **is** in the build side always passes.
-- A key that is **not** in the build side may share a bit with one that is, and pass. **A pass is not a
-  match**: the table decides, and the answer is the table's answer.
-- **A false negative is impossible**, and the test that says so is in the suite: the filtered probe's
-  rows are compared with the unfiltered probe's **row for row, in order**.
+- [ ] **Every key in the build side sets its bit**, so a key that **is** in the build side always passes.
+- [ ] A key that is **not** in the build side may share a bit with one that is, and pass. **A pass is not
+      a match**: the table decides, and the answer is the table's answer.
+- [x] **A false negative is impossible**, and the test that says so is in the suite: the filtered probe's
+      rows are compared with the unfiltered probe's **row for row, in order** -- and the comparison runs in
+      **every iteration of every campaign**, over the engine's own probe's rows, and it passed in all
+      eighteen.
 
 ### R4 — The same rows, in the same order, and the same answer
 
-- The filtered probe returns **exactly** the rows the unfiltered probe returns, in the same order.
-- The query's answer is unchanged, and the published join's answer is checked before anything is timed.
+- [x] The filtered probe returns **exactly** the rows the unfiltered probe returns, in the same order.
+- [x] The query's answer is unchanged, and the published join's answer is checked before anything is timed.
 
 ### R5 — The ladder measures the filter, and the filter is measured apart
 
-- **Two shapes**, not one:
+- [x] **Two shapes**, not one:
   - the filter **in front of the table** -- a row the filter refuses does not read the table's byte;
   - the filter **compacting the rows** in front of the probe -- the survivors alone are probed, and the
     probe's own work is not done for the rows the filter refused.
-- The **filter's own floor**: the bitmap's load, one a probe row.
-- The **table's own floor**: the byte's load, one a probe row. **The two are the same kind of work** --
-  one random access -- and the ladder says which of the two costs more.
-- The **constructions**: the table's own construction, and the filter's own construction. **A filter's
-  price is its test and the building of it.**
-- The **prize**: the probe over the survivors alone, against the probe as it is.
-- The **control**: the candidates are the engine's own probe, **line for line**, and the engine's own
-  probe is measured **in the iteration**, beside them.
-- The **cross-check**: the candidates' rows are compared with the engine's own probe's rows, **row for
-  row, in order**.
-- Every rung is measured **in the iteration**, and the two sides of every difference are measured **back
-  to back with the order alternated**. The six orders are chosen so that **every pair** is back to back
-  in four of the six iterations, two in each direction: a rotation of three would have put one pair back
-  to back four times and another twice.
+- [x] The **filter's own floor**: the bitmap's load, one a probe row.
+- [x] The **table's own floor**: the byte's load, one a probe row. **The two are the same kind of work** --
+      one random access -- and the ladder says which of the two costs more: **the filter's, at 5.222 ms
+      against the table's 4.399 ms.**
+- [x] The **constructions**: the table's own construction, and the filter's own construction. **A filter's
+      price is its test and the building of it.**
+- [x] The **prize**: the probe over the survivors alone, against the probe as it is -- **+6.981 ms**.
+- [x] The **control**: the candidates are the engine's own probe, **line for line**, and the engine's own
+      probe is measured **in the iteration**, beside them.
+- [x] The **cross-check**: the candidates' rows are compared with the engine's own probe's rows, **row for
+      row, in order**.
+- [x] Every rung is measured **in the iteration**, and the two sides of every difference are measured **back
+      to back with the order alternated**. The six orders are chosen so that **every pair** is back to back
+      in four of the six iterations, two in each direction: a rotation of three would have put one pair back
+      to back four times and another twice.
 
 ### R6 — The memory estimate charges the filter
 
-- The filter's bytes are **the estimate's**, and the estimate is charged for them before a row is read.
-- **If the filter does not pay, it is not built**, and the estimate does not move.
+- [ ] The filter's bytes are **the estimate's**, and the estimate is charged for them before a row is read.
+- [x] **If the filter does not pay, it is not built**, and the estimate does not move. **It does not pay**,
+      and **the estimate does not move**: the increment's diff on the engine is **empty**.
 
 ### R7 — The answer is published either way
 
-- **A win** is published old-and-new, with the reason, and the open question is rewritten.
-- **A refusal** is published with the numbers that refused it, and the open question is rewritten to
-  name what the refusal leaves standing.
-- The figures are derived from the committed reports and checked by the guard **inside the section that
-  publishes them**.
+- [x] **A win** is published old-and-new, with the reason, and the open question is rewritten.
+- [x] **A refusal** is published with the numbers that refused it, and the open question is rewritten to
+      name what the refusal leaves standing.
+- [x] The figures are derived from the committed reports and checked by the guard **inside the section that
+      publishes them**.
 
 ## The scope
 

@@ -15,7 +15,7 @@ Every increment is a **spec** under [`specs/`](specs/), with its requirements (R
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
 [`constitution.md`](constitution.md). **45 specs**, **59 ADRs** and **29 defects** so far, and every one
-of the specs but the one in flight is closed. **And the status has a page**:
+of the specs is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
 cannot go stale.
@@ -206,9 +206,9 @@ By kind:
   that the query does not pay.
 
 And the ones the measurement **refused** — the direct-addressed table's own shape, the probe's hash,
-owning the Parquet decode, expanding the predicate's column, a bitmap in front of the table, a
-filter over the build side's keys — are
-refusals with the numbers that refused them, published as the finding.
+owning the Parquet decode, expanding the predicate's column, a bitmap in front of the table, and a
+filter over the build side's keys — are refusals with the numbers that refused them, published as the
+finding.
 
 ---
 
