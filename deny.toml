@@ -96,6 +96,16 @@ allow = [
 confidence-threshold = 0.8
 unused-allowed-license = "warn"
 
+# One exception, scoped to one crate:
+#
+#   * `colored` is MPL-2.0. It reaches the graph only through `codspeed`, the
+#     runtime of the CodSpeed benchmark harness, which is a **dev-dependency**
+#     of `columnar-bench` (itself `publish = false`). It is never compiled
+#     into a shipped binary or a published crate.
+[[licenses.exceptions]]
+allow = ["MPL-2.0"]
+crate = "colored"
+
 # This workspace publishes nothing, so unpublished-crate licence assertions are
 # not meaningful here.
 [licenses.private]

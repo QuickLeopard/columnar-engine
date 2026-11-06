@@ -29,3 +29,16 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+divan = { version = "6.0.0", package = "codspeed-divan-compat" }
+
+# CodSpeed benchmarks (divan, through the `codspeed-divan-compat` layer).
+# Run them with `cargo codspeed build -p columnar-bench && cargo codspeed run`.
+[[bench]]
+name = "kernels"
+harness = false
+
+[[bench]]
+name = "engine"
+harness = false

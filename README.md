@@ -1,5 +1,7 @@
 # Columnar Engine
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/QuickLeopard/columnar-engine?utm_source=badge)
+
 A vectorised columnar query engine in Rust, with a measurement harness that is willing to say the
 engine loses.
 
