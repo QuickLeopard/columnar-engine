@@ -4301,19 +4301,27 @@ spec 039 used and spec 042 reused -- and the round trip run **twice in the same 
 **one file**, and once over the **six files**. The rows are the same rows, so the only thing that moves is
 the set.
 
-**The cost of the set: nothing.**
+**The cost of the set: nothing that can be claimed.**
 
 | | the one file | the six files | the difference |
 |---|---|---|---|
-| the rows out | **4,454.220 ms** | **4,257.278 ms** | **−196.942 ms** |
-| the write | **2,530.120 ms** | **2,458.209 ms** | **−71.911 ms** |
+| the rows out | **3,338.468 ms** | **3,344.893 ms** | **+6.425 ms** |
+| the write | **2,040.668 ms** | **2,075.327 ms** | **+34.659 ms** |
 
-**Both differences are negative, and both are inside the noise**: the one file's own spread is 4,065.308 to
-4,659.841 ms and the six files' is 4,188.186 to 4,719.927 ms, and the write's spreads are 2,462.668 to
-2,579.452 ms and 2,312.978 to 2,530.711 ms. **The host's load average in those campaigns was 9.26, 18.94
-and 11.50** -- a busy host -- and **the pairs are measured together**, so the host's own movement is in
-both sides of every pair. **The set costs nothing the one file does not cost**, which is what §3v and §3y
-found twice already and what the third measurement confirms.
+**The two differences are the host's, and the yardstick says so.** The two arms are measured **back to
+back** in every iteration and **the order they are measured in alternates**, so the host's own movement is
+in both sides of every pair -- and the difference between the arms, in every iteration, is:
+
+| | the differences, in every iteration | their median |
+|---|---|---|
+| the read | +6.425, +14.326, +914.845, +5.861, +234.120, +262.869, +67.003, +132.970, +84.001 | **+84.001 ms** |
+| the write | −50.811, −33.693, −82.489, −566.643, +395.080, +45.717, −108.137, +168.581, +31.516 | **−33.693 ms** |
+
+**The write's differences straddle zero, and their spread is wider than the difference of the medians.**
+The read's are all positive, and their median (**+84.001 ms**) is **2.5% of the read** -- and their spread
+runs from +5.861 to +914.845 ms, so the spread is eleven times the median. **The host's load average in
+those campaigns was 18.03, 12.81 and 15.72.** **No difference can be claimed**: the set's cost is inside
+the noise, which is what §3v and §3y found twice already and what the third measurement confirms.
 
 **And the estimate does not move either**: **1,549,500,016 bytes** for both. The rows are the sum of the
 files' rows and the columns are the same, so the budget is charged the same for a set as for one file.
@@ -4324,14 +4332,15 @@ The eager path separates the two, because it reads the same file and then gather
 
 | | the cost |
 |---|---|
-| the engine's eager read | **565.409 ms** |
-| the eager rows: the read and the gather | **3,972.452 ms** |
-| **the gather** | **3,407.042 ms** |
+| the engine's eager read | **516.196 ms** |
+| the eager rows: the read and the gather | **2,823.164 ms** |
+| **the gather** | **2,292.710 ms** |
 
-**The gather is 76% of the read.** It is a copy of the whole table -- six million rows, sixteen columns,
-every dictionary value materialised into its own string -- and on a plan that filters nothing **the copy
-buys nothing**: the rows are the rows that were read. That is the next increment's, and it is named in
-[ADR-0055](docs/adr/0055-the-sets-rows-are-handed-out.md).
+**The gather is 81% of the eager path's cost.** It is a copy of the whole table -- six million rows,
+sixteen columns, every dictionary value materialised into its own string -- and on a plan that filters
+nothing **the copy buys nothing**: the rows are the rows that were read. **And the lazy path pays the copy
+too**: the one file's rows cost **3,338.468 ms**, which is its scan and the same copy. That is the next
+increment's, and it is named in [ADR-0055](docs/adr/0055-the-sets-rows-are-handed-out.md).
 
 **The identity is exact, and the file is the witness.** The same **6,000,000** rows come out of the one
 file and out of the six files, and **the two files the two round trips write are the same file, byte for
@@ -4339,28 +4348,40 @@ byte**. A file is a stronger witness than a checksum, because a checksum is a su
 thing itself: the set's rows and the one file's rows are the same rows, in the same order, with the same
 values.
 
-**The round trip is not byte-exact, and the difference is the schema alone.**
+**The round trip is the published file's data, and not its metadata.**
 
-| | the bytes | the first differing byte |
-|---|---|---|
-| the published file | 242,859,461 | -- |
-| the round trip, the store's schema rule | **242,853,681** | **20,566,725** |
-| the round trip, the file's own nullability | **242,859,117** | **242,810,880** |
+| | the bytes | the first differing byte | the data |
+|---|---|---|---|
+| the published file | 242,859,461 | -- | -- |
+| the round trip, the store's schema rule | **242,853,681** | **20,566,725** | **different** |
+| the round trip, the file's own nullability | **242,859,117** | **242,857,739** | **the same, byte for byte** |
 
 **Two differences, and they are two different things.**
 
 1. **The store's rule** -- a column that holds no NULL is written REQUIRED -- makes the definition levels
    differ, and the first difference is at byte **20,566,725**: **the same byte §3z published** for the
-   one-file path, because it is the same rule and the same rows.
+   one-file path, because it is the same rule and the same rows. **And the data is different**, because the
+   definition levels are in the data pages.
 2. **The file's own nullability** removes that difference, and then the first difference moves to byte
-   **242,810,880** -- **48,581 bytes before the end of the published file**. **The difference is in the
-   file's metadata, not in its data**: the Parquet writer stores the Arrow schema in the footer, and the
-   Arrow schema says the dictionary columns are dictionaries. **The gather materialised the dictionary
-   away**, so the round trip's schema says they are plain strings.
+   **242,857,739** -- and **the published file's metadata starts at 242,845,766**, so the difference is
+   **inside the metadata**. **And the data is the file's data, byte for byte**: the probe compares the two
+   files' **data regions** -- everything in front of the metadata -- and they are **identical**.
 
-**So the round trip reproduces the published file's data exactly, and its metadata differs by the
-representation the rows cannot carry.** The rows say which rows are NULL; they do not say whether a column
-is dictionary-encoded, and the footer records what they are.
+**So the round trip reproduces the published file's data exactly, and its metadata differs.** The Parquet
+writer stores the Arrow schema in the footer, and the Arrow schema says the dictionary columns are
+dictionaries; **the gather materialised the dictionary away**, so the round trip's schema says they are
+plain strings. **The Parquet schema is the same and the Arrow schema is not** -- both measured -- and the
+round trip's metadata is **344 bytes shorter**, because the Arrow schema without the dictionaries is a
+smaller one.
+
+**And the first differing byte was wrong the first time, and the probe is fixed.** The first run of this
+probe reported **242,810,880** against the file's own schema. **That was the offset of the last chunk, not
+the first differing byte**: the probe's comparison returned the chunk boundary when the two files had
+different lengths -- and they do, because the round trip's file is the shorter one. **The comparison now
+finds the first byte that differs, and it compares the two files' data regions directly**, which is the
+question a first differing byte cannot answer on its own. **The claim the wrong figure supported was
+right** -- the difference is the metadata and not the data -- **and the figure was wrong**: the corrected
+one is **242,857,739**, inside the metadata, and the data regions are identical.
 
 **What this cost.** **No public break, and no new type.** `FileSetSource::execute_rows` takes a
 `&QueryPlan` and an `&ExecOptions` and gives back a `Dataset` -- all three already on the surface -- so the

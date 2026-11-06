@@ -1420,6 +1420,7 @@ SET_ROWS_FACTS = (
     ("the estimate, six files", "estimate_six_files", 0),
     ("the first differing byte", "first_difference", 0),
     ("the first differing byte, the file's own schema", "first_difference_own_schema", 0),
+    ("the published file's metadata starts at", "metadata_start", 0),
 )
 
 
@@ -4933,6 +4934,38 @@ def main() -> int:
                     )
                 elif verdicts:
                     print(f"ok  {'PERF.md':<10} {label:<60} True")
+            # The data and the metadata, told apart. The first differing byte alone
+            # cannot say which one moved, so the probe compares the data regions.
+            for label, key, expected in (
+                (
+                    "the file's own schema writes the published file's data",
+                    "data_identical_own_schema",
+                    True,
+                ),
+                (
+                    "the store's rule writes the published file's data",
+                    "data_identical_rule",
+                    False,
+                ),
+                (
+                    "the Arrow schema is the file's Arrow schema",
+                    "arrow_schema_identical_own_schema",
+                    False,
+                ),
+                (
+                    "the Parquet schema is the file's Parquet schema",
+                    "parquet_schema_identical_own_schema",
+                    True,
+                ),
+            ):
+                verdicts = [report.get(key) for report in set_reports]
+                if verdicts and any(verdict is not expected for verdict in verdicts):
+                    failures.append(
+                        f"PERF.md: the reports say that {label} is not {expected} in some "
+                        f"campaign, and the section publishes that it is"
+                    )
+                elif verdicts:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {expected}")
 
     if failures:
         print()

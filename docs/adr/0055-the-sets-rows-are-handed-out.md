@@ -52,16 +52,18 @@ And there were two questions nobody had asked, because the door was closed:
 5. **The round trip is measured, and the difference is named.** The measurement says three things, and all
    three are published:
    - **The set's rows and the one file's rows write the same file, byte for byte.** The identity is exact.
-   - **The round trip reproduces the published file's data exactly.** Under the file's own nullability the
-     first differing byte is at **242,810,880** — 48,581 bytes before the end of the published file — so the
-     difference is in the **metadata**, not in the data.
-   - **The metadata differs because the gather materialised the dictionary away.** The Parquet writer stores
-     the Arrow schema in the footer, and the Arrow schema says the dictionary columns are dictionaries. The
-     rows the engine hands out are **plain columns** where the file's schema says a dictionary.
+   - **The round trip reproduces the published file's data exactly.** The probe compares the two files'
+     **data regions** — everything in front of the metadata — and they are **byte for byte the same**, and
+     the first differing byte is the published file's **metadata's first byte**.
+   - **The metadata differs because the gather materialised the dictionary away.** The Parquet writer
+     stores the Arrow schema in the footer, and the Arrow schema says the dictionary columns are
+     dictionaries. The rows the engine hands out are **plain columns** where the file's schema says a
+     dictionary. **The Parquet schema is the same and the Arrow schema is not**, and both are measured.
 
 6. **The copy the rows path makes is named, and it is the next increment.** The rows the engine hands out
-   are **gathered** — the plan's projection, copied out of what was read — and the gather is **3,407.042 ms
-   of a 4,454.220 ms read**: 76% of it. On a plan that filters nothing **the copy buys nothing**, because
+   are **gathered** — the plan's projection, copied out of what was read — and the gather is
+   **2,292.710 ms**: 81% of what the eager path spends handing the rows out. On a plan that filters nothing
+   **the copy buys nothing**, because
    the rows are the rows that were read. **This increment measures it and names it; it does not fix it**,
    because the fix changes what a plan's rows are — the dictionary survives — and that moves §3z's published
    figures and is a decision of its own.
@@ -85,16 +87,34 @@ Arrow path, where the schema comes with the rows.
 
 **The cost, the identity and the three files** are in [PERF.md §3aa](../../PERF.md).
 
-- **The set costs nothing**: the rows out are **−196.942 ms** against the one file's and the write
-  **−71.911 ms** — both negative, and both inside the noise, on a host whose load average was 9.26, 18.94
-  and 11.50. The estimate is **1,549,500,016 bytes** for both.
+- **The set costs nothing that can be claimed**: the rows out are **+6.425 ms** against the one file's and
+  the write **+34.659 ms**, and the difference between the arms in every iteration — measured back to back,
+  with the order alternating — straddles zero with a spread wider than either, on a host whose load average
+  was 18.03, 12.81 and 15.72. The estimate is **1,549,500,016 bytes** for both.
 - **The identity is exact**: the same **6,000,000** rows, and **the two files the two round trips write are
   the same file, byte for byte**.
 - **The round trip is the published file's data, and not its metadata**: the store's rule makes the first
-  difference **20,566,725** — the same byte §3z published — and the file's own nullability moves it to
-  **242,810,880**, 48,581 bytes before the end of the file.
-- **The gather is 3,407.042 ms of the 4,454.220 ms read** — 76% of it — and it is a copy of the whole
-  table.
+  difference **20,566,725** — the same byte §3z published — and the data differs, because the definition
+  levels are in the data pages. The file's own nullability moves the first difference to **242,857,739**,
+  which is **inside the metadata** (the published file's metadata starts at **242,845,766**), and **the two
+  files' data regions are byte for byte the same**.
+- **The gather is 2,292.710 ms** — 81% of what the eager path spends handing the rows out — and it is a
+  copy of the whole table.
+
+## The correction
+
+**The probe's first run reported the wrong first differing byte, and the figure was wrong while the claim
+was right.** The probe's file comparison returned the **chunk boundary** when the two files had different
+lengths — and they do, because the round trip's file is the shorter one — and the boundary it returned was
+the offset of the published file's **last chunk**, **242,810,880**. **The comparison now finds the first
+byte that differs**, and the probe **compares the two files' data regions** — everything in front of the
+metadata — which is the question a first differing byte cannot answer on its own. **The corrected figure is
+242,857,739**, inside the metadata, and the data regions are identical.
+
+**The claim the wrong figure supported was right**: the difference is the metadata and not the data. **The
+figure was wrong**, and it is corrected here, in [PERF.md §3aa](../../PERF.md) and in
+[STATUS.md](../../STATUS.md) — **in the places that published it** — and the probe that produced it is
+fixed.
 
 ## Confidence
 

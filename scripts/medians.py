@@ -2469,6 +2469,8 @@ def print_set_rows(runs: list[dict]) -> None:
         ("identical_arms", "the one file's rows and the six files' rows are the same file"),
         ("identical_to_published", "the round trip is the published file"),
         ("identical_own_schema", "the round trip, the file's own schema, is the published file"),
+        ("data_identical_rule", "the store's rule writes the published file's data"),
+        ("data_identical_own_schema", "the file's own schema writes the published file's data"),
     ):
         verdicts = [run.get(key) for run in runs if run.get(key) is not None]
         if verdicts:
@@ -2476,6 +2478,7 @@ def print_set_rows(runs: list[dict]) -> None:
     for key, heading in (
         ("first_difference", "the first differing byte, the store's rule"),
         ("first_difference_own_schema", "the first differing byte, the file's own schema"),
+        ("metadata_start", "the published file's metadata starts at"),
     ):
         differences = [run.get(key) for run in runs if run.get(key) is not None]
         if differences:
@@ -2483,6 +2486,24 @@ def print_set_rows(runs: list[dict]) -> None:
     loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
     if loads:
         print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+    # The yardstick for a pair: the difference between the two arms, in every
+    # iteration. The two arms are measured back to back, and the order they are
+    # measured in alternates, so the host's movement is in both sides of every
+    # one of these numbers.
+    for key, heading in (
+        ("read", "the difference in the read, in every iteration"),
+        ("write", "the difference in the write, in every iteration"),
+    ):
+        values = [
+            difference[key]
+            for run in runs
+            for difference in run.get("differences_ms", [])
+            if key in difference
+        ]
+        if values:
+            rendered = ", ".join(f"{value:+.3f}" for value in values)
+            print(f"   {heading:<44} {rendered}")
+            print(f"   {'the median of them':<44} {median(values):+10.3f} ms")
 
 
 def print_excursion_hunt(runs: list[dict]) -> None:

@@ -423,28 +423,33 @@ for a pinned x86-64 runner; it has not run on one.
   can now be read by the engine and written back**, and the glue is three lines: the paths go to the set, the
   set's rows come out, the store writes them. **The identity is exact**: the same **6,000,000** rows come out
   of one file and out of six, and **the two files the two round trips write are the same file, byte for
-  byte**. **The set costs nothing** — the rows out are **−196.942 ms** against the one file's and the write
-  **−71.911 ms**, both negative and both inside the noise on a host whose load average was 9.26, 18.94 and
-  11.50 — and the estimate does not move either: **1,549,500,016 bytes** for both. **The round trip is not
-  byte-exact, and the difference is the schema alone**: under the store's rule the first difference is at
-  **20,566,725** — the same byte spec 042 published — and under the file's own nullability it moves to
-  **242,810,880**, 48,581 bytes before the end of the published file, which is **the metadata and not the
-  data**: the Parquet writer stores the Arrow schema in the footer, and the gather materialised the
-  dictionary away. **And the cost of the round trip is the copy**: the gather is **3,407.042 ms of a
-  4,454.220 ms read**, 76% of it, and on a plan that filters nothing the copy buys nothing — **that is the
-  next increment**. **No public break**: the surface does not move, so the crates can be published with this
-  in them. [ADR-0055](docs/adr/0055-the-sets-rows-are-handed-out.md) records it.
-- **The rows path copies the table when the plan filters nothing, and the copy is 76% of the read.** The rows
-  the engine hands out are **gathered** — the plan's projection, copied out of what was read — and the gather
-  costs **3,407.042 ms of a 4,454.220 ms read** on the published file. **On a plan that filters nothing the
-  copy buys nothing**: the rows are the rows that were read. **And the copy is why the round trip's file is
-  not the published one**: the gather materialises the dictionary away, and the Parquet writer stores the
-  Arrow schema in the footer, so the metadata records plain strings where the file says dictionaries.
+  byte**. **The set costs nothing that can be claimed** — the rows out are **+6.425 ms** against the one file's
+  and the write **+34.659 ms**, and the differences between the arms in every iteration — measured back to
+  back, with the order alternating — straddle zero with a spread wider than either, on a host whose load
+  average was 18.03, 12.81 and 15.72 — and the estimate does not move either: **1,549,500,016 bytes** for
+  both. **The round trip is the
+  published file's data and not its metadata**: under the store's rule the first difference is at
+  **20,566,725** — the same byte spec 042 published — and the data differs, because the definition levels
+  are in the data pages; under the file's own nullability the first difference moves to **242,857,739**,
+  which is **inside the metadata** (it starts at **242,845,766**), and **the data is the file's data, byte
+  for byte**. **The Parquet schema is the same and the Arrow schema is not**: the Parquet writer stores the
+  Arrow schema in the footer, and the gather materialised the dictionary away. **And the cost of the round
+  trip is the copy**: the gather is **2,292.710 ms**, 81% of what the eager path spends handing the rows
+  out, and on a plan that filters nothing the copy buys nothing — **that is the next increment**. **No public
+  break**: the surface does not move, so the crates can be published with this in them.
+  [ADR-0055](docs/adr/0055-the-sets-rows-are-handed-out.md) records it.
+- **The rows path copies the table when the plan filters nothing, and the copy is most of what it costs.** The
+  rows the engine hands out are **gathered** — the plan's projection, copied out of what was read — and the
+  gather costs **2,292.710 ms** on the published file: 81% of what the eager path spends handing the rows
+  out. **On a plan that filters nothing the
+  copy buys nothing**: the rows are the rows that were read. **And the copy is why the round trip's metadata
+  differs from the file's**: the gather materialises the dictionary away, and the Parquet writer stores the
+  Arrow schema in the footer, so the footer records plain strings where the file says dictionaries.
   **What would answer it:** handing the columns out **as they lie** when the selection is the identity — no
-  copy, and the dictionary survives, so the round trip would be byte-exact. **That is not a free change**:
-  it changes what a plan's rows are, and it moves §3z's published figures, so it is an increment of its own
-  and not a repair. **What would answer the round trip's bytes without it:** writing through the Arrow path,
-  where the schema comes with the rows.
+  copy, and the dictionary survives, so the round trip's file would be the file. **That is not a free
+  change**: it changes what a plan's rows are, and it moves §3z's published figures, so it is an increment of
+  its own and not a repair. **What would answer the round trip's bytes without it:** writing through the
+  Arrow path, where the schema comes with the rows.
 - **The store's table can be on the build side of a join, and on the probe side.** `JoinSpec.build_paths`
   is a list of paths: one path is one file, exactly as it was, and several are read as one table — so the
   build side is now the **source's** shape and not the plan's, and it is named rather than left to be
