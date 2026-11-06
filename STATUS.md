@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **40 specs**, **54 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **41 specs**, **55 ADRs** and **29 defects** so far, and every one
 of the specs is closed.
 
 ---
@@ -418,6 +418,33 @@ for a pinned x86-64 runner; it has not run on one.
   is refused**, because the aggregate folds the rows and there is nothing left to write. The **grid is
   the store's** and the engine does not learn it.
   [ADR-0054](docs/adr/0054-the-engines-rows-reach-a-stores-table.md) records it.
+- **The set's rows are handed out, and the round trip is the file's data.** `FileSetSource::execute_rows` is
+  the set's own door to its rows — the same path `execute_rows_on` takes for one file — so **a store's table
+  can now be read by the engine and written back**, and the glue is three lines: the paths go to the set, the
+  set's rows come out, the store writes them. **The identity is exact**: the same **6,000,000** rows come out
+  of one file and out of six, and **the two files the two round trips write are the same file, byte for
+  byte**. **The set costs nothing** — the rows out are **−196.942 ms** against the one file's and the write
+  **−71.911 ms**, both negative and both inside the noise on a host whose load average was 9.26, 18.94 and
+  11.50 — and the estimate does not move either: **1,549,500,016 bytes** for both. **The round trip is not
+  byte-exact, and the difference is the schema alone**: under the store's rule the first difference is at
+  **20,566,725** — the same byte spec 042 published — and under the file's own nullability it moves to
+  **242,810,880**, 48,581 bytes before the end of the published file, which is **the metadata and not the
+  data**: the Parquet writer stores the Arrow schema in the footer, and the gather materialised the
+  dictionary away. **And the cost of the round trip is the copy**: the gather is **3,407.042 ms of a
+  4,454.220 ms read**, 76% of it, and on a plan that filters nothing the copy buys nothing — **that is the
+  next increment**. **No public break**: the surface does not move, so the crates can be published with this
+  in them. [ADR-0055](docs/adr/0055-the-sets-rows-are-handed-out.md) records it.
+- **The rows path copies the table when the plan filters nothing, and the copy is 76% of the read.** The rows
+  the engine hands out are **gathered** — the plan's projection, copied out of what was read — and the gather
+  costs **3,407.042 ms of a 4,454.220 ms read** on the published file. **On a plan that filters nothing the
+  copy buys nothing**: the rows are the rows that were read. **And the copy is why the round trip's file is
+  not the published one**: the gather materialises the dictionary away, and the Parquet writer stores the
+  Arrow schema in the footer, so the metadata records plain strings where the file says dictionaries.
+  **What would answer it:** handing the columns out **as they lie** when the selection is the identity — no
+  copy, and the dictionary survives, so the round trip would be byte-exact. **That is not a free change**:
+  it changes what a plan's rows are, and it moves §3z's published figures, so it is an increment of its own
+  and not a repair. **What would answer the round trip's bytes without it:** writing through the Arrow path,
+  where the schema comes with the rows.
 - **The store's table can be on the build side of a join, and on the probe side.** `JoinSpec.build_paths`
   is a list of paths: one path is one file, exactly as it was, and several are read as one table — so the
   build side is now the **source's** shape and not the plan's, and it is named rather than left to be

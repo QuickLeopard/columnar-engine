@@ -1396,6 +1396,32 @@ ENGINE_ROWS_BYTES = (
     ("the first differing byte", "first_difference", 0),
 )
 
+# Spec 043: the set's rows. The round trip is run twice in the same campaign --
+# once over the one file, once over the six files -- and **the pairs are what
+# matter**, because the host's own movement is in both sides of every pair.
+SET_ROWS_REPORTS = sorted((ROOT / "bench-results").glob("set-rows-run*.json"))
+SET_ROWS_SECTION = "### 3aa"
+
+SET_ROWS_COSTS = (
+    ("the engine's eager read", "eager_read", 3),
+    ("the eager rows", "eager_rows", 3),
+    ("the one file's rows", "read_one_file", 3),
+    ("the six files' rows", "read_six_files", 3),
+    ("the write of the one file's rows", "write_one_file", 3),
+    ("the write of the six files' rows", "write_six_files", 3),
+)
+
+SET_ROWS_FACTS = (
+    ("the rows, one file", "rows_one_file", 0),
+    ("the rows, six files", "rows_six_files", 0),
+    ("the file, the store's schema rule", "bytes_rule", 0),
+    ("the file, the file's own schema", "bytes_own_schema", 0),
+    ("the estimate, one file", "estimate_one_file", 0),
+    ("the estimate, six files", "estimate_six_files", 0),
+    ("the first differing byte", "first_difference", 0),
+    ("the first differing byte, the file's own schema", "first_difference_own_schema", 0),
+)
+
 
 def spec041x_figures(family: str, suffix: str) -> dict[str, float] | None:
     """The headline figure of every family, for the set `suffix` names.
@@ -4804,6 +4830,110 @@ def main() -> int:
             elif verdicts:
                 print(f"ok  {'PERF.md':<10} {'the store\'s own append is not the published file':<60} True")
 
+    # Spec 043: the set's rows. The round trip is measured twice in the same
+    # campaign -- once over the one file, once over the six files -- and **every
+    # figure is checked inside the section that publishes it**.
+    if SET_ROWS_REPORTS:
+        set_reports = [json.loads(path.read_text()) for path in SET_ROWS_REPORTS]
+        set_section = section_of(texts["PERF.md"], SET_ROWS_SECTION)
+        if set_section is None:
+            failures.append(
+                f"PERF.md: the set's rows ({SET_ROWS_SECTION}) are not in the document"
+            )
+        else:
+            for label, key, places in SET_ROWS_COSTS:
+                values = [
+                    report["measurements_ms"][key]
+                    for report in set_reports
+                    if key in report.get("measurements_ms", {})
+                ]
+                if not values:
+                    failures.append(f"PERF.md: no figure for {label} in the set's rows' reports")
+                    continue
+                rendered = f"{statistics.median(values):,.{places}f}"
+                if rendered not in set_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+            for label, key, places in SET_ROWS_FACTS:
+                values = [report[key] for report in set_reports if key in report]
+                if not values:
+                    failures.append(f"PERF.md: no figure for {label} in the set's rows' reports")
+                    continue
+                rendered = f"{statistics.median(values):,.{places}f}"
+                if rendered not in set_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+            # The gather: the eager rows against the eager read. It is the copy
+            # the rows path makes of everything it read.
+            gathers = [
+                report["measurements_ms"]["eager_rows"] - report["measurements_ms"]["eager_read"]
+                for report in set_reports
+                if "eager_rows" in report.get("measurements_ms", {})
+                and "eager_read" in report.get("measurements_ms", {})
+            ]
+            if gathers:
+                rendered = f"{statistics.median(gathers):,.3f}"
+                if rendered not in set_section:
+                    failures.append(
+                        f"PERF.md: the gather is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {'the gather':<60} {rendered}")
+            # The two differences the section publishes: the pairs, side by side.
+            for label, one, many, places in (
+                ("the difference in the read", "read_one_file", "read_six_files", 3),
+                ("the difference in the write", "write_one_file", "write_six_files", 3),
+            ):
+                one_median = statistics.median(
+                    [report["measurements_ms"][one] for report in set_reports]
+                )
+                many_median = statistics.median(
+                    [report["measurements_ms"][many] for report in set_reports]
+                )
+                rendered = f"{many_median - one_median:+,.{places}f}"
+                if rendered.lstrip("+") not in set_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+            # The three verdicts the section publishes: the two arms write the
+            # same file, and the round trip is not the published file -- not
+            # under the store's rule and not under the file's own schema.
+            arms = [report.get("identical_arms") for report in set_reports]
+            if arms and not all(arms):
+                failures.append(
+                    "PERF.md: the two arms of the round trip do not write the same file in "
+                    "some campaign, and the section publishes that they do"
+                )
+            elif arms:
+                print(f"ok  {'PERF.md':<10} {'the two arms write the same file':<60} True")
+            for label, key in (
+                ("the round trip is not the published file", "identical_to_published"),
+                (
+                    "the round trip under the file's own schema is not the published file",
+                    "identical_own_schema",
+                ),
+            ):
+                verdicts = [report.get(key) for report in set_reports]
+                if verdicts and any(verdicts):
+                    failures.append(
+                        f"PERF.md: the reports say that {label} in some campaign, and the "
+                        f"section publishes that they do not"
+                    )
+                elif verdicts:
+                    print(f"ok  {'PERF.md':<10} {label:<60} True")
+
     if failures:
         print()
         for failure in failures:
@@ -4833,7 +4963,8 @@ def main() -> int:
         f"{2 + 3 * HOSTILE_ROWS + 1} of the hostile file, "
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status, "
         f"{len(BUILD_SET_COSTS) + len(BUILD_SET_FACTS) + 3} of the build side, "
-        f"{len(ENGINE_ROWS_COSTS) + len(ENGINE_ROWS_BYTES) + 3} of the engine's rows"
+        f"{len(ENGINE_ROWS_COSTS) + len(ENGINE_ROWS_BYTES) + 3} of the engine's rows, "
+        f"{len(SET_ROWS_COSTS) + len(SET_ROWS_FACTS) + 6} of the set's rows"
     )
     return 0
 

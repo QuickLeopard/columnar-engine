@@ -178,6 +178,29 @@ nothing left to write. **And the schema is the store's**: a column that holds no
 REQUIRED, and a column that holds one is written OPTIONAL -- the engine's rows say which rows are NULL
 and not whether a column may be.
 
+**And a table comes back the same way it went in.** The set has its own way to hand its rows out --
+`FileSetSource::execute_rows` -- so **the round trip is three lines**: the table's paths go to the set, the
+set's rows come out, and the store writes them.
+
+```rust
+use columnar_engine::prelude::*;
+use columnar_store::Store;
+
+let store = Store::open("/tmp/warehouse")?;
+let table = store.table("lineitem")?.expect("the table is there");
+
+let set = FileSetSource::open(&table.paths())?;
+let rows = set.execute_rows(&plan, &ExecOptions::default())?;
+
+store.append_rows("lineitem-copy", &rows.chunks, writer_properties(&[]))?;
+```
+
+**The rows are the file's rows**: the set's rows and one file's rows are the same rows, in the same order,
+and the two write the same file. **What the round trip does not carry is the schema** -- the nullability
+above, and the dictionary, because the rows the engine hands out are gathered and the gather materialises
+the dictionary away. **The figures are in
+[PERF.md §3aa](https://github.com/QuickLeopard/columnar-engine/blob/main/PERF.md#3aa-the-sets-rows).**
+
 **And the crate publishes with the others.** It was held back while its API was still moving, and the
 increment that settled it — the engine's source over a set of files — is done. **The publish itself is a
 separate act** and it needs a crates.io account and a token: the order and the commands are below.

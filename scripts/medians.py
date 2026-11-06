@@ -2417,6 +2417,74 @@ def print_build_set(runs: list[dict]) -> None:
         print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
 
 
+def print_set_rows(runs: list[dict]) -> None:
+    """Print the set's rows: the round trip through the engine.
+
+    This is spec 043's increment: a store's table read as a set, its rows handed
+    out, and the rows written back. The **pairs** are what matter -- one file
+    against six, measured together -- because the host's own movement is the
+    same for both sides of the pair.
+
+    The **gather** is the difference between the eager read and the eager rows:
+    the rows the engine hands out are a copy of what it read, and the copy is
+    what the round trip pays for.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE SET'S ROWS -- THE ROUND TRIP ({len(runs)} campaigns) ===")
+    for name, heading in (
+        ("eager_read", "the engine's eager read"),
+        ("eager_rows", "the eager rows: the read and the gather"),
+        ("read_one_file", "the one file's rows"),
+        ("read_six_files", "the six files' rows"),
+        ("write_one_file", "the write of the one file's rows"),
+        ("write_six_files", "the write of the six files' rows"),
+    ):
+        values = [
+            run["measurements_ms"][name]
+            for run in runs
+            if name in run.get("measurements_ms", {})
+        ]
+        if values:
+            print(f"   {heading:<44} {median(values):10.3f} ms   ({min(values):.3f}-{max(values):.3f})")
+    gathers = []
+    for run in runs:
+        measurements = run.get("measurements_ms", {})
+        if "eager_rows" in measurements and "eager_read" in measurements:
+            gathers.append(measurements["eager_rows"] - measurements["eager_read"])
+    if gathers:
+        print(f"   {'the gather':<44} {median(gathers):10.3f} ms   ({min(gathers):.3f}-{max(gathers):.3f})")
+    for key, heading in (
+        ("rows_one_file", "the rows, one file"),
+        ("rows_six_files", "the rows, six files"),
+        ("bytes_rule", "the file, the store's schema rule"),
+        ("bytes_own_schema", "the file, the file's own schema"),
+        ("estimate_one_file", "the estimate, one file"),
+        ("estimate_six_files", "the estimate, six files"),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {int(median(values)):>12}")
+    for key, heading in (
+        ("identical_arms", "the one file's rows and the six files' rows are the same file"),
+        ("identical_to_published", "the round trip is the published file"),
+        ("identical_own_schema", "the round trip, the file's own schema, is the published file"),
+    ):
+        verdicts = [run.get(key) for run in runs if run.get(key) is not None]
+        if verdicts:
+            print(f"   {heading:<44} {str(all(verdicts)):>12}")
+    for key, heading in (
+        ("first_difference", "the first differing byte, the store's rule"),
+        ("first_difference_own_schema", "the first differing byte, the file's own schema"),
+    ):
+        differences = [run.get(key) for run in runs if run.get(key) is not None]
+        if differences:
+            print(f"   {heading:<44} {int(median(differences)):>12}")
+    loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+    if loads:
+        print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
 def print_excursion_hunt(runs: list[dict]) -> None:
     """Print the hunt: whether the file's state moved at all.
 
@@ -2774,6 +2842,11 @@ def main() -> int:
 
     build_set_runs = [load(p) for p in sorted(Path("bench-results").glob("build-set-run*.json"))]
     print_build_set(build_set_runs)
+
+    # Spec 043: the set's rows -- a store's table read as a set, its rows
+    # handed out, and the rows written back.
+    set_rows_runs = [load(p) for p in sorted(Path("bench-results").glob("set-rows-run*.json"))]
+    print_set_rows(set_rows_runs)
 
     # Spec 041: the reader's four gigabytes -- a real file with one hostile
     # page header, and the largest single allocation the reader asked for.

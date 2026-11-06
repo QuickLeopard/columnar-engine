@@ -99,6 +99,17 @@ let source = open_source("data/lineitem.parquet")?;
 let rows = execute_rows_on(&plan, &source, &ExecOptions::default())?;
 ```
 
+**And a set's rows come out the same way.** `FileSetSource::execute_rows` is the set's own counterpart of
+`execute_rows_on` -- the set's rows, in the set's order -- so **a store's table can be read by the engine and
+written back**:
+
+```rust
+use columnar_engine::prelude::*;
+
+let set = FileSetSource::open(&table.paths())?;
+let rows = set.execute_rows(&plan, &ExecOptions::default())?;
+```
+
 A plan with an **aggregation** is refused: the aggregate folds the rows into groups, and there is
 nothing left to write. The rows are the engine's own vocabulary -- a column chunk with an encoding and a
 validity mask -- and `columnar-store` turns them into Parquet.

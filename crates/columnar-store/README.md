@@ -50,6 +50,24 @@ let rows = columnar_engine::execute_rows_on(&plan, &source, &options)?;
 let manifest = store.append_rows("lineitem", &rows.chunks, writer_properties(&[]))?;
 ```
 
+**And a table comes back the same way.** A table is **many files**, and `Table::paths` hands the list over.
+The engine reads that list as one table and hands the rows out, so **a store's table can be read by the
+engine and written back**:
+
+```rust
+use columnar_engine::prelude::*;
+
+let table = store.table("lineitem")?.expect("the table is there");
+let set = FileSetSource::open(&table.paths())?;
+let rows = set.execute_rows(&plan, &options)?;
+let manifest = store.append_rows("lineitem-copy", &rows.chunks, writer_properties(&[]))?;
+```
+
+**The rows are the file's rows**: the set's rows and one file's rows are the same rows, in the same order,
+and the two write the same file. **What the round trip does not carry is the schema** -- the nullability
+(below) and the dictionary, because the rows are gathered and the gather materialises the dictionary away.
+**The figures are in [PERF.md §3aa](https://github.com/QuickLeopard/columnar-engine/blob/main/PERF.md#3aa-the-sets-rows).**
+
 **The grid is still the store's**: the rows are re-batched inside the store, and the engine does not
 learn the number 65,536. **The conversion is the store's**, because it cannot live in `columnar-core` (a
 vocabulary that depends on a framework is not a vocabulary) and must not live in the engine (the
