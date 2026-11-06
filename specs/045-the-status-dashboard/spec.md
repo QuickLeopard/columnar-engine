@@ -1,8 +1,11 @@
 # Spec 045 — The status dashboard
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-06
+**Finished**: 2026-11-06
 **Predecessor**: [spec 044 — the rows as they lie](../044-the-rows-as-they-lie/spec.md)
+
+**CI green on `8ba06b6`** -- run 42229209218, sixteen of sixteen jobs.
 
 ## The problem
 
