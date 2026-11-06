@@ -1,8 +1,11 @@
 # Spec 043 — The set's rows
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-06
+**Finished**: 2026-11-06
 **Predecessor**: [spec 042 — the set on both sides](../042-the-set-on-both-sides/spec.md)
+
+**CI green on `3d26523c`** -- run 42209721185, fifteen of fifteen jobs.
 
 ## The problem
 
@@ -40,15 +43,25 @@ that is worse than no door.
 
 ### The claim this increment has to earn
 
-**The round trip is exact.** A table's rows, read by the engine and written by the store, are **the file the
-rows came from**, byte for byte — not an equivalent file, not a file with the same values, **the same
-bytes**. And the set makes no difference: the rows of **six files** and the rows of **one file** are the
-same rows, and they write the same file.
+**The round trip is exact in the data, and the difference is the schema.** A table's rows, read by the engine
+and written by the store, are **the file the rows came from**, byte for byte — **except for the schema**,
+and the schema is the one thing the engine's rows cannot carry: they say *which rows are NULL* and not
+*whether a column may be* (spec 042's rule), and they do not say *whether a column is dictionary-encoded*
+either. And the set makes no difference: the rows of **six files** and the rows of **one file** are the same
+rows, and they write the same file.
 
 **That is the claim the whole project rests on.** The store is append-only and the engine is a reader; a
 table that cannot be read back byte for byte is a table whose bytes depend on how it was written, and every
 guarantee above it — the manifest's rows, the grid, the commit — is a guarantee about bytes. **This increment
 measures the guarantee end to end, on the published file, through the engine's own rows.**
+
+**The measurement qualified the claim, and the qualification is published.** The round trip reproduces the
+published file's **data** exactly — the two files' data regions are byte for byte the same, and the first
+differing byte is **inside the metadata** — and the metadata differs because **the gather materialised the
+dictionary away** and the Parquet writer stores the Arrow schema in the footer. **And the gather is most of
+what the rows cost**, because the rows the engine hands out are a copy of what it read, and on a plan that
+filters nothing the copy buys nothing. **Both are named in
+[ADR-0055](../../docs/adr/0055-the-sets-rows-are-handed-out.md), and the second is the next increment.**
 
 ## The requirements
 
@@ -166,6 +179,51 @@ spec 039 used and spec 042 reused — and asks four questions:
 **The probe is written after the code it measures, and the reason is recorded.** The set's rows cannot be
 measured before the door exists, and the house's rule is that the **publication** waits for the measurement
 — which it does.
+
+## The amendment
+
+**The measurement found three things the specification did not know, and they are recorded here because a
+spec that is corrected after the fact is honest and a spec that is quietly left standing is not.**
+
+1. **The round trip is exact in the data and not in the metadata, and the reason is the gather.** The claim
+   above was written as *the round trip is exact*, and the measurement says two things about it. Under the
+   **store's own rule** the first differing byte is **20,566,725** — the same byte spec 042 published,
+   because it is the same rule and the same rows — and **the data differs**, because the definition levels
+   are in the data pages. Under the **file's own nullability** the first differing byte moves to
+   **242,857,739**, which is **inside the metadata** (the published file's metadata starts at
+   **242,845,766**), and **the two files' data regions are byte for byte the same**. **The Parquet writer
+   stores the Arrow schema in the footer**, and the Arrow schema says the dictionary columns are
+   dictionaries — and **the gather materialises the dictionary away**. So the engine's rows carry neither a
+   column's nullability nor a column's encoding, and both are in the bytes. **The data is exact; the schema
+   is what cannot be.** The claim is corrected in place above, and ADR-0055 records it.
+
+2. **The round trip's cost is the copy, and the copy is most of what it costs.** The rows the engine hands
+   out are **gathered** — the plan's projection, copied out of what was read — and the gather costs
+   **2,292.710 ms**: 81% of what the eager path spends handing the rows out, and the lazy path pays it
+   too. **On a plan that filters nothing the copy buys nothing**, because the rows are the rows that were
+   read. **This increment measures it and names it; it does not fix it**, because the fix changes what a
+   plan's rows are — the dictionary survives — and that moves §3z's published figures, so it is **an
+   increment of its own**. **That is the next increment, and it is named here so it is a decision and not an
+   oversight.**
+
+3. **The scope table's "the set's rows are handed out" is done, and the store's half did not move.** The
+   store needed nothing: `append_rows` takes the engine's rows, `Table::paths` gives the list of paths, and
+   the round trip is the embedder's three lines. **The engine's surface did not move either** — no new type
+   and no break — so the crates can be published with this increment in them.
+
+**And the probe's first run reported the wrong first differing byte, and the probe is fixed.** The probe's
+file comparison returned the **chunk boundary** when the two files had different lengths — and they do,
+because the round trip's file is the shorter one — and the boundary it returned was the published file's
+**last chunk**, **242,810,880**. **The comparison now finds the first byte that differs**, and the probe
+**compares the two files' data regions directly**, which is the question a first differing byte cannot
+answer on its own. **The claim the wrong figure supported was right** — the difference is the metadata and
+not the data — **and the figure was wrong**: the corrected one is **242,857,739**, inside the metadata, and
+the data regions are identical. ADR-0055 records the correction, in the places that published the wrong
+figure.
+
+**The probe was written after the code it measures, and the reason is recorded.** The set's rows cannot be
+measured before the door exists, and the house's rule is that the **publication** waits for the measurement
+✓, and it did ✓.
 
 ## The references
 

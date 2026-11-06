@@ -1,7 +1,8 @@
 # Spec 043 — The set's rows — the tasks
 
-**Status**: open
+**Status**: done
 **Started**: 2026-11-06
+**Finished**: 2026-11-06
 
 The order is the house's: **build, then measure, then publish.** The door has to exist before the set's rows
 can be measured, and the house's rule is that the **publication** waits for the measurement — which it does.
@@ -61,4 +62,4 @@ can be measured, and the house's rule is that the **publication** waits for the 
 - [x] `./scripts/check-package.sh` — the four crates package, in the order their dependencies decide.
 - [x] `python3 scripts/medians.py` and `python3 scripts/check-published-figures.py`
 - [x] `python3 scripts/check-links.py` and `python3 scripts/check-page.py`
-- [ ] **CI green**, and the closure commit says on which commit.
+- [x] **CI green**, and the closure commit says on which commit.
