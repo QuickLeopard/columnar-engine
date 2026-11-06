@@ -245,6 +245,43 @@ enum Command {
         #[arg(long, default_value = "bench-results/curve.json")]
         out: PathBuf,
     },
+
+    /// Take the **join-orders query apart on both sides**: this engine's own
+    /// parts, `DuckDB`'s own parts, and the counterfactual that names the
+    /// mechanism.
+    ///
+    /// The engine is behind `DuckDB` on the cold `join-orders` query, and every
+    /// part of the engine's own analysis so far was set against `DuckDB`'s
+    /// **whole**. This command takes both sides apart in one session: the
+    /// engine's plan output for its parts, `DuckDB`'s own profiler for its, and
+    /// `DuckDB` a third time with its join filter pushdown **disabled**, which
+    /// changes exactly one thing and therefore names the mechanism instead of
+    /// assuming it.
+    JoinParts {
+        /// The probe side's Parquet file.
+        #[arg(long, default_value = "data/lineitem.parquet")]
+        data: PathBuf,
+        /// The build side's Parquet file.
+        ///
+        /// It is beside the primary file by default, and the name follows the
+        /// primary file's, the way the generator writes them.
+        #[arg(long)]
+        build: Option<PathBuf>,
+        /// How many iterations a campaign runs.
+        ///
+        /// **Even**, so that the two orders' groups are the same size: the
+        /// engine's arm and `DuckDB`'s arms are measured back to back and the
+        /// order alternates, because a machine that drifts while an iteration
+        /// runs gives the first measurement a different price from the second.
+        #[arg(long, default_value_t = 6)]
+        iterations: usize,
+        /// The thread count both sides are pinned to.
+        #[arg(long, default_value_t = 1)]
+        threads: usize,
+        /// Where to write the JSON report.
+        #[arg(long, default_value = "bench-results/join-parts.json")]
+        out: PathBuf,
+    },
 }
 
 /// How the thread-count sweep measures.
@@ -368,6 +405,7 @@ fn run(cli: Cli) -> Result<()> {
             | Command::Gate { .. }
             | Command::Sweep { .. }
             | Command::Curve { .. }
+            | Command::JoinParts { .. }
     ) && columnar_bench::machine::simd_probe_is_overridden()
     {
         anyhow::bail!("{}", columnar_bench::machine::FORCED_SIMD_REFUSAL);
@@ -421,7 +459,39 @@ fn run(cli: Cli) -> Result<()> {
         Command::Sweep { data, query, threads, iterations, mode, out } => {
             run_sweep(&data, query, &threads, iterations, mode, &out)
         }
+        Command::JoinParts { data, build, iterations, threads, out } => {
+            run_join_parts(&data, build.as_deref(), iterations, threads, &out)
+        }
     }
+}
+
+/// Takes the join-orders query apart on both sides.
+///
+/// The engine's parts come from its own plan output, `DuckDB`'s from its own
+/// profiler, and the two are measured back to back in one iteration with the
+/// order alternated -- so the machine's drift cannot land on one side. The
+/// third arm, `DuckDB` with its join filter pushdown disabled, changes exactly
+/// one thing and therefore names the mechanism.
+fn run_join_parts(
+    data: &Path,
+    build: Option<&Path>,
+    iterations: usize,
+    threads: usize,
+    out: &Path,
+) -> Result<()> {
+    let build = build.map_or_else(|| build_table_path(data), PathBuf::from);
+    let options = columnar_bench::join_parts::JoinPartsOptions {
+        data: data.to_path_buf(),
+        build,
+        iterations,
+        threads,
+    };
+    let report = columnar_bench::join_parts::run(&options)
+        .map_err(|error| anyhow::anyhow!("the join-parts probe failed: {error}"))?;
+    columnar_bench::join_parts::write_report(&report, out)
+        .map_err(|error| anyhow::anyhow!("the join-parts report could not be written: {error}"))?;
+    println!("wrote {}", out.display());
+    Ok(())
 }
 
 /// Generates the benchmark dataset.

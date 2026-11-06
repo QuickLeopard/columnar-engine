@@ -333,6 +333,20 @@ probe-sort data="data/lineitem.parquet" out="bench-results/sort-cost-run1.json":
 probe-join data="data/lineitem.parquet" out="bench-results/join-cost-run1.json":
     cargo run --release -p columnar-engine --example join_cost_probe -- {{data}} --out {{out}}
 
+# Take the **join-orders query apart on both sides**: this engine's own parts,
+# `DuckDB`'s own parts, and `DuckDB` a third time with its join filter pushdown
+# **disabled** -- the counterfactual that changes exactly one thing and
+# therefore names the mechanism instead of assuming it.
+#
+# The two sides are measured back to back in one iteration and the order
+# alternates, because a machine that drifts while an iteration runs gives the
+# first measurement a different price from the second.
+#
+# The probe is spec 046's instrument, and it checks both sides' answers against
+# the published one before anything is timed.
+probe-join-parts data="data/lineitem.parquet" iterations="6" threads="1" out="bench-results/join-parts-run1.json":
+    cargo run --release -p columnar-cli -- join-parts --data {{data}} --iterations {{iterations}} --threads {{threads}} --out {{out}}
+
 # Take the **write side** apart: the published file's own rows written back out
 # in the file's own row groups, with the file's own writer properties; the
 # commit's five steps, one at a time; and the file read back through the
