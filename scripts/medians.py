@@ -1846,6 +1846,189 @@ def print_join_cost(sets: list[tuple[str, list[tuple[str, list[dict]]]]]) -> Non
                     print(f"{path:<44}{difference:>12.3f}{floor:>12.3f}")
 
 
+def print_join_parts(runs: list[dict]) -> None:
+    """Print the join-orders query, on both sides, taken apart.
+
+    This is spec 046: the engine's cold `join-orders` query is behind
+    `DuckDB`'s, and every part of the engine's own analysis so far was set
+    against `DuckDB`'s **whole** -- and a part cannot be compared with a whole.
+
+    So both sides are taken apart, in one session, and the parts are named the
+    same way on both sides. The third arm -- `DuckDB` with its join filter
+    pushdown **disabled** -- changes exactly one thing and therefore names the
+    mechanism instead of assuming it.
+
+    The **paired** difference is the figure: both sides are measured back to
+    back in the same iteration and the order is alternated, so the machine's
+    drift cannot land on one side. A difference of two medians would let the
+    drift land on both.
+    """
+    iterations = _join_parts_iterations(runs)
+    campaigns = len(runs)
+    print(
+        f"\n=== THE JOIN-ORDERS QUERY, ON BOTH SIDES, TAKEN APART "
+        f"({campaigns} campaigns, {len(iterations)} iterations) ==="
+    )
+
+    print("\n-- the parts --")
+    header = f"{'the part':<26}" + "".join(
+        f"{JOIN_PARTS_SIDE_LABELS[side]:>26}" for side in JOIN_PARTS_SIDES
+    )
+    print(header)
+    for key, label in JOIN_PARTS_PARTS:
+        row = f"{label:<26}"
+        for side in JOIN_PARTS_SIDES:
+            values = _join_parts_side_values(iterations, side, key)
+            if not values:
+                row += f"{'-':>26}"
+                continue
+            row += (
+                f"{statistics.median(values):>15.3f}"
+                f" [{min(values):>6.2f},{max(values):>6.2f}]"
+            )
+        print(row)
+
+    # The unprofiled arm has no parts: it is the whole, the way the comparison
+    # harness measures it, and it is what the profiler's price is read against.
+    unprofiled = _join_parts_side_values(iterations, "duckdb-unprofiled", "total")
+    if unprofiled:
+        print(
+            f"{'the whole, unprofiled':<26}"
+            f"{statistics.median(unprofiled):>15.3f}"
+            f" [{min(unprofiled):>6.2f},{max(unprofiled):>6.2f}]"
+        )
+
+    print("\n-- the paired differences, same iteration, back to back --")
+    print(f"{'the difference':<46}{'median':>11}{'min':>11}{'max':>11}")
+    for label, left, right, key in JOIN_PARTS_DIFFERENCES:
+        values = _join_parts_paired(iterations, left, right, key)
+        if not values:
+            continue
+        print(
+            f"{label:<46}{statistics.median(values):>11.3f}"
+            f"{min(values):>11.3f}{max(values):>11.3f}"
+        )
+
+    print("\n-- the rows each side's join saw --")
+    for side in JOIN_PARTS_SIDES:
+        values = _join_parts_rows(iterations, side)
+        if values:
+            print(f"{JOIN_PARTS_SIDE_LABELS[side]:<26}{min(values):>12} - {max(values):>12}")
+
+
+# The sides, and the label each is published under.
+JOIN_PARTS_SIDES = ("engine", "duckdb", "duckdb-filter-off")
+JOIN_PARTS_SIDE_LABELS = {
+    "engine": "the engine",
+    "duckdb": "duckdb, as it runs",
+    "duckdb-unprofiled": "duckdb, unprofiled",
+    "duckdb-filter-off": "duckdb, the filter off",
+}
+
+# The parts, and the label each is published under.
+JOIN_PARTS_PARTS = (
+    ("total", "the whole"),
+    ("probe_side_read_ms", "the probe side's read"),
+    ("build_side_read_ms", "the build side's read"),
+    ("build_side_open_ms", "the build side's open"),
+    ("join_ms", "the join"),
+    ("projection_ms", "the projection"),
+    ("aggregate_ms", "the aggregate"),
+    ("outside_parts_ms", "outside the parts"),
+)
+
+# The paired differences: the left side's figure less the right side's, taken
+# in the same iteration.
+JOIN_PARTS_DIFFERENCES = (
+    ("the whole: the engine less duckdb", "engine", "duckdb", "total"),
+    ("the probe side's read: the engine less duckdb", "engine", "duckdb", "probe_side_read_ms"),
+    ("the build side's read: the engine less duckdb", "engine", "duckdb", "build_side_read_ms"),
+    ("the join: the engine less duckdb", "engine", "duckdb", "join_ms"),
+    ("the projection: the engine less duckdb", "engine", "duckdb", "projection_ms"),
+    ("the aggregate: the engine less duckdb", "engine", "duckdb", "aggregate_ms"),
+    ("outside the parts: the engine less duckdb", "engine", "duckdb", "outside_parts_ms"),
+    ("the join: duckdb with the filter off less duckdb", "duckdb-filter-off", "duckdb", "join_ms"),
+    ("the join: duckdb with the filter off less the engine", "duckdb-filter-off", "engine", "join_ms"),
+    (
+        "the probe side's read: duckdb with the filter off less duckdb",
+        "duckdb-filter-off",
+        "duckdb",
+        "probe_side_read_ms",
+    ),
+)
+
+
+def _join_parts_iterations(runs: list[dict]) -> list[dict]:
+    """Every iteration of every campaign, with its arms by side."""
+    iterations = []
+    for run in runs:
+        for iteration in run.get("iterations", []):
+            arms = {arm["side"]: arm for arm in iteration.get("arms", [])}
+            iterations.append(
+                {
+                    "index": iteration.get("index"),
+                    "order": iteration.get("order"),
+                    "load_average": iteration.get("load_average"),
+                    "arms": arms,
+                }
+            )
+    return iterations
+
+
+def _join_parts_side_values(iterations: list[dict], side: str, key: str) -> list[float]:
+    """One part's values, across every iteration, for one side."""
+    values = []
+    for iteration in iterations:
+        arm = iteration["arms"].get(side)
+        if not arm:
+            continue
+        if key == "total":
+            values.append(arm["total_ms"])
+            continue
+        parts = arm.get("parts") or {}
+        if key in parts:
+            values.append(parts[key])
+    return values
+
+
+def _join_parts_paired(
+    iterations: list[dict], left: str, right: str, key: str
+) -> list[float]:
+    """The paired difference of one part, in the same iteration."""
+    values = []
+    for iteration in iterations:
+        arms = iteration["arms"]
+        if left not in arms or right not in arms:
+            continue
+        left_value = _join_parts_one(arms[left], key)
+        right_value = _join_parts_one(arms[right], key)
+        if left_value is None or right_value is None:
+            continue
+        values.append(left_value - right_value)
+    return values
+
+
+def _join_parts_one(arm: dict, key: str) -> float | None:
+    """One figure of one arm."""
+    if key == "total":
+        return arm.get("total_ms")
+    parts = arm.get("parts") or {}
+    return parts.get(key)
+
+
+def _join_parts_rows(iterations: list[dict], side: str) -> list[int]:
+    """How many rows reached each side's join."""
+    values = []
+    for iteration in iterations:
+        arm = iteration["arms"].get(side)
+        if not arm:
+            continue
+        parts = arm.get("parts") or {}
+        if "rows_to_join" in parts:
+            values.append(parts["rows_to_join"])
+    return values
+
+
 def print_drift_ladder(sets: list[tuple[str, list[dict]]]) -> None:
     """Print the drift's own parts: the ladder, and the movement that makes it.
 
@@ -2844,6 +3027,13 @@ def main() -> int:
     ]
     if join_sets:
         print_join_cost(join_sets)
+
+    # Spec 046's join-parts probe: the join-orders query, on both sides, taken
+    # apart -- the engine's own parts, `DuckDB`'s own parts, and `DuckDB` a
+    # third time with its join filter pushdown disabled.
+    join_parts_paths = sorted(Path("bench-results").glob("join-parts-run*.json"))
+    if join_parts_paths:
+        print_join_parts([load(p) for p in join_parts_paths])
 
     # Spec 035's ladder: the drift's own parts, over the set the file publishes,
     # the set spec 034 measured beside it, and the set spec 036 measured.

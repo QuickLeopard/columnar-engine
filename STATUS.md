@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **43 specs**, **57 ADRs** and **29 defects** so far, and every one
-of the specs is closed. **And the status has a page**:
+[`constitution.md`](constitution.md). **44 specs**, **58 ADRs** and **29 defects** so far, and every one
+of the specs but the one in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
 cannot go stale.
@@ -283,15 +283,28 @@ decode of the column fell from **4.13 ms** to **3.34 ms**, while the expansion's
 host. **What would answer it:** a file with a page index, or a reader that owns the Parquet decode.
 Neither is in scope of what the project has done so far.
 
-**3. `join-orders`, cold: DuckDB is ahead.** The engine is **100.0 ms** against DuckDB's **94.0 ms**,
-where the set the bump replaces had **97.6 ms** against **91.0 ms**: the gap is **0.6 ms** smaller than
-it was, and the whole of that is DuckDB's own movement. The published analysis says the gap is
-**DuckDB's own figure that moved**: DuckDB's cold join fell from 95.0 ms while the engine's rose from
-96.7 ms, and the engine's *old* code, re-measured on this host in the same session, reads 97.3 ms
-against the same DuckDB's 92.0 ms — so the gap is there for the code spec 026 shipped as well. The
-engine's stage was taken apart in spec 026 and the answer was that it is the **build side's read** —
-11.716 ms of the 21.731 ms cold stage — and Arrow's decode of `orders.parquet`, which has been
-measured three times and refused every time. **What would answer it:** the parts, not the total.
+**3. `join-orders`, cold: the parts are taken apart, and the engine's lookup is the faster one.** The
+engine is **100.0 ms** against DuckDB's **94.0 ms**, where the set the bump replaces had **97.6 ms**
+against **91.0 ms**: the gap is **0.6 ms** smaller than it was, and the whole of that is DuckDB's own
+movement — DuckDB's cold join fell from **95.0 ms** while the engine's rose from **96.7 ms**, and the
+engine's *old* code, re-measured on this host in the same session, reads **97.3 ms** against the same
+DuckDB's **92.0 ms**, so the gap is there for the code spec 026 shipped as well. **Spec 046 took both
+sides apart, in one session**, and the answer is not the one the file expected. The engine's **join** is
+**14.625 ms** and DuckDB's is **7.706 ms** — the engine's join is **+6.898 ms** slower, and it is slower
+in **every one of the eighteen iterations** — **and DuckDB's own join, over the same six million rows,
+costs +51.422 ms more than its own filtered join and +44.190 ms more than the engine's.** DuckDB joins
+**216,783** rows; the engine joins **6,000,000**. **The engine's lookup is the faster of the two, four
+times over**, and the engine is behind because it looks up every row where DuckDB tests a bit. The filter
+is worth **+45.697 ms** to DuckDB: it costs its scan **5.827 ms** and saves its join **51.422 ms**. **And
+the rest of the engine's disadvantage is in the reads** — the build side's read **+0.862 ms**, the
+projection **+0.452 ms**, the probe side's read at the noise — **and DuckDB's planning gives back 6.860
+ms** that the engine's whole does not pay, which is why this host's paired gap is **+3.290 ms** — and the
+whole is at the noise, with the engine ahead in **three** of the eighteen iterations. **The decomposition
+closes to 0.0000 ms on every iteration.** **What would answer the next question:** what a filter over
+the build side's keys costs the engine's scan and what it saves its join — DuckDB's own filter costs
+**5.827 ms** over six million rows, and the engine's prize is the whole of its **14.625 ms** join less
+what its filter would cost. **That is the next increment, and this one does not build it.**
+[§3ac](PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart) has the tables.
 
 **4. The morsel driver.** The pushdown leaves the operators nothing to do on the cold path, so a
 morsel driver has nothing to drive there. It has not been built, and nothing measured so far says
@@ -544,6 +557,19 @@ for a pinned x86-64 runner; it has not run on one.
   sentence is corrected where it was published** — in [`spec 034`](specs/034-the-engine-as-a-library/spec.md)'s
   R10, here and in `deny.toml` — and [ADR-0049](docs/adr/0049-the-readers-four-gigabytes.md) records
   the correction. The figure is in [§3w](PERF.md#3w-the-readers-four-gigabytes).
+- **The `join-orders` query is taken apart on both sides, and the engine's lookup is the faster one.**
+  Spec 046 measured **four arms in one session** — the engine's own plan output, `DuckDB`'s own profiler,
+  `DuckDB` unprofiled, and `DuckDB` with its **join filter pushdown disabled** — with the two sides
+  measured back to back in the same iteration and the order alternated. **The engine's join is 14.625 ms
+  and `DuckDB`'s is 7.706 ms**, and the engine's is **+6.898 ms** slower in **every one of the eighteen
+  iterations**. **And `DuckDB`'s own join, over the same six million rows, costs +51.422 ms more than its
+  own filtered join and +44.190 ms more than the engine's**: `DuckDB` joins **216,783** rows and the engine
+  joins **6,000,000**, so **the engine's lookup is four times the cheaper of the two**, and the engine is
+  behind because it looks up every row where `DuckDB` tests a bit. **The filter is worth +45.697 ms** to
+  `DuckDB` — it costs its scan **5.827 ms** and saves its join **51.422 ms** — and **the decomposition
+  closes to 0.0000 ms on every iteration**. **No engine work changed**: the measurement decides what is
+  built, and the next increment is the filter.
+  [ADR-0058](docs/adr/0058-the-join-orders-query-on-both-sides-taken-apart.md) records it.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a

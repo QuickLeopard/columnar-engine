@@ -4485,6 +4485,166 @@ the guard **inside this section**. The reports are `bench-results/set-rows-run1.
 
 ---
 
+### 3ac. The join-orders query, on both sides, taken apart
+
+**What this section is**: the **6.0 ms** the engine is behind `DuckDB` by on the cold `join-orders`
+query, given a place to live.
+
+The engine's cold `join-orders` is **100.0 ms** against `DuckDB`'s **94.0 ms** — **6.0 ms** apart, while
+the peer's is **175.3 ms** and `Polars`' **225.7 ms**. The set the bump replaces read **97.6 ms**,
+**91.0 ms**, **168.8 ms** and **219.1 ms**, and the gap is **0.6 ms** smaller than it was, and the whole
+of that is `DuckDB`'s own movement. **And every part of the engine's own analysis was set against
+`DuckDB`'s _whole_**: [§3o](#3o-the-joins-stage-taken-apart) took the join's stage apart and found it
+was the build side's read and `Arrow`'s decode of `orders.parquet`, and it was right — **about the
+engine's own stage**.
+
+**The rule.** **A part can be compared with a part. A total cannot be compared with a part.** So both
+sides have to come apart, and each side's parts have to be that system's **own account of itself**.
+
+**The instrument.** Four arms, **one session**, back to back, with the **order alternated** between the
+iterations — a machine that drifts while an iteration runs gives the first measurement a different price
+from the second. The iteration count is **even**, for the reason spec 026 gave.
+
+| arm | what it is | what it yields |
+|---|---|---|
+| the engine | the engine's own plan over the file, the lazy path | the stage table, and the join's own parts |
+| `DuckDB`, profiled | the same SQL, with `DuckDB`'s **own profiler** on | the operator tree's timings, the bytes read |
+| `DuckDB`, unprofiled | the same SQL, the way the comparison harness runs it | the whole, with no parts |
+| `DuckDB`, the filter off | the profiled arm with the **join filter pushdown disabled** | the parts, and the rows that reached the join |
+
+**Both sides' answers are checked against the published value before anything is timed**, and the
+profiler is not free, so the unprofiled arm is measured too: it is the whole the comparison harness
+measures, and the difference from the profiled whole is the profiler's price.
+
+#### The parts
+
+| the part | the engine | `DuckDB` | `DuckDB`, the filter off |
+|---|---|---|---|
+| **the whole** | **96.241** ms | **92.735** ms | **138.154** ms |
+| the probe side's read | 68.435 ms | 66.335 ms | 60.766 ms |
+| the build side's read | 12.012 ms | 11.213 ms | 11.237 ms |
+| the build side's open | 0.041 ms | *inside its scan* | *inside its scan* |
+| **the join** | **14.625** ms | **7.706** ms | **59.149** ms |
+| the projection | 0.533 ms | 0.081 ms | 0.087 ms |
+| the aggregate | 0.275 ms | 0.433 ms | 0.543 ms |
+| **outside the parts** | **0.019** ms | **6.879** ms | **6.597** ms |
+
+The whole, unprofiled — the way the comparison harness measures it — is **92.000** ms, against the
+profiled **92.735** ms: the profiler costs about **0.7 ms**.
+
+**And the engine's scan does not carry the probe's cost.** On the cold path the probe runs **inside**
+the scan and its time is taken out of the scan's, so the scan's figure and the join's figure are two
+different parts of the query. **And `DuckDB`'s whole carries 6.879 ms outside its operator tree** — its
+planning, its blocked threads and its I/O — where the engine's plan output names every stage and
+leaves **0.019** outside.
+
+#### The paired differences
+
+Both sides are measured back to back in the same iteration, so the machine's drift cannot land on one
+side. **The difference is the paired one**, not the difference of two medians.
+
+| the difference, in the same iteration | the median | the least | the most |
+|---|---|---|---|
+| **the whole: the engine less `DuckDB`** | **+3.290** ms | −2.350 ms | +16.606 ms |
+| the probe side's read: the engine less `DuckDB` | +2.111 ms | −1.006 ms | +11.016 ms |
+| the build side's read: the engine less `DuckDB` | +0.862 ms | +0.060 ms | +1.316 ms |
+| **the join: the engine less `DuckDB`** | **+6.898** ms | +3.385 ms | +10.963 ms |
+| the projection: the engine less `DuckDB` | +0.452 ms | +0.434 ms | +0.527 ms |
+| the aggregate: the engine less `DuckDB` | −0.165 ms | −0.232 ms | −0.081 ms |
+| outside the parts: the engine less `DuckDB` | −6.860 ms | −7.876 ms | −6.505 ms |
+
+**The sign is what carries the claim.** The engine's join is slower in **every one of the eighteen
+iterations**, by **+6.898 ms** at the median and by at least **+3.385 ms** in the quietest. The engine's
+build side's read is slower in every iteration; its projection is slower in every iteration; its
+aggregate is **faster** in every iteration. **The probe side's read is at the noise** — the engine's is
+ahead in **three** of the eighteen iterations and behind in fifteen — and **the whole is at the noise**
+too, for the reason the next paragraph gives.
+
+#### The rows, and the counterfactual
+
+**How many rows each side's join saw**:
+
+| | rows that reached the join | rows that came out |
+|---|---|---|
+| the engine | **6,000,000** | 216,783 |
+| `DuckDB` | **216,783** | 216,783 |
+| `DuckDB`, the filter off | **5,999,998** | 216,783 |
+
+**And the counterfactual changes exactly one thing.** With its join filter pushdown disabled, `DuckDB`'s
+own profile no longer carries the filter at all — `(l_orderkey >= 6)`, the statistics-derived minimum, is
+still there, and `optional: l_orderkey IN PRF(o_orderkey)`, the perfect-hash filter over the build
+side's keys, is **gone**:
+
+| the counterfactual | the median | the least | the most |
+|---|---|---|---|
+| **the join: `DuckDB` with the filter off less `DuckDB`** | **+51.422** ms | +48.013 ms | +56.615 ms |
+| **the join: `DuckDB` with the filter off less the engine** | **+44.190** ms | +38.000 ms | +48.548 ms |
+| the probe side's read: `DuckDB` with the filter off less `DuckDB` | −5.827 ms | −9.251 ms | −2.809 ms |
+| the whole: `DuckDB` with the filter off less `DuckDB` | +45.697 ms | +38.080 ms | +53.889 ms |
+
+**So `DuckDB`'s own join, over the same six million rows, costs 44.190 ms more than the engine's.** The
+engine's lookup is the **faster** of the two — by a factor of four — and the engine is behind because it
+**looks up every row**.
+
+#### The finding
+
+**The gap is not the lookup. The gap is that there is no lookup to do.**
+
+1. **The engine's join is the slower one — 14.625 ms against 7.706 ms — and it is slower for a reason
+   that is not the engine's lookup.** `DuckDB` joins **216,783** rows; the engine joins **6,000,000**.
+2. **And the engine's lookup is the better one.** `DuckDB`'s hash join, over the same six million rows,
+   costs **+51.422 ms** more than its own filtered join and **+44.190 ms** more than the engine's. **The
+   engine's probe is four times cheaper than `DuckDB`'s hash join, row for row.**
+3. **The filter is what `DuckDB` has and the engine does not**, and it is worth **+45.697 ms** on the
+   whole: it costs the scan **5.827 ms** and saves the join **51.422 ms**.
+4. **And the rest of the engine's disadvantage is in the reads**: the build side's read is **+0.862 ms**
+   and the projection **+0.452 ms**, against a probe side's read that is at the noise.
+5. **And `DuckDB`'s planning gives back most of it**: **6.860 ms** outside its operator tree, where the
+   engine's whole leaves **0.019** outside its stages.
+
+**The arithmetic closes.** The engine's parts are **+10.668 ms** more than `DuckDB`'s; `DuckDB`'s whole
+carries **6.860 ms** outside its operator tree that the engine's does not; and the net is the whole's
+**+3.290 ms**. **The decomposition closes to 0.0000 ms on every one of the eighteen iterations.**
+
+**And the whole is at the noise on this host.** The published gap is **6.0 ms**; this host's paired gap
+is **+3.290 ms**, and in one of the eighteen iterations the engine's whole was **ahead**. **The published
+figures stand** — they are the comparison harness's, taken by a different campaign — and **this section
+does not re-derive them**. What this section publishes is the **parts**, and they are the same on both
+sides whichever way the whole falls.
+
+#### The bytes
+
+`DuckDB` read **79,321,951** bytes in sixteen of the eighteen iterations, and **88,463,611** in two; with
+the filter off, **79,321,951** in seventeen and **97,606,309** in one. **The engine's bytes are not
+measured here** — its read is named by the **columns** it reports, `l_orderkey` and `l_extendedprice`,
+which are `DuckDB`'s columns too — and the file's own column sizes are the file's, not a measurement of
+the engine's read. **The two sides read the same columns**, and the two sides' answers are the same
+answer.
+
+#### What this changes
+
+**The next question is not "why is the engine behind". It is "what does a filter over the build side's
+keys cost, and what does it save".**
+
+The build side's keys are known **before** the probe side's scan runs, so they could be a filter on it:
+a bit test per row instead of a hash lookup per row. `DuckDB`'s own filter costs its scan **5.827 ms**
+over six million rows and saves its join **51.422 ms**. **The engine's prize, if its filter costs what
+`DuckDB`'s costs, is the whole of its own join — 14.625 ms — less what the filter would cost it.** That
+is the next increment, and **this section does not build it**: the measurement decides what is built, and
+the decision belongs to the increment that follows.
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by
+the guard **inside this section**. The reports are `bench-results/join-parts-run1.json`,
+`bench-results/join-parts-run2.json` and `bench-results/join-parts-run3.json`, and the probe is
+`crates/columnar-bench/src/join_parts.rs`, driven by `just probe-join-parts`. The decision is in
+[ADR-0058](docs/adr/0058-the-join-orders-query-on-both-sides-taken-apart.md).
+
+**The conditions**: three campaigns of six iterations, on one host, with the load average between
+**8.54** and **8.77** — and the host's own drift is published with every difference, because a
+difference of two medians would let the drift land on both sides.
+
+---
+
 ## 4. The defects the increments found
 
 Twenty-nine, all found by measurement, all recorded with their before-and-after numbers in the ADRs

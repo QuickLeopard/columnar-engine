@@ -652,6 +652,107 @@ JOIN_COST_DERIVED_CHECKS = [
     )
 ]
 
+# ---------------------------------------------------------------------------
+# Spec 046: the join-orders query, on both sides, taken apart.
+#
+# The engine's cold `join-orders` query is behind `DuckDB`'s, and every part of
+# the engine's own analysis so far was set against `DuckDB`'s **whole**. This
+# family takes both sides apart, and the figures are the **paired** ones: both
+# sides are measured back to back in the same iteration and the order is
+# alternated, so the machine's drift cannot land on one side.
+#
+# The figures are looked for **inside** the section that publishes them, so a
+# figure that happens to equal an unrelated number elsewhere in the document
+# cannot satisfy the check by accident.
+JOIN_PARTS_REPORTS = sorted((ROOT / "bench-results").glob("join-parts-run*.json"))
+JOIN_PARTS_SECTION = "### 3ac"
+
+# The campaigns the method calls for. A set with fewer is a failure: a set that
+# is not there is not a set of zero figures, it is the absence of the evidence.
+JOIN_PARTS_CAMPAIGNS = 3
+
+# The sides, and the label each is published under.
+JOIN_PARTS_SIDE_LABELS = {
+    "engine": "the engine's",
+    "duckdb": "duckdb's",
+    "duckdb-filter-off": "duckdb with the filter off's",
+}
+
+# The parts, per side: (side, part, the label the section publishes it under,
+# places).
+JOIN_PARTS_PARTS = (
+    ("engine", "total", "the whole", 3),
+    ("engine", "probe_side_read_ms", "the probe side's read", 3),
+    ("engine", "build_side_read_ms", "the build side's read", 3),
+    ("engine", "build_side_open_ms", "the build side's open", 3),
+    ("engine", "join_ms", "the join", 3),
+    ("engine", "projection_ms", "the projection", 3),
+    ("engine", "aggregate_ms", "the aggregate", 3),
+    ("engine", "outside_parts_ms", "outside the parts", 3),
+    ("duckdb", "total", "the whole", 3),
+    ("duckdb", "probe_side_read_ms", "the probe side's read", 3),
+    ("duckdb", "build_side_read_ms", "the build side's read", 3),
+    ("duckdb", "join_ms", "the join", 3),
+    ("duckdb", "projection_ms", "the projection", 3),
+    ("duckdb", "aggregate_ms", "the aggregate", 3),
+    ("duckdb", "outside_parts_ms", "outside the parts", 3),
+    ("duckdb-unprofiled", "total", "the whole, unprofiled", 3),
+    ("duckdb-filter-off", "total", "the whole", 3),
+    ("duckdb-filter-off", "probe_side_read_ms", "the probe side's read", 3),
+    ("duckdb-filter-off", "join_ms", "the join", 3),
+)
+
+# The paired differences: the left side's figure less the right side's, taken
+# in the same iteration. (label, left side, right side, part, places)
+JOIN_PARTS_DIFFERENCES = (
+    ("the whole: the engine less duckdb", "engine", "duckdb", "total", 3),
+    (
+        "the probe side's read: the engine less duckdb",
+        "engine",
+        "duckdb",
+        "probe_side_read_ms",
+        3,
+    ),
+    (
+        "the build side's read: the engine less duckdb",
+        "engine",
+        "duckdb",
+        "build_side_read_ms",
+        3,
+    ),
+    ("the join: the engine less duckdb", "engine", "duckdb", "join_ms", 3),
+    ("the projection: the engine less duckdb", "engine", "duckdb", "projection_ms", 3),
+    ("the aggregate: the engine less duckdb", "engine", "duckdb", "aggregate_ms", 3),
+    (
+        "outside the parts: the engine less duckdb",
+        "engine",
+        "duckdb",
+        "outside_parts_ms",
+        3,
+    ),
+    (
+        "the join: duckdb with the filter off less duckdb",
+        "duckdb-filter-off",
+        "duckdb",
+        "join_ms",
+        3,
+    ),
+    (
+        "the join: duckdb with the filter off less the engine",
+        "duckdb-filter-off",
+        "engine",
+        "join_ms",
+        3,
+    ),
+    (
+        "the probe side's read: duckdb with the filter off less duckdb",
+        "duckdb-filter-off",
+        "duckdb",
+        "probe_side_read_ms",
+        3,
+    ),
+)
+
 # (document, label, report, measurement, places)
 #
 # Spec 021's instrument is the **operator probe**, and its figures are the
@@ -1048,6 +1149,67 @@ def _join_cost_figures(
         for key, value in run.get("derived_ms", {}).items():
             derived.setdefault(key, []).append(value)
     return parts, derived
+
+
+def _join_parts_figures(
+    paths: list[Path],
+) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+    """The join-parts probe's parts and paired differences, from the reports.
+
+    The parts are each side's own figure for each part of the query; the
+    differences are the **paired** ones -- the left side's figure less the
+    right side's, taken in the same iteration, because both sides are measured
+    back to back there and the order is alternated.
+
+    A part is keyed by ``side:part`` so that two sides' figures never land in
+    the same bucket, and a difference is keyed by ``left:right:part``.
+    """
+    parts: dict[str, list[float]] = {}
+    differences: dict[str, list[float]] = {}
+    for path in paths:
+        run = json.loads(path.read_text())
+        for iteration in run.get("iterations", []):
+            arms = {arm["side"]: arm for arm in iteration.get("arms", [])}
+            for side, arm in arms.items():
+                for key, value in _join_parts_arm_figures(arm).items():
+                    parts.setdefault(f"{side}:{key}", []).append(value)
+            for left, right in (
+                ("engine", "duckdb"),
+                ("duckdb-filter-off", "duckdb"),
+                ("duckdb-filter-off", "engine"),
+            ):
+                if left not in arms or right not in arms:
+                    continue
+                for key in ("total", "probe_side_read_ms", "build_side_read_ms", "join_ms",
+                            "projection_ms", "aggregate_ms", "outside_parts_ms"):
+                    left_value = _join_parts_one(arms[left], key)
+                    right_value = _join_parts_one(arms[right], key)
+                    if left_value is None or right_value is None:
+                        continue
+                    differences.setdefault(f"{left}:{right}:{key}", []).append(
+                        left_value - right_value
+                    )
+    return parts, differences
+
+
+def _join_parts_arm_figures(arm: dict) -> dict[str, float]:
+    """One arm's figures, keyed by the part's name."""
+    figures: dict[str, float] = {}
+    if "total_ms" in arm:
+        figures["total"] = arm["total_ms"]
+    for key, value in (arm.get("parts") or {}).items():
+        if isinstance(value, (int, float)):
+            figures[key] = float(value)
+    return figures
+
+
+def _join_parts_one(arm: dict, key: str) -> float | None:
+    """One figure of one arm."""
+    if key == "total":
+        return arm.get("total_ms")
+    parts = arm.get("parts") or {}
+    value = parts.get(key)
+    return float(value) if isinstance(value, (int, float)) else None
 
 
 def join_cost_drift(parts: dict[str, list[float]]) -> dict[str, float]:
@@ -2938,6 +3100,61 @@ def main() -> int:
                         f"ok  {'PERF.md':<10} {f'the {path} path\'s query\'s cost':<40} "
                         f"{difference:.3f} ms"
                     )
+
+    # Spec 046: the join-orders query, on both sides, taken apart -- the
+    # engine's own parts, `DuckDB`'s own parts, and `DuckDB` with its join
+    # filter pushdown disabled.
+    #
+    # A family that is missing, or that has fewer campaigns than the method
+    # says, is a **failure**, for the reason the join probe's families are:
+    # the evidence is what the figures are derived from.
+    if not JOIN_PARTS_REPORTS:
+        failures.append("the join-parts probe's set is missing")
+    elif len(JOIN_PARTS_REPORTS) < JOIN_PARTS_CAMPAIGNS:
+        failures.append(
+            f"the join-parts probe's set has {len(JOIN_PARTS_REPORTS)} campaigns, "
+            f"and the method says {JOIN_PARTS_CAMPAIGNS}"
+        )
+
+    if JOIN_PARTS_REPORTS:
+        join_parts_figures, join_parts_differences = _join_parts_figures(JOIN_PARTS_REPORTS)
+        published = section_of(texts["PERF.md"], JOIN_PARTS_SECTION)
+        if published is None:
+            failures.append(
+                f"PERF.md: the section that publishes the join-parts probe's figures "
+                f"({JOIN_PARTS_SECTION}) is not in the document"
+            )
+        else:
+            for side, part, label, places in JOIN_PARTS_PARTS:
+                values = join_parts_figures.get(f"{side}:{part}", [])
+                if not values:
+                    failures.append(
+                        f"PERF.md: no figure for {label} in the join-parts probe's reports"
+                    )
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+            for label, left, right, part, places in JOIN_PARTS_DIFFERENCES:
+                values = join_parts_differences.get(f"{left}:{right}:{part}", [])
+                if not values:
+                    failures.append(
+                        f"PERF.md: no figure for {label} in the join-parts probe's reports"
+                    )
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
 
     # Spec 034's re-measurement: the same code, and the code it replaces,
     # measured back to back on this host. The published figures stand; the
@@ -5086,6 +5303,7 @@ def main() -> int:
         f"{len(QUERY_COST_CHECKS) + len(QUERY_COST_SHAPE_CHECKS)} of the query probe, "
         f"{len(SORT_COST_CHECKS)} of the sort probe, "
         f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe, "
+        f"{len(JOIN_PARTS_PARTS) + len(JOIN_PARTS_DIFFERENCES)} of the join-parts probe, "
         f"{len(SPEC035_FAMILIES) * (2 * (7 + 3 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
         f"{2 * (11 + 3 * len(SPEC035_LEAVES['cold'])) + 3 + 2 * (2 * len(SPEC035_LEAVES['cold']) + 6) + 3 * len(SPEC036_MOVED) + 6} of the file-state floor, "
         f"{len(WRITE_COST_FAMILIES) * (1 + len(WRITE_COST_SHAPES) + len(WRITE_COST_DERIVED) + 3 + 1)} of the write side, "

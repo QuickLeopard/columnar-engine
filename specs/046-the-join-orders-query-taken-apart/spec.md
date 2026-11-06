@@ -1,6 +1,6 @@
 # Spec 046 — The join-orders query, on both sides, taken apart
 
-**Status**: open
+**Status**: planned
 **Started**: 2026-11-06
 **Predecessor**: [spec 045 — the status dashboard](../045-the-status-dashboard/spec.md)
 
@@ -194,9 +194,22 @@ because the order is what takes the machine's drift out of the difference.
 - The **raw reports are committed** under `bench-results/`, and the published table is derived from
   them by `scripts/medians.py`.
 
+### The outcome
+
+**The hypothesis is confirmed, and it is published with its numbers in
+[§3ac](../../PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart).**
+
+The engine's **lookup is the cheaper of the two, row for row** — `DuckDB`'s own join, over the same six
+million rows, costs far more than the engine's — and the engine is behind because it looks up **every**
+row where `DuckDB` tests a bit over **216,783** of them. **The next increment is the filter**, and its
+prize is now a number rather than a hope.
+
+**The figures live in the section that publishes them**, and they are not repeated here: one owner per
+figure, and the guard checks them there.
+
 ## The references
 
-- [ADR-0058](../../docs/adr/0058-the-join-orders-query-taken-apart.md) — the decision: both sides are
+- [ADR-0058](../../docs/adr/0058-the-join-orders-query-on-both-sides-taken-apart.md) — the decision: both sides are
   taken apart, in one session, and the mechanism is measured with a counterfactual.
 - [STATUS.md](../../STATUS.md) — the open question this increment answers, and the house's single
   account of the state of the work.
