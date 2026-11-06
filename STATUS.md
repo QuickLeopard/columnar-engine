@@ -322,9 +322,9 @@ addition to is cheaper than it is. **The filter in front of the table is +2.318 
 filter compacting the rows, which keeps the rejected rows out of the probe's own work as well, is
 +0.547 ms: a wash, with five of its twelve paired samples negative.** **No engine work changed**: the
 filter is not built, the estimate does not move, and the engine's diff in the increment is empty.
-**And the same test is worth two orders of magnitude more in DuckDB** — its filter costs its scan
-**5.827 ms** and saves its join **51.422 ms** — **because it replaces a hash join, and the engine has
-no hash join to pay for.** **What would answer the next question:** the engine's join part is
+**And the same test is worth seven times more in DuckDB** — its filter costs its scan
+**5.827 ms** and saves its join **51.422 ms**, where the prize here is **6.981 ms** — **because it
+replaces a hash join, and the engine has no hash join to pay for.** **What would answer the next question:** the engine's join part is
 **14.625 ms**, its probe over six million rows is **7.967 ms** and its table's construction is
 **0.672 ms** — **a filter cannot make the lookup cheaper, because the lookup is the membership test** —
 **so the join's other work has to be found and named.** That is the next increment, and this one does
@@ -605,9 +605,9 @@ for a pinned x86-64 runner; it has not run on one.
   test** — the key's own range addresses it, and it consults nothing — **so a filter can only be
   consulted in addition to it, and what it is consulted in addition to is cheaper than it is.** The
   filter in front of the table is **+2.318 ms**, a loss; the filter compacting the rows is **+0.547 ms**,
-  a wash. **No engine work changed.** **And the same test is worth two orders of magnitude more in
-  DuckDB** — its filter costs its scan **5.827 ms** and saves its join **51.422 ms** — **because it
-  replaces a hash join, and the engine has no hash join to pay for.**
+  a wash. **No engine work changed.** **And the same test is worth seven times more in
+  DuckDB** — its filter costs its scan **5.827 ms** and saves its join **51.422 ms**, where the prize
+  here is **6.981 ms** — **because it replaces a hash join, and the engine has no hash join to pay for.**
   [ADR-0059](docs/adr/0059-the-build-side-s-keys-as-a-filter.md) records it.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions

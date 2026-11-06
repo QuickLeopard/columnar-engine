@@ -4752,10 +4752,11 @@ cheapest membership test there is.**
 
 **And what survives the refusal is the mechanism, and it is a statement about `DuckDB` too.**
 `DuckDB`'s filter costs its scan **5.827 ms** over six million rows — the same order as this filter's
-**5.222 ms** — and it saves its join **51.422 ms**. **The same test, in the same place, is worth two
-orders of magnitude more.** The difference is not the test: it is what the test replaces. `DuckDB`'s
-filter replaces a **hash join**, which costs **+44.190 ms** more than the engine's lookup over the same
-six million rows; a filter here would replace **a lookup that is already a single load with no hash**.
+**5.222 ms** — and it saves its join **51.422 ms**. **The same test, keeping the same rows out of the
+join, is worth seven times more there: the prize here is 6.981 ms.** The difference is not the test: it is
+what the test replaces. `DuckDB`'s filter replaces a **hash join**, and that join over the same six million
+rows costs **59.149 ms** against the engine's **7.967 ms** — **seven times a row** — while a filter here
+would replace **a lookup that is already a single load with no hash**.
 **`DuckDB`'s filter is the price of `DuckDB`'s join, and the engine does not have that join to pay for.**
 
 #### What this changes
@@ -4766,8 +4767,8 @@ the rest of its time".**
 The engine's join part is **14.625 ms**; its probe over six million rows is **7.967 ms** and its table's
 construction is **0.672 ms**, and the filter is not where the rest of it is — a filter cannot make the
 lookup cheaper, because the lookup **is** the membership test. **And the engine's advantage over
-`DuckDB` is already taken: `DuckDB`'s join is four times dearer a row, and that is why its filter is
-worth having.**
+`DuckDB` is already taken: `DuckDB`'s join over the same six million rows is seven times dearer a row,
+and that is why its filter is worth having.**
 
 So the next increment has to find the join's other work — the part the probe does not account for — and
 ask what it is. **That is the next question, and this section does not answer it.**

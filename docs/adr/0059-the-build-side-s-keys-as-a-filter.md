@@ -75,10 +75,11 @@ the access the byte does not.** The direct-addressed table's byte **is** the mem
 own range addresses it and it consults nothing. **A filter can only be consulted in addition to it, and
 what it is consulted in addition to is cheaper than it is.**
 
-**And the same test is worth two orders of magnitude more in `DuckDB`.** `DuckDB`'s filter costs its scan
+**And the same test is worth seven times more in `DuckDB`.** `DuckDB`'s filter costs its scan
 **5.827 ms** over six million rows — the same order as this filter's **5.222 ms** — and it saves its join
-**51.422 ms**. **The difference is not the test: it is what the test replaces.** `DuckDB`'s filter replaces
-a **hash join**, which costs **+44.190 ms** more than the engine's lookup over the same six million rows.
+**51.422 ms**, where the prize here is **6.981 ms**. **The difference is not the test: it is what the test
+replaces.** `DuckDB`'s filter replaces a **hash join**, and that join over the same six million rows costs
+**59.149 ms** against the engine's **7.967 ms** — **seven times a row**.
 **`DuckDB`'s filter is the price of `DuckDB`'s join, and the engine does not have that join to pay for.**
 **The engine's advantage over `DuckDB` was already taken; copying `DuckDB`'s filter would give it back.**
 
@@ -99,3 +100,10 @@ filter's twelve paired samples were positive and that **four** of the compaction
 host stalled in, and five of the compaction's are negative. **The figures were right — the medians, the
 spreads and the verdicts were derived from the reports and the guard checks them — and the counts around
 them were not.** They are corrected in `PERF.md` §3ad and in `STATUS.md`, here, and nowhere else.
+
+**And a second sentence was corrected, for the same reason.** The publication said the same test was worth
+"**two orders of magnitude**" more in `DuckDB`, and that "`DuckDB`'s join is four times dearer a row".
+**The reports say seven times, both of them**: `DuckDB`'s filter saves its join **51.422 ms** where the
+prize here is **6.981 ms**, and `DuckDB`'s join over the same six million rows costs **59.149 ms** against
+the engine's **7.967 ms**. **The claims around the figures were not, and they are corrected in the same
+three places.**
