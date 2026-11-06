@@ -19,7 +19,10 @@ with the same SQL handed to every system.
 **Where the project stands** is in [`STATUS.md`](STATUS.md): what is built, what is measured, what
 the increments found, and what is still open. It is a summary and not a second copy of the figures —
 every number in it is the headline of a table this file and [`PERF.md`](PERF.md) publish in full, and
-the same gate checks it against the committed reports.
+the same gate checks it against the committed reports. **And it has a page**:
+[`docs/status.html`](docs/status.html) is the same status as one screen — the headline, the tree's
+shape, the gates, the increments and the open questions — **generated** from the documents and
+**gated**, so a change that moves the status cannot merge with a stale page.
 
 ---
 
