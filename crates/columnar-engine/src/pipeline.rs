@@ -628,8 +628,8 @@ fn take_columns(dataset: Dataset, indices: &[usize]) -> Vec<ColumnChunk> {
         } else {
             // The projection names the same column twice: the second copy is a
             // copy of the first, exactly as the gather handed it out twice.
-            let position = first.get(&index).copied().unwrap_or_default();
-            chunks.get(position).expect("the first copy of the column was taken").clone()
+            let position = first.get(&index).copied().expect("the column was taken once");
+            chunks.get(position).expect("the first copy was pushed").clone()
         };
         first.entry(index).or_insert(chunks.len());
         chunks.push(chunk);

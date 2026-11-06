@@ -774,9 +774,14 @@ fn print_the_measurements(medians: &serde_json::Map<String, serde_json::Value>, 
         let median = medians.get(name).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
         println!("{name:<18}: {median:>10.3} ms");
     }
-    let copy = medians.get("eager_rows").and_then(serde_json::Value::as_f64).unwrap_or(0.0)
-        - medians.get("eager_read").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    // **The copy is the eager rows.** The eager rows measurement does not
+    // include the read -- the probe measures the decode and the rows
+    // separately -- so the difference between the two is not the copy. The
+    // eager path's total is the two added.
+    let copy = medians.get("eager_rows").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    let read = medians.get("eager_read").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
     println!("the copy         : {copy:>10.3} ms");
+    println!("the eager path's total: {:>10.3} ms", copy + read);
     println!();
     println!("--- the identity ---");
     println!("the rows: {} against {}", facts.rows_one, facts.rows_six);
