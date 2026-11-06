@@ -36,7 +36,7 @@
 #![allow(clippy::indexing_slicing)]
 
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -54,6 +54,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::{EnabledStatistics, WriterProperties, WriterVersion};
+use parquet::file::reader::FileReader;
 use parquet::schema::types::ColumnPath;
 
 /// The rows in a row group, and the grid the files are written on.
@@ -256,6 +257,10 @@ fn gathered_schema(schema: &SchemaRef) -> SchemaRef {
 }
 
 /// Compares two files byte for byte, and says where they first differ.
+///
+/// **The first differing byte is the first byte that differs.** The files may be different lengths, and
+/// when one of them ends before the other, the first difference is the byte the shorter file does not
+/// have -- which is the end of the shorter file's data, and where the other file's metadata begins.
 fn compare_files(left: &Path, right: &Path) -> (bool, Option<u64>) {
     let mut left_reader = BufReader::new(File::open(left).expect("the left file opens"));
     let mut right_reader = BufReader::new(File::open(right).expect("the right file opens"));
@@ -265,22 +270,90 @@ fn compare_files(left: &Path, right: &Path) -> (bool, Option<u64>) {
     loop {
         let left_read = left_reader.read(&mut left_chunk).expect("the left file reads");
         let right_read = right_reader.read(&mut right_chunk).expect("the right file reads");
+        let common = left_read.min(right_read);
+        if left_chunk[..common] != right_chunk[..common] {
+            let differing = left_chunk[..common]
+                .iter()
+                .zip(right_chunk[..common].iter())
+                .position(|(left, right)| left != right)
+                .unwrap_or(0);
+            return (false, Some(offset + differing as u64));
+        }
+        offset += common as u64;
         if left_read != right_read {
             return (false, Some(offset));
         }
         if left_read == 0 {
             return (true, None);
         }
-        if left_chunk[..left_read] != right_chunk[..right_read] {
-            let differing = left_chunk
-                .iter()
-                .zip(right_chunk.iter())
-                .position(|(left, right)| left != right)
-                .unwrap_or(0);
-            return (false, Some(offset + differing as u64));
-        }
-        offset += left_read as u64;
     }
+}
+
+/// Where a Parquet file's metadata starts.
+///
+/// A Parquet file ends with the metadata, its length as four little-endian bytes, and the four-byte magic.
+/// **Everything before that is the file's data.**
+fn metadata_start(path: &Path) -> u64 {
+    let file = File::open(path).expect("the file opens");
+    let size = file.metadata().expect("the file has a size").len();
+    let mut reader = BufReader::new(file);
+    reader.seek(SeekFrom::End(-8)).expect("the reader seeks");
+    let mut tail = [0u8; 8];
+    reader.read_exact(&mut tail).expect("the tail reads");
+    let metadata_len = u64::from(u32::from_le_bytes(tail[..4].try_into().expect("four bytes")));
+    size - 8 - metadata_len
+}
+
+/// The Parquet schema, as the file's metadata holds it.
+fn parquet_schema(path: &Path) -> String {
+    let file = File::open(path).expect("the file opens");
+    let reader = parquet::file::serialized_reader::SerializedFileReader::new(file)
+        .expect("the reader is made");
+    format!("{:?}", reader.metadata().file_metadata().schema_descr())
+}
+
+/// The Arrow schema the Parquet writer keeps in the file's footer.
+///
+/// The writer base64-encodes the IPC schema and stores it under the key
+/// `ARROW:schema`, so **the two files' entries say whether the schemas are the same** -- and the schema is
+/// where a dictionary column and a plain one differ.
+fn arrow_schema(path: &Path) -> Option<String> {
+    let file = File::open(path).expect("the file opens");
+    let reader = parquet::file::serialized_reader::SerializedFileReader::new(file)
+        .expect("the reader is made");
+    reader.metadata().file_metadata().key_value_metadata().and_then(|entries| {
+        entries
+            .iter()
+            .find(|entry| entry.key == "ARROW:schema")
+            .and_then(|entry| entry.value.clone())
+    })
+}
+
+/// Whether two files hold the same bytes in front of their metadata.
+///
+/// **This is the question the first differing byte cannot answer on its own**: a difference that is in the
+/// metadata leaves the data alone, and a difference that is in the data does not.
+fn data_regions_match(left: &Path, right: &Path) -> bool {
+    let mut left_left = metadata_start(left);
+    let mut right_left = metadata_start(right);
+    let mut left_reader = BufReader::new(File::open(left).expect("the left file opens"));
+    let mut right_reader = BufReader::new(File::open(right).expect("the right file opens"));
+    let mut left_chunk = vec![0u8; 64 * 1024];
+    let mut right_chunk = vec![0u8; 64 * 1024];
+    while left_left > 0 && right_left > 0 {
+        let left_take = usize::try_from(left_left).unwrap_or(usize::MAX);
+        let right_take = usize::try_from(right_left).unwrap_or(usize::MAX);
+        let take = (64 * 1024).min(left_take).min(right_take);
+        let left_read = left_reader.read(&mut left_chunk[..take]).expect("the left file reads");
+        let right_read = right_reader.read(&mut right_chunk[..take]).expect("the right file reads");
+        let common = left_read.min(right_read);
+        if left_chunk[..common] != right_chunk[..common] {
+            return false;
+        }
+        left_left -= left_read as u64;
+        right_left -= right_read as u64;
+    }
+    left_left == 0 && right_left == 0
 }
 
 /// The file's size in bytes.
@@ -383,6 +456,8 @@ struct Arguments {
     out: Option<String>,
     /// Where the work goes.
     work_dir: PathBuf,
+    /// Whether the work directory survives the probe.
+    keep: bool,
 }
 
 /// The probe's arguments, from the command line.
@@ -391,10 +466,12 @@ fn arguments() -> Arguments {
     let mut file = PathBuf::from("data/lineitem.parquet");
     let mut out = None;
     let mut work_dir = PathBuf::from("target/set-rows-probe");
+    let mut keep = false;
     let mut positional = Vec::new();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--out" => out = arguments.next(),
+            "--keep" => keep = true,
             "--work-dir" => {
                 if let Some(value) = arguments.next() {
                     work_dir = PathBuf::from(value);
@@ -406,7 +483,7 @@ fn arguments() -> Arguments {
     if let Some(first) = positional.first() {
         file.clone_from(first);
     }
-    Arguments { file, out, work_dir }
+    Arguments { file, out, work_dir, keep }
 }
 
 /// The campaign's samples: every measurement, every iteration.
@@ -426,6 +503,20 @@ struct Campaign {
     eager_rows: Vec<Duration>,
     /// What the round trips produced.
     facts: Facts,
+    /// The difference between the two arms, in every iteration.
+    differences: Vec<Difference>,
+}
+
+/// The difference between the two arms, in one iteration.
+///
+/// **This is the yardstick for a pair**: the two arms are measured back to back, so the host's movement is
+/// in both sides of every one of these numbers.
+#[derive(Debug, Clone, Copy)]
+struct Difference {
+    /// The set's rows against the one file's rows.
+    read: f64,
+    /// The write of the set's rows against the write of the one file's rows.
+    write: f64,
 }
 
 /// Runs the campaign: three iterations, each with both arms.
@@ -447,31 +538,63 @@ fn campaign(
         campaign.eager_reads.push(eager_read);
         campaign.eager_rows.push(eager_gathered);
 
-        let (one, one_read, one_write) = arm(
-            &mut || execute_rows_on(&plan(), one_source, &options()).expect("the rows come out"),
-            &store_rule,
-            &store_own,
-            gathered,
-        );
-        let (six, six_read, six_write) = arm(
-            &mut || set.execute_rows(&plan(), &options()).expect("the rows come out"),
-            &store_rule,
-            &store_own,
-            gathered,
-        );
+        // **The order alternates.** The two arms are measured back to back in
+        // every iteration, and the order they are measured in flips from one
+        // iteration to the next, so the host's own drift does not favour one
+        // arm over the other.
+        let (one, one_read, one_write, six, six_read, six_write) = if iteration % 2 == 0 {
+            let one = arm(
+                &mut || {
+                    execute_rows_on(&plan(), one_source, &options()).expect("the rows come out")
+                },
+                &store_rule,
+                &store_own,
+                gathered,
+            );
+            let six = arm(
+                &mut || set.execute_rows(&plan(), &options()).expect("the rows come out"),
+                &store_rule,
+                &store_own,
+                gathered,
+            );
+            (one.0, one.1, one.2, six.0, six.1, six.2)
+        } else {
+            let six = arm(
+                &mut || set.execute_rows(&plan(), &options()).expect("the rows come out"),
+                &store_rule,
+                &store_own,
+                gathered,
+            );
+            let one = arm(
+                &mut || {
+                    execute_rows_on(&plan(), one_source, &options()).expect("the rows come out")
+                },
+                &store_rule,
+                &store_own,
+                gathered,
+            );
+            (one.0, one.1, one.2, six.0, six.1, six.2)
+        };
 
         campaign.read_one.push(one_read);
         campaign.read_six.push(six_read);
         campaign.write_one.push(one_write);
         campaign.write_six.push(six_write);
+        campaign.differences.push(Difference {
+            read: ms(six_read) - ms(one_read),
+            write: ms(six_write) - ms(one_write),
+        });
 
         campaign.facts.collect(&one, &six, file);
         println!(
-            "iteration {iteration}: read {:>8.3} / {:>8.3} ms, write {:>8.3} / {:>8.3} ms",
+            "iteration {iteration}: read {:>8.3} / {:>8.3} ms, write {:>8.3} / {:>8.3} ms, \
+             the differences {:>+8.3} / {:>+8.3} ms",
             ms(one_read),
             ms(six_read),
             ms(one_write),
-            ms(six_write)
+            ms(six_write),
+            ms(six_read) - ms(one_read),
+            ms(six_write) - ms(one_write)
         );
     }
     campaign
@@ -542,8 +665,16 @@ fn main() {
     print_the_measurements(&medians, &campaign.facts);
 
     let (estimate_one, estimate_six) = estimates(&one_source, &set);
-    let report =
-        report(&file, &files, &campaign.facts, estimate_one, estimate_six, &medians, &spreads);
+    let report = report(
+        &file,
+        &files,
+        &campaign.facts,
+        estimate_one,
+        estimate_six,
+        &medians,
+        &spreads,
+        &campaign.differences,
+    );
     println!();
     println!("--- the report ---");
     println!("{report}");
@@ -552,10 +683,18 @@ fn main() {
         println!("report: {out}");
     }
 
-    std::fs::remove_dir_all(&work_dir).ok();
+    if arguments.keep {
+        println!("the work directory survives: {}", work_dir.display());
+    } else {
+        std::fs::remove_dir_all(&work_dir).ok();
+    }
 }
 
 /// The facts the round trip produced.
+///
+/// **The verdicts are independent**: each says whether two files are the same, and
+/// they do not exclude one another, so the struct holds more than three of them.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
 struct Facts {
     /// The rows the two arms handed out.
@@ -572,6 +711,16 @@ struct Facts {
     identical_own: bool,
     /// The first differing byte under the file's own schema.
     first_difference_own: Option<u64>,
+    /// Whether the store's rule wrote the published file's data.
+    data_identical_rule: bool,
+    /// Whether the file's own schema wrote the published file's data.
+    data_identical_own: bool,
+    /// Whether the two files keep the same Arrow schema in their footers.
+    arrow_schema_identical_own: bool,
+    /// Whether the two files keep the same Parquet schema.
+    parquet_schema_identical_own: bool,
+    /// Where the published file's metadata starts.
+    metadata_start: u64,
     /// The bytes the store's rule wrote.
     bytes_rule: u64,
     /// The bytes the file's own schema wrote.
@@ -591,6 +740,11 @@ impl Facts {
         let (own_same, own_difference) = compare_files(&one.own, published);
         self.identical_own = own_same;
         self.first_difference_own = own_difference;
+        self.data_identical_rule = data_regions_match(&one.rule, published);
+        self.data_identical_own = data_regions_match(&one.own, published);
+        self.arrow_schema_identical_own = arrow_schema(&one.own) == arrow_schema(published);
+        self.parquet_schema_identical_own = parquet_schema(&one.own) == parquet_schema(published);
+        self.metadata_start = metadata_start(published);
         self.bytes_rule = file_bytes(&one.rule);
         self.bytes_own = file_bytes(&one.own);
     }
@@ -625,6 +779,11 @@ fn print_the_measurements(medians: &serde_json::Map<String, serde_json::Value>, 
     println!("the first differing byte: {:?}", facts.first_difference);
     println!("the file's own schema is the published file: {}", facts.identical_own);
     println!("the first differing byte, own schema: {:?}", facts.first_difference_own);
+    println!("the data, the store's rule: {}", facts.data_identical_rule);
+    println!("the data, the file's own schema: {}", facts.data_identical_own);
+    println!("the Arrow schema is the same: {}", facts.arrow_schema_identical_own);
+    println!("the Parquet schema is the same: {}", facts.parquet_schema_identical_own);
+    println!("the published file's metadata starts at: {}", facts.metadata_start);
 }
 
 /// The report, for the committed raw report.
@@ -637,7 +796,12 @@ fn report(
     estimate_six: usize,
     medians: &serde_json::Map<String, serde_json::Value>,
     spreads: &serde_json::Map<String, serde_json::Value>,
+    differences: &[Difference],
 ) -> serde_json::Value {
+    let difference_rows: Vec<serde_json::Value> = differences
+        .iter()
+        .map(|difference| serde_json::json!({"read": difference.read, "write": difference.write}))
+        .collect();
     serde_json::json!({
         "probe": "set-rows",
         "file": file.display().to_string(),
@@ -652,11 +816,17 @@ fn report(
         "first_difference": facts.first_difference,
         "identical_own_schema": facts.identical_own,
         "first_difference_own_schema": facts.first_difference_own,
+        "data_identical_rule": facts.data_identical_rule,
+        "data_identical_own_schema": facts.data_identical_own,
+        "arrow_schema_identical_own_schema": facts.arrow_schema_identical_own,
+        "parquet_schema_identical_own_schema": facts.parquet_schema_identical_own,
+        "metadata_start": facts.metadata_start,
         "bytes_rule": facts.bytes_rule,
         "bytes_own_schema": facts.bytes_own,
         "estimate_one_file": estimate_one,
         "estimate_six_files": estimate_six,
         "measurements_ms": medians,
         "spreads_ms": spreads,
+        "differences_ms": difference_rows,
     })
 }
