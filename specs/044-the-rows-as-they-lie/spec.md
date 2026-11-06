@@ -16,10 +16,14 @@ dictionary materialised away. A Parquet string column is stored as a dictionary 
 a small index per row — and the gather turns every index back into its own string. On the published file
 that is six million rows, sixteen columns, and every dictionary value made into its own string.
 
-**Spec 043 measured it: the gather is 2,292.710 ms, and it is 81% of what the eager path spends handing the
-rows out at all** (`2,823.164 ms` against an eager read of `516.196 ms`). **And it is a copy the plan did
-not ask for**: a plan that filters nothing hands out exactly the rows that were read, and the copy buys
-nothing.
+**Spec 043 measured it: the gather was the whole of the eager rows — `2,823.164 ms` — and it was 84.2% of
+what the eager path spends handing the rows out at all** (against an eager read of `516.196 ms`). **And it is
+a copy the plan did not ask for**: a plan that filters nothing hands out exactly the rows that were read,
+and the copy buys nothing.
+
+**The figure spec 043 published for the gather — `2,292.710 ms`, and 81% — was wrong, and the reason is
+in the amendment below.** The probe measures the decode and the rows separately, so the difference between
+the two was never the gather. The claim was right; the figure was not.
 
 ### What the copy costs besides the time
 
@@ -131,6 +135,45 @@ raw reports committed under their own names, and the tables derived from the rep
 | **the round trip** | the written file against the published file: the bytes, and **the first differing byte** |
 | **the estimate** | what the budget is charged, against what the rows path used |
 
+## The amendment
+
+**The increment is done, and four things moved under it.** They are recorded here because the spec is where
+the reasoning was written down, and a reader has to be able to see what changed and why.
+
+1. **The shape depends on the plan *and* on the path, and the spec said the plan alone.** R1 says the test
+   is about the rows and not about where they came from, and that is what the code does — **the same test,
+   made once, in the rows stage**. But the two paths can answer it differently, because **the read is
+   different**: the lazy path pushes the plan's predicates into the reader, so a predicate the reader took has
+   **already removed its rows**, and the rows that come out are the rows that were read. The eager path
+   reads everything and filters in the engine, so the survivors are scattered through the dataset and they
+   are gathered. **So the rule is one rule, and the answer depends on the read** — and the documentation
+   says so, in the engine's README, in the store's README and in `docs/embedding.md`.
+
+2. **§3z's plan's rows did not move, and the reason is published.** The Q6 plan's predicates remove rows
+   in the engine, so **the gather is still the right thing to do there** — the survivors are scattered
+   through the batch — and the bytes are the same **982,089**. The section is published old-and-new with
+   that reason, and the timings moved inside the noise.
+
+3. **The probe's "the file's own schema" arm changed, and it changed for the reason the increment is
+   about.** The arm used to write the rows under a schema with the dictionary materialised away, because
+   the rows were gathered. **The rows keep the dictionary now, so the arm writes them under the file's own
+   schema** — and the probe publishes the shape as well: the rows' dictionary columns and the rows' plain
+   columns, counted.
+
+4. **§3aa published the gather wrong, and the correction is in the place that published it.** The published
+   figure was **2,292.710 ms** — the difference between the eager rows and the eager read — and it was
+   published as **81%** of what the eager path spends handing the rows out. **But the eager rows
+   measurement did not include the read**: the probe measures the decode and the rows **separately**, so
+   the gather was the whole of the eager rows, **2,823.164 ms**, and the eager path's total was
+   **3,353.618 ms** — so the gather was **84.2%** of it, and not 81%. **The claim the wrong figure supported
+   was right** — the gather was most of the cost, and on a plan that filters nothing the copy bought
+   nothing — **and the figures were wrong**. They are corrected in [PERF.md §3aa](../../PERF.md) and in
+   [STATUS.md](../../STATUS.md), **in the places that published them**, and
+   [ADR-0056](../../docs/adr/0056-the-rows-are-handed-out-as-they-lie.md) records the correction. **The
+   figure the correction quotes is checked by the guard against the before reports** — the reports the
+   section replaces are kept under their own names — so the correction quotes the reports and not a memory
+   of them.
+
 ## The references
 
 - [constitution.md](../../constitution.md) IV — evidence over claims: the cost, the shape and the bytes are
@@ -145,6 +188,8 @@ raw reports committed under their own names, and the tables derived from the rep
   store's table: the conversion that takes both shapes, and the schema rule that still differs.
 - [ADR-0055](../../docs/adr/0055-the-sets-rows-are-handed-out.md) — the set's rows: the round trip, the
   gather's cost, and the reason the round trip was the file's data and not its metadata.
+- [ADR-0056](../../docs/adr/0056-the-rows-are-handed-out-as-they-lie.md) — the rows as they lie: the rule,
+  the move against the copy, and the correction of the gather's published figure.
 - [spec 042](../042-the-set-on-both-sides/spec.md) — the set on both sides: the write path and the
   conversion.
 - [spec 043](../043-the-sets-rows/spec.md) — the set's rows: the round trip, measured, and the correction.

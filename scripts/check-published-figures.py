@@ -1402,6 +1402,15 @@ ENGINE_ROWS_BYTES = (
 SET_ROWS_REPORTS = sorted((ROOT / "bench-results").glob("set-rows-run*.json"))
 SET_ROWS_SECTION = "### 3aa"
 
+# The rows as they lie: the section that publishes the shape of the rows and
+# the round trip's verdict.
+SET_ROWS_LIE_SECTION = "### 3ab"
+
+# The set's rows before spec 044: the figures the section publishes old-and-new.
+SET_ROWS_BEFORE_REPORTS = sorted(
+    (ROOT / "bench-results").glob("set-rows-spec044-before-run*.json")
+)
+
 SET_ROWS_COSTS = (
     ("the engine's eager read", "eager_read", 3),
     ("the eager rows", "eager_rows", 3),
@@ -4837,9 +4846,14 @@ def main() -> int:
     if SET_ROWS_REPORTS:
         set_reports = [json.loads(path.read_text()) for path in SET_ROWS_REPORTS]
         set_section = section_of(texts["PERF.md"], SET_ROWS_SECTION)
+        lie_section = section_of(texts["PERF.md"], SET_ROWS_LIE_SECTION)
         if set_section is None:
             failures.append(
                 f"PERF.md: the set's rows ({SET_ROWS_SECTION}) are not in the document"
+            )
+        elif lie_section is None:
+            failures.append(
+                f"PERF.md: the rows as they lie ({SET_ROWS_LIE_SECTION}) are not in the document"
             )
         else:
             for label, key, places in SET_ROWS_COSTS:
@@ -4864,6 +4878,18 @@ def main() -> int:
                 if not values:
                     failures.append(f"PERF.md: no figure for {label} in the set's rows' reports")
                     continue
+                if all(value is None for value in values):
+                    # **No differing byte.** The files are the same file, so
+                    # there is no byte to name -- and the section has to say so
+                    # in words, because there is no figure to check.
+                    if "no differing byte" not in set_section:
+                        failures.append(
+                            f"PERF.md: the reports say that {label} does not exist, and the "
+                            f"section does not say that there is no differing byte"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {label:<60} no differing byte")
+                    continue
                 rendered = f"{statistics.median(values):,.{places}f}"
                 if rendered not in set_section:
                     failures.append(
@@ -4872,23 +4898,26 @@ def main() -> int:
                     )
                 else:
                     print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
-            # The gather: the eager rows against the eager read. It is the copy
-            # the rows path makes of everything it read.
-            gathers = [
-                report["measurements_ms"]["eager_rows"] - report["measurements_ms"]["eager_read"]
+            # The eager path's total: its read and its rows. **The rows are not
+            # the read** -- the lazy path reads the file and hands the columns
+            # out, and the eager path reads the file and copies the columns --
+            # so the two are added, and the difference between the paths is the
+            # copy the eager path makes and the lazy path does not.
+            totals = [
+                report["measurements_ms"]["eager_rows"] + report["measurements_ms"]["eager_read"]
                 for report in set_reports
                 if "eager_rows" in report.get("measurements_ms", {})
                 and "eager_read" in report.get("measurements_ms", {})
             ]
-            if gathers:
-                rendered = f"{statistics.median(gathers):,.3f}"
-                if rendered not in set_section:
+            if totals:
+                rendered = f"{statistics.median(totals):,.3f}"
+                if rendered not in set_section and rendered not in lie_section:
                     failures.append(
-                        f"PERF.md: the gather is {rendered} in the reports but that figure "
-                        f"does not appear in the section that publishes it"
+                        f"PERF.md: the eager path's total is {rendered} in the reports but that "
+                        f"figure does not appear in the section that publishes it"
                     )
                 else:
-                    print(f"ok  {'PERF.md':<10} {'the gather':<60} {rendered}")
+                    print(f"ok  {'PERF.md':<10} {'the eager path\'s total':<60} {rendered}")
             # The two differences the section publishes: the pairs, side by side.
             for label, one, many, places in (
                 ("the difference in the read", "read_one_file", "read_six_files", 3),
@@ -4919,21 +4948,22 @@ def main() -> int:
                 )
             elif arms:
                 print(f"ok  {'PERF.md':<10} {'the two arms write the same file':<60} True")
-            for label, key in (
-                ("the round trip is not the published file", "identical_to_published"),
+            for label, key, expected in (
+                ("the round trip is not the published file", "identical_to_published", False),
                 (
-                    "the round trip under the file's own schema is not the published file",
+                    "the round trip under the file's own schema is the published file",
                     "identical_own_schema",
+                    True,
                 ),
             ):
                 verdicts = [report.get(key) for report in set_reports]
-                if verdicts and any(verdicts):
+                if verdicts and any(verdict is not expected for verdict in verdicts):
                     failures.append(
-                        f"PERF.md: the reports say that {label} in some campaign, and the "
-                        f"section publishes that they do not"
+                        f"PERF.md: the reports say that {label} is not {expected} in some "
+                        f"campaign, and the section publishes that it is"
                     )
                 elif verdicts:
-                    print(f"ok  {'PERF.md':<10} {label:<60} True")
+                    print(f"ok  {'PERF.md':<10} {label:<60} {expected}")
             # The data and the metadata, told apart. The first differing byte alone
             # cannot say which one moved, so the probe compares the data regions.
             for label, key, expected in (
@@ -4950,7 +4980,7 @@ def main() -> int:
                 (
                     "the Arrow schema is the file's Arrow schema",
                     "arrow_schema_identical_own_schema",
-                    False,
+                    True,
                 ),
                 (
                     "the Parquet schema is the file's Parquet schema",
@@ -4966,6 +4996,75 @@ def main() -> int:
                     )
                 elif verdicts:
                     print(f"ok  {'PERF.md':<10} {label:<60} {expected}")
+            # The shape of the rows, published in the section that says it.
+            for label, key in (
+                ("the rows' dictionary columns", "dictionary_columns"),
+                ("the rows' plain columns", "plain_columns"),
+            ):
+                values = [report[key] for report in set_reports if key in report]
+                if not values:
+                    failures.append(f"PERF.md: no figure for {label} in the set's rows' reports")
+                    continue
+                rendered = f"{statistics.median(values):,.0f}"
+                if rendered not in lie_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+
+    if SET_ROWS_BEFORE_REPORTS:
+        # The figures the section publishes old-and-new, and the gather **as it
+        # was published** -- the figure the correction names, so the correction
+        # quotes the reports and not a memory of them.
+        before_reports = [json.loads(path.read_text()) for path in SET_ROWS_BEFORE_REPORTS]
+        before_section = section_of(texts["PERF.md"], SET_ROWS_SECTION)
+        if before_section is None:
+            failures.append(
+                f"PERF.md: the set's rows ({SET_ROWS_SECTION}) are not in the document"
+            )
+        else:
+            for label, key, places in (
+                ("the engine's eager read, before", "eager_read", 3),
+                ("the eager rows, before", "eager_rows", 3),
+                ("the one file's rows, before", "read_one_file", 3),
+                ("the six files' rows, before", "read_six_files", 3),
+                ("the write of the one file's rows, before", "write_one_file", 3),
+                ("the write of the six files' rows, before", "write_six_files", 3),
+            ):
+                values = [
+                    report["measurements_ms"][key]
+                    for report in before_reports
+                    if key in report.get("measurements_ms", {})
+                ]
+                if not values:
+                    failures.append(f"PERF.md: no figure for {label} in the set's rows' reports")
+                    continue
+                rendered = f"{statistics.median(values):,.{places}f}"
+                if rendered not in before_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the section that publishes it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+            gathers = [
+                report["measurements_ms"]["eager_rows"]
+                - report["measurements_ms"]["eager_read"]
+                for report in before_reports
+                if "eager_rows" in report.get("measurements_ms", {})
+                and "eager_read" in report.get("measurements_ms", {})
+            ]
+            if gathers:
+                rendered = f"{statistics.median(gathers):,.3f}"
+                if rendered not in before_section:
+                    failures.append(
+                        f"PERF.md: the gather, as it was published, is {rendered} in the reports "
+                        f"but that figure does not appear in the section that published it"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {'the gather, as it was published':<60} {rendered}")
 
     if failures:
         print()
@@ -4997,7 +5096,8 @@ def main() -> int:
         f"{len(STATUS_COLD_CHECKS) + len(STATUS_RESIDENT_CHECKS) + len(STATUS_LOAD_CHECKS) + len(STATUS_JOIN_CHECKS) + len(STATUS_PROBE_DERIVED_CHECKS) + len(STATUS_QUESTION_DERIVED_CHECKS) + len(STATUS_JOIN_QUESTIONS) + len(STATUS_RLE_CHECKS) + 3} of the status, "
         f"{len(BUILD_SET_COSTS) + len(BUILD_SET_FACTS) + 3} of the build side, "
         f"{len(ENGINE_ROWS_COSTS) + len(ENGINE_ROWS_BYTES) + 3} of the engine's rows, "
-        f"{len(SET_ROWS_COSTS) + len(SET_ROWS_FACTS) + 6} of the set's rows"
+        f"{len(SET_ROWS_COSTS) + len(SET_ROWS_FACTS) + 6 + 2} of the set's rows, "
+        f"{len(SET_ROWS_BEFORE_REPORTS) and 7} of the set's rows before"
     )
     return 0
 

@@ -4227,21 +4227,27 @@ published file -- the rows as they lie, dictionaries and all. **A plan's rows** 
 survive a filter, gathered by the engine's own projection: the gather materialises the dictionary away,
 so those rows are plain columns and their file is a different file by construction. Both are measured.
 
+**Spec 044 re-measured this section, and the bytes did not move.** The reason is in one line: **a plan's
+rows are still gathered**, because the Q6 plan's predicates remove rows in the engine, and the gather is
+the right thing to do when they do. **The timings moved inside the noise**, and **every figure that moved
+is published with the one it replaced**.
+
 | | the cost | the bytes |
 |---|---|---|
-| the engine's eager read | **547.734 ms** | -- |
-| the conversion: the engine's vocabulary to Arrow's | **149.809 ms** | -- |
-| the store's own API, end to end | **1,826.588 ms** | **242,854,029** |
-| the store's own Arrow path, for comparison | **2,266.358 ms** | **242,859,461** |
-| a plan's rows: the read | **76.748 ms** | -- |
-| a plan's rows: the write | **15.059 ms** | **982,089** |
+| the engine's eager read | **555.049 ms** *(was 547.734 ms)* | -- |
+| the conversion: the engine's vocabulary to Arrow's | **149.271 ms** *(was 149.809 ms)* | -- |
+| the store's own API, end to end | **1,825.182 ms** *(was 1,826.588 ms)* | **242,854,029** |
+| the store's own Arrow path, for comparison | **2,337.143 ms** *(was 2,266.358 ms)* | **242,859,461** |
+| a plan's rows: the read | **74.280 ms** *(was 76.748 ms)* | -- |
+| a plan's rows: the write | **15.784 ms** *(was 15.059 ms)* | **982,089** |
 
-The published file is **242,859,461** bytes. **The conversion is 8.2% of the write it serves** -- 149.809
-ms against 1,826.588 ms -- and the engine's own rows cost **149.809 ms** to convert and the store's API
-**1,826.588 ms** to write and commit them. The medians are of three campaigns; the spreads are
-540.566-548.960 ms, 146.647-152.991 ms, 1,799.650-1,827.949 ms and 2,241.475-2,297.386 ms. **The host's
-load average in those campaigns was 8.33, 7.89 and 8.86** -- a busy host, and the two paths are measured
-**in the same campaign**, so the host's movement is in both.
+The published file is **242,859,461** bytes. **The conversion is 8.2% of the write it serves** -- 149.271
+ms against 1,825.182 ms -- and the engine's own rows cost **149.271 ms** to convert and the store's API
+**1,825.182 ms** to write and commit them. The medians are of three campaigns; the spreads are
+553.120-563.166 ms, 147.442-153.275 ms, 1,816.742-1,831.367 ms and 2,303.320-2,372.850 ms. **The host's
+load average in those campaigns was 6.89, 6.94 and 6.52** -- a busy host, and the two paths are measured
+**in the same campaign**, so the host's movement is in both. **The bytes did not move at all**: the eager
+read keeps the dictionary, the plan's rows are gathered, and both write what they wrote.
 
 **Three files, three questions.**
 
@@ -4266,9 +4272,11 @@ column that holds one is written OPTIONAL.** A caller who needs a schema the row
 through the Arrow path, where the schema comes with the rows.
 
 **A plan's rows are a different file by construction**: **115,821** rows in **982,089** bytes, with the
-dictionary materialised away. The engine gained the way to hand a plan's rows out -- `execute_rows` and
-`execute_rows_on` -- and **a plan with an aggregation is refused**, because the aggregate folds the rows
-into groups and there is nothing left to write. The embedder's glue is two lines: hand the engine's rows
+dictionary materialised away. **And that is still right after spec 044**: the gather is the right thing
+to do when a plan removes rows, because the survivors are scattered through the batch and have to be
+pulled out. The engine gained the way to hand a plan's rows out -- `execute_rows` and `execute_rows_on` --
+and **a plan with an aggregation is refused**, because the aggregate folds the rows into groups and there
+is nothing left to write. The embedder's glue is two lines: hand the engine's rows
 to the store. The **grid is the store's** -- the rows are re-batched inside the store, and the engine
 does not learn it.
 
@@ -4289,12 +4297,16 @@ by the guard **inside this section**. The reports are `bench-results/engine-rows
 
 ### 3aa. The set's rows
 
-**What this section is**: the set's **own rows** handed out, and the **round trip** — a store's table read
+**What this section is**: the set's **own rows** handed out, and the **round trip** -- a store's table read
 by the engine and written back by the store. Spec 042 gave the engine a way to hand **a file's** rows out
 (`execute_rows_on`) and the store a way to take them (`append_rows`), but **the set's own rows still
 stopped at the aggregate**: `FileSetSource::execute` folded them into groups, and a store's table could
 not be read by the engine and written back. Spec 043 gives the set its own door --
 `FileSetSource::execute_rows` -- and this section is what that door costs and what comes out of it.
+
+**Spec 044 moved the figures in this section, and every one of them is published with the one it
+replaced.** The reason is in one line: **the rows the engine hands out are the rows that were read, when
+they are**, so the gather is gone -- and [§3ab](#3ab-the-rows-as-they-lie) is that increment.
 
 **The experiment.** The published file's own **six row groups** written as **six files** -- the experiment
 spec 039 used and spec 042 reused -- and the round trip run **twice in the same campaign**: once over the
@@ -4305,8 +4317,8 @@ the set.
 
 | | the one file | the six files | the difference |
 |---|---|---|---|
-| the rows out | **3,338.468 ms** | **3,344.893 ms** | **+6.425 ms** |
-| the write | **2,040.668 ms** | **2,075.327 ms** | **+34.659 ms** |
+| the rows out | **549.167 ms** *(was 3,338.468 ms)* | **550.301 ms** *(was 3,344.893 ms)* | **+1.133 ms** *(was +6.425 ms)* |
+| the write | **1,860.799 ms** *(was 2,040.668 ms)* | **1,836.466 ms** *(was 2,075.327 ms)* | **−24.333 ms** *(was +34.659 ms)* |
 
 **The two differences are the host's, and the yardstick says so.** The two arms are measured **back to
 back** in every iteration and **the order they are measured in alternates**, so the host's own movement is
@@ -4314,33 +4326,42 @@ in both sides of every pair -- and the difference between the arms, in every ite
 
 | | the differences, in every iteration | their median |
 |---|---|---|
-| the read | +6.425, +14.326, +914.845, +5.861, +234.120, +262.869, +67.003, +132.970, +84.001 | **+84.001 ms** |
-| the write | −50.811, −33.693, −82.489, −566.643, +395.080, +45.717, −108.137, +168.581, +31.516 | **−33.693 ms** |
+| the read | +48.423, −37.925, +168.260, +23.317, −52.658, +170.690, −10.798, +0.945, +5.125 | **+5.125 ms** |
+| the write | −60.948, −174.146, −27.641, −32.745, −36.371, +147.019, −54.045, +12.497, +73.197 | **−32.745 ms** |
 
-**The write's differences straddle zero, and their spread is wider than the difference of the medians.**
-The read's are all positive, and their median (**+84.001 ms**) is **2.5% of the read** -- and their spread
-runs from +5.861 to +914.845 ms, so the spread is eleven times the median. **The host's load average in
-those campaigns was 18.03, 12.81 and 15.72.** **No difference can be claimed**: the set's cost is inside
-the noise, which is what §3v and §3y found twice already and what the third measurement confirms.
+**The read's differences straddle zero, and their spread is wider than the difference of the medians.**
+The read's median (**+5.125 ms**) is **0.9% of the read** -- and their spread runs from −52.658 to
++170.690 ms, so the spread is forty-three times the median. **The host's load average in those campaigns
+was 5.88, 6.69 and 7.22.** **No difference can be claimed**: the set's cost is inside the noise, which is
+what §3v and §3y found twice already and what the third measurement confirms.
 
 **And the estimate does not move either**: **1,549,500,016 bytes** for both. The rows are the sum of the
 files' rows and the columns are the same, so the budget is charged the same for a set as for one file.
 
-**The read is mostly a copy, and that is the round trip's real cost.** The rows the engine hands out are
-**gathered**: the plan's projection, copied out of what was read, with the dictionary materialised away.
-The eager path separates the two, because it reads the same file and then gathers the same rows:
+**The read is not a copy any more.** The rows the engine hands out are **the rows that were read**: the
+plan's projection, handed out with the reader's own encodings, and **the gather is gone for a plan that
+removes nothing**. The eager path separates the two, because it reads the same file and then hands the
+same rows out:
 
 | | the cost |
 |---|---|
-| the engine's eager read | **516.196 ms** |
-| the eager rows: the read and the gather | **2,823.164 ms** |
-| **the gather** | **2,292.710 ms** |
+| the engine's eager read | **551.325 ms** *(was 516.196 ms)* |
+| the eager rows: the copy of the columns | **154.858 ms** *(was 2,823.164 ms)* |
+| the eager path's total | **706.634 ms** *(was 3,353.618 ms)* |
 
-**The gather is 81% of the eager path's cost.** It is a copy of the whole table -- six million rows,
-sixteen columns, every dictionary value materialised into its own string -- and on a plan that filters
-nothing **the copy buys nothing**: the rows are the rows that were read. **And the lazy path pays the copy
-too**: the one file's rows cost **3,338.468 ms**, which is its scan and the same copy. That is the next
-increment's, and it is named in [ADR-0055](docs/adr/0055-the-sets-rows-are-handed-out.md).
+**The copy is 21.9% of the eager path's cost, and it was 84.2% before.** The copy is what the **eager**
+path pays, because the caller owns the dataset there: the rows are a copy of the columns rather than the
+columns themselves. **And the lazy path does not pay it at all**: the one file's rows cost **549.167 ms**,
+which is its scan and nothing else -- the columns are **moved** out of the reader, not copied. **§3ab has
+the before-and-after, and the reason the gather is gone.**
+
+**The correction: the gather was published wrong, and it is corrected here.** The published figure was
+**2,292.710 ms**, and it was the difference between the eager rows and the eager read. **But the eager
+rows measurement did not include the read**: the probe measures the decode and the rows **separately**, so
+the gather was the whole of the eager rows -- **2,823.164 ms** -- and the eager path's total was
+**3,353.618 ms**. **The published "81%" was wrong too**: the gather was **84.2%** of the eager path's
+cost, and not 81%. **The claim the wrong figure supported was right** -- the gather was most of what the
+eager path spent -- **and the figure was wrong**. ADR-0056 records the correction.
 
 **The identity is exact, and the file is the witness.** The same **6,000,000** rows come out of the one
 file and out of the six files, and **the two files the two round trips write are the same file, byte for
@@ -4348,31 +4369,29 @@ byte**. A file is a stronger witness than a checksum, because a checksum is a su
 thing itself: the set's rows and the one file's rows are the same rows, in the same order, with the same
 values.
 
-**The round trip is the published file's data, and not its metadata.**
+**The round trip is the published file, byte for byte.**
 
 | | the bytes | the first differing byte | the data |
 |---|---|---|---|
 | the published file | 242,859,461 | -- | -- |
-| the round trip, the store's schema rule | **242,853,681** | **20,566,725** | **different** |
-| the round trip, the file's own nullability | **242,859,117** | **242,857,739** | **the same, byte for byte** |
+| the round trip, the store's schema rule | **242,854,029** *(was 242,853,681)* | **20,566,725** | **different** |
+| the round trip, the file's own schema | **242,859,461** *(was 242,859,117)* | **no differing byte** | **the same, byte for byte** |
 
-**Two differences, and they are two different things.**
+**One difference, and it is the store's rule.**
 
 1. **The store's rule** -- a column that holds no NULL is written REQUIRED -- makes the definition levels
    differ, and the first difference is at byte **20,566,725**: **the same byte §3z published** for the
    one-file path, because it is the same rule and the same rows. **And the data is different**, because the
-   definition levels are in the data pages.
-2. **The file's own nullability** removes that difference, and then the first difference moves to byte
-   **242,857,739** -- and **the published file's metadata starts at 242,845,766**, so the difference is
-   **inside the metadata**. **And the data is the file's data, byte for byte**: the probe compares the two
-   files' **data regions** -- everything in front of the metadata -- and they are **identical**.
+   definition levels are in the data pages. **The published file's metadata starts at 242,845,766**, so this
+   difference is in the data and not in the metadata.
+2. **The file's own schema removes that difference, and then there is no difference left.** The rows are the
+   rows that were read, so they keep the dictionary, and the file that comes out is the file they came
+   from: **242,859,461** bytes, and **no differing byte**.
 
-**So the round trip reproduces the published file's data exactly, and its metadata differs.** The Parquet
-writer stores the Arrow schema in the footer, and the Arrow schema says the dictionary columns are
-dictionaries; **the gather materialised the dictionary away**, so the round trip's schema says they are
-plain strings. **The Parquet schema is the same and the Arrow schema is not** -- both measured -- and the
-round trip's metadata is **344 bytes shorter**, because the Arrow schema without the dictionaries is a
-smaller one.
+**So the round trip reproduces the published file.** The Parquet writer stores the Arrow schema in the
+footer, and the Arrow schema says the dictionary columns are dictionaries; **the rows are the rows that
+were read, so they say the same thing**. **The Parquet schema is the same and the Arrow schema is the
+same** -- both measured -- and the **344 bytes** the old round trip was short of are **gone**.
 
 **And the first differing byte was wrong the first time, and the probe is fixed.** The first run of this
 probe reported **242,810,880** against the file's own schema. **That was the offset of the last chunk, not
@@ -4381,7 +4400,8 @@ different lengths -- and they do, because the round trip's file is the shorter o
 finds the first byte that differs, and it compares the two files' data regions directly**, which is the
 question a first differing byte cannot answer on its own. **The claim the wrong figure supported was
 right** -- the difference is the metadata and not the data -- **and the figure was wrong**: the corrected
-one is **242,857,739**, inside the metadata, and the data regions are identical.
+one is **242,857,739**, inside the metadata, and the data regions are identical. **That difference is
+gone now**, because the metadata is the same too.
 
 **What this cost.** **No public break, and no new type.** `FileSetSource::execute_rows` takes a
 `&QueryPlan` and an `&ExecOptions` and gives back a `Dataset` -- all three already on the surface -- so the
@@ -4391,6 +4411,75 @@ and the round trip is the embedder's three lines.
 
 Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked
 by the guard **inside this section**. The reports are `bench-results/set-rows-run1.json`,
+`bench-results/set-rows-run2.json` and `bench-results/set-rows-run3.json`, the reports this section
+replaces are `bench-results/set-rows-spec044-before-run1.json` and its two siblings, and the probe is
+`crates/columnar-store/examples/set_rows_probe.rs`.
+
+---
+
+### 3ab. The rows as they lie
+
+**What this section is**: the rows a plan hands out, when they are **the rows that were read**. Spec 043
+named the gather as the thing that stands between the engine and its own rows -- a copy of the whole table,
+with the dictionary materialised away -- and **this is the increment that takes it away**, and measures what
+is left.
+
+**The rule.** Two things have to hold:
+
+1. **No row was removed.** The filter's selection holds the survivors in the order they were read, and the
+   selection's rows are distinct, so a selection as long as the dataset *is* every row -- whether the plan
+   has no filter at all, or a filter that kept everything.
+2. **Nothing reordered them.** A join's output and a sort's output are new rows, in a new order.
+
+**And then the rows do not need to be copied at all.** The engine read the columns; it hands the same
+columns out. **The lazy path moves them** -- the engine owns what it read -- **and the eager path copies
+them**, because the caller owns the dataset there.
+
+**One rule, both paths.** The test is about the **rows** and not about where they came from, so the eager
+path and the lazy path make the same one. **They can answer it differently, because the read is
+different**: the lazy path pushes the plan's predicates into the reader, so a predicate the reader took has
+already removed its rows, and those rows come out as they lie. The eager path reads everything and filters
+in the engine, so the survivors are scattered through the dataset, and they are gathered.
+
+**The shape, and it is the plan's.** The rows come out with the reader's own encodings: on the published
+file's schema, **7 dictionary columns** and **9 plain ones**. **So the caller can see which shape it got**
+-- the encoding says so -- and **the store takes both**: its conversion maps the three dictionary forms and
+the three plain ones ([ADR-0054](docs/adr/0054-the-engines-rows-reach-a-stores-table.md)).
+
+**The cost: the gather is gone.**
+
+| | the cost | before |
+|---|---|---|
+| the one file's rows out | **549.167 ms** | 3,338.468 ms |
+| the eager rows: the copy of the columns | **154.858 ms** | 2,823.164 ms |
+| the eager path's total | **706.634 ms** | 3,353.618 ms |
+
+**The rows out are six times faster** -- **549.167 ms** against **3,338.468 ms** -- **and the copy that is
+left is eighteen times smaller**: **154.858 ms** against **2,823.164 ms**. **The lazy path does not pay the
+copy at all**: it moves the columns out of the reader, so the one file's rows cost the scan and nothing
+else. **And the lazy path is now the cheaper of the two**, by 157.467 ms -- and that difference is the
+copy.
+
+**The round trip is the file, byte for byte.** [§3aa](#3aa-the-sets-rows) has the bytes: the round trip
+under the file's own schema is **242,859,461** bytes and **no differing byte**, and **the store's own rule
+still differs**, at byte **20,566,725**, because a column that holds no NULL is written REQUIRED. **That is
+the store's rule and not the engine's**, and it is the one difference the round trip has left.
+
+**And the estimate does not move**: **1,549,500,016 bytes**, for one file and for the set. **What the
+budget is charged is what it was**; **what the plan actually uses went down**, and both are published.
+
+**The gather does not go away.** It is the **right** thing to do when a filter removed rows in the engine, a
+join or a sort made new rows: the survivors are scattered through the batch and have to be pulled out.
+**The gather stays for every plan that needs it**, and §3z's plan's rows are gathered still -- their file
+is **982,089** bytes, and it is a different file by construction.
+
+**What it costs: nothing on the surface.** The rows are the same type they were -- a `Dataset` of column
+chunks -- and **the store's half did not move at all**: its conversion already took both shapes, and its
+writer, its grid, its commit and its schema rule are untouched. **No public break is taken**, so the crates
+can be published with this increment in them.
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by
+the guard **inside this section**. The reports are `bench-results/set-rows-run1.json`,
 `bench-results/set-rows-run2.json` and `bench-results/set-rows-run3.json`, and the probe is
 `crates/columnar-store/examples/set_rows_probe.rs`.
 

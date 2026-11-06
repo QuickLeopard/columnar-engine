@@ -2417,21 +2417,16 @@ def print_build_set(runs: list[dict]) -> None:
         print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
 
 
-def print_set_rows(runs: list[dict]) -> None:
-    """Print the set's rows: the round trip through the engine.
+def print_set_rows_before(runs: list[dict]) -> None:
+    """Print the set's rows before spec 044: the figures that moved.
 
-    This is spec 043's increment: a store's table read as a set, its rows handed
-    out, and the rows written back. The **pairs** are what matter -- one file
-    against six, measured together -- because the host's own movement is the
-    same for both sides of the pair.
-
-    The **gather** is the difference between the eager read and the eager rows:
-    the rows the engine hands out are a copy of what it read, and the copy is
-    what the round trip pays for.
+    The gather is printed **as it was published** -- the difference between the
+    eager rows and the eager read -- because the correction names it, and the
+    section has to quote the reports and not a memory of them.
     """
     if not runs:
         return
-    print(f"\n=== THE SET'S ROWS -- THE ROUND TRIP ({len(runs)} campaigns) ===")
+    print(f"\n=== THE SET'S ROWS, BEFORE SPEC 044 ({len(runs)} campaigns) ===")
     for name, heading in (
         ("eager_read", "the engine's eager read"),
         ("eager_rows", "the eager rows: the read and the gather"),
@@ -2447,13 +2442,71 @@ def print_set_rows(runs: list[dict]) -> None:
         ]
         if values:
             print(f"   {heading:<44} {median(values):10.3f} ms   ({min(values):.3f}-{max(values):.3f})")
+    totals = []
     gathers = []
     for run in runs:
         measurements = run.get("measurements_ms", {})
         if "eager_rows" in measurements and "eager_read" in measurements:
+            totals.append(measurements["eager_rows"] + measurements["eager_read"])
             gathers.append(measurements["eager_rows"] - measurements["eager_read"])
+    if totals:
+        print(f"   {'the eager path\'s total':<44} {median(totals):10.3f} ms   ({min(totals):.3f}-{max(totals):.3f})")
     if gathers:
-        print(f"   {'the gather':<44} {median(gathers):10.3f} ms   ({min(gathers):.3f}-{max(gathers):.3f})")
+        print(f"   {'the gather, as it was published':<44} {median(gathers):10.3f} ms   ({min(gathers):.3f}-{max(gathers):.3f})")
+    for key, heading in (
+        ("bytes_rule", "the file, the store's schema rule"),
+        ("bytes_own_schema", "the file, the file's own schema"),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {int(median(values)):>12}")
+
+
+def print_set_rows(runs: list[dict]) -> None:
+    """Print the set's rows: the round trip through the engine.
+
+    This is spec 043's increment: a store's table read as a set, its rows handed
+    out, and the rows written back. The **pairs** are what matter -- one file
+    against six, measured together -- because the host's own movement is the
+    same for both sides of the pair.
+
+    Spec 044 took the gather away for a plan that removes nothing, so **the
+    eager rows are the copy of the columns** and the eager path's total is its
+    read and its copy. The **before** set is printed beside it: the gather as it
+    was, and the figures the section publishes old-and-new.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE SET'S ROWS -- THE ROUND TRIP ({len(runs)} campaigns) ===")
+    for name, heading in (
+        ("eager_read", "the engine's eager read"),
+        ("eager_rows", "the eager rows: the copy of the columns"),
+        ("read_one_file", "the one file's rows"),
+        ("read_six_files", "the six files' rows"),
+        ("write_one_file", "the write of the one file's rows"),
+        ("write_six_files", "the write of the six files' rows"),
+    ):
+        values = [
+            run["measurements_ms"][name]
+            for run in runs
+            if name in run.get("measurements_ms", {})
+        ]
+        if values:
+            print(f"   {heading:<44} {median(values):10.3f} ms   ({min(values):.3f}-{max(values):.3f})")
+    totals = []
+    for run in runs:
+        measurements = run.get("measurements_ms", {})
+        if "eager_rows" in measurements and "eager_read" in measurements:
+            totals.append(measurements["eager_rows"] + measurements["eager_read"])
+    if totals:
+        print(f"   {'the eager path\'s total':<44} {median(totals):10.3f} ms   ({min(totals):.3f}-{max(totals):.3f})")
+    for key, heading in (
+        ("dictionary_columns", "the rows' dictionary columns"),
+        ("plain_columns", "the rows' plain columns"),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {int(median(values)):>12}")
     for key, heading in (
         ("rows_one_file", "the rows, one file"),
         ("rows_six_files", "the rows, six files"),
@@ -2867,7 +2920,11 @@ def main() -> int:
     # Spec 043: the set's rows -- a store's table read as a set, its rows
     # handed out, and the rows written back.
     set_rows_runs = [load(p) for p in sorted(Path("bench-results").glob("set-rows-run*.json"))]
+    set_rows_before = [
+        load(p) for p in sorted(Path("bench-results").glob("set-rows-spec044-before-run*.json"))
+    ]
     print_set_rows(set_rows_runs)
+    print_set_rows_before(set_rows_before)
 
     # Spec 041: the reader's four gigabytes -- a real file with one hostile
     # page header, and the largest single allocation the reader asked for.
