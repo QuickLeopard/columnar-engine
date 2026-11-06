@@ -1,8 +1,11 @@
 # Spec 042 — The set on both sides
 
-**Status**: open
+**Status**: done
 **Started**: 2026-11-06
+**Finished**: 2026-11-06
 **Predecessor**: [spec 041 — the reader's four gigabytes](../041-the-readers-four-gigabytes/spec.md)
+
+**CI green on `c2be4802`** -- run 42190345103, fifteen of fifteen jobs.
 
 ## The problem
 
@@ -189,12 +192,12 @@ engine still cannot write into a table the store already holds without appending
 | | |
 |---|---|
 | the engine's read path | **Unchanged.** Its published figures do not move, and one path is still one path. |
-| the probe side | **Unchanged.** `FileSetSource` is what it was. |
+| the probe side | **Unchanged.** `FileSetSource` is what it was — and **the set's rows are not handed out yet**: `execute_rows` and `execute_rows_on` take a dataset and a file, and the set's own `execute` still folds the rows into an aggregate. **That is the next increment, and it is named here so it is a decision and not an oversight.** |
 | the store's writer, the grid and the commit | **Unchanged.** The grid's owner is still the store, and the commit is still the five measured steps. |
 | the build side's shape | **A set may be named.** One path behaves as it does today. |
 | the write path | **Built.** The engine's rows reach a store's table, on the grid, committed. |
 | the engine's surface | **One breaking change**: `JoinSpec.build_path` → `build_paths`. Arrow does **not** enter the surface — the conversion lives in the store. |
-| the store's surface | **Grows**: an append that takes the engine's rows, and the core's `ColumnChunk` in its signature. |
+| the store's surface | **Grows**: an append that takes the engine's rows, the core's `ColumnChunk` in its signature, and the conversion itself — `rows::arrays`, `rows::schema` and `rows::batches` — because a caller who wants to see the schema the store would use, or to write the engine's rows under their own, has to be able to ask for it. |
 | the store's dependencies | **The core is added.** The engine is not, and never will be. |
 
 ## The measurement
@@ -228,6 +231,14 @@ it comes out.
    20,566,725. **And the same rows under the published file's own schema write the published file byte
    for byte**, so the difference is the schema and nothing else. Published in PERF.md §3z and recorded in
    ADR-0054.
+
+3. **The scope table names two things the implementation settled.** The store's surface grows by the
+   **conversion** as well as by the append — `rows::arrays`, `rows::schema` and `rows::batches` — because
+   a caller who wants to see the schema the store would use, or to write the engine's rows under their
+   own, has to be able to ask for it. And the **set's rows are not handed out**: `execute_rows` and
+   `execute_rows_on` take a dataset and a file, and the set's own `execute` still folds the rows into an
+   aggregate. **That is the next increment, and it is named here so it is a decision and not an
+   oversight.**
 
 **The probes were written after the code they measure, and the reason is recorded.** The build side's
 **cost** is the cost of a build side that takes a set, and the write path's probe measures the **store's

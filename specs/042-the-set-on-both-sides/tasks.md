@@ -1,7 +1,8 @@
 # Spec 042 — The set on both sides — the tasks
 
-**Status**: open
+**Status**: done
 **Started**: 2026-11-06
+**Finished**: 2026-11-06
 
 The order is the house's: **measure, then build, then publish.** The probes come first because their
 numbers decide the shapes — the estimate's charge, the table's shape over a set, and whether the engine's
