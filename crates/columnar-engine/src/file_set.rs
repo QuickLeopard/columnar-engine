@@ -368,6 +368,37 @@ impl FileSetSource {
         crate::facade::execute_with(plan, self, options)
     }
 
+    /// Runs a plan over the table and hands its **rows** out.
+    ///
+    /// This is the set's own way into the write path: the table's rows, in the
+    /// table's order, as the engine's own vocabulary -- a column chunk with an
+    /// encoding and a validity mask. **A store that writes Parquet turns them
+    /// into Arrow's own.**
+    ///
+    /// It is the same path [`crate::facade::execute_rows_on`] takes for one
+    /// file, and **the rows are the same rows**: the plan is resolved against
+    /// the table's schema, the scan's decision is the reader's decision, and
+    /// the stages are the engine's. **The rows come back file by file**, and
+    /// inside a file row group by row group.
+    ///
+    /// A plan with an aggregation is refused, for the reason the eager path
+    /// and the one-file path refuse it: the aggregate folds the rows into
+    /// groups, and there is nothing left to write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::InvalidPlan`] when the plan has an aggregation,
+    /// [`EngineError::Memory`] when the plan's estimated working set exceeds
+    /// `options.memory_budget`, and the usual resolution errors when the plan
+    /// does not fit the table's schema.
+    pub fn execute_rows(
+        &self,
+        plan: &QueryPlan,
+        options: &ExecOptions,
+    ) -> Result<Dataset, EngineError> {
+        crate::facade::execute_rows_with(plan, self, options)
+    }
+
     /// Reads the table, with or without a filter.
     fn read_scanned(
         &self,

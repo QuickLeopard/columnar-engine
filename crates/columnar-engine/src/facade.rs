@@ -437,6 +437,31 @@ pub(crate) fn execute_with<S: EngineSource>(
     }
 }
 
+/// Runs a plan over a source and hands its **rows** out.
+///
+/// This is the source path's way into the write path. A file's rows come out
+/// through [`execute_rows_on`]; a **set's** rows come out through
+/// [`FileSetSource::execute_rows`](crate::FileSetSource::execute_rows). **Both
+/// go through this one function**, so the rows a set hands out are the rows a
+/// file hands out — the same plan, the same stages, the same rules.
+///
+/// # Errors
+///
+/// Returns [`EngineError::InvalidPlan`] when the plan has an aggregation, and
+/// the usual resolution errors when the plan does not fit the source's schema.
+pub(crate) fn execute_rows_with<S: EngineSource>(
+    plan: &QueryPlan,
+    source: &S,
+    options: &ExecOptions,
+) -> Result<Dataset, EngineError> {
+    match execute_source(plan, source, options, Output::Rows)? {
+        Outcome::Rows(rows) => Ok(rows),
+        Outcome::Aggregate(_) => {
+            Err(EngineError::InvalidPlan("the plan's aggregate was not the output".to_owned()))
+        }
+    }
+}
+
 /// Runs a plan over a source, for either output.
 pub(crate) fn execute_source<S: EngineSource>(
     plan: &QueryPlan,
