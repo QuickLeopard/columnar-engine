@@ -146,8 +146,8 @@ question is not only "what does the probe cost" but "what does the query pay".
 - [ADR-0060](../../docs/adr/0060-the-probe-measured-twice.md) — the decision.
 - [constitution.md](../../constitution.md), principle **IV — Evidence Over Claims**: a number is a claim about a
   measurement, and a claim without its evidence is not published.
-- [constitution.md](../../constitution.md), principle **II — A Negative Result Is a Result**: a correction is a
-  result, and it is published where the wrong figure was published.
+- [constitution.md](../../constitution.md), principle **VII — Explicit Scope, No Silent Deferral**: a
+  measurement that refuses a shape is published as the finding, rather than left as an omission.
 
 ## The amendments
 

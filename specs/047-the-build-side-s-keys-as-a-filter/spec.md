@@ -167,8 +167,8 @@ which is what this question is. The amendment is recorded below.
 - [PERF.md §3o](../../PERF.md#3o-the-joins-stage-taken-apart) — the join's stage, taken apart.
 - [constitution.md](../../constitution.md), principle **IV — Evidence Over Claims**: a number is a
   claim about a measurement, and a claim without its evidence is not published.
-- [constitution.md](../../constitution.md), principle **II — A Negative Result Is a Result**: the
-  refusal and the numbers that refused it are published as the finding.
+- [constitution.md](../../constitution.md), principle **VII — Explicit Scope, No Silent Deferral**: the
+  refusal and the numbers that refused it are published as the finding, rather than left as an omission.
 
 ## The amendments
 
