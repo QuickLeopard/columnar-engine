@@ -44,6 +44,15 @@
 //!
 //! **The batch size must not change the answer.** Every shape's rows are recorded at every batch size, and the
 //! probe refuses to write a report whose shapes disagree.
+//!
+//! ## And the rule's output
+//!
+//! **The default is a byte budget**, and the budget is divided by the statement — so **the rule's output is a
+//! figure**, and a figure with no instrument behind it is a claim. This probe publishes **the batch size the
+//! default gives each shape**, at one worker and at the worker counts a parallel read shares the budget across.
+//!
+//! **The budget is the read's, and the workers share it**, so a read on *n* workers gets an *n*-th of it. At one
+//! worker the rule is the one spec 049 published; above it the batch is smaller, and the divisors are coarse.
 
 #![allow(clippy::indexing_slicing)]
 
@@ -55,7 +64,7 @@ use std::path::{Path, PathBuf};
 use columnar_engine::queries::{BuiltinQuery, QUERIES};
 use columnar_engine::{
     AggregateResult, AggregateValue, Dataset, EngineError, ExecOptions, MemoryBudget,
-    ParquetSource, QueryPlan,
+    ParquetSource, QueryPlan, DEFAULT_READER_BATCH_BYTES,
 };
 use counting_allocator::Counting;
 
@@ -285,6 +294,27 @@ fn current_code() -> String {
     format!("{commit}-{state}")
 }
 
+/// The **rule's output**: the default's own batch size for a read of these
+/// columns, at one worker and at the worker counts a parallel read shares the
+/// budget across.
+///
+/// **The rule's output is a figure**, and a figure with no instrument behind
+/// it is a claim: this is the instrument. The **budget is the read's** and the
+/// workers share it, so a read on *n* workers gets an *n*-th of it -- and the
+/// batch is the **largest divisor of the row group's row count** whose bytes
+/// fit that share.
+fn the_default_batches(source: &ParquetSource, fetched: &[usize]) -> Vec<serde_json::Value> {
+    [1usize, 2, 4, 6, 14]
+        .iter()
+        .map(|workers| {
+            serde_json::json!({
+                "the_workers": workers,
+                "the_batch_rows": source.batch_rows_for(fetched, *workers),
+            })
+        })
+        .collect()
+}
+
 /// The command line.
 fn arguments() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
     let mut data = PathBuf::from("data/lineitem.parquet");
@@ -392,6 +422,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "the_file_bytes": the_file,
             "the_columns": the_columns,
             "the_rows": shape_rows.unwrap_or(0),
+            "the_default_s_batch_rows": source.batch_rows_for(&read.fetched, 1),
+            "the_default_s_batch_by_workers": the_default_batches(&source, &read.fetched),
             "the_points": points,
         }));
     }
@@ -401,6 +433,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     report.insert("code".to_owned(), serde_json::json!(current_code()));
     report.insert("the_repeats".to_owned(), serde_json::json!(REPEATS));
     report.insert("the_batch_sizes".to_owned(), serde_json::json!(BATCH_SIZES));
+    report.insert(
+        "the_default_s_batch_bytes".to_owned(),
+        serde_json::json!(DEFAULT_READER_BATCH_BYTES),
+    );
     report.insert("the_rows_agree".to_owned(), serde_json::json!(the_rows_agree));
     report.insert("the_shapes".to_owned(), serde_json::json!(shapes_report));
     let load = the_loads.iter().copied().fold(0.0_f64, f64::max);

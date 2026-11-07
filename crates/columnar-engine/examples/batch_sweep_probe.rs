@@ -14,9 +14,14 @@
 //! | **the join's part** | the join's stage: the build table's construction and the probe, together |
 //! | **the filter-range's scan** | the scan's stage: the read and the pushed-down predicates |
 //!
-//! **And the batch sizes rotate.** A rotation of four, twice over: every point takes every position exactly
+//! **And the batch sizes rotate.** A rotation of five, twice over: every point takes every position exactly
 //! twice, and every pair of points runs in one order twice and the other order twice. A point that always
 //! ran first would pay a colder cache than one that always ran last.
+//!
+//! **And each shape's own batch is its own point.** The default is a byte budget, so the batch it gives
+//! depends on the width the read fetches -- and the probe asks the engine, so the reference it publishes is
+//! the engine's own and not a copy of it. **The engine's own must be one of the points**: a difference against
+//! a batch the sweep did not measure is not a measurement, and the probe refuses to publish one.
 //!
 //! ## The rows
 //!
@@ -35,28 +40,31 @@ use columnar_engine::{EngineError, ExecOptions, MemoryBudget, ParquetSource, Que
 ///
 /// **The points are rows**, and every one of them divides a row group's row count — the file has six row
 /// groups of a million rows each — so no row group ends with a partial batch.
-const BATCH_SIZES: [usize; 4] = [62_500, 125_000, 250_000, 1_000_000];
-
-/// The engine's own batch size: the largest divisor of a row group's row count under the engine's limit.
-const OWN_BATCH_ROWS: usize = 125_000;
+///
+/// **The engine's own is one of the points**, and it is **not the same point for every shape**: the default
+/// is a byte budget, so the batch it gives depends on the width the read fetches — and the wide read's own
+/// is **100,000** rows, which no published set had measured.
+const BATCH_SIZES: [usize; 5] = [62_500, 100_000, 125_000, 250_000, 1_000_000];
 
 /// How many times the sweep runs.
 ///
 /// **Even**, so that the two orders' groups are the same size.
-const ITERATIONS: usize = 8;
+const ITERATIONS: usize = 10;
 
 /// The orders the sweep's points run in, one per iteration.
 ///
-/// **A rotation of four**, twice over.
-const SWEEP_ORDERS: [[usize; 4]; ITERATIONS] = [
-    [0, 1, 2, 3],
-    [1, 2, 3, 0],
-    [2, 3, 0, 1],
-    [3, 0, 1, 2],
-    [0, 1, 2, 3],
-    [1, 2, 3, 0],
-    [2, 3, 0, 1],
-    [3, 0, 1, 2],
+/// **A rotation of five**, twice over.
+const SWEEP_ORDERS: [[usize; 5]; ITERATIONS] = [
+    [0, 1, 2, 3, 4],
+    [1, 2, 3, 4, 0],
+    [2, 3, 4, 0, 1],
+    [3, 4, 0, 1, 2],
+    [4, 0, 1, 2, 3],
+    [0, 1, 2, 3, 4],
+    [1, 2, 3, 4, 0],
+    [2, 3, 4, 0, 1],
+    [3, 4, 0, 1, 2],
+    [4, 0, 1, 2, 3],
 ];
 
 /// A duration in milliseconds.
@@ -120,6 +128,58 @@ fn plan_for(query: BuiltinQuery, build: &Path) -> QueryPlan {
         .find(|definition| definition.query == query)
         .expect("the query is in the engine's table");
     (definition.plan)(build)
+}
+
+/// The engine's own batch size for a read of this plan's columns.
+///
+/// **The default is a byte budget**, so the batch it gives depends on the width the read fetches -- and the
+/// probe asks the engine, so the reference it publishes is the engine's own and not a copy of it.
+fn own_batch_for(data: &Path, plan: &QueryPlan) -> Result<usize, EngineError> {
+    let source = ParquetSource::open(data)?;
+    let resolved = plan.resolve_against(&source)?;
+    let read = source.read_shape(&resolved.materialised, &resolved.filter)?;
+    Ok(source.batch_rows_for(&read.fetched, 1))
+}
+
+/// Each shape's own batch: the size in rows, and the point it is in the sweep.
+///
+/// **The engine's own must be one of the points**: a difference against a batch the sweep did not measure
+/// is not a measurement, and the probe refuses to publish one.
+struct Own {
+    /// The join's part: its own batch, in rows.
+    join_rows: usize,
+    /// The join's part's point in the sweep.
+    join_point: usize,
+    /// The filter-range's scan: its own batch, in rows.
+    filter_rows: usize,
+    /// The filter-range's scan's point in the sweep.
+    filter_point: usize,
+    /// The wide read: its own batch, in rows.
+    wide_rows: usize,
+    /// The wide read's point in the sweep.
+    wide_point: usize,
+}
+
+/// The three shapes' own batches, and the points they are.
+fn the_own_points(data: &Path, build: &Path) -> Result<Own, Box<dyn std::error::Error>> {
+    let join_rows = own_batch_for(data, &plan_for(BuiltinQuery::JoinOrders, build))?;
+    let filter_rows = own_batch_for(data, &plan_for(BuiltinQuery::FilterRange, data))?;
+    let wide_rows = own_batch_for(data, &QueryPlan::scan_all())?;
+    Ok(Own {
+        join_rows,
+        join_point: point_of(join_rows)?,
+        filter_rows,
+        filter_point: point_of(filter_rows)?,
+        wide_rows,
+        wide_point: point_of(wide_rows)?,
+    })
+}
+
+/// The point a batch size is, in the sweep.
+fn point_of(rows: usize) -> Result<usize, Box<dyn std::error::Error>> {
+    BATCH_SIZES.iter().position(|size| *size == rows).ok_or_else(|| {
+        format!("the engine's own batch, {rows} rows, is not one of the sweep's points").into()
+    })
 }
 
 /// What one run of a shape found.
@@ -320,35 +380,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // The paired difference against the engine's own batch size, in the same iteration.
-    let own = BATCH_SIZES.iter().position(|rows| *rows == OWN_BATCH_ROWS).unwrap_or(1);
+    //
+    // **Each shape has its own**: the default is a byte budget, so the batch it
+    // gives depends on the width the read fetches -- and the wide read's own is
+    // a different point from the join's.
+    let own = the_own_points(&data, &build)?;
     let mut differences = serde_json::Map::new();
     for (point, batch) in BATCH_SIZES.iter().enumerate() {
-        if point == own {
+        let mut entry = serde_json::Map::new();
+        if point != own.join_point {
+            let join_difference: Vec<f64> = join_parts[point]
+                .iter()
+                .zip(join_parts[own.join_point].iter())
+                .map(|(point, own)| point - own)
+                .collect();
+            entry.insert("the_join_part_ms".to_owned(), series(&join_difference));
+        }
+        if point != own.filter_point {
+            let filter_difference: Vec<f64> = filter_parts[point]
+                .iter()
+                .zip(filter_parts[own.filter_point].iter())
+                .map(|(point, own)| point - own)
+                .collect();
+            entry.insert("the_filter_scan_ms".to_owned(), series(&filter_difference));
+        }
+        if point != own.wide_point {
+            let wide_difference: Vec<f64> = wide_parts[point]
+                .iter()
+                .zip(wide_parts[own.wide_point].iter())
+                .map(|(point, own)| point - own)
+                .collect();
+            entry.insert("the_wide_read_ms".to_owned(), series(&wide_difference));
+        }
+        if entry.is_empty() {
             continue;
         }
-        let join_difference: Vec<f64> = join_parts[point]
-            .iter()
-            .zip(join_parts[own].iter())
-            .map(|(point, own)| point - own)
-            .collect();
-        let filter_difference: Vec<f64> = filter_parts[point]
-            .iter()
-            .zip(filter_parts[own].iter())
-            .map(|(point, own)| point - own)
-            .collect();
-        let wide_difference: Vec<f64> = wide_parts[point]
-            .iter()
-            .zip(wide_parts[own].iter())
-            .map(|(point, own)| point - own)
-            .collect();
-        differences.insert(
-            batch.to_string(),
-            serde_json::json!({
-                "the_join_part_ms": series(&join_difference),
-                "the_filter_scan_ms": series(&filter_difference),
-                "the_wide_read_ms": series(&wide_difference),
-            }),
-        );
+        differences.insert(batch.to_string(), serde_json::json!(entry));
     }
 
     let report = the_report(
@@ -359,6 +426,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &wide_parts,
         &wide_totals,
         &differences,
+        &own,
         the_rows_agree,
         (join_rows, filter_rows, wide_rows),
         &loads,
@@ -379,6 +447,7 @@ fn the_report(
     wide_parts: &[Vec<f64>],
     wide_totals: &[Vec<f64>],
     differences: &serde_json::Map<String, serde_json::Value>,
+    own: &Own,
     the_rows_agree: bool,
     rows: (usize, usize, usize),
     loads: &[f64],
@@ -403,7 +472,14 @@ fn the_report(
     report.insert("code".to_owned(), serde_json::json!(current_code()));
     report.insert("iterations".to_owned(), serde_json::json!(ITERATIONS));
     report.insert("the_batch_sizes".to_owned(), serde_json::json!(BATCH_SIZES));
-    report.insert("the_engine_s_own_batch_rows".to_owned(), serde_json::json!([OWN_BATCH_ROWS]));
+    report.insert(
+        "the_engine_s_own_batch_rows".to_owned(),
+        serde_json::json!({
+            "the_join_part": own.join_rows,
+            "the_filter_scan": own.filter_rows,
+            "the_wide_read": own.wide_rows,
+        }),
+    );
     report.insert("the_rows_agree".to_owned(), serde_json::json!(the_rows_agree));
     report.insert("the_join_rows".to_owned(), serde_json::json!(rows.0));
     report.insert("the_filter_rows".to_owned(), serde_json::json!(rows.1));

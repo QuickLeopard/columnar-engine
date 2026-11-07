@@ -66,9 +66,10 @@ static ALLOCATOR: Counting = Counting;
 /// groups of a million rows each — so no row group ends with a partial batch, and the sweep is the engine's
 /// read and nothing else.
 ///
-/// **The engine's own is one of the points**: **125,000** rows, the largest divisor of a row group's row
-/// count under the engine's **byte budget**.
-const BATCH_SIZES: [usize; 4] = [62_500, 125_000, 250_000, 1_000_000];
+/// **The engine's own is one of the points**, and it is **not the same point for every shape**: the default
+/// is a byte budget, so the batch it gives depends on the width the read fetches -- and the file's sixteen
+/// columns' own is **100,000** rows, which no published set had measured.
+const BATCH_SIZES: [usize; 5] = [62_500, 100_000, 125_000, 250_000, 1_000_000];
 
 /// How many times each point is measured.
 ///
@@ -360,6 +361,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut the_loads = Vec::new();
 
     for shape in shapes() {
+        // **The engine's own batch for this shape**, from the engine: the
+        // default is a byte budget, so the batch it gives depends on the width
+        // the read fetches.
+        let plan = (shape.plan)(Path::new("orders.parquet"));
+        let resolved = plan.resolve_against(&source)?;
+        let read = source.read_shape(&resolved.materialised, &resolved.filter)?;
+        let the_own_batch = source.batch_rows_for(&read.fetched, 1);
         let refused_at_the_default = if shape.returns_rows {
             let plan = (shape.plan)(Path::new("orders.parquet"));
             columnar_engine::execute_rows_on(&plan, &source, &default_budget).is_err()
@@ -402,6 +410,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         shapes_report.push(serde_json::json!({
             "the_shape": shape.name,
+            "the_engine_s_own_batch_rows": the_own_batch,
             "the_columns_materialised": match shape.width {
                 Width::Named(names) => names.len(),
                 Width::Every => source.columns().len(),
