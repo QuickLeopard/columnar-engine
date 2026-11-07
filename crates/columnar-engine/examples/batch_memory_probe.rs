@@ -40,16 +40,25 @@
 
 #![allow(clippy::indexing_slicing)]
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-use columnar_engine::memory::estimate_lazy_read;
+#[path = "support/counting_allocator.rs"]
+mod counting_allocator;
+
+use columnar_engine::memory::estimate_lazy_read_with_batch;
 use columnar_engine::queries::{BuiltinQuery, QUERIES};
 use columnar_engine::{
     AggregateResult, AggregateValue, Dataset, EngineError, ExecOptions, MemoryBudget,
     ParquetSource, QueryPlan,
 };
+use counting_allocator::Counting;
+
+/// The allocator that counts.
+///
+/// **It is here, in the example, and not in the engine**: every crate here
+/// denies `unsafe_code`, and a `GlobalAlloc` implementation needs `unsafe`.
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
 
 /// The batch sizes the probe measures, beside the engine's own.
 ///
@@ -75,51 +84,6 @@ const WIDE_BUDGET_BYTES: usize = 4 * 1024 * 1024 * 1024;
 
 /// The columns the join's probe side reads.
 const THE_TWO: [&str; 2] = ["l_orderkey", "l_extendedprice"];
-
-/// The bytes the process holds now.
-static HELD: AtomicUsize = AtomicUsize::new(0);
-
-/// The most bytes the process has held at once.
-static PEAK: AtomicUsize = AtomicUsize::new(0);
-
-/// The allocator that counts.
-///
-/// **It counts the bytes the process holds, and nothing else.** It does not change what is allocated, and it
-/// does not change how much: the same layout goes to the system allocator.
-struct Counting;
-
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let pointer = unsafe { System.alloc(layout) };
-        if !pointer.is_null() {
-            let held = HELD.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
-            PEAK.fetch_max(held, Ordering::Relaxed);
-        }
-        pointer
-    }
-
-    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        HELD.fetch_sub(layout.size(), Ordering::Relaxed);
-        unsafe { System.dealloc(pointer, layout) };
-    }
-
-    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let resized = unsafe { System.realloc(pointer, layout, new_size) };
-        if !resized.is_null() {
-            if new_size >= layout.size() {
-                let grew = new_size - layout.size();
-                let held = HELD.fetch_add(grew, Ordering::Relaxed) + grew;
-                PEAK.fetch_max(held, Ordering::Relaxed);
-            } else {
-                HELD.fetch_sub(layout.size() - new_size, Ordering::Relaxed);
-            }
-        }
-        resized
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: Counting = Counting;
 
 /// Which columns a shape materialises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,11 +168,11 @@ struct Measured {
 fn measure_read<T, F: FnOnce() -> Result<T, EngineError>>(
     run: F,
 ) -> Result<(Measured, T), EngineError> {
-    let baseline = HELD.load(Ordering::Relaxed);
-    PEAK.store(baseline, Ordering::Relaxed);
+    let baseline = Counting::held();
+    Counting::reset(baseline);
     let value = run()?;
-    let peak = PEAK.load(Ordering::Relaxed).saturating_sub(baseline);
-    let held = HELD.load(Ordering::Relaxed).saturating_sub(baseline);
+    let peak = Counting::peak().saturating_sub(baseline);
+    let held = Counting::held().saturating_sub(baseline);
     Ok((Measured { peak, held }, value))
 }
 
@@ -257,16 +221,28 @@ fn run_shape(
     }
 }
 
-/// The estimate the engine's own formula gives for a shape.
+/// The estimate the engine's own formula gives for a shape, at a batch size.
 ///
-/// **The engine's own function**, called with the shape's materialised columns — so the figure is the
-/// engine's, and not a copy of it.
-fn the_estimate(source: &ParquetSource, shape: &Shape) -> usize {
-    let read: Vec<usize> = match shape.width {
-        Width::Named(names) => names.iter().filter_map(|name| source.column_index(name)).collect(),
-        Width::Every => (0..source.columns().len()).collect(),
+/// **The engine's own function**, called with the shape's own read — so the figure is the engine's, and not a
+/// copy of it. **And it depends on the batch size**, because the read holds one batch of the columns it
+/// fetches at a time: that is the whole of what this increment changed.
+fn the_estimate(source: &ParquetSource, shape: &Shape, batch_rows: usize) -> usize {
+    let plan = (shape.plan)(Path::new("orders.parquet"));
+    let Ok(resolved) = plan.resolve_against(source) else {
+        return 0;
     };
-    estimate_lazy_read(source, &read, 1, false)
+    let Ok(read) = source.read_shape(&resolved.materialised, &resolved.filter) else {
+        return 0;
+    };
+    estimate_lazy_read_with_batch(
+        source.rows(),
+        source,
+        &read.held,
+        &read.fetched,
+        batch_rows,
+        1,
+        false,
+    )
 }
 
 /// The number of batches a named batch size makes over the file's row groups.
@@ -384,7 +360,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut the_loads = Vec::new();
 
     for shape in shapes() {
-        let estimate = the_estimate(&source, &shape);
         let refused_at_the_default = if shape.returns_rows {
             let plan = (shape.plan)(Path::new("orders.parquet"));
             columnar_engine::execute_rows_on(&plan, &source, &default_budget).is_err()
@@ -416,6 +391,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             points.push(serde_json::json!({
                 "batch_rows": batch,
                 "the_batches": the_batch_count(&source, batch),
+                "the_estimate_bytes": the_estimate(&source, &shape, batch),
                 "the_peak_bytes": peaks,
                 "the_peak_median": median(&peaks),
                 "the_held_after_bytes": helds,
@@ -430,7 +406,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Width::Named(names) => names.len(),
                 Width::Every => source.columns().len(),
             },
-            "the_estimate_bytes": estimate,
             "refused_at_the_default_budget": refused_at_the_default,
             "the_rows": shape_rows.unwrap_or(0),
             "the_points": points,

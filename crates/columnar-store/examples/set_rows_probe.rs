@@ -44,7 +44,7 @@ use arrow::array::RecordBatchReader;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use columnar_core::Encoding;
-use columnar_engine::memory::estimate_lazy_read_for;
+use columnar_engine::memory::estimate_lazy_read_with_batch;
 use columnar_engine::{
     execute_rows_on, open_source, ExecOptions, FileSetSource, MemoryBudget, QueryPlan,
 };
@@ -622,18 +622,35 @@ fn summaries(
 }
 
 /// What the budget is charged for the one file, and for the set.
+///
+/// **The budget's own charge**, made the way the budget makes it: the read's
+/// own shape, the reader's batch, and the batch charged beside the file's
+/// rows. **The engine's own function**, so the figure is the engine's and not
+/// a copy of it.
 fn estimates(one_source: &columnar_engine::ParquetSource, set: &FileSetSource) -> (usize, usize) {
-    let one = estimate_lazy_read_for(
+    let plan = plan();
+    let resolved = plan.resolve_against(one_source).expect("the plan resolves");
+    let read = one_source
+        .read_shape(&resolved.materialised, &resolved.filter)
+        .expect("the read is decided");
+    let one = estimate_lazy_read_with_batch(
         one_source.rows(),
         one_source,
-        &(0..one_source.columns().len()).collect::<Vec<_>>(),
+        &read.held,
+        &read.fetched,
+        one_source.batch_rows(),
         1,
         false,
     );
-    let six = estimate_lazy_read_for(
+    let resolved = plan.resolve_against(set).expect("the plan resolves");
+    let read =
+        set.read_shape(&resolved.materialised, &resolved.filter).expect("the read is decided");
+    let six = estimate_lazy_read_with_batch(
         set.rows(),
         set,
-        &(0..set.columns().len()).collect::<Vec<_>>(),
+        &read.held,
+        &read.fetched,
+        set.batch_rows(),
         1,
         false,
     );
