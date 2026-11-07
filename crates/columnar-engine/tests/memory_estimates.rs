@@ -30,11 +30,13 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use columnar_core::{ComparisonOp, Predicate, ScalarValue};
 use columnar_engine::memory::{
-    direct_table_fits, estimate_build_side, estimate_bytes, estimate_lazy_read, estimate_positions,
-    estimate_resolved, estimate_resolved_at, estimate_sort, DIRECT_TABLE_LIMIT,
+    direct_table_fits, estimate_build_side, estimate_bytes, estimate_lazy_read,
+    estimate_lazy_read_with_batch, estimate_positions, estimate_resolved, estimate_resolved_at,
+    estimate_sort, DIRECT_TABLE_LIMIT,
 };
 use columnar_engine::{
     Aggregate, AggregateSpec, Dataset, JoinSpec, ParquetSource, QueryPlan, SortSpec,
+    MAX_READER_BATCH_ROWS,
 };
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
@@ -506,4 +508,142 @@ fn no_estimate_overflows() {
     assert_eq!(estimate_sort(usize::MAX, None), usize::MAX);
     assert_eq!(estimate_sort(usize::MAX, Some(usize::MAX)), usize::MAX);
     assert_eq!(estimate_positions(usize::MAX), usize::MAX);
+}
+
+// ---------------------------------------------------------------------------
+// The width statement, and the batch it is charged with.
+//
+// The statement is **one** number per column, and the estimate and the
+// reader's batch rule both read it. These tests say what it is, and that the
+// estimate moves with the reader's batch size — which it did not do before,
+// and which is the whole of what this increment changed.
+// ---------------------------------------------------------------------------
+
+/// The bytes a row's **holder** takes: an `int64` or a `float64` is eight,
+/// a plain string's `String` header is twenty-four.
+const FIXED64_BYTES: usize = 8;
+const STRING_HEADER_BYTES: usize = 24;
+
+/// A dictionary's index takes four.
+const INDEX_BYTES: usize = 4;
+
+/// Writes a file whose third column is **dictionary-encoded**, so the
+/// statement's dictionary case can be tested against the engine's own reading
+/// of the file's schema.
+fn write_dictionary_file(path: &Path) {
+    use arrow::array::{ArrayRef, DictionaryArray, Int32Array};
+    use arrow::datatypes::Int32Type;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("k", DataType::Int64, false),
+        Field::new(
+            "s",
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
+            false,
+        ),
+    ]));
+
+    let file = File::create(path).expect("the file is created");
+    let mut writer = ArrowWriter::try_new(file, schema.clone(), None).expect("the writer is built");
+
+    let keys: Vec<i64> = (0..ROWS).map(|row| i64::try_from(row).expect("the row fits")).collect();
+    let values: Vec<String> = std::iter::repeat_n("2020-01-01".to_owned(), ROWS).collect();
+    let dictionary = Arc::new(StringArray::from(values)) as ArrayRef;
+    let indices = Int32Array::from(vec![0i32; ROWS]);
+    let column: ArrayRef = Arc::new(
+        DictionaryArray::<Int32Type>::try_new(indices, dictionary)
+            .expect("the dictionary is built"),
+    );
+
+    let batch =
+        RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(keys)), column])
+            .expect("the batch is built");
+    writer.write(&batch).expect("the batch is written");
+    writer.close().expect("the file is closed");
+}
+
+#[test]
+fn the_statement_says_what_a_row_costs() {
+    let source = source("statement");
+
+    // An `int64` and a `float64` hold the value itself: eight bytes a row.
+    assert_eq!(source.column_cost(0).holder, FIXED64_BYTES);
+    assert_eq!(source.column_cost(2).holder, FIXED64_BYTES);
+
+    // A plain string holds a `String`: twenty-four bytes a row, and the
+    // string's own bytes on top.
+    assert_eq!(source.column_cost(1).holder, STRING_HEADER_BYTES);
+    assert!(
+        source.column_cost(1).value > 0,
+        "the string's own bytes are the column's own, and they are not nothing"
+    );
+}
+
+#[test]
+fn a_dictionary_column_costs_its_index() {
+    let path = file_path("statement-dictionary");
+    write_dictionary_file(&path);
+    let source = ParquetSource::open(&path).expect("the source opens");
+
+    // **The schema's own type is the signal**: a dictionary-encoded string
+    // column holds an index, and the index is four bytes.
+    assert_eq!(source.column_cost(1).holder, INDEX_BYTES);
+    assert_eq!(source.column_cost(0).holder, FIXED64_BYTES);
+}
+
+#[test]
+fn the_estimate_charges_the_batch() {
+    let source = source("estimate-batch");
+    let held: Vec<usize> = vec![0];
+    let fetched: Vec<usize> = vec![0];
+
+    let small = estimate_lazy_read_with_batch(source.rows(), &source, &held, &fetched, 1, 1, false);
+    let large =
+        estimate_lazy_read_with_batch(source.rows(), &source, &held, &fetched, 512, 1, false);
+
+    assert!(large > small, "a bigger batch holds more, and the budget has to see it");
+}
+
+#[test]
+fn a_parallel_read_charges_a_batch_a_worker() {
+    let source = source("estimate-workers");
+    let held: Vec<usize> = vec![0];
+    let fetched: Vec<usize> = vec![0];
+
+    let one = estimate_lazy_read_with_batch(source.rows(), &source, &held, &fetched, 512, 1, false);
+    let many =
+        estimate_lazy_read_with_batch(source.rows(), &source, &held, &fetched, 512, 4, false);
+    assert!(many > one, "every worker holds a batch of its own");
+}
+
+#[test]
+fn the_byte_rule_divides_the_budget_by_the_width() {
+    let source = source("byte-rule");
+    let read: Vec<usize> = vec![0, 1, 2];
+
+    // The rule is a **byte budget**, so the batch it picks is the one whose
+    // bytes fit under it -- and it is the statement's width that says how
+    // many rows that is.
+    let budget = 16 * 1024;
+    let batch = source.batch_rows_under_bytes(budget, &read);
+    let bytes = batch.saturating_mul(source.row_bytes_of(&read));
+    assert!(bytes <= budget, "the batch's bytes fit under the budget");
+
+    // And a budget that is too small for one row buys no batch at all.
+    assert_eq!(
+        source.batch_rows_under_bytes(0, &read),
+        source.batch_rows_under(MAX_READER_BATCH_ROWS)
+    );
+}
+
+#[test]
+fn the_batch_the_rule_picks_divides_a_row_group() {
+    let source = source("byte-rule-divisor");
+    let read: Vec<usize> = vec![0];
+    let batch = source.batch_rows_under_bytes(16 * 1024 * 1024, &read);
+
+    // The batch is a **divisor** of the row group's row count, so no row
+    // group ends with a partial batch.
+    let group = source.row_group_ranges("k").first().map_or(ROWS, |group| group.rows);
+    assert_eq!(group % batch, 0, "the batch divides the row group's rows");
 }

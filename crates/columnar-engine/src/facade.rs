@@ -61,7 +61,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::memory::{estimate_lazy_read_for, estimate_plan_sort, estimate_resolved};
+use crate::memory::{estimate_lazy_read_with_batch, estimate_plan_sort, estimate_resolved};
 use crate::pipeline::{scan_stage, BuildSide, Outcome, Output, Pipeline, StreamedJoin};
 use crate::scan::{decide_scan, fetched_columns, pushdown_descriptions, streamed_join, ScanReport};
 use crate::source::EngineSource;
@@ -498,11 +498,25 @@ pub(crate) fn execute_source<S: EngineSource>(
     // read's peak, which holds two copies of the read set rather than one.
     // The join's build side and the sort's working set are in the estimate
     // too: a plan that does not fit is refused before any of it is built.
+    //
+    // **The batch is charged as well.** The reader holds one batch of the
+    // columns it fetches at a time, and that batch is memory the engine
+    // holds -- so the budget's verdict depends on the reader's batch size,
+    // which is what it did not do before.
     let grouped =
         resolved.aggregate.as_ref().is_some_and(|aggregate| !aggregate.group_by.is_empty());
-    let estimate = estimate_lazy_read_for(source.rows(), source, &decision.read, workers, grouped)
-        .saturating_add(build.estimate(resolved.join.as_ref(), options.threads.unwrap_or(1)))
-        .saturating_add(estimate_plan_sort(resolved.sort.as_ref(), source.rows()));
+    let fetched = crate::scan::fetched_columns(&decision);
+    let estimate = estimate_lazy_read_with_batch(
+        source.rows(),
+        source,
+        &decision.read,
+        &fetched,
+        source.batch_rows(),
+        workers,
+        grouped,
+    )
+    .saturating_add(build.estimate(resolved.join.as_ref(), options.threads.unwrap_or(1)))
+    .saturating_add(estimate_plan_sort(resolved.sort.as_ref(), source.rows()));
     if estimate > options.memory_budget.bytes {
         return Err(EngineError::Memory(MemoryError::BudgetExceeded));
     }

@@ -116,6 +116,14 @@ pub struct FileSetSource {
     ranges: crate::source::ColumnRanges,
     /// The range of each column over each row group, with the row group's rows.
     row_group_ranges: crate::source::RowGroupRanges,
+    /// The **file's own** bytes, for each column, over the whole table.
+    ///
+    /// **The files' own accounting**: the set's figure is the files' bytes
+    /// over the table's rows, so a table that is many files is charged for the
+    /// data it holds. See [`crate::width`].
+    file_bytes: Vec<usize>,
+    /// The values each column holds, over the whole table.
+    file_values: Vec<usize>,
 }
 
 impl FileSetSource {
@@ -166,6 +174,7 @@ impl FileSetSource {
 
         let ranges = merged_ranges(&files);
         let row_group_ranges = merged_row_group_ranges(&files);
+        let (file_bytes, file_values) = merged_file_bytes(&files, rows);
 
         Ok(Self {
             files,
@@ -176,6 +185,8 @@ impl FileSetSource {
             offsets,
             ranges,
             row_group_ranges,
+            file_bytes,
+            file_values,
         })
     }
 
@@ -242,6 +253,115 @@ impl FileSetSource {
             .iter()
             .filter_map(|&index| self.columns.get(index).map(|column| column.name.clone()))
             .collect()
+    }
+
+    /// The value's own bytes a row, of the column at `index`.
+    ///
+    /// **The files' own accounting** of the column, over the table's rows,
+    /// and **nothing for a number**: a number's eight bytes already are its
+    /// value, so the file's pages for it would be charged twice.
+    #[must_use]
+    pub fn column_value_bytes(&self, index: usize) -> usize {
+        match self.columns.get(index).map(SourceColumn::storage) {
+            Some(crate::width::Storage::Fixed64) | None => 0,
+            Some(_) => self.file_bytes.get(index).copied().unwrap_or(0),
+        }
+    }
+
+    /// The **file's own** bytes a row, of the column at `index`.
+    ///
+    /// **The file's pages**: the column chunk's `total_uncompressed_size`
+    /// over its `num_values`. It is **not** the working set's cost -- the
+    /// engine holds decoded values -- and it is published beside the
+    /// statement so that the difference is visible. See [`crate::width`].
+    #[must_use]
+    pub fn column_file_bytes(&self, index: usize) -> usize {
+        self.file_bytes.get(index).copied().unwrap_or(0)
+    }
+
+    /// The **file's own** values, of the column at `index`.
+    ///
+    /// The files' own account of how many values the column holds, so the
+    /// file's own bytes can be said **a row**.
+    #[must_use]
+    pub fn column_file_values(&self, index: usize) -> usize {
+        self.file_values.get(index).copied().unwrap_or(0)
+    }
+
+    /// What a read of this table takes: the columns the dataset holds, and
+    /// the columns the reader fetches.
+    ///
+    /// **The reader's own decision**, made the way the engine makes it, so
+    /// that a caller cannot answer a different question from the one the
+    /// estimate answers. See [`crate::source::ReadShape`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::UnknownColumn`] when a predicate names a column
+    /// the table does not have.
+    pub fn read_shape(
+        &self,
+        materialised: &[usize],
+        filters: &[ResolvedFilter],
+    ) -> Result<crate::source::ReadShape, EngineError> {
+        let decision = self.decide_read(materialised, filters)?;
+        let fetched = crate::scan::fetched_columns(&decision);
+        Ok(crate::source::ReadShape { held: decision.read, fetched })
+    }
+
+    /// The bytes one row of the column at `index` costs, in the engine's own
+    /// storage.
+    ///
+    /// **This is the width statement**, and the estimate and the reader's batch
+    /// rule both read it. See [`crate::width`].
+    #[must_use]
+    pub fn column_cost(&self, index: usize) -> crate::width::RowCost {
+        let storage = self
+            .columns
+            .get(index)
+            .map_or(crate::width::Storage::StringHeader, SourceColumn::storage);
+        storage.cost(self.column_value_bytes(index))
+    }
+
+    /// The bytes one row of a read of these columns costs.
+    ///
+    /// **The statement's per-column cost**, over the columns the read takes,
+    /// and the validity bit each column's rows carry.
+    #[must_use]
+    pub fn row_bytes_of(&self, read: &[usize]) -> usize {
+        read.iter()
+            .filter_map(|&index| self.columns.get(index).map(|column| (index, column)))
+            .map(|(index, _column)| {
+                let cost = self.column_cost(index);
+                cost.per_row(self.rows()).saturating_add(1)
+            })
+            .sum()
+    }
+
+    /// The reader's batch size this table will read with, in rows.
+    ///
+    /// **The engine's own**: the largest divisor of the merged row groups' row
+    /// count under the reader's row limit.
+    #[must_use]
+    pub fn batch_rows(&self) -> usize {
+        self.batch_rows_under(MAX_READER_BATCH_ROWS)
+    }
+
+    /// The reader's batch size under a **byte budget**, for a read of `read`.
+    ///
+    /// **The budget is in bytes, because the bytes a batch holds scale with the
+    /// query's width.** See
+    /// [ADR-0061](../../../docs/adr/0061-the-batch-sizes-price.md).
+    #[must_use]
+    pub fn batch_rows_under_bytes(&self, budget_bytes: usize, read: &[usize]) -> usize {
+        let per_row = self.row_bytes_of(read);
+        if per_row == 0 {
+            return self.batch_rows_under(MAX_READER_BATCH_ROWS);
+        }
+        // **The floor**: a budget too small to buy the smallest usable batch
+        // still buys that batch, because a read has to read something.
+        let limit = (budget_bytes / per_row).max(MIN_READER_BATCH_ROWS);
+        self.batch_rows_under(limit)
     }
 
     /// The reader's batch size under a given limit, for the whole table.
@@ -633,6 +753,28 @@ fn merged_ranges(files: &[ParquetSource]) -> crate::source::ColumnRanges {
     ranges
 }
 
+/// The **file's own** bytes a row, for each column of the table.
+///
+/// **The files' own accounting**, over the table's rows: each file's figure
+/// over its own rows, weighted by the rows it holds.
+fn merged_file_bytes(files: &[ParquetSource], rows: usize) -> (Vec<usize>, Vec<usize>) {
+    if rows == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    let count = files.first().map_or(0, |file| file.columns().len());
+    let mut totals = vec![0usize; count];
+    let mut values = vec![0usize; count];
+    for file in files {
+        for (index, total) in totals.iter_mut().enumerate() {
+            // The file's own bytes are the **whole file's**, so the table's
+            // figure is the sum of the files' -- and not a share of one.
+            *total = total.saturating_add(file.column_file_bytes(index));
+            values[index] = values[index].saturating_add(file.column_file_values(index));
+        }
+    }
+    (totals, values)
+}
+
 /// The range of every column over every row group of the table.
 ///
 /// The row groups are the table's, numbered across the files, and the ranges
@@ -680,6 +822,10 @@ impl EngineSource for FileSetSource {
         FileSetSource::worker_count(self, threads)
     }
 
+    fn batch_rows(&self) -> usize {
+        FileSetSource::batch_rows(self)
+    }
+
     fn decide_read(
         &self,
         materialised: &[usize],
@@ -721,5 +867,9 @@ impl ColumnSchema for FileSetSource {
 
     fn column_type(&self, index: usize) -> columnar_core::DataType {
         self.columns.get(index).map_or(columnar_core::DataType::Int64, |column| column.data_type)
+    }
+
+    fn column_cost(&self, index: usize) -> crate::width::RowCost {
+        FileSetSource::column_cost(self, index)
     }
 }

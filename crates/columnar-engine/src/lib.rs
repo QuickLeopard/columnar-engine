@@ -171,6 +171,11 @@ pub mod pushdown;
 pub mod queries;
 #[doc(hidden)]
 pub mod source;
+// The width statement: what a row costs. Reachable, because the estimate and
+// the reader's batch rule both read it; not part of the surface, because it
+// is a statement about the engine's own storage rather than about a plan.
+#[doc(hidden)]
+pub mod width;
 
 // The pipeline and the scan's decision are the engine's own machinery. They
 // are modules of the crate, not of its public surface: nothing outside the

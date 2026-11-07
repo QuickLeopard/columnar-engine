@@ -60,6 +60,25 @@ use crate::pushdown::{Pushdown, PushdownPlan, RowMask};
 use crate::EngineError;
 use columnar_kernels::Flavor;
 
+/// What a read takes: the columns the dataset holds, and the columns the
+/// reader fetches.
+///
+/// **The reader's own decision**, made the way the engine makes it: the
+/// plan's materialised columns are held for the whole read, a predicate the
+/// reader **declined** has its column read and held too, and a predicate the
+/// reader **pushed** has its column fetched and dropped.
+///
+/// The two sets are what the estimate charges: the **file's rows** for the
+/// held ones, and the **batch's rows** for the fetched ones. See
+/// [`crate::memory::estimate_lazy_read_with_batch`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadShape {
+    /// The file's root columns the dataset holds.
+    pub held: Vec<usize>,
+    /// The file's root columns the reader fetches.
+    pub fetched: Vec<usize>,
+}
+
 /// What a scan hands each batch to, before it copies anything.
 ///
 /// The scan copies a row **once**, into the engine's own column. A filter
@@ -104,6 +123,18 @@ pub struct SourceColumn {
     /// reader's business, and the engine's surface does not name Arrow's
     /// types. A reader who wants the engine's own type has `data_type`.
     pub(crate) arrow_type: ArrowType,
+}
+
+impl SourceColumn {
+    /// How the column's values are stored.
+    ///
+    /// **The schema's own Arrow type is the signal**, and not the chunk's
+    /// encodings: a chunk's `encodings` list names `RLE_DICTIONARY` for a
+    /// column that is not dictionary-encoded at all. See [`crate::width`].
+    #[must_use]
+    pub fn storage(&self) -> crate::width::Storage {
+        crate::width::storage_of(&self.arrow_type)
+    }
 }
 
 /// The limit on the number of rows the Parquet reader hands over at a time.
@@ -213,6 +244,18 @@ pub struct ParquetSource {
     /// A row group that has no statistics for a column has no range for it,
     /// and its rows cannot be bounded by it.
     row_group_ranges: RowGroupRanges,
+    /// The **file's own** bytes, for each column, over the whole file.
+    ///
+    /// **The file's pages**: the column chunk's `total_uncompressed_size`,
+    /// summed over the row groups. It is not the working set's cost — the
+    /// engine holds decoded values — so it is used for the one thing it is
+    /// good at: the size of a column's own data. See [`crate::width`].
+    file_bytes: Vec<usize>,
+    /// The values each column holds, over the whole file.
+    ///
+    /// The file's own accounting of how many values a column has, so the
+    /// file's own bytes can be said **a row**.
+    file_values: Vec<usize>,
 }
 
 /// A column's range over a whole file.
@@ -276,6 +319,16 @@ pub(crate) trait EngineSource: ColumnSchema {
 
     /// How many workers a read of this source uses.
     fn worker_count(&self, threads: usize) -> usize;
+
+    /// The reader's batch size a read of this source will use, in rows.
+    ///
+    /// **The engine's own**: the largest divisor of the row groups' row count
+    /// under the reader's row limit, so that no row group ends with a partial
+    /// batch — or the size the caller named.
+    ///
+    /// **The estimate reads it**, so the budget can see what a read will hold
+    /// before the read holds it.
+    fn batch_rows(&self) -> usize;
 
     /// Decides what the read takes, and what it pushes into the reader.
     ///
@@ -392,6 +445,7 @@ impl ParquetSource {
             .collect::<Result<Vec<SourceColumn>, DatasetError>>()?;
 
         let (ranges, row_group_ranges) = column_ranges(metadata);
+        let (file_bytes, file_values) = file_bytes(metadata);
 
         Ok(Self {
             path: path.to_path_buf(),
@@ -403,6 +457,8 @@ impl ParquetSource {
             reader_batch_rows: None,
             ranges,
             row_group_ranges,
+            file_bytes,
+            file_values,
         })
     }
 
@@ -518,6 +574,141 @@ impl ParquetSource {
             .iter()
             .filter_map(|&index| self.columns.get(index).map(|column| column.name.clone()))
             .collect()
+    }
+
+    /// How a column's values are stored.
+    ///
+    /// **The schema's own Arrow type is the signal**, and not the chunk's
+    /// encodings: a chunk's `encodings` list names `RLE_DICTIONARY` for a
+    /// column that is not dictionary-encoded at all. See [`crate::width`].
+    #[must_use]
+    pub fn column_storage(&self, index: usize) -> Option<crate::width::Storage> {
+        self.columns.get(index).map(SourceColumn::storage)
+    }
+
+    /// The value's own bytes a row, of the column at `index`.
+    ///
+    /// **The file's own accounting** of the column, and **nothing for a
+    /// number**: a number's eight bytes already are its value, so the file's
+    /// pages for it would be charged twice.
+    #[must_use]
+    pub fn column_value_bytes(&self, index: usize) -> usize {
+        match self.columns.get(index).map(SourceColumn::storage) {
+            Some(crate::width::Storage::Fixed64) | None => 0,
+            Some(_) => self.file_bytes.get(index).copied().unwrap_or(0),
+        }
+    }
+
+    /// The **file's own** values, of the column at `index`.
+    ///
+    /// The file's own account of how many values the column holds, so the
+    /// file's own bytes can be said **a row**.
+    #[must_use]
+    pub fn column_file_values(&self, index: usize) -> usize {
+        self.file_values.get(index).copied().unwrap_or(0)
+    }
+
+    /// The **file's own** bytes a row, of the column at `index`.
+    ///
+    /// **The file's pages**: the column chunk's `total_uncompressed_size`
+    /// over its `num_values`. It is **not** the working set's cost -- the
+    /// engine holds decoded values, and the file stores `l_discount` in
+    /// **0.50** bytes a row where the engine holds it in **eight** -- and it
+    /// is published beside the statement so that the difference is visible.
+    /// See [`crate::width`].
+    #[must_use]
+    pub fn column_file_bytes(&self, index: usize) -> usize {
+        self.file_bytes.get(index).copied().unwrap_or(0)
+    }
+
+    /// What a read of this file takes: the columns the dataset holds, and the
+    /// columns the reader fetches.
+    ///
+    /// **The reader's own decision**, made the way the engine makes it, so
+    /// that a caller cannot answer a different question from the one the
+    /// estimate answers. See [`ReadShape`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::UnknownColumn`] when a predicate names a column
+    /// the file does not have.
+    pub fn read_shape(
+        &self,
+        materialised: &[usize],
+        filters: &[ResolvedFilter],
+    ) -> Result<ReadShape, EngineError> {
+        let decision = self.decide_read(materialised, filters)?;
+        let fetched = crate::scan::fetched_columns(&decision);
+        Ok(ReadShape { held: decision.read, fetched })
+    }
+
+    /// The bytes one row of the column at `index` costs, in the engine's own
+    /// storage.
+    ///
+    /// **This is the width statement**, and the estimate and the reader's batch
+    /// rule both read it. See [`crate::width`].
+    #[must_use]
+    pub fn column_cost(&self, index: usize) -> crate::width::RowCost {
+        let storage = self
+            .columns
+            .get(index)
+            .map_or(crate::width::Storage::StringHeader, SourceColumn::storage);
+        storage.cost(self.column_value_bytes(index))
+    }
+
+    /// The reader's batch size this source will read with, in rows.
+    ///
+    /// **The engine's own**: the largest divisor of the row groups' row count
+    /// under the reader's row limit, so that no row group ends with a partial
+    /// batch — or the size the caller named.
+    #[must_use]
+    pub fn batch_rows(&self) -> usize {
+        match self.batch_plan() {
+            BatchPlan::Fixed(rows) => rows,
+            BatchPlan::Derived(limit) => self.batch_rows_for(None, limit),
+        }
+    }
+
+    /// The reader's batch size under a **byte budget**, for a read of `read`.
+    ///
+    /// **The budget is in bytes, because the bytes a batch holds scale with the
+    /// query's width**: the same million-row batch is a few megabytes on a
+    /// two-column query and hundreds on a sixteen-column one, and a knob named
+    /// in rows cannot see the width. See
+    /// [ADR-0061](../../../docs/adr/0061-the-batch-sizes-price.md).
+    ///
+    /// The batch size is **the largest divisor of the row groups' row count**
+    /// whose bytes fit under the budget — so no row group ends with a partial
+    /// batch, and the budget is what the batch is measured against.
+    ///
+    /// **The width is the statement's**, the same number the estimate charges
+    /// a column, so the rule and the estimate cannot disagree about what a row
+    /// costs.
+    #[must_use]
+    pub fn batch_rows_under_bytes(&self, budget_bytes: usize, read: &[usize]) -> usize {
+        let per_row = self.row_bytes_of(read);
+        if per_row == 0 {
+            return self.batch_rows_for(None, MAX_READER_BATCH_ROWS);
+        }
+        // **The floor**: a budget too small to buy the smallest usable batch
+        // still buys that batch, because a read has to read something.
+        let limit = (budget_bytes / per_row).max(MIN_READER_BATCH_ROWS);
+        self.batch_rows_for(None, limit)
+    }
+
+    /// The bytes one row of a read of these columns costs.
+    ///
+    /// **The statement's per-column cost**, over the columns the read takes,
+    /// and the validity bit each column's rows carry.
+    #[must_use]
+    pub fn row_bytes_of(&self, read: &[usize]) -> usize {
+        read.iter()
+            .filter_map(|&index| self.columns.get(index).map(|column| (index, column)))
+            .map(|(index, _column)| {
+                let cost = self.column_cost(index);
+                cost.per_row(self.rows()).saturating_add(1)
+            })
+            .sum()
     }
 
     /// Reads the given columns, with the given predicates pushed into the
@@ -860,6 +1051,31 @@ impl ParquetSource {
     }
 }
 
+/// The **file's own** bytes and values, for each column of the file.
+///
+/// **The file's pages**: each column chunk's `total_uncompressed_size` and
+/// its `num_values`, summed over the row groups. It is not the working set's
+/// cost — the engine holds decoded values, and a number's eight bytes
+/// already are its value — so it is used for the one thing it is good at:
+/// the size of a column's own data. See [`crate::width`].
+fn file_bytes(metadata: &ParquetMetaData) -> (Vec<usize>, Vec<usize>) {
+    let mut totals: Vec<usize> = Vec::new();
+    let mut counts: Vec<usize> = Vec::new();
+    for group in metadata.row_groups() {
+        for (index, chunk) in group.columns().iter().enumerate() {
+            if totals.len() <= index {
+                totals.resize(index + 1, 0);
+                counts.resize(index + 1, 0);
+            }
+            totals[index] = totals[index]
+                .saturating_add(usize::try_from(chunk.uncompressed_size()).unwrap_or(0));
+            counts[index] =
+                counts[index].saturating_add(usize::try_from(chunk.num_values()).unwrap_or(0));
+        }
+    }
+    (totals, counts)
+}
+
 /// The smallest and largest value each column holds, over the file's row groups.
 ///
 /// A column with no statistics in any row group is not in the map at all: the
@@ -1112,6 +1328,10 @@ impl EngineSource for ParquetSource {
         ParquetSource::worker_count(self, threads)
     }
 
+    fn batch_rows(&self) -> usize {
+        ParquetSource::batch_rows(self)
+    }
+
     fn decide_read(
         &self,
         materialised: &[usize],
@@ -1153,6 +1373,10 @@ impl ColumnSchema for ParquetSource {
 
     fn column_type(&self, index: usize) -> DataType {
         self.columns.get(index).map_or(DataType::Int64, |column| column.data_type)
+    }
+
+    fn column_cost(&self, index: usize) -> crate::width::RowCost {
+        ParquetSource::column_cost(self, index)
     }
 }
 

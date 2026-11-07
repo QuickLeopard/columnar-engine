@@ -41,6 +41,8 @@
 
 use columnar_core::DataType;
 
+use crate::width::{RowCost, Storage};
+
 mod resolve;
 mod resolved;
 mod spec;
@@ -76,4 +78,17 @@ pub trait ColumnSchema {
 
     /// The type of the column at `index`.
     fn column_type(&self, index: usize) -> DataType;
+
+    /// What one row of the column at `index` costs, in bytes.
+    ///
+    /// **This is the width statement**, and the estimate and the reader's batch
+    /// rule both read it. The **default** is the type's own cost: a schema
+    /// that cannot say how a column's values are laid out is charged the
+    /// plain cost, which is the dearer of the two a `utf8` column can have.
+    ///
+    /// A source that knows says so — a dictionary-encoded column then costs
+    /// its index's four bytes rather than a `String`'s twenty-four.
+    fn column_cost(&self, index: usize) -> RowCost {
+        Storage::of_type(self.column_type(index)).cost(0)
+    }
 }

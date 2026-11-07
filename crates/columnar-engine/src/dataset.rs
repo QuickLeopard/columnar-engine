@@ -264,6 +264,18 @@ impl crate::plan::ColumnSchema for Dataset {
     fn column_type(&self, index: usize) -> DataType {
         self.chunks.get(index).map_or(DataType::Int64, columnar_core::ColumnChunk::data_type)
     }
+
+    /// **The eager path's answer**, and the honest one: the chunk is in hand,
+    /// so the storage and the value's own bytes are both known.
+    fn column_cost(&self, index: usize) -> crate::width::RowCost {
+        self.chunks.get(index).map_or_else(
+            || crate::width::Storage::of_type(DataType::Int64).cost(0),
+            |chunk| {
+                let storage = crate::width::storage_of_encoding(&chunk.encoding);
+                storage.cost(crate::width::value_bytes_of_encoding(&chunk.encoding))
+            },
+        )
+    }
 }
 
 /// The limit on the number of rows per record batch on the **eager** path.

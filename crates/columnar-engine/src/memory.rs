@@ -16,6 +16,7 @@
 //! | the aggregate hash table | `groups * 16` |
 //! | the row positions | `rows * 4`, where a join or a sort is present |
 //! | the join's build side | its dataset and the larger of its two tables |
+//! | **the reader's batch** | `batch rows * (value width + 1 validity bit)`, over the columns the reader fetches |
 //!
 //! The aggregate hash table holds one entry per **group**, and the number of
 //! groups cannot be known before the query runs. A **grouped** aggregate can
@@ -24,10 +25,26 @@
 //! row overstated the working set six million times -- 91.6 MiB of phantom
 //! on every eager plan.
 //!
-//! The value width is 8 bytes for `int64` and `float64`, and 24 bytes
-//! -- the size of a `String` header -- for `utf8`; the bytes a string's heap
-//! holds are not counted, because they are the data's own size rather than
-//! the working set's.
+//! ## What a row costs
+//!
+//! **The width statement**, and it lives in [`crate::width`]: the row's
+//! **holder** -- **8** bytes for an `int64` or a `float64`, **4** for a
+//! dictionary's index, **24** for a plain string's `String` header -- and the
+//! column's own **value** on top, which is the string's own bytes and the
+//! dictionary's values.
+//!
+//! **The estimate and the reader's batch rule read the same statement**, so
+//! the two cannot disagree about what a row costs.
+//!
+//! ## The estimate is an upper bound, not a prediction
+//!
+//! It is meant to fail early and loudly, not to be accurate to the byte.
+//! **And it is measured against**, because a budget that has never seen the
+//! real thing is a budget that has never been checked: the difference between
+//! the estimate and a counting allocator's measurement is in
+//! [§3ag](../../PERF.md#3ag-the-width-statement-paid), and it runs **both**
+//! ways -- the estimate is high on a narrow read and low on a wide one, and
+//! the reason is named there.
 //!
 //! ## The join's build side
 //!
@@ -79,8 +96,15 @@
 //! dataset and holds one copy of it. A parallel read holds every thread's part
 //! at once -- which is one copy between them -- and then holds the merged
 //! result as well, so it holds **two**. See [`estimate_lazy_read`].
+//!
+//! **And it accounts for the reader's batch**, which is the transient part of
+//! the read: the reader holds one batch of the columns it fetches at a time,
+//! and a parallel read holds one batch per worker. See
+//! [`estimate_lazy_read_with_batch`]. **Without that charge the budget's
+//! verdict on a plan was the same whatever the reader's batch size said**, and
+//! the batch's price was invisible to it.
 
-use columnar_core::{ComparisonOp, DataType, Encoding, Predicate, ScalarValue};
+use columnar_core::{ComparisonOp, DataType, Predicate, ScalarValue};
 
 use crate::plan::{ColumnSchema, QueryPlan, ResolvedJoin, ResolvedPlan, ResolvedSort};
 use crate::source::{EngineSource, ParquetSource};
@@ -100,9 +124,6 @@ const HASH_ENTRY_BYTES: usize = 48;
 
 /// The bytes a row position takes: a `u32`.
 const POSITION_BYTES: usize = 4;
-
-/// The width of a `String` header, the value width of a `utf8` column.
-const STRING_HEADER_BYTES: usize = 24;
 
 /// The largest direct-addressed table the engine will build, in bytes.
 ///
@@ -243,17 +264,15 @@ fn is_grouped(resolved: &ResolvedPlan) -> bool {
 }
 
 /// The bytes a materialised column costs.
+///
+/// **The statement's**, read off the chunk: the row's holder — **8**, **4** or
+/// **24** — and the value's own bytes, which the eager path knows because the
+/// chunk is in hand. See [`crate::width`].
 fn column_bytes(chunk: &columnar_core::ColumnChunk, rows: usize) -> usize {
-    let value_width = match &chunk.encoding {
-        Encoding::Int64 { .. }
-        | Encoding::Float64 { .. }
-        | Encoding::Int64Dict { .. }
-        | Encoding::Float64Dict { .. }
-        | Encoding::BoolRle { .. } => 8,
-        Encoding::Utf8 { .. } | Encoding::Utf8Dict { .. } => STRING_HEADER_BYTES,
-    };
+    let storage = crate::width::storage_of_encoding(&chunk.encoding);
+    let cost = storage.cost(crate::width::value_bytes_of_encoding(&chunk.encoding));
     let validity = rows.div_ceil(8);
-    rows.saturating_mul(value_width).saturating_add(validity)
+    rows.saturating_mul(cost.holder).saturating_add(cost.value).saturating_add(validity)
 }
 
 /// Estimates the working set of a **lazy** read of `source`, in bytes.
@@ -295,6 +314,9 @@ pub fn estimate_lazy_read(
 /// The one-file read and the set's read are estimated by the **same** rules,
 /// and the set's rows are the sum of its files' -- so a table that is many
 /// files is charged for the rows it holds, not for one file's share of them.
+///
+/// **This is the estimate without the batch.** See
+/// [`estimate_lazy_read_with_batch`].
 #[must_use]
 pub fn estimate_lazy_read_for(
     rows: usize,
@@ -309,12 +331,93 @@ pub fn estimate_lazy_read_for(
 
     let mut dataset = 0usize;
     for &index in read {
-        let width = type_width(schema.column_type(index));
-        dataset =
-            dataset.saturating_add(rows.saturating_mul(width).saturating_add(rows.div_ceil(8)));
+        let cost = schema.column_cost(index);
+        dataset = dataset
+            .saturating_add(rows.saturating_mul(cost.holder))
+            .saturating_add(cost.value)
+            .saturating_add(rows.div_ceil(8));
     }
 
     let mut bytes = dataset.saturating_mul(read_copies(threads));
+
+    // The filter's match mask and the selection vector it becomes.
+    bytes = bytes.saturating_add(rows.div_ceil(8).saturating_mul(2));
+
+    // The aggregate hash table: one entry per group. A **grouped** aggregate
+    // can have as many groups as it has rows, so the rows bound it; a
+    // **global** aggregate has exactly one, and counting one entry per row
+    // would overstate the working set by six million times.
+    let groups = if grouped { rows } else { 1 };
+    bytes = bytes.saturating_add(groups.saturating_mul(GROUP_ENTRY_BYTES));
+
+    bytes
+}
+
+/// Estimates the working set of a **lazy** read, with the **batch** charged.
+///
+/// **This is the estimate the budget checks.** The one above is the file's
+/// rows alone, and it is what the budget used to check -- which is why the
+/// budget's verdict on a plan was the same whatever the reader's batch size
+/// said, and why the batch's price was invisible to it.
+///
+/// A read holds **two** things at once:
+///
+/// - **The file's rows**, for the columns the **dataset** holds -- the plan's
+///   materialised columns and the columns of the predicates the reader
+///   declined. Those are held for the whole read, and a parallel read holds
+///   two copies of them.
+/// - **The batch's rows**, for the columns the **reader fetches** -- the
+///   dataset's columns and the columns of the predicates it pushed. Those are
+///   held for one batch at a time, and a parallel read holds one batch per
+///   worker.
+///
+/// **The batch's rows are the statement's per-column cost**, at the batch's
+/// size -- the same number the reader's own byte budget divides by. See
+/// [`crate::width`].
+///
+/// `rows` is the file's row count, `held` the columns the dataset holds,
+/// `fetched` the columns the reader fetches, `batch_rows` the batch the read
+/// holds, `workers` how many threads read it, and `grouped` whether the
+/// plan's aggregation has group-by columns.
+#[must_use]
+pub fn estimate_lazy_read_with_batch(
+    rows: usize,
+    schema: &dyn ColumnSchema,
+    held: &[usize],
+    fetched: &[usize],
+    batch_rows: usize,
+    workers: usize,
+    grouped: bool,
+) -> usize {
+    if rows == 0 {
+        return 0;
+    }
+
+    // The file's rows: the columns the dataset holds, for the whole read.
+    let mut dataset = 0usize;
+    for &index in held {
+        let cost = schema.column_cost(index);
+        dataset = dataset
+            .saturating_add(rows.saturating_mul(cost.holder))
+            .saturating_add(cost.value)
+            .saturating_add(rows.div_ceil(8));
+    }
+
+    // The batch's rows: the columns the reader fetches, for one batch. The
+    // column's own value bytes are the column's, and they are spread over the
+    // file's rows -- so the batch's share of them is the batch's share of the
+    // column, and not the column's whole.
+    let mut batch = 0usize;
+    for &index in fetched {
+        let cost = schema.column_cost(index);
+        batch = batch
+            .saturating_add(batch_rows.saturating_mul(cost.holder))
+            .saturating_add(batch_rows.saturating_mul(cost.value) / rows)
+            .saturating_add(batch_rows.div_ceil(8));
+    }
+
+    let mut bytes = dataset.saturating_mul(read_copies(workers));
+    bytes = bytes.saturating_add(batch.saturating_mul(workers));
 
     // The filter's match mask and the selection vector it becomes.
     bytes = bytes.saturating_add(rows.div_ceil(8).saturating_mul(2));
@@ -338,18 +441,6 @@ fn read_copies(threads: usize) -> usize {
         1
     } else {
         2
-    }
-}
-
-/// The width of one value of a column of the given type.
-///
-/// A dictionary-encoded string column is a `utf8` column to the engine, and
-/// costs the same as one: the dictionary is shared by the whole column, and
-/// the per-row cost is the index.
-fn type_width(data_type: DataType) -> usize {
-    match data_type {
-        DataType::Int64 | DataType::Float64 => 8,
-        DataType::Utf8 => STRING_HEADER_BYTES,
     }
 }
 
@@ -433,9 +524,11 @@ pub(crate) fn estimate_build_side_over<S: EngineSource>(
     // read set, and over the copies the read holds at once.
     let mut dataset = 0usize;
     for &index in &read.columns {
-        let width = source.columns().get(index).map_or(8, |column| type_width(column.data_type));
-        dataset =
-            dataset.saturating_add(rows.saturating_mul(width).saturating_add(rows.div_ceil(8)));
+        let cost = source.column_cost(index);
+        dataset = dataset
+            .saturating_add(rows.saturating_mul(cost.holder))
+            .saturating_add(cost.value)
+            .saturating_add(rows.div_ceil(8));
     }
     let workers = source.worker_count(threads);
     let mut bytes = dataset.saturating_mul(read_copies(workers));
