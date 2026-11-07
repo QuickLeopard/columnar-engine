@@ -1,8 +1,11 @@
 # Spec 049 — The batch size's price
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-07
+**Finished**: 2026-11-07
 **Predecessor**: [spec 048 — the probe, twice](../048-the-probe-twice/spec.md)
+
+**CI green on `6d10bee`** -- run 42348260263, sixteen of sixteen jobs.
 
 ## The problem
 
