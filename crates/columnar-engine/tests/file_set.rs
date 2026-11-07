@@ -431,7 +431,7 @@ fn the_batch_size_is_derived_from_the_merged_row_groups() {
     let files = write_split(&directory.path, ROWS, ROW_GROUP_ROWS);
 
     let set = FileSetSource::open(&files).expect("the set opens");
-    let batch = set.batch_rows_under(columnar_engine::MAX_READER_BATCH_ROWS);
+    let batch = set.batch_rows_for(&[0], 1);
 
     // The batch divides every row group's row count, in every file -- so no
     // row group anywhere ends with a partial batch.

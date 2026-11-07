@@ -638,7 +638,7 @@ fn estimates(one_source: &columnar_engine::ParquetSource, set: &FileSetSource) -
         one_source,
         &read.held,
         &read.fetched,
-        one_source.batch_rows(),
+        one_source.batch_rows_for(&read.fetched, 1),
         1,
         false,
     );
@@ -650,7 +650,7 @@ fn estimates(one_source: &columnar_engine::ParquetSource, set: &FileSetSource) -
         set,
         &read.held,
         &read.fetched,
-        set.batch_rows(),
+        set.batch_rows_for(&read.fetched, 1),
         1,
         false,
     );

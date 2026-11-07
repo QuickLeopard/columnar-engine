@@ -195,5 +195,5 @@ pub use facade::{
     Expr, FileSetSource, Flavor, Group, JoinReport, JoinSpec, MemoryBudget, MemoryError,
     NullBitmap, Operand, ParquetSource, PlanBuilder, PlanOutput, Predicate, PushdownMetrics,
     QueryPlan, RowGroupRange, ScalarValue, SortReport, SortSpec, SourceColumn, StageStats,
-    TableAddress, MAX_READER_BATCH_ROWS,
+    TableAddress, DEFAULT_READER_BATCH_BYTES,
 };

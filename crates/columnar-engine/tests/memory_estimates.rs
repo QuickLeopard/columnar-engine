@@ -36,7 +36,7 @@ use columnar_engine::memory::{
 };
 use columnar_engine::{
     Aggregate, AggregateSpec, Dataset, JoinSpec, ParquetSource, QueryPlan, SortSpec,
-    MAX_READER_BATCH_ROWS,
+    DEFAULT_READER_BATCH_BYTES,
 };
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
@@ -75,6 +75,11 @@ const GROUP_ROWS: usize = ROWS / DAYS;
 
 /// Writes the synthetic file: ten row groups, one a date, in date order.
 fn write_file(path: &Path) {
+    write_file_with(path, DAYS, GROUP_ROWS);
+}
+
+/// A file with `days` row groups of `group_rows` rows each.
+fn write_file_with(path: &Path, days: usize, group_rows: usize) {
     let schema = Arc::new(Schema::new(vec![
         Field::new("k", DataType::Int64, false),
         Field::new("d", DataType::Utf8, false),
@@ -85,17 +90,17 @@ fn write_file(path: &Path) {
     // The writer buffers rows and flushes a row group when it reaches the
     // limit, so the limit is what decides how many row groups the file has.
     let properties =
-        WriterProperties::builder().set_max_row_group_row_count(Some(GROUP_ROWS)).build();
+        WriterProperties::builder().set_max_row_group_row_count(Some(group_rows)).build();
     let mut writer =
         ArrowWriter::try_new(file, schema.clone(), Some(properties)).expect("the writer is built");
-    for group in 0..DAYS {
-        let first = group * GROUP_ROWS;
-        let keys: Vec<i64> = (first..first + GROUP_ROWS)
+    for group in 0..days {
+        let first = group * group_rows;
+        let keys: Vec<i64> = (first..first + group_rows)
             .map(|row| i64::try_from(row).expect("the row count fits in an i64"))
             .collect();
         let dates: Vec<String> =
-            std::iter::repeat_n(format!("2020-01-{:02}", group + 1), GROUP_ROWS).collect();
-        let values: Vec<f64> = (first..first + GROUP_ROWS)
+            std::iter::repeat_n(format!("2020-01-{:02}", group + 1), group_rows).collect();
+        let values: Vec<f64> = (first..first + group_rows)
             .map(|row| f64::from(i32::try_from(row).expect("the row count fits in an i32")))
             .collect();
 
@@ -625,22 +630,75 @@ fn the_byte_rule_divides_the_budget_by_the_width() {
     // bytes fit under it -- and it is the statement's width that says how
     // many rows that is.
     let budget = 16 * 1024;
-    let batch = source.batch_rows_under_bytes(budget, &read);
+    let batch = source.batch_rows_under_bytes(budget, &read, 1);
     let bytes = batch.saturating_mul(source.row_bytes_of(&read));
     assert!(bytes <= budget, "the batch's bytes fit under the budget");
 
-    // And a budget that is too small for one row buys no batch at all.
+    // And a budget that is too small for one row still buys a batch: a read
+    // has to read something.
+    let floor = source.batch_rows_under_bytes(0, &read, 1);
+    assert!(floor > 0, "the floor buys a batch");
+    assert!(floor * source.row_bytes_of(&read) >= 4_096, "the floor is 4,096 rows");
+}
+
+#[test]
+fn the_budget_is_divided_by_the_reads_width() {
+    // One row group of ten thousand rows: big enough that the **floor** does
+    // not decide the batch, so the width does.
+    let path = file_path("budget-width");
+    write_file_with(&path, 1, 10_000);
+    let source = ParquetSource::open(&path).expect("the source opens");
+
+    // **The same budget, two reads**: the wider one buys the smaller batch,
+    // because a row of it costs more.
+    let budget = 400_000;
+    let narrow = source.batch_rows_under_bytes(budget, &[0], 1);
+    let wide = source.batch_rows_under_bytes(budget, &[0, 1, 2], 1);
+    assert!(narrow > wide, "the wider read buys the smaller batch");
+
+    // And each one divides the row group's rows, and fits the budget.
+    assert_eq!(10_000 % narrow, 0, "the narrow batch divides the rows");
+    assert_eq!(10_000 % wide, 0, "the wide batch divides the rows");
+    assert!(narrow * source.row_bytes_of(&[0]) <= budget);
+    assert!(wide * source.row_bytes_of(&[0, 1, 2]) <= budget);
+}
+
+#[test]
+fn the_workers_share_the_budget() {
+    let path = file_path("budget-workers");
+    write_file_with(&path, 1, 10_000);
+    let source = ParquetSource::open(&path).expect("the source opens");
+
+    // **The budget is the read's**, so six workers give each of them a sixth
+    // of it -- and the read's batch memory does not grow with the workers.
+    let one = source.batch_rows_under_bytes(400_000, &[0], 1);
+    let six = source.batch_rows_under_bytes(400_000, &[0], 6);
+    assert!(six < one, "the workers share the budget");
+    assert_eq!(10_000 % six, 0, "the shared batch divides the rows");
+    let bytes = six * source.row_bytes_of(&[0]);
+    assert!(bytes * 6 <= 400_000, "the read's batch memory fits the budget");
+}
+
+#[test]
+fn the_default_is_the_budget_and_the_knob_is_not() {
+    let source = source("default-budget");
+
+    // **The engine's own** is the budget's rule, on the read's own width.
     assert_eq!(
-        source.batch_rows_under_bytes(0, &read),
-        source.batch_rows_under(MAX_READER_BATCH_ROWS)
+        source.batch_rows_for(&[0], 1),
+        source.batch_rows_under_bytes(DEFAULT_READER_BATCH_BYTES, &[0], 1)
     );
+
+    // **And the knob still overrides it**: a named size is exactly that size.
+    let named = source.clone().with_reader_batch_rows(50);
+    assert_eq!(named.batch_rows_for(&[0], 1), 50);
 }
 
 #[test]
 fn the_batch_the_rule_picks_divides_a_row_group() {
     let source = source("byte-rule-divisor");
     let read: Vec<usize> = vec![0];
-    let batch = source.batch_rows_under_bytes(16 * 1024 * 1024, &read);
+    let batch = source.batch_rows_under_bytes(16 * 1024 * 1024, &read, 1);
 
     // The batch is a **divisor** of the row group's row count, so no row
     // group ends with a partial batch.

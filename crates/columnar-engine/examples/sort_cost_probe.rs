@@ -92,7 +92,7 @@ use columnar_engine::operators::key::KeyColumn;
 use columnar_engine::operators::sort;
 use columnar_engine::pushdown::PushdownPlan;
 use columnar_engine::queries::BuiltinQuery;
-use columnar_engine::{Dataset, ExecOptions, ParquetSource, MAX_READER_BATCH_ROWS};
+use columnar_engine::{Dataset, ExecOptions, ParquetSource};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 
@@ -757,7 +757,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let candidate_block = candidate_parts(&column, &engine_rows);
     let [rows_range, key_column] = hand_over_parts(rows, chunk);
 
-    let batch_rows = source.batch_rows_under(MAX_READER_BATCH_ROWS);
+    // The sort's own batch: the budget is divided by the columns the read
+    // fetches, and the sort reads the key.
+    let batch_rows = source.batch_rows_for(&[key_index], 1);
     let (fused_decode, fused_topk) = fused_parts(&path, key_index, batch_rows, &engine_rows)?;
 
     let operator_all = unbounded_sort(&column);

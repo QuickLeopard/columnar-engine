@@ -58,7 +58,7 @@ use crate::plan::{ColumnSchema, ResolvedFilter};
 use crate::pushdown::PushdownPlan;
 use crate::source::{
     gcd, largest_divisor_at_most, scalar_cmp, BatchFilter, EngineSource, ParquetSource,
-    ReadDecision, RowGroupRange, SourceColumn, MAX_READER_BATCH_ROWS, MIN_READER_BATCH_ROWS,
+    ReadDecision, RowGroupRange, SourceColumn, DEFAULT_READER_BATCH_BYTES, MIN_READER_BATCH_ROWS,
 };
 use crate::{EngineError, ExecOptions, Flavor, QueryPlan};
 
@@ -338,13 +338,16 @@ impl FileSetSource {
             .sum()
     }
 
-    /// The reader's batch size this table will read with, in rows.
+    /// The reader's batch size a read of these columns will use, in rows, when
+    /// the read runs on `workers` workers.
     ///
     /// **The engine's own**: the largest divisor of the merged row groups' row
-    /// count under the reader's row limit.
+    /// count whose **bytes** fit the default's budget — and the bytes a row
+    /// costs are the **width statement's**, over the columns the read fetches.
+    /// **The workers share the budget.**
     #[must_use]
-    pub fn batch_rows(&self) -> usize {
-        self.batch_rows_under(MAX_READER_BATCH_ROWS)
+    pub fn batch_rows_for(&self, read: &[usize], workers: usize) -> usize {
+        self.batch_rows_under_bytes(DEFAULT_READER_BATCH_BYTES, read, workers)
     }
 
     /// The reader's batch size under a **byte budget**, for a read of `read`.
@@ -353,14 +356,22 @@ impl FileSetSource {
     /// query's width.** See
     /// [ADR-0061](../../../docs/adr/0061-the-batch-sizes-price.md).
     #[must_use]
-    pub fn batch_rows_under_bytes(&self, budget_bytes: usize, read: &[usize]) -> usize {
+    pub fn batch_rows_under_bytes(
+        &self,
+        budget_bytes: usize,
+        read: &[usize],
+        workers: usize,
+    ) -> usize {
         let per_row = self.row_bytes_of(read);
         if per_row == 0 {
-            return self.batch_rows_under(MAX_READER_BATCH_ROWS);
+            // A read that fetches nothing holds nothing, so the budget does not
+            // bind it: the batch is the row group's own rows.
+            return self.batch_rows_under(usize::MAX);
         }
         // **The floor**: a budget too small to buy the smallest usable batch
         // still buys that batch, because a read has to read something.
-        let limit = (budget_bytes / per_row).max(MIN_READER_BATCH_ROWS);
+        let share = budget_bytes / workers.max(1);
+        let limit = (share / per_row).max(MIN_READER_BATCH_ROWS);
         self.batch_rows_under(limit)
     }
 
@@ -531,7 +542,12 @@ impl FileSetSource {
         let workers = self.worker_count(threads);
         // One batch size for the whole table: the one the merged row groups
         // agree on. It divides every row group's row count, in every file.
-        let batch_rows = self.batch_rows_under(MAX_READER_BATCH_ROWS);
+        //
+        // **The budget is divided by the columns this read fetches**, so the
+        // batch is the read's own.
+        let projection = crate::source::scan_projection(columns, pushdown);
+        let batch_rows =
+            self.batch_rows_under_bytes(DEFAULT_READER_BATCH_BYTES, &projection, workers);
         if workers == 1 {
             return self.read_in_order(columns, pushdown, filter, flavor, batch_rows);
         }
@@ -822,8 +838,8 @@ impl EngineSource for FileSetSource {
         FileSetSource::worker_count(self, threads)
     }
 
-    fn batch_rows(&self) -> usize {
-        FileSetSource::batch_rows(self)
+    fn batch_rows_for(&self, read: &[usize], workers: usize) -> usize {
+        FileSetSource::batch_rows_for(self, read, workers)
     }
 
     fn decide_read(

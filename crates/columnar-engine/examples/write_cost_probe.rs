@@ -113,7 +113,7 @@ use std::time::{Duration, Instant};
 
 use arrow::array::RecordBatch;
 use columnar_engine::pushdown::PushdownPlan;
-use columnar_engine::{ParquetSource, MAX_READER_BATCH_ROWS};
+use columnar_engine::ParquetSource;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -433,9 +433,9 @@ fn rows(path: &Path) -> u64 {
 /// row counts, rounded down to a divisor that fits under the limit. The probe asks the
 /// engine for it, so that the probe's shapes are the engine's shapes by construction
 /// rather than by a copy of the rule.
-fn batch_rows(path: &Path) -> usize {
+fn batch_rows(path: &Path, read: &[usize]) -> usize {
     let source = ParquetSource::open(path).expect("the source opens");
-    source.batch_rows_under(MAX_READER_BATCH_ROWS)
+    source.batch_rows_for(read, 1)
 }
 
 /// A file's size in bytes.
@@ -739,7 +739,7 @@ fn main() {
         "rows": file_rows,
         "row_group_rows": ROW_GROUP_ROWS,
         "batch_rows": batch,
-        "engine_batch_rows": batch_rows(&path),
+        "engine_batch_rows": batch_rows(&path, &SCAN_COLUMNS),
         "read_source_ms": read_source_ms,
         "bytes_original": bytes.original,
         "bytes_written": bytes.written,

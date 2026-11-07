@@ -54,7 +54,7 @@ use arrow::array::{Array, ArrayRef, DictionaryArray, Float64Array, StringArray};
 use arrow::datatypes::{DataType as ArrowType, Field, FieldRef, Int32Type, Schema};
 use columnar_core::{ComparisonOp, ScalarValue};
 use columnar_engine::pushdown::{Pushdown, PushdownPlan};
-use columnar_engine::{ParquetSource, MAX_READER_BATCH_ROWS};
+use columnar_engine::ParquetSource;
 use columnar_kernels::Flavor;
 use parquet::arrow::arrow_reader::{
     ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder,
@@ -93,7 +93,7 @@ fn main() {
     }
 
     let plan = q6_pushdown();
-    let batch_rows = engine_batch_rows(path);
+    let batch_rows = engine_batch_rows(path, &plan.columns());
     let groups = row_groups(path);
     let projection = [QUANTITY, DISCOUNT, SHIPDATE];
 
@@ -708,15 +708,16 @@ fn row_groups(path: &Path) -> usize {
     builder.metadata().num_row_groups()
 }
 
-/// The reader's batch size the engine would use for this file.
+/// The reader's batch size the engine would use for this file, for a read.
 ///
 /// The probe **asks the engine** for it, rather than copying the rule out of
-/// it: the engine derives the batch size from the file -- the batch size
-/// divides every row group's row count, so no row group is left with a
-/// partial batch -- and the probe's shapes have to be the engine's shapes.
-fn engine_batch_rows(path: &Path) -> usize {
+/// it: the engine derives the batch size from the file and from the columns
+/// the read fetches -- the batch size divides every row group's row count, so
+/// no row group is left with a partial batch -- and the probe's shapes have to
+/// be the engine's shapes.
+fn engine_batch_rows(path: &Path, read: &[usize]) -> usize {
     let source = ParquetSource::open(path).expect("the source opens");
-    source.batch_rows_under(MAX_READER_BATCH_ROWS)
+    source.batch_rows_for(read, 1)
 }
 
 /// The commit the working tree is at, for the report.

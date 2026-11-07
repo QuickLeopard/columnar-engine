@@ -67,7 +67,7 @@ static ALLOCATOR: Counting = Counting;
 /// read and nothing else.
 ///
 /// **The engine's own is one of the points**: **125,000** rows, the largest divisor of a row group's row
-/// count under [`columnar_engine::source::MAX_READER_BATCH_ROWS`].
+/// count under the engine's **byte budget**.
 const BATCH_SIZES: [usize; 4] = [62_500, 125_000, 250_000, 1_000_000];
 
 /// How many times each point is measured.

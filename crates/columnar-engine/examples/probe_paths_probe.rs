@@ -63,7 +63,7 @@ const ITERATIONS: usize = 8;
 /// is the engine's probe and nothing else.
 ///
 /// **The engine's own is one of the points**: **125,000** rows, the largest divisor of a row group's
-/// row count under [`columnar_engine::source::MAX_READER_BATCH_ROWS`]. It is in the sweep, and in
+/// row count under the engine's **byte budget**. It is in the sweep, and in
 /// the sweep's rotation, so that "a named size against the engine's own" is a comparison between
 /// two points that took the same position half the time each.
 const SWEEP: [usize; 4] = [62_500, 125_000, 250_000, 1_000_000];

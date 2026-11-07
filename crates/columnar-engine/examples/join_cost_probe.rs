@@ -163,7 +163,7 @@ use columnar_engine::operators::join::{build_table, probe_rows, BuildTable};
 use columnar_engine::operators::key::{ArrowKeys, KeyColumn, KeySource, KeyValue};
 use columnar_engine::pushdown::{Pushdown, PushdownPlan};
 use columnar_engine::queries::BuiltinQuery;
-use columnar_engine::{Dataset, ExecOptions, JoinSpec, ParquetSource, MAX_READER_BATCH_ROWS};
+use columnar_engine::{Dataset, ExecOptions, JoinSpec, ParquetSource};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 
@@ -1647,7 +1647,9 @@ fn probe_parts(
     let probe_index =
         source.column_index(PROBE_KEY).ok_or_else(|| format!("no {PROBE_KEY} column"))?;
     let value_index = source.column_index("l_extendedprice").unwrap_or(probe_index);
-    let batch_rows = source.batch_rows_under(MAX_READER_BATCH_ROWS);
+    // The probe side's own batch: the budget is divided by the columns the
+    // probe side fetches.
+    let batch_rows = source.batch_rows_for(&[probe_index, value_index], 1);
     let values = probe_values(source, probe_index, flavor)?;
     let all_rows = 0..u32::try_from(source.rows()).unwrap_or(u32::MAX);
     let candidate_rows = candidate_probe(counts, base, &values, all_rows.clone());
@@ -1981,7 +1983,9 @@ fn measure(path: &Path, code: &str) -> Result<Measured, Box<dyn std::error::Erro
     let probe_index =
         source.column_index(PROBE_KEY).ok_or_else(|| format!("no {PROBE_KEY} column"))?;
     let value_index = source.column_index("l_extendedprice").unwrap_or(probe_index);
-    let batch_rows = source.batch_rows_under(MAX_READER_BATCH_ROWS);
+    // The probe side's own batch: the budget is divided by the columns the
+    // probe side fetches.
+    let batch_rows = source.batch_rows_for(&[probe_index, value_index], 1);
 
     // The held column is loaded **once**, before the iterations, and disturbed
     // in them: the two sides of the file state's difference are then taken in

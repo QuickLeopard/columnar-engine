@@ -63,7 +63,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use columnar_engine::pushdown::PushdownPlan;
-use columnar_engine::{ParquetSource, MAX_READER_BATCH_ROWS};
+use columnar_engine::ParquetSource;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 use parquet::file::reader::{FileReader, SerializedFileReader};
@@ -193,15 +193,16 @@ fn engine_scan(path: &Path, columns: &[usize]) -> (Duration, usize) {
     (elapsed, rows)
 }
 
-/// The batch size the engine's own read uses on a file.
+/// The batch size the engine's own read uses on a file, for a given read.
 ///
-/// The engine derives it from the file: the greatest common divisor of the
-/// row groups' row counts, rounded down to a divisor that fits under the
-/// limit. The probe asks the engine for it, so that the probe's shapes are
-/// the engine's shapes by construction rather than by a copy of the rule.
-fn batch_rows(path: &Path) -> usize {
+/// The engine derives it from the file and from **the columns the read
+/// fetches**: the greatest common divisor of the row groups' row counts,
+/// under the byte budget that those columns' width allows. The probe asks
+/// the engine for it, so that the probe's shapes are the engine's shapes by
+/// construction rather than by a copy of the rule.
+fn batch_rows(path: &Path, read: &[usize]) -> usize {
     let source = ParquetSource::open(path).expect("the source opens");
-    source.batch_rows_under(MAX_READER_BATCH_ROWS)
+    source.batch_rows_for(read, 1)
 }
 
 /// The file's row-group count.
@@ -267,7 +268,15 @@ fn measure(shape: &Shape) -> (Timing, usize) {
 }
 
 /// The shapes the probe measures, in the order the table prints them.
-fn shapes(lineitem: &Path, orders: &Path, lineitem_rows: usize, orders_rows: usize) -> Vec<Shape> {
+fn shapes(lineitem: &Path, orders: &Path) -> Vec<Shape> {
+    let lineitem_source = ParquetSource::open(lineitem).expect("the source opens");
+    let orders_source = ParquetSource::open(orders).expect("the source opens");
+    // **Each shape's own batch**: the budget is divided by the columns that
+    // shape fetches, so two widths get two batches.
+    let orderkey_batch = lineitem_source.batch_rows_for(&[ORDERKEY], 1);
+    let price_batch = lineitem_source.batch_rows_for(&[EXTENDEDPRICE], 1);
+    let both_batch = lineitem_source.batch_rows_for(&[ORDERKEY, EXTENDEDPRICE], 1);
+    let orders_batch = orders_source.batch_rows_for(&[ORDERS_ORDERKEY, ORDERS_ORDERDATE], 1);
     let both = vec![ORDERKEY, EXTENDEDPRICE];
     vec![
         Shape {
@@ -276,7 +285,7 @@ fn shapes(lineitem: &Path, orders: &Path, lineitem_rows: usize, orders_rows: usi
             part: Part::Crate,
             path: lineitem.to_path_buf(),
             columns: vec![ORDERKEY],
-            batch_rows: lineitem_rows,
+            batch_rows: orderkey_batch,
             engine: false,
         },
         Shape {
@@ -285,7 +294,7 @@ fn shapes(lineitem: &Path, orders: &Path, lineitem_rows: usize, orders_rows: usi
             part: Part::Crate,
             path: lineitem.to_path_buf(),
             columns: vec![EXTENDEDPRICE],
-            batch_rows: lineitem_rows,
+            batch_rows: price_batch,
             engine: false,
         },
         Shape {
@@ -294,7 +303,7 @@ fn shapes(lineitem: &Path, orders: &Path, lineitem_rows: usize, orders_rows: usi
             part: Part::Crate,
             path: lineitem.to_path_buf(),
             columns: both.clone(),
-            batch_rows: lineitem_rows,
+            batch_rows: both_batch,
             engine: false,
         },
         Shape {
@@ -303,7 +312,7 @@ fn shapes(lineitem: &Path, orders: &Path, lineitem_rows: usize, orders_rows: usi
             part: Part::Engine,
             path: lineitem.to_path_buf(),
             columns: vec![ORDERKEY],
-            batch_rows: lineitem_rows,
+            batch_rows: orderkey_batch,
             engine: true,
         },
         Shape {
@@ -312,7 +321,7 @@ fn shapes(lineitem: &Path, orders: &Path, lineitem_rows: usize, orders_rows: usi
             part: Part::Engine,
             path: lineitem.to_path_buf(),
             columns: vec![EXTENDEDPRICE],
-            batch_rows: lineitem_rows,
+            batch_rows: price_batch,
             engine: true,
         },
         Shape {
@@ -321,7 +330,7 @@ fn shapes(lineitem: &Path, orders: &Path, lineitem_rows: usize, orders_rows: usi
             part: Part::Engine,
             path: lineitem.to_path_buf(),
             columns: both,
-            batch_rows: lineitem_rows,
+            batch_rows: both_batch,
             engine: true,
         },
         Shape {
@@ -330,7 +339,7 @@ fn shapes(lineitem: &Path, orders: &Path, lineitem_rows: usize, orders_rows: usi
             part: Part::Build,
             path: orders.to_path_buf(),
             columns: vec![ORDERS_ORDERKEY, ORDERS_ORDERDATE],
-            batch_rows: orders_rows,
+            batch_rows: orders_batch,
             engine: false,
         },
     ]
@@ -349,9 +358,8 @@ fn main() {
 
     // The join's build side is the file beside the probe's file.
     let orders = path.parent().unwrap_or_else(|| Path::new(".")).join("orders.parquet");
-    let lineitem_rows = batch_rows(&path);
-    let orders_rows = batch_rows(&orders);
-    let shapes = shapes(&path, &orders, lineitem_rows, orders_rows);
+    let shapes = shapes(&path, &orders);
+    let lineitem_rows = batch_rows(&path, &[ORDERKEY, EXTENDEDPRICE]);
 
     println!("file: {}", path.display());
     println!("row groups: {}, batch rows: {lineitem_rows}", row_groups(&path));
@@ -383,6 +391,10 @@ fn main() {
         "commit": commit(),
         "host_load_average": load_average(),
         "batch_rows": lineitem_rows,
+        "the_batch_rows": shapes
+            .iter()
+            .map(|shape| (shape.name.to_owned(), serde_json::json!(shape.batch_rows)))
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
         "row_groups": row_groups(&path),
         "measurements_ms": measurements,
         "spreads_ms": spreads,

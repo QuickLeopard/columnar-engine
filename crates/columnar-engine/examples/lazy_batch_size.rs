@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 
 use columnar_core::{ComparisonOp, ScalarValue};
 use columnar_engine::pushdown::{Pushdown, PushdownPlan};
-use columnar_engine::{ParquetSource, MAX_READER_BATCH_ROWS};
+use columnar_engine::{ParquetSource, DEFAULT_READER_BATCH_BYTES};
 
 /// The file's root index of `l_quantity`.
 const QUANTITY: usize = 4;
@@ -214,7 +214,6 @@ fn main() {
     let path = Path::new(&file);
 
     let source = ParquetSource::open(path).expect("the source opens");
-    let current = source.batch_rows_under(MAX_READER_BATCH_ROWS);
 
     println!("file: {}", path.display());
     println!("iterations: {ITERATIONS}\n");
@@ -230,6 +229,14 @@ fn main() {
     let mut reported: Vec<serde_json::Value> = Vec::with_capacity(shapes.len());
 
     for (name, plan, materialised) in shapes {
+        // **The engine's own batch for this shape**: the default is a byte
+        // budget, and the budget is divided by the columns the read fetches.
+        let mut fetched = materialised.to_vec();
+        fetched.extend(plan.columns());
+        fetched.sort_unstable();
+        fetched.dedup();
+        let current = source.batch_rows_for(&fetched, 1);
+
         println!("=== {name} ===");
         println!("    limit      batch     engine scan     rows");
         println!("------------------------------------------------");
@@ -245,8 +252,7 @@ fn main() {
                 rows = survivors;
             }
             let scan_ms = ms(median(&mut samples));
-            let marker =
-                if limit == MAX_READER_BATCH_ROWS { "  <- the limit in the tree" } else { "" };
+            let marker = if limit == current { "  <- the engine's own batch" } else { "" };
             println!("{limit:>10} {batch_rows:>10}  {scan_ms:8.2} ms  {rows:>8}{marker}");
             limits.push(serde_json::json!({
                 "limit": limit,
@@ -260,6 +266,7 @@ fn main() {
         println!();
         reported.push(serde_json::json!({
             "shape": name,
+            "the_engine_s_own_batch": current,
             "limits": limits,
             "candidates": [
                 { "batch": OLD_BATCH_ROWS, "scan_ms": candidates.first().copied().unwrap_or_default() },
@@ -276,8 +283,7 @@ fn main() {
             "iterations": ITERATIONS,
             "host_load_average": load_average(),
             "old_batch_rows": OLD_BATCH_ROWS,
-            "limit_in_the_tree": MAX_READER_BATCH_ROWS,
-            "batch_in_the_tree": current,
+            "the_default_s_batch_bytes": DEFAULT_READER_BATCH_BYTES,
             "shapes": reported,
         });
         std::fs::write(&out, serde_json::to_string_pretty(&report).expect("the report is written"))

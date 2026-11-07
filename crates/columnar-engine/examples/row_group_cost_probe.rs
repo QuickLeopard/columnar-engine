@@ -278,6 +278,16 @@ fn crate_read_with_batch(path: &Path, columns: &[usize], batch_rows: usize) -> (
     (started.elapsed(), rows)
 }
 
+/// The batch size the engine's own read uses for this plan.
+///
+/// The engine's default is a **byte budget**, and the budget is divided by the
+/// columns the read fetches -- so the probe asks the engine, and does not copy
+/// the rule out of it.
+fn engine_own_batch_rows(path: &Path, plan: &PushdownPlan) -> usize {
+    let source = ParquetSource::open(path).expect("the source opens");
+    source.batch_rows_for(&plan.columns(), 1)
+}
+
 /// The engine's own lazy scan, with a given reader batch size.
 fn engine_scan_with_batch(
     path: &Path,
@@ -431,7 +441,15 @@ fn measure_engine_scan(path: &Path, plan: &PushdownPlan) -> (f64, f64, Vec<serde
     println!("and the price     : {engine_full_ms:7.2} ms");
     println!("--- the engine's own scan, by reader batch size ---");
     let mut ladder: Vec<serde_json::Value> = Vec::new();
-    for batch_rows in [12_500usize, 25_000, 31_250, 50_000, 62_500, 65_536, 125_000, 250_000] {
+    // **The engine's own batch is in the ladder**: the default moved, and the
+    // ladder is where the default's batch is compared with the fixed ones.
+    let own = engine_own_batch_rows(path, plan);
+    let mut batches = vec![12_500usize, 25_000, 31_250, 50_000, 62_500, 65_536, 125_000, 250_000];
+    if !batches.contains(&own) {
+        batches.push(own);
+        batches.sort_unstable();
+    }
+    for batch_rows in batches {
         let elapsed = ms(repeat(|| engine_scan_with_batch(path, plan, &[], batch_rows).0));
         println!("batch {batch_rows:>7} rows : {elapsed:7.2} ms");
         ladder.push(serde_json::json!({ "batch": batch_rows, "scan_ms": elapsed }));

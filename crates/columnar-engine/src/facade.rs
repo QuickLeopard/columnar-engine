@@ -73,7 +73,7 @@ pub use crate::memory::{MemoryBudget, MemoryError};
 pub use crate::operators::aggregate::{AggregateResult, AggregateValue, Group};
 pub use crate::plan::{Aggregate, AggregateSpec, JoinSpec, QueryPlan, SortSpec};
 pub use crate::pushdown::PushdownMetrics;
-pub use crate::source::{ParquetSource, RowGroupRange, SourceColumn, MAX_READER_BATCH_ROWS};
+pub use crate::source::{ParquetSource, RowGroupRange, SourceColumn, DEFAULT_READER_BATCH_BYTES};
 
 // The vocabulary the plan's types are made of. These are `columnar-core`'s
 // types, and they are on the surface because the surface's own types name
@@ -511,7 +511,7 @@ pub(crate) fn execute_source<S: EngineSource>(
         source,
         &decision.read,
         &fetched,
-        source.batch_rows(),
+        source.batch_rows_for(&fetched, workers),
         workers,
         grouped,
     )
