@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **46 specs**, **60 ADRs** and **29 defects** so far, and every one
-of the specs is closed. **And the status has a page**:
+[`constitution.md`](constitution.md). **47 specs**, **61 ADRs** and **29 defects** so far, and every one
+of the specs but the one in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
 cannot go stale.
@@ -344,13 +344,25 @@ worth, and the paired difference against `DuckDB`'s join falls from **+8.083 ms*
 the build table's residency**, which is worth **0.657 ms** and is measured: with the key column alone the
 gap is **+1.834 ms**, so the value column's decode is more than half of the charge. **And the knob is a
 knob**: `ParquetSource::with_reader_batch_rows` names a size in rows, the default does not move, and no
-engine behaviour changed. **What would answer the next question:** whether the default should move — and
-what a batch of a million rows costs in memory, since the reader holds a batch's key column and value
-column at once. **And what is not yet explained:** why a shorter run of the probe costs more per row, when
-the table is equally cold either way and the reader's work is the same.
+engine behaviour changed.
+
+**And spec 049 priced the knob, and the price is what the rule has to answer.** A **counting global
+allocator** measured the **peak** a read holds at three widths: the two predicate columns, the two
+materialised ones, and the file's sixteen. **The bytes a batch holds scale with the width** — a whole row
+group is **12.8 MiB** on a narrow query and **165.8 MiB** on a wide one — **and the knob is named in rows,
+so it cannot see that.** **And the engine's own memory estimate does not model the batch at all**: it says
+**1,500,016** bytes where the read holds **13,719,490**, and it says **1,549,500,016** where the read
+holds **1,157,291,375** — and the **default budget refuses the wide shape at every batch size**, because
+the estimate does not depend on the batch size at all. **So the rule
+is a byte budget, and the budget is 16 MiB** — bounded by the measurement from both sides, and it gives
+every shape at least what it has today. **And the default does not move yet**: moving it moves **every**
+published figure the batch size touches, and that is the next increment's work.
+**And what is still not explained:** why a shorter run of the probe costs more per row, when the table is
+equally cold either way and the reader's work is the same.
 [§3ac](PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart),
-[§3ad](PERF.md#3ad-the-build-side-s-keys-as-a-filter) and
-[§3ae](PERF.md#3ae-the-probe-measured-twice) have the tables.
+[§3ad](PERF.md#3ad-the-build-side-s-keys-as-a-filter),
+[§3ae](PERF.md#3ae-the-probe-measured-twice) and
+[§3af](PERF.md#3af-the-batch-sizes-price) have the tables.
 
 **4. The morsel driver.** The pushdown leaves the operators nothing to do on the cold path, so a
 morsel driver has nothing to drive there. It has not been built, and nothing measured so far says
@@ -645,6 +657,19 @@ for a pinned x86-64 runner; it has not run on one.
   cold either way and the reader's work is the same.
   [§3ae](PERF.md#3ae-the-probe-measured-twice) has the tables, and
   [ADR-0060](docs/adr/0060-the-probe-measured-twice.md) records it.
+- **The batch size's price is measured, and the rule is a byte budget.** Spec 049 measured the **peak** a read
+  holds — with a **counting global allocator**, at three widths — and the **time** on both shapes in one session,
+  back to back, with the order alternated. **The bytes a batch holds scale with the query's width**: a whole row
+  group is **12.8 MiB** on a narrow query and **165.8 MiB** on a wide one, **and the knob is named in rows, so it
+  cannot see that**. **And the engine's memory estimate does not model the batch**: it says **1,500,016** bytes
+  where the read holds **13,719,490**, and **1,549,500,016** where the read holds **1,157,291,375** — and the
+  **default budget refuses the wide shape at every batch size**. **So the rule is a byte budget, and the budget is
+  16 MiB**, bounded by the measurement from both sides and giving every shape at least what it has today.
+  **What is not done:** the default does not move yet — moving it moves **every** published figure the batch size
+  touches, and that is the next increment's work — and the **estimate and the rule do not yet share one honest
+  statement of what a row costs**.
+  [§3af](PERF.md#3af-the-batch-sizes-price) has the tables, and
+  [ADR-0061](docs/adr/0061-the-batch-sizes-price.md) records it.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a

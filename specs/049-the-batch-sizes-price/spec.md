@@ -38,44 +38,70 @@ rule that has to serve both.
 
 ### R1 — The price is **measured**, not estimated
 
-- [ ] The instrument installs a **counting global allocator** and reports the **peak held bytes** of a read — the
+- [x] The instrument installs a **counting global allocator** and reports the **peak held bytes** of a read — the
       peak, because a peak is what a budget has to survive, and a budget that is checked against an estimate has
       never seen the real thing.
-- [ ] The peak is measured at **every batch size** of the sweep — **62,500**, **125,000** (the engine's own),
+- [x] The peak is measured at **every batch size** of the sweep — **62,500**, **125,000** (the engine's own),
       **250,000** and **1,000,000** — and at **three widths**: the join query's **two** columns, `q6`'s **two**
       predicate columns with nothing materialised, and the **eager** path's **sixteen**.
-- [ ] Each point is measured **three times** and the median is published, so a point is not a single reading.
+- [x] Each point is measured **three times** and the median is published, so a point is not a single reading.
 
 ### R2 — Both shapes are priced, in **time** as well as in memory
 
-- [ ] The `filter-range` query — the one the limit was chosen for — is measured at the **same** batch sizes as the
+- [x] The `filter-range` query — the one the limit was chosen for — is measured at the **same** batch sizes as the
       join query, **in the same session**, **back to back**, with the **order alternated**.
-- [ ] **So the join's 4.926 ms is priced against what the other shape pays**, and the difference is the **paired**
+- [x] **So the join's 4.926 ms is priced against what the other shape pays**, and the difference is the **paired**
       one, not the difference of two medians from two campaigns.
 
 ### R3 — The estimate is **measured against**, and is not changed
 
-- [ ] The engine's own estimate is published **beside the measurement**, at every point, so the estimate's error
+- [x] The engine's own estimate is published **beside the measurement**, at every point, so the estimate's error
       is published **as the estimate's error** and not as a difference of two numbers.
-- [ ] **And the estimate is not changed in this increment.** Changing it is **spec 050's** work, and the reason
+- [x] **And the estimate is not changed in this increment.** Changing it is **spec 050's** work, and the reason
       is in the amendments.
 
 ### R4 — The default's **rule** is decided, and the default does not move
 
-- [ ] If the measurement says a **byte budget** is the right rule, the rule is published, with the numbers that
+- [x] If the measurement says a **byte budget** is the right rule, the rule is published, with the numbers that
       said it — and the width the rule is for is named.
-- [ ] If the measurement says the **row count** is the right rule, **that is published too**, with the numbers
+- [x] If the measurement says the **row count** is the right rule, **that is published too**, with the numbers
       that said it.
-- [ ] **And the default does not move in this increment.** Moving it moves **every** published figure the
+- [x] **And the default does not move in this increment.** Moving it moves **every** published figure the
       reader's batch size touches, and re-measuring those is **spec 050's** work. **A rule that is decided and
       a default that moves are two different acts, and this increment does the first.**
 
 ### R5 — The answer is published either way
 
-- [ ] A **new section** in `PERF.md`, the decision in an **ADR**, the status's next question rewritten, and the raw
+- [x] A **new section** in `PERF.md`, the decision in an **ADR**, the status's next question rewritten, and the raw
       reports **committed**.
-- [ ] The **guard** checks the published figures **inside the section that publishes them**, as it does for
+- [x] The **guard** checks the published figures **inside the section that publishes them**, as it does for
       spec 048's.
+
+## What the measurement found
+
+**The price scales with the width, and the rule is a byte budget.**
+
+A **counting global allocator** measured the **peak** a read holds at three widths, and the **time** was measured
+beside it in one session, back to back, with the order alternated.
+
+- **The bytes a batch holds scale with the query's width**: between the **62,500**-row batch and the **1,000,000**-row
+  one, the peak grows by **13.39 bytes a row** on the two predicate columns, by **16.03** on the two materialised
+  ones, and by **173.88** on the sixteen — so a whole row group is **12.8 MiB** on a narrow query and **165.8 MiB**
+  on a wide one. **And the knob is named in rows, so it cannot see any of that.**
+- **The engine's memory estimate does not model the batch**: it says **1,500,016** bytes where the read holds
+  **13,719,490**, and **1,549,500,016** where the read holds **1,157,291,375** — and the **default budget refuses
+  the wide shape at every batch size**, including the one that would have fitted.
+- **And the batch's optimum is width-dependent**: the join's part is **−3.717 ms** at a whole row group, faster in
+  **24 of 24**; the filter-range's scan does not move; and the wide read is **+14.455 ms**, faster in **1 of 24**.
+
+**So the rule is a byte budget, and the budget is 16 MiB** — bounded by the measurement from both sides: above the
+narrow shapes' whole row group (**12.8 MiB** and **15.3 MiB**) and at or below the wide shape's own batch
+(**20.7 MiB**). **And it gives every shape at least what it has today**: the narrow shapes get the whole row group,
+and the wide shape gets **62,500** rows.
+
+**And the default does not move in this increment.** Moving it moves **every** published figure the reader's batch
+size touches, and that is **spec 050's** work. See
+[ADR-0061](../../docs/adr/0061-the-batch-sizes-price.md) and `PERF.md` §3af.
 
 ## The scope
 

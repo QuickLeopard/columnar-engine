@@ -1,0 +1,246 @@
+{
+  "code": "67363e9-clean",
+  "probe": "batch-memory",
+  "the_batch_sizes": [
+    62500,
+    125000,
+    250000,
+    1000000
+  ],
+  "the_host_load_average": 6.22,
+  "the_repeats": 3,
+  "the_rows_agree": true,
+  "the_shapes": [
+    {
+      "refused_at_the_default_budget": false,
+      "the_columns_materialised": 0,
+      "the_estimate_bytes": 1500016,
+      "the_points": [
+        {
+          "batch_rows": 62500,
+          "the_batches": 96,
+          "the_held_after_bytes": [
+            1261,
+            1261,
+            1261
+          ],
+          "the_held_median": 1261,
+          "the_peak_bytes": [
+            1166640,
+            1166640,
+            1166640
+          ],
+          "the_peak_median": 1166640,
+          "the_rows": 315203
+        },
+        {
+          "batch_rows": 125000,
+          "the_batches": 48,
+          "the_held_after_bytes": [
+            1261,
+            1261,
+            1261
+          ],
+          "the_held_median": 1261,
+          "the_peak_bytes": [
+            2169504,
+            2169504,
+            2169504
+          ],
+          "the_peak_median": 2169504,
+          "the_rows": 315203
+        },
+        {
+          "batch_rows": 250000,
+          "the_batches": 24,
+          "the_held_after_bytes": [
+            1261,
+            1261,
+            1261
+          ],
+          "the_held_median": 1261,
+          "the_peak_bytes": [
+            4099388,
+            4099388,
+            4099388
+          ],
+          "the_peak_median": 4099388,
+          "the_rows": 315203
+        },
+        {
+          "batch_rows": 1000000,
+          "the_batches": 6,
+          "the_held_after_bytes": [
+            1261,
+            1261,
+            1261
+          ],
+          "the_held_median": 1261,
+          "the_peak_bytes": [
+            13719490,
+            13719490,
+            13719490
+          ],
+          "the_peak_median": 13719490,
+          "the_rows": 315203
+        }
+      ],
+      "the_rows": 315203,
+      "the_shape": "the two predicate columns"
+    },
+    {
+      "refused_at_the_default_budget": false,
+      "the_columns_materialised": 2,
+      "the_estimate_bytes": 99000016,
+      "the_points": [
+        {
+          "batch_rows": 62500,
+          "the_batches": 96,
+          "the_held_after_bytes": [
+            129500281,
+            129500281,
+            129500281
+          ],
+          "the_held_median": 129500281,
+          "the_peak_bytes": [
+            132262335,
+            132262335,
+            132262335
+          ],
+          "the_peak_median": 132262335,
+          "the_rows": 6000000
+        },
+        {
+          "batch_rows": 125000,
+          "the_batches": 48,
+          "the_held_after_bytes": [
+            129500281,
+            129500281,
+            129500281
+          ],
+          "the_held_median": 129500281,
+          "the_peak_bytes": [
+            133241835,
+            133241835,
+            133241835
+          ],
+          "the_peak_median": 133241835,
+          "the_rows": 6000000
+        },
+        {
+          "batch_rows": 250000,
+          "the_batches": 24,
+          "the_held_after_bytes": [
+            129500281,
+            129500281,
+            129500281
+          ],
+          "the_held_median": 129500281,
+          "the_peak_bytes": [
+            135405811,
+            135405811,
+            135405811
+          ],
+          "the_peak_median": 135405811,
+          "the_rows": 6000000
+        },
+        {
+          "batch_rows": 1000000,
+          "the_batches": 6,
+          "the_held_after_bytes": [
+            129500281,
+            129500281,
+            129500281
+          ],
+          "the_held_median": 129500281,
+          "the_peak_bytes": [
+            147294195,
+            147294195,
+            147294195
+          ],
+          "the_peak_median": 147294195,
+          "the_rows": 6000000
+        }
+      ],
+      "the_rows": 6000000,
+      "the_shape": "the two materialised columns"
+    },
+    {
+      "refused_at_the_default_budget": true,
+      "the_columns_materialised": 16,
+      "the_estimate_bytes": 1549500016,
+      "the_points": [
+        {
+          "batch_rows": 62500,
+          "the_batches": 96,
+          "the_held_after_bytes": [
+            1139591586,
+            1139591586,
+            1139591586
+          ],
+          "the_held_median": 1139591586,
+          "the_peak_bytes": [
+            1144709775,
+            1144709775,
+            1144709775
+          ],
+          "the_peak_median": 1144709775,
+          "the_rows": 6000000
+        },
+        {
+          "batch_rows": 125000,
+          "the_batches": 48,
+          "the_held_after_bytes": [
+            1139591586,
+            1139591586,
+            1139591586
+          ],
+          "the_held_median": 1139591586,
+          "the_peak_bytes": [
+            1157291375,
+            1157291375,
+            1157291375
+          ],
+          "the_peak_median": 1157291375,
+          "the_rows": 6000000
+        },
+        {
+          "batch_rows": 250000,
+          "the_batches": 24,
+          "the_held_after_bytes": [
+            1139591586,
+            1139591586,
+            1139591586
+          ],
+          "the_held_median": 1139591586,
+          "the_peak_bytes": [
+            1183960327,
+            1183960327,
+            1183960327
+          ],
+          "the_peak_median": 1183960327,
+          "the_rows": 6000000
+        },
+        {
+          "batch_rows": 1000000,
+          "the_batches": 6,
+          "the_held_after_bytes": [
+            1139591586,
+            1139591586,
+            1139591586
+          ],
+          "the_held_median": 1139591586,
+          "the_peak_bytes": [
+            1307720087,
+            1307720087,
+            1307720087
+          ],
+          "the_peak_median": 1307720087,
+          "the_rows": 6000000
+        }
+      ],
+      "the_rows": 6000000,
+      "the_shape": "the file's sixteen columns"
+    }
+  ]
+}

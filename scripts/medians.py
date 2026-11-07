@@ -3104,6 +3104,170 @@ def print_excursion_hunt(runs: list[dict]) -> None:
         print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
 
 
+# Spec 049: the batch size's price.
+#
+# The memory is measured with a counting allocator, in the instrument's own
+# probe; the time is measured beside it, in a probe that has no allocator in
+# it. The two are never in the same measurement.
+BATCH_MEMORY_SHAPES = (
+    ("the two predicate columns", "the_join_part_ms"),
+)
+
+BATCH_SWEEP_FAMILIES = (
+    ("the_join_part_ms", "the join's part"),
+    ("the_filter_scan_ms", "the filter-range's scan"),
+    ("the_wide_read_ms", "the wide read"),
+)
+
+
+def _pool(runs: list[dict], shape: int, batch: str, key: str) -> list[float]:
+    """One point's samples, pooled over every campaign.
+
+    The pooling is the house's rule: every repetition of every campaign is a
+    sample, and the published figure is the median of the pooled samples.
+    """
+    values: list[float] = []
+    for run in runs:
+        shapes = run.get("the_shapes") or []
+        if shape >= len(shapes):
+            continue
+        for point in shapes[shape].get("the_points", []):
+            if str(point.get("batch_rows")) != str(batch):
+                continue
+            values.extend(float(value) for value in (point.get(key) or []))
+    return values
+
+
+def print_batch_memory(runs: list[dict]) -> None:
+    """Print the price: the peak a read holds, at each width.
+
+    This is spec 049: the reader's batch size is a knob, and the knob's price
+    is measured with a counting allocator, at three widths -- because the bytes
+    a batch holds scale with the query's width, and a knob named in rows cannot
+    see it.
+
+    **The engine's own estimate is printed beside the measurement**, because an
+    estimate that is not measured against is not checked.
+    """
+    if not runs:
+        return
+
+    campaigns = len(runs)
+    probe = runs[0].get("probe", "batch-memory")
+    print(f"\n=== THE BATCH SIZE'S PRICE ({probe} probe, {campaigns} campaigns) ===")
+
+    shapes = runs[0].get("the_shapes") or []
+    for index, shape in enumerate(shapes):
+        name = shape.get("the_shape", "?")
+        columns = shape.get("the_columns_materialised", 0)
+        estimate = int(shape.get("the_estimate_bytes", 0))
+        refused = bool(shape.get("refused_at_the_default_budget", False))
+        print(f"\n-- the shape: {name} ({columns} materialised columns) --")
+        print(f"{'the engine\'s own estimate':<46}{estimate:>15,} bytes")
+        if refused:
+            print(f"{'refused at the default budget':<46}{'yes':>15}")
+        print(
+            f"{'the batch size':<16}{'the peak':>15}{'the held':>15}"
+            f"{'the batches':>13}{'the gap':>15}"
+        )
+        for point in shape.get("the_points", []):
+            batch = str(point.get("batch_rows"))
+            peaks = _pool(runs, index, batch, "the_peak_bytes")
+            helds = _pool(runs, index, batch, "the_held_after_bytes")
+            if not peaks:
+                continue
+            peak = statistics.median(peaks)
+            held = statistics.median(helds) if helds else 0
+            batches = point.get("the_batches", "?")
+            print(
+                f"{int(batch):>15,}{peak:>15,.0f}{held:>15,.0f}"
+                f"{batches:>13,}{peak - estimate:>+15,.0f}"
+            )
+
+    rows_agree = {bool(run.get("the_rows_agree")) for run in runs}
+    print("\n-- the correctness --")
+    print(f"the rows agree in every campaign: {rows_agree == {True}}")
+    loads = [float(run.get("the_host_load_average", 0.0)) for run in runs]
+    if loads:
+        print(f"the host load average: {min(loads):.2f} - {max(loads):.2f}")
+
+
+def _sweep_samples(runs: list[dict], family: str, batch: str, key: str) -> list[float]:
+    """One family's samples at one batch size, pooled over every campaign."""
+    values: list[float] = []
+    for run in runs:
+        sweep = run.get(key) or {}
+        entry = sweep.get(str(batch)) or {}
+        series = entry.get(family) or {}
+        values.extend(float(value) for value in (series.get("samples") or []))
+    return values
+
+
+def print_batch_sweep(runs: list[dict]) -> None:
+    """Print the time: each shape's own part, at each batch size.
+
+    This is spec 049's other half: the join's part and the filter-range's scan
+    are measured **in one session, back to back, with the order alternated**,
+    so the join's win is priced against what the other shape pays.
+
+    **The difference is the paired one**: each point against the engine's own
+    batch size, in the same iteration.
+    """
+    if not runs:
+        return
+
+    campaigns = len(runs)
+    probe = runs[0].get("probe", "batch-sweep")
+    sizes = [str(size) for size in runs[0].get("the_batch_sizes", [])]
+    own = runs[0].get("the_engine_s_own_batch_rows") or ["125000"]
+    own = str(own[0]) if own else "125000"
+
+    print(
+        f"\n=== THE BATCH SIZE'S PRICE, IN TIME ({probe} probe, "
+        f"{campaigns} campaigns, {len(sizes)} points) ==="
+    )
+
+    for family, label in BATCH_SWEEP_FAMILIES:
+        print(f"\n-- {label} --")
+        print(
+            f"{'the batch size':<18}{'the median':>12}"
+            f"{'less the engine\'s own':>24}{'the faster':>12}"
+        )
+        for size in sizes:
+            values = _sweep_samples(runs, family, size, "the_sweep_ms")
+            if not values:
+                continue
+            line = f"{int(size):>17,}{statistics.median(values):>12.3f}"
+            if size == own:
+                line += f"{'-':>24}{'-':>12}"
+            else:
+                differences = _sweep_samples(
+                    runs, family, size, "the_sweep_difference_ms"
+                )
+                if differences:
+                    faster = sum(1 for value in differences if value < 0)
+                    line += (
+                        f"{statistics.median(differences):>+24.3f}"
+                        f"{faster:>7}/{len(differences):<4}"
+                    )
+            print(line)
+
+    rows_agree = {bool(run.get("the_rows_agree")) for run in runs}
+    print("\n-- the correctness --")
+    print(f"the rows agree in every campaign: {rows_agree == {True}}")
+    for label, key in (
+        ("the join's rows", "the_join_rows"),
+        ("the filter-range's rows", "the_filter_rows"),
+        ("the wide read's rows", "the_wide_rows"),
+    ):
+        values = [int(run.get(key, 0)) for run in runs]
+        if values:
+            print(f"{label}: {min(values)} - {max(values)}")
+    loads = [float(run.get("the_host_load_average", 0.0)) for run in runs]
+    if loads:
+        print(f"the host load average: {min(loads):.2f} - {max(loads):.2f}")
+
+
 def main() -> int:
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
@@ -3397,6 +3561,15 @@ def main() -> int:
             batch_sweep.append((label, [load(p) for p in paths]))
     if batch_sweep:
         print_join_parts_batch_sweep(batch_sweep)
+
+    # Spec 049: the batch size's price -- the memory, measured with a counting
+    # allocator, and the time, measured beside it.
+    batch_memory = sorted(Path("bench-results").glob("batch-memory-run*.json"))
+    if batch_memory:
+        print_batch_memory([load(p) for p in batch_memory])
+    batch_sweep_reports = sorted(Path("bench-results").glob("batch-sweep-run*.json"))
+    if batch_sweep_reports:
+        print_batch_sweep([load(p) for p in batch_sweep_reports])
 
     # Spec 035's ladder: the drift's own parts, over the set the file publishes,
     # the set spec 034 measured beside it, and the set spec 036 measured.

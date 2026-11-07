@@ -795,6 +795,26 @@ PROBE_PATHS_VERDICTS = (
     ("the_readers_cost_ms", "what the reader's work costs the table", 3),
 )
 
+# Spec 049: the batch size's price.
+#
+# The **memory** is measured with a counting allocator, in the instrument's own
+# probe; the **time** is measured beside it, in a probe that has no allocator
+# in it. The two are never in the same measurement.
+BATCH_MEMORY_REPORTS = sorted((ROOT / "bench-results").glob("batch-memory-run*.json"))
+BATCH_SWEEP_REPORTS = sorted((ROOT / "bench-results").glob("batch-sweep-run*.json"))
+BATCH_PRICE_SECTION = "### 3af"
+
+# The campaigns the method calls for. A set with fewer is a failure: a set that
+# is not there is not a set of zero figures, it is the absence of the evidence.
+BATCH_PRICE_CAMPAIGNS = 3
+
+# The shapes the price is measured at, and the families each carries.
+BATCH_PRICE_FAMILIES = (
+    ("the_join_part_ms", "the join's part"),
+    ("the_filter_scan_ms", "the filter-range's scan"),
+    ("the_wide_read_ms", "the wide read"),
+)
+
 # The query's own parts, at each of the reader's batch sizes: the set, the
 # label the section publishes it under, and the parts.
 PROBE_PATHS_BATCH_SETS = (
@@ -819,6 +839,39 @@ STATUS_PROBE_PATHS = (
     ),
     ("the table's residency", "probe-paths-run*.json", "the_residency_ms", 3),
     ("the gap with the key alone", "probe-paths-key-only-run*.json", "the_gap_ms", 3),
+)
+
+# The figures the status publishes for spec 049, and the report set each is
+# derived from: (label, the report set, the shape, the batch size, the key).
+STATUS_BATCH_PRICE = (
+    (
+        "the narrow shape's estimate",
+        "batch-memory-run*.json",
+        0,
+        None,
+        "the_estimate_bytes",
+    ),
+    (
+        "the narrow shape's peak at a whole row group",
+        "batch-memory-run*.json",
+        0,
+        1_000_000,
+        "the_peak_bytes",
+    ),
+    (
+        "the wide shape's estimate",
+        "batch-memory-run*.json",
+        2,
+        None,
+        "the_estimate_bytes",
+    ),
+    (
+        "the wide shape's peak at the engine's own batch size",
+        "batch-memory-run*.json",
+        2,
+        125_000,
+        "the_peak_bytes",
+    ),
 )
 
 # The query's own parts the status publishes, and the report set each is
@@ -1357,6 +1410,47 @@ def _key_filter_samples(runs: list[dict], key: str) -> list[float]:
         series = run.get(key) or {}
         samples.extend(float(value) for value in series.get("samples", []))
     return samples
+
+
+def rendered_bytes(figure: float) -> str:
+    """A figure in bytes, as the document writes it.
+
+    The documents write the byte counts with a thousands separator, because a
+    byte count without one is not readable, and the guard has to look for the
+    character the document has.
+    """
+    rounded = round(figure)
+    if rounded == 0:
+        rounded = 0
+    return f"{rounded:,}"
+
+
+def _batch_memory_pool(runs: list[dict], shape: int, batch: str, key: str) -> list[float]:
+    """One point's samples, pooled over every campaign.
+
+    The pooling is the house's rule: every repetition of every campaign is a
+    sample, and the published figure is the median of the pooled samples.
+    """
+    values: list[float] = []
+    for run in runs:
+        shapes = run.get("the_shapes") or []
+        if shape >= len(shapes):
+            continue
+        for point in shapes[shape].get("the_points", []):
+            if str(point.get("batch_rows")) != str(batch):
+                continue
+            values.extend(float(value) for value in (point.get(key) or []))
+    return values
+
+
+def _batch_sweep_samples(runs: list[dict], family: str, batch: str, key: str) -> list[float]:
+    """One family's samples at one batch size, pooled over every campaign."""
+    values: list[float] = []
+    for run in runs:
+        entry = (run.get(key) or {}).get(str(batch)) or {}
+        series = entry.get(family) or {}
+        values.extend(float(value) for value in (series.get("samples") or []))
+    return values
 
 
 def _probe_paths_samples(runs: list[dict], key: str) -> list[float]:
@@ -3519,6 +3613,87 @@ def main() -> int:
                         f"{sorted(states)}"
                     )
 
+    if BATCH_MEMORY_REPORTS:
+        price_runs = [json.loads(path.read_text()) for path in BATCH_MEMORY_REPORTS]
+        if len(price_runs) < BATCH_PRICE_CAMPAIGNS:
+            failures.append(
+                f"PERF.md: the batch-memory probe has {len(runs)} campaigns, and "
+                f"the method says {BATCH_PRICE_CAMPAIGNS}"
+            )
+        published = section_of(texts["PERF.md"], BATCH_PRICE_SECTION)
+        if published is None:
+            failures.append(
+                f"PERF.md: the section that publishes the batch price's figures "
+                f"({BATCH_PRICE_SECTION}) is not in the document"
+            )
+        else:
+            for index, shape in enumerate(price_runs[0].get("the_shapes", [])):
+                name = shape.get("the_shape", "?")
+                estimate = rendered_bytes(shape.get("the_estimate_bytes", 0))
+                if not figure_in(published, estimate):
+                    failures.append(
+                        f"PERF.md: {name}'s estimate is {estimate} in the reports but "
+                        f"that figure does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {name + ', the estimate':<44} {estimate}")
+                for point in shape.get("the_points", []):
+                    batch = str(point.get("batch_rows"))
+                    for key, label in (
+                        ("the_peak_bytes", "the peak"),
+                        ("the_held_after_bytes", "the held"),
+                    ):
+                        values = _batch_memory_pool(price_runs, index, batch, key)
+                        if not values:
+                            continue
+                        rendered = rendered_bytes(statistics.median(values))
+                        label_text = f"{name} at {int(batch):,} rows, {label}"
+                        if not figure_in(published, rendered):
+                            failures.append(
+                                f"PERF.md: {label_text} is {rendered} in the reports but "
+                                f"that figure does not appear in the document"
+                            )
+                        else:
+                            print(f"ok  {'PERF.md':<10} {label_text:<44} {rendered}")
+
+    if BATCH_SWEEP_REPORTS:
+        sweep_runs = [json.loads(path.read_text()) for path in BATCH_SWEEP_REPORTS]
+        if len(sweep_runs) < BATCH_PRICE_CAMPAIGNS:
+            failures.append(
+                f"PERF.md: the batch-sweep probe has {len(runs)} campaigns, and the "
+                f"method says {BATCH_PRICE_CAMPAIGNS}"
+            )
+        published = section_of(texts["PERF.md"], BATCH_PRICE_SECTION)
+        if published is not None:
+            for family, label in BATCH_PRICE_FAMILIES:
+                for size in runs[0].get("the_batch_sizes", []):
+                    values = _batch_sweep_samples(sweep_runs, family, str(size), "the_sweep_ms")
+                    if not values:
+                        continue
+                    rendered = rendered_figure(statistics.median(values), 3)
+                    label_text = f"{label} at {int(size):,} rows"
+                    if not figure_in(published, rendered):
+                        failures.append(
+                            f"PERF.md: {label_text} is {rendered} in the reports but that "
+                            f"figure does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {label_text:<44} {rendered}")
+                    differences = _batch_sweep_samples(
+                        sweep_runs, family, str(size), "the_sweep_difference_ms"
+                    )
+                    if not differences:
+                        continue
+                    rendered = rendered_figure(statistics.median(differences), 3)
+                    label_text = f"{label} at {int(size):,} rows, less the engine's own"
+                    if not figure_in(published, rendered):
+                        failures.append(
+                            f"PERF.md: {label_text} is {rendered} in the reports but that "
+                            f"figure does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {label_text:<44} {rendered}")
+
     if PROBE_PATHS_KEY_ONLY_REPORTS:
         key_only_runs = [
             json.loads(path.read_text()) for path in PROBE_PATHS_KEY_ONLY_REPORTS
@@ -3626,6 +3801,34 @@ def main() -> int:
                     )
                 else:
                     print(f"ok  {'STATUS.md':<10} {label:<44} {rendered}")
+
+    for label, pattern, shape, batch, key in STATUS_BATCH_PRICE:
+        paths = sorted((ROOT / "bench-results").glob(pattern))
+        if not paths:
+            continue
+        price_runs = [json.loads(path.read_text()) for path in paths]
+        values: list[float] = []
+        for run in price_runs:
+            shapes = run.get("the_shapes") or []
+            if shape >= len(shapes):
+                continue
+            if key == "the_estimate_bytes":
+                values.append(float(shapes[shape].get(key, 0)))
+                continue
+            for point in shapes[shape].get("the_points", []):
+                if batch is not None and int(point.get("batch_rows", 0)) != batch:
+                    continue
+                values.extend(float(value) for value in (point.get(key) or []))
+        if not values:
+            continue
+        rendered = rendered_bytes(statistics.median(values))
+        if not figure_in(status_text, rendered):
+            failures.append(
+                f"STATUS.md: {label} is {rendered} in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {'STATUS.md':<10} {label:<44} {rendered}")
 
     for label, pattern, key in STATUS_PROBE_PATHS_BATCH:
         paths = sorted((ROOT / "bench-results").glob(pattern))
@@ -5798,6 +6001,8 @@ def main() -> int:
         f"{len(PROBE_PATHS_RUNGS) + len(PROBE_PATHS_VERDICTS)} of the probe-paths probe, "
         f"{len(PROBE_PATHS_BATCH_SETS) * 4} of the query's parts at each batch size, "
         f"{len(STATUS_PROBE_PATHS) + len(STATUS_PROBE_PATHS_BATCH) + 1} of the status's probe-paths figures, "
+        f"{len(BATCH_PRICE_FAMILIES) * 8 + 9} of the batch price, "
+        f"{len(STATUS_BATCH_PRICE)} of the status's batch-price figures, "
         f"{len(SPEC035_FAMILIES) * (2 * (7 + 3 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
         f"{2 * (11 + 3 * len(SPEC035_LEAVES['cold'])) + 3 + 2 * (2 * len(SPEC035_LEAVES['cold']) + 6) + 3 * len(SPEC036_MOVED) + 6} of the file-state floor, "
         f"{len(WRITE_COST_FAMILIES) * (1 + len(WRITE_COST_SHAPES) + len(WRITE_COST_DERIVED) + 3 + 1)} of the write side, "

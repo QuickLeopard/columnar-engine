@@ -4955,6 +4955,129 @@ and **7.94** — and the host's own drift is published with every difference, be
 medians would let the drift land on both sides. **The query's own parts are three campaigns of six
 iterations**, interleaved with the instrument's, so that the host's drift lands on every family equally.
 
+### 3af. The batch size's price
+
+**What this section is**: what the reader's batch size **costs** — in bytes and in milliseconds — measured at the
+widths the engine reads at.
+
+[§3ae](#3ae-the-probe-measured-twice) made the reader's batch size a knob and measured what it **buys**: a batch
+of a row group — **1,000,000** rows — is **4.926 ms** cheaper than the engine's own **125,000**, faster in **24 of
+24** paired samples. **And it did not measure what it costs**, and the engine's own memory estimate does not model
+the batch at all.
+
+**So the price is measured here, with a counting global allocator.** It sees every allocation the process makes,
+and it sees the **peak** — which is what a memory budget has to survive. **And the time is measured beside it**, in
+one session, **back to back**, with the **order alternated**, so the join's win is priced against what the other
+shape pays.
+
+#### The price, in bytes
+
+| the shape | the batch size | the peak | the read leaves behind | the engine's estimate | the gap |
+|---|---|---|---|---|---|
+| **the two predicate columns** | 62,500 | **1,166,640** | **1,261** | **1,500,016** | −333,376 |
+| | **125,000 — the engine's own** | **2,169,504** | **1,261** | | +669,488 |
+| | 250,000 | **4,099,388** | **1,261** | | +2,599,372 |
+| | **1,000,000** | **13,719,490** | **1,261** | | +12,219,474 |
+| **the two materialised columns** | 62,500 | **132,262,335** | **129,500,281** | **99,000,016** | +33,262,319 |
+| | **125,000 — the engine's own** | **133,241,835** | **129,500,281** | | +34,241,819 |
+| | 250,000 | **135,405,811** | **129,500,281** | | +36,405,795 |
+| | **1,000,000** | **147,294,195** | **129,500,281** | | +48,294,179 |
+| **the file's sixteen columns** | 62,500 | **1,144,709,775** | **1,139,591,586** | **1,549,500,016** | −404,790,241 |
+| | **125,000 — the engine's own** | **1,157,291,375** | **1,139,591,586** | | −392,208,641 |
+| | 250,000 | **1,183,960,327** | **1,139,591,586** | | −365,539,689 |
+| | **1,000,000** | **1,307,720,087** | **1,139,591,586** | | −241,779,929 |
+
+**And the bytes a batch holds scale with the width.** Between the **62,500**-row batch and the **1,000,000**-row
+one, the peak grows by **13.39 bytes a row** on the two predicate columns, by **16.03 bytes a row** on the two
+materialised ones, and by **173.88 bytes a row** on the sixteen — so a batch of a whole row group is **12.8 MiB** on
+the first shape and **165.8 MiB** on the last. **And the knob is named in rows, so it cannot see any of that.**
+
+#### The price, in time
+
+| the shape | the batch size | the median | less the engine's own | the faster |
+|---|---|---|---|---|
+| **the join's part** | 62,500 | 25.320 ms | +0.345 ms | 10 of 24 |
+| | **125,000 — the engine's own** | **25.211 ms** | *the reference* | — |
+| | 250,000 | 24.450 ms | −0.899 ms | 16 of 24 |
+| | **1,000,000** | **21.459 ms** | **−3.717 ms** | **24 of 24** |
+| **the filter-range's scan** | 62,500 | 12.811 ms | −0.026 ms | 13 of 24 |
+| | **125,000 — the engine's own** | **12.801 ms** | *the reference* | — |
+| | 250,000 | 12.567 ms | −0.204 ms | 16 of 24 |
+| | 1,000,000 | 12.699 ms | −0.108 ms | 13 of 24 |
+| **the wide read** | 62,500 | 511.376 ms | −0.442 ms | 12 of 24 |
+| | **125,000 — the engine's own** | **512.751 ms** | *the reference* | — |
+| | 250,000 | 516.688 ms | +2.335 ms | 10 of 24 |
+| | **1,000,000** | 525.698 ms | +14.455 ms | 1 of 24 |
+
+**So the batch's optimum is width-dependent, and that is the whole of the answer.** The join's part is **3.717 ms**
+cheaper at a whole row group and faster in **24 of 24**; the filter-range's scan does not move; and the wide read is
+**14.455 ms** *dearer* at a whole row group, faster in **one** of twenty-four. **A rule that serves one of those
+cannot serve the other, and a rule named in rows cannot serve either** — because what separates them is the width.
+
+#### The rule
+
+**The default is a byte budget, and the budget is 16 MiB.** The number is bounded by the measurement **from both
+sides**:
+
+- The narrow shapes' whole row group costs **12.8 MiB** and **15.3 MiB** — so the budget must be **above** that, or
+  the shapes that win would lose.
+- The wide shape's own batch — **125,000** rows at **173.88** bytes a row — costs **20.7 MiB**, and the wide read is
+  **0.442 ms** cheaper at **62,500** rows than at the engine's own, so the budget must be **at or below** that, or
+  the shape that loses would lose more.
+
+**So the budget is between 12.8 MiB and 20.7 MiB, and it is 16 MiB.** And the rule gives **every** shape at least
+what it has today: the two narrow shapes get the whole row group — **1,000,000** rows — and the wide shape gets
+**62,500**, the largest divisor of a row group's row count under **16 MiB** — **80,000 does not divide a million**,
+and the divisors are coarse — which is a **smaller** batch than today and, by the measurement, **not a loss**: the
+wide read is **0.442 ms** cheaper at **62,500** rows than at the engine's own.
+
+**And the default does not move in this increment.** Moving it moves **every** published figure the reader's batch
+size touches — the headline table, the thread sweeps, the ladder, the join's parts — and re-measuring those is
+**spec 050's** work. **A rule that is decided and a default that moves are two different acts, and this increment
+does the first.**
+
+#### And the estimate is wrong in both directions
+
+**The engine's memory estimate does not model the reader's batch**, and the error runs both ways:
+
+- On the **narrow** shape the estimate is **9.15× low**: it says **1,500,016** bytes where the read holds
+  **13,719,490** at a whole row group. **The estimate charges the file's rows for the columns the plan
+  materialises and nothing for the batch**, and on a query that materialises nothing the batch *is* the read.
+- On the **wide** shape it is **25% high**: **1,549,500,016** against **1,157,291,375**.
+- And the **wide shape is refused by the default budget** — the estimate is more than **256 MiB** — **at every batch
+  size**, because the estimate does not depend on the batch size at all. **So the budget's verdict on a plan is the
+  same whatever the knob says**, and the knob's price is invisible to it. **The refusal itself is right** — the read
+  holds **1,139,591,586** bytes at every size — **but it is right by accident**, and a plan that fits would be
+  refused for the same reason.
+
+**And the estimate's own document says what it gets wrong.** *"A dictionary-encoded string column is a `utf8` column
+to the engine, and costs the same as one: the dictionary is shared by the whole column, and the per-row cost is the
+index."* **And the code charges a `String` header — 24 bytes a row — for a column whose per-row cost is the index's
+four.** **Both paths do it**: the eager path's estimate *has* the chunk's encoding in hand and charges the header
+anyway, and the lazy path's estimate cannot see the encoding at all and charges the same. The estimate's doc and the
+estimate's code disagree, and **neither the estimate nor the budget is checked against a measurement anywhere in this
+repository** until this section.
+
+#### What this changes
+
+**The next increment** gives the engine **one** honest statement of what a row costs — the estimate and the batch's
+rule share it — makes the reader's batch size a **byte budget**, and **publishes every figure that moves old-and-new,
+re-measured**. The **open question** this leaves behind is the one spec 048 left: **why a shorter run of the probe
+costs more per row**, when the table is equally cold either way and the reader's work is the same — and now with
+**the batch's bytes** named as the thing a bigger batch buys and the wide shape pays for.
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/batch-memory-run1.json` and its two siblings, and
+`bench-results/batch-sweep-run1.json` and its two siblings. The instruments are
+`crates/columnar-engine/examples/batch_memory_probe.rs` and
+`crates/columnar-engine/examples/batch_sweep_probe.rs`. The decision is in
+[ADR-0061](docs/adr/0061-the-batch-sizes-price.md).
+
+**The conditions**: three campaigns of three repetitions for the memory, and three campaigns of eight iterations for
+the time, on one host, with the load average between **6.22** and **6.78**. **The two measurements are in different
+processes on purpose**: a counting allocator counts every allocation, and a time measured beside one is not the
+engine's time.
+
 ---
 
 ## 4. The defects the increments found
