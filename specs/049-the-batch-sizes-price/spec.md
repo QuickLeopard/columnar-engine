@@ -53,24 +53,22 @@ rule that has to serve both.
 - [ ] **So the join's 4.926 ms is priced against what the other shape pays**, and the difference is the **paired**
       one, not the difference of two medians from two campaigns.
 
-### R3 — The estimate **learns the batch**
+### R3 — The estimate is **measured against**, and is not changed
 
-- [ ] The engine's memory estimate models the **batch's** transient bytes: the columns the reader fetches for the
-      predicates, and the batch's own rows, are charged at the **batch's** size and not at the file's.
-- [ ] The estimate's figure is published **old-and-new**, with the reason — and the **budget** can then refuse a plan
-      whose batch does not fit, which today it cannot see.
-- [ ] **The public surface does not break.** The estimate's functions are `pub`, so a new parameter would be a major
-      break; a new function is an addition, and the crate is still unpublished.
+- [ ] The engine's own estimate is published **beside the measurement**, at every point, so the estimate's error
+      is published **as the estimate's error** and not as a difference of two numbers.
+- [ ] **And the estimate is not changed in this increment.** Changing it is **spec 050's** work, and the reason
+      is in the amendments.
 
-### R4 — The default's rule is **decided**, either way
+### R4 — The default's **rule** is decided, and the default does not move
 
-- [ ] If the measurement says a **byte budget** is the right rule, the default becomes one: the largest divisor of
-      the row group's row count that holds no more than **B** bytes — so a wide query gets a smaller batch and a
-      narrow one gets a bigger, and the memory is bounded whatever the width.
-- [ ] If the measurement says the **row count** is the right rule, **that is published too**, with the numbers that
-      said it.
-- [ ] **Every figure that moves is published old-and-new, with the reason** — and if the default moves, the figures
-      that move are **re-measured**, not recomputed.
+- [ ] If the measurement says a **byte budget** is the right rule, the rule is published, with the numbers that
+      said it — and the width the rule is for is named.
+- [ ] If the measurement says the **row count** is the right rule, **that is published too**, with the numbers
+      that said it.
+- [ ] **And the default does not move in this increment.** Moving it moves **every** published figure the
+      reader's batch size touches, and re-measuring those is **spec 050's** work. **A rule that is decided and
+      a default that moves are two different acts, and this increment does the first.**
 
 ### R5 — The answer is published either way
 
@@ -82,9 +80,11 @@ rule that has to serve both.
 ## The scope
 
 - **In**: the reader's batch size, the memory a read holds, the engine's memory estimate, and the default's rule.
+- **Out**: **any change to the engine**. The **estimate** does not change and the **default** does not move — both
+  are **spec 050's** work, and the amendments say why.
 - **Out**: **the reader's own decode**. Spec 048's finding — that the reader's context is the join's other work —
   and ADR-0018's — that owning the decode was measured three times and refused — are two different questions, and
-  **this one does not answer either.** Owning the decode is **spec 050**, and this increment does not touch it.
+  **this one does not answer either.** Owning the decode is **spec 051**, and this increment does not touch it.
 - **Out**: any change to the plan's shape, and any change to the public surface.
 - **Out**: the crates.io publish. The crates stay unpublished while this work lands, so a break that the work implies
   costs nothing.
@@ -134,3 +134,23 @@ diagnostic's and never the engine's — and the engine's own memory behaviour is
 allocator's instrument, and the time is measured in spec 046's probe, which has no allocator in it.** The two are
 never in the same measurement, because an allocator that counts every allocation would make the time it sits next to
 untrustworthy — and a time measured next to an allocator is not the engine's time.
+
+### A3 — The engine does not change in this increment
+
+**Why**: two changes are named by the measurement, and **both of them move published figures**, and the house's rule
+is that a moved figure is published old-and-new with the reason and **re-measured**, not recomputed.
+
+- **The estimate.** It does not model the reader's batch, so the estimate is **9× low** on a narrow query at a large
+  batch and **35% high** on a wide one — and the budget cannot see the knob's price. **Fixing it moves the estimate's
+  own published figures**, in three places in `PERF.md` and in a sentence about a query the budget **refuses**: the
+  24-million-row query that is rejected today would fit, and the sentence that says so would be wrong.
+- **The default.** It becomes a byte budget, and **every** published figure the reader's batch size touches moves
+  with it: the headline table, the thread sweeps, the ladder, the join's parts.
+
+**So this increment measures the price and decides the rule, and spec 050 builds both.** That is the house's order —
+the measurement decides what is built, and the building is its own increment — and it is also the safer one: a rule
+that is decided on one day's campaigns and a default that moves on another day's are two different claims, and the
+second one needs its own campaigns.
+
+**And the estimate's gap is published here, beside the measurement.** A gap that is published is a finding; a gap
+that is left in a blind spot is not.
