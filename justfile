@@ -356,6 +356,17 @@ probe-join-parts data="data/lineitem.parquet" iterations="6" threads="1" out="be
 probe-key-filter data="data/lineitem.parquet" out="bench-results/key-filter-run1.json":
     cargo run --release -p columnar-engine --example key_filter_probe -- --data {{data}} --out {{out}}
 
+# Take the **engine's own probe** apart in the **two paths it runs in**: over a
+# materialised column outside the reader, and inside the reader between the
+# reader's own work -- measured **back to back in the same iteration**, with the
+# order alternated, and with the reader's **batch size** swept.
+#
+# The key column alone is the same probe with less of the reader's context
+# around it, and it is what says how much of the context the value column's
+# decode is.
+probe-paths data="data/lineitem.parquet" out="bench-results/probe-paths-run1.json" key_only="":
+    cargo run --release -p columnar-engine --example probe_paths_probe -- --data {{data}} --out {{out}} {{key_only}}
+
 # Take the **write side** apart: the published file's own rows written back out
 # in the file's own row groups, with the file's own writer properties; the
 # commit's five steps, one at a time; and the file read back through the

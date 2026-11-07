@@ -90,6 +90,11 @@ pub struct JoinPartsOptions {
     pub iterations: usize,
     /// How many threads both sides use.
     pub threads: usize,
+    /// The reader's batch size, in rows, when the caller names one.
+    ///
+    /// **`None` is the engine's own**, so the default does not move and every
+    /// published figure stays reproducible by the command that made it.
+    pub reader_batch_rows: Option<usize>,
 }
 
 /// What the probe could not do.
@@ -330,9 +335,13 @@ fn engine_arm(
     // The probe side's file is opened **outside** the clock, the way the
     // comparison harness opens it: the open is the reader's, and the query is
     // the query.
-    let source = ParquetSource::open(&options.data).map_err(|error| JoinPartsError::Engine {
-        reason: format!("could not open {}: {error}", options.data.display()),
-    })?;
+    let mut source =
+        ParquetSource::open(&options.data).map_err(|error| JoinPartsError::Engine {
+            reason: format!("could not open {}: {error}", options.data.display()),
+        })?;
+    if let Some(rows) = options.reader_batch_rows {
+        source = source.with_reader_batch_rows(rows);
+    }
     let exec = ExecOptions { threads: Some(options.threads.max(1)), ..ExecOptions::default() };
     let started = Instant::now();
     let result = columnar_engine::execute_on(&plan(&options.build), &source, &exec)

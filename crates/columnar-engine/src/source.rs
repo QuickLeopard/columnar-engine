@@ -193,6 +193,15 @@ pub struct ParquetSource {
     /// The reader's batch size is a divisor of a row group's row count, so
     /// the read needs to know them.
     row_group_rows: Vec<usize>,
+    /// The reader's batch size, in rows, when the caller names one.
+    ///
+    /// **`None` is the engine's own**: the largest divisor of the row groups'
+    /// row count under [`MAX_READER_BATCH_ROWS`], so that no row group ends
+    /// with a partial batch.
+    ///
+    /// **This is a knob, and its default does not move.** The published
+    /// figures stay reproducible by the command that made them.
+    reader_batch_rows: Option<usize>,
     /// The smallest and largest value each column holds, over the file's row
     /// groups.
     ///
@@ -391,9 +400,53 @@ impl ParquetSource {
             rows,
             row_groups,
             row_group_rows,
+            reader_batch_rows: None,
             ranges,
             row_group_ranges,
         })
+    }
+
+    /// The reader's batch size, in rows, when the caller names one.
+    ///
+    /// **The knob.** The reader hands the rows over in batches, and the batch
+    /// size is a **knob**: the engine's own is the largest divisor of the row
+    /// groups' row count under [`MAX_READER_BATCH_ROWS`], so that no row
+    /// group ends with a partial batch -- **125,000** rows for this
+    /// repository's files, and **48** batches over six million rows.
+    ///
+    /// **A named size is exactly that size**, and a size that does not divide
+    /// a row group's row count leaves a **partial batch** at the end of every
+    /// row group. A partial batch costs the parquet crate's reader about
+    /// **0.85 ms**, once per row group, and the engine's own read does not
+    /// pay it -- a knob that names a size does.
+    ///
+    /// **The default does not move.** Nothing named is the engine's own, so
+    /// every published figure stays reproducible by the command that made it.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::path::Path;
+    ///
+    /// use columnar_engine::ParquetSource;
+    ///
+    /// // The file is the repository's own, so the example is not run.
+    /// let source = ParquetSource::open(Path::new("data/lineitem.parquet"))?
+    ///     .with_reader_batch_rows(250_000);
+    /// # Ok::<(), columnar_engine::DatasetError>(())
+    /// ```
+    #[must_use]
+    pub fn with_reader_batch_rows(mut self, rows: usize) -> Self {
+        self.reader_batch_rows = Some(rows);
+        self
+    }
+
+    /// The batch plan this source reads with.
+    ///
+    /// **The knob's plan**: the engine's own derived batch size, or the size
+    /// the caller named.
+    fn batch_plan(&self) -> BatchPlan {
+        self.reader_batch_rows.map_or(BatchPlan::Derived(MAX_READER_BATCH_ROWS), BatchPlan::Fixed)
     }
 
     /// Where the file is.
@@ -497,13 +550,7 @@ impl ParquetSource {
         flavor: Flavor,
         threads: usize,
     ) -> Result<Dataset, DatasetError> {
-        self.read_with(
-            columns,
-            pushdown,
-            flavor,
-            threads,
-            BatchPlan::Derived(MAX_READER_BATCH_ROWS),
-        )
+        self.read_with(columns, pushdown, flavor, threads, self.batch_plan())
     }
 
     /// Reads the file with a given reader batch size.
@@ -612,14 +659,7 @@ impl ParquetSource {
         flavor: Flavor,
         threads: usize,
     ) -> Result<ScanOutput, DatasetError> {
-        self.read_scanned(
-            columns,
-            pushdown,
-            Some(filter),
-            flavor,
-            threads,
-            BatchPlan::Derived(MAX_READER_BATCH_ROWS),
-        )
+        self.read_scanned(columns, pushdown, Some(filter), flavor, threads, self.batch_plan())
     }
 
     /// Reads the file, with or without a filter.
@@ -1317,6 +1357,68 @@ mod tests {
         assert_eq!(source.batch_rows_under(64), 64);
         // Under the floor, the row count itself is the batch.
         assert_eq!(source.batch_rows_under(1_000_000), 500);
+    }
+
+    /// A filter that records the size of every batch it is handed.
+    #[derive(Default)]
+    struct BatchSizes {
+        /// The size of every batch, in the order the reader handed them over.
+        sizes: std::sync::Mutex<Vec<usize>>,
+    }
+
+    impl crate::source::BatchFilter for BatchSizes {
+        fn keep(
+            &self,
+            batch: &arrow::record_batch::RecordBatch,
+            _survivors: Option<&crate::pushdown::RowMask>,
+        ) -> Result<Vec<u32>, crate::DatasetError> {
+            self.sizes.lock().expect("the lock is not poisoned").push(batch.num_rows());
+            Ok((0..u32::try_from(batch.num_rows()).unwrap_or(0)).collect())
+        }
+    }
+
+    /// The knob names the batch size, and the answer does not move.
+    #[test]
+    fn the_knob_names_the_batch_size_and_the_answer_does_not_move() {
+        let path = std::path::Path::new("/tmp/columnar-engine-reader-batch-rows.parquet");
+        write_row_groups(path, &[1_000, 1_000]);
+        let source = ParquetSource::open(path).expect("the source opens");
+        let plan = crate::pushdown::PushdownPlan::default();
+
+        // The engine's own: the largest divisor of the row groups' row count.
+        let engine = BatchSizes::default();
+        let engine_rows = source
+            .read_filtered(&[0], &plan, &engine, columnar_kernels::best(), 1)
+            .expect("the file reads");
+        let engine_sizes = engine.sizes.lock().expect("the lock is not poisoned").clone();
+        assert_eq!(engine_sizes, vec![1_000, 1_000], "the engine's own batch size");
+
+        // The knob's: the size the caller names, in rows.
+        let named = BatchSizes::default();
+        let named_rows = source
+            .with_reader_batch_rows(100)
+            .read_filtered(&[0], &plan, &named, columnar_kernels::best(), 1)
+            .expect("the file reads");
+        let named_sizes = named.sizes.lock().expect("the lock is not poisoned").clone();
+        assert_eq!(
+            named_sizes,
+            vec![100; 20],
+            "the knob's batch size, in rows: twenty batches of a hundred"
+        );
+
+        // **And the answer does not move.** The knob changes when the rows
+        // arrive, not which rows arrive.
+        assert_eq!(
+            engine_rows.rows.len(),
+            named_rows.rows.len(),
+            "the same number of rows came back"
+        );
+        assert_eq!(engine_rows.rows, named_rows.rows, "and they are the same rows");
+        assert_eq!(
+            engine_rows.dataset.len(),
+            named_rows.dataset.len(),
+            "and the dataset holds the same rows"
+        );
     }
 
     /// Writes a Parquet file with one row group per batch.

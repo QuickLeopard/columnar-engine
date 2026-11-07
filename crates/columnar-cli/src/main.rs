@@ -100,6 +100,19 @@ enum Command {
         /// headline comparison runs at.
         #[arg(long, default_value_t = 1)]
         threads: usize,
+        /// The reader's batch size, in rows.
+        ///
+        /// The reader hands the rows over in batches, and the batch size is a
+        /// knob. **The default is the engine's own**: the largest divisor of
+        /// the row groups' row count under the engine's limit, so that no row
+        /// group ends with a partial batch -- **125,000** rows for this
+        /// repository's files.
+        ///
+        /// **A size that does not divide a row group's row count leaves a
+        /// partial batch** at the end of every row group, and a partial batch
+        /// costs the parquet crate's reader about 0.85 ms, once per row group.
+        #[arg(long)]
+        reader_batch_rows: Option<usize>,
     },
 
     /// The kernel A/B: every flavor, on the real data.
@@ -278,6 +291,12 @@ enum Command {
         /// The thread count both sides are pinned to.
         #[arg(long, default_value_t = 1)]
         threads: usize,
+        /// The reader's batch size, in rows.
+        ///
+        /// **The default is the engine's own**, so the published figures stay
+        /// reproducible by the command that made them.
+        #[arg(long)]
+        reader_batch_rows: Option<usize>,
         /// Where to write the JSON report.
         #[arg(long, default_value = "bench-results/join-parts.json")]
         out: PathBuf,
@@ -415,8 +434,8 @@ fn run(cli: Cli) -> Result<()> {
         Command::Dataset { scale_factor, seed, null_rate, row_group_rows, output } => {
             run_dataset(scale_factor, seed, null_rate, row_group_rows, &output)
         }
-        Command::Query { data, query, iterations, lazy, threads } => {
-            run_query(&data, query, iterations, lazy, threads)
+        Command::Query { data, query, iterations, lazy, threads, reader_batch_rows } => {
+            run_query(&data, query, iterations, lazy, threads, reader_batch_rows)
         }
         Command::Bench { data, rows, iterations, column, threshold, out } => {
             run_bench(&data, rows, iterations, &column, threshold, &out)
@@ -459,8 +478,8 @@ fn run(cli: Cli) -> Result<()> {
         Command::Sweep { data, query, threads, iterations, mode, out } => {
             run_sweep(&data, query, &threads, iterations, mode, &out)
         }
-        Command::JoinParts { data, build, iterations, threads, out } => {
-            run_join_parts(&data, build.as_deref(), iterations, threads, &out)
+        Command::JoinParts { data, build, iterations, threads, reader_batch_rows, out } => {
+            run_join_parts(&data, build.as_deref(), iterations, threads, reader_batch_rows, &out)
         }
     }
 }
@@ -477,6 +496,7 @@ fn run_join_parts(
     build: Option<&Path>,
     iterations: usize,
     threads: usize,
+    reader_batch_rows: Option<usize>,
     out: &Path,
 ) -> Result<()> {
     let build = build.map_or_else(|| build_table_path(data), PathBuf::from);
@@ -485,6 +505,7 @@ fn run_join_parts(
         build,
         iterations,
         threads,
+        reader_batch_rows,
     };
     let report = columnar_bench::join_parts::run(&options)
         .map_err(|error| anyhow::anyhow!("the join-parts probe failed: {error}"))?;
@@ -553,6 +574,7 @@ fn run_query(
     iterations: usize,
     lazy: bool,
     threads: usize,
+    reader_batch_rows: Option<usize>,
 ) -> Result<()> {
     {
         {
@@ -574,8 +596,11 @@ fn run_query(
                 let mut opens = Vec::with_capacity(iterations.max(1));
                 for _ in 0..iterations.max(1) {
                     let open_started = std::time::Instant::now();
-                    let source = columnar_engine::ParquetSource::open(data)
+                    let mut source = columnar_engine::ParquetSource::open(data)
                         .with_context(|| format!("could not open {}", data.display()))?;
+                    if let Some(rows) = reader_batch_rows {
+                        source = source.with_reader_batch_rows(rows);
+                    }
                     opens.push(open_started.elapsed().as_secs_f64() * 1000.0);
 
                     let started = std::time::Instant::now();
