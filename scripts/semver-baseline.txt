@@ -26,4 +26,11 @@
 # change**, and every commit after it is gated against the new surface. The
 # revision before that was `42f08b4`, the code commit of spec 034, which
 # established the surface spec 042 replaced.
-387a14f
+#
+# **Spec 051 changed the surface again.** `MAX_READER_BATCH_ROWS` left it -- the
+# reader's row limit is not the rule any more, and the rule is a byte budget --
+# and `DEFAULT_READER_BATCH_BYTES` took its place. **The crates are still
+# unpublished**, so no embedder depended on the old name. **The revision below
+# is therefore the commit that made the change**, and every commit after it is
+# gated against the new surface.
+b655d1a
