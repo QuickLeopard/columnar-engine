@@ -4612,6 +4612,11 @@ figures stand** — they are the comparison harness's, taken by a different camp
 does not re-derive them**. What this section publishes is the **parts**, and they are the same on both
 sides whichever way the whole falls.
 
+**And the join part's figure carries a spread on a shared host.** [§3ae](#3ae-the-probe-measured-twice)
+re-measured this part on this host with the reader's batch size named, and read it **larger** — **the same
+measurement, the host's state apart, and nothing in the engine changed.** **This section is not
+corrected**: its campaigns made its figure, and §3ae publishes the spread and the reason beside it.
+
 #### The bytes
 
 `DuckDB` read **79,321,951** bytes in sixteen of the eighteen iterations, and **88,463,611** in two; with
@@ -4786,6 +4791,169 @@ of about eight milliseconds**, and they are in the spreads above: one landed on 
 the filter's own measurement, and one on the probe's again. **The medians are what the house publishes,
 and the medians do not move for a stall in three of eighteen.**
 
+
+### 3ae. The probe, measured twice
+
+**What this section is**: the engine's own probe, in the two paths it runs in — and what the reader's batch
+size does to it.
+
+[§3ac](#3ac-the-join-orders-query-on-both-sides-taken-apart) published the engine's join part at **14.625
+ms**, and [§3ad](#3ad-the-build-side-s-keys-as-a-filter) measured the engine's own probe over the **same**
+six million rows, against the **same** table, at **7.622 ms**. **The same `probe_rows`, the same table, the
+same rows, and 7 ms apart** — and the two numbers came from two different campaigns, on a shared host, days
+apart. **So the first question was not "what causes the gap": it was "is there a gap at all".**
+
+**And the first thing to turn was named.** The reader's batch size is a constant — `MAX_READER_BATCH_ROWS` is
+131,072, and the batch a row group is read in is the **largest divisor** of its row count under that limit,
+**125,000** rows for this file, so **48** batches over six million rows — and `BatchPlan::Fixed`, the house's
+"measurement seam", had nothing above it that could turn it. **So the batch size is a knob now**:
+`ParquetSource::with_reader_batch_rows`, named in rows, with the engine's own as the default. **The default
+does not move**, so every published figure stays reproducible by the command that made it.
+
+#### The instrument
+
+**One session, back to back, with the order alternated.** The **ladder's path** — the probe over a
+materialised column, outside the reader — and the **query's path** — the probe inside the reader, between
+the reader's own work. **Both are the engine's own `probe_rows`**, over the same rows, against the same
+table. **And the same probe is measured three times in the ladder's path**, because the probe's cost is the
+build table's residency and the instrument has to say so rather than assume it: **cold**, right after the
+materialisation; **resident**, at once, with nothing in between; and once more **after the reader's work**.
+
+**And the rows are checked before anything is timed.** Every path's rows are compared with the engine's own
+probe's rows, **row for row, in order**, in every iteration, and the comparison is asserted. **The rows
+agree in every campaign**, and they are the **216,783** rows the join produces.
+
+#### The two paths
+
+| the path | the median | the least | the most |
+|---|---|---|---|
+| **the ladder's path, the table cold** | **10.033** ms | 8.850 ms | 14.377 ms |
+| **the ladder's path again, the table resident** | **9.290** ms | 8.364 ms | 11.869 ms |
+| **the ladder's path once more, after the reader's work** | **9.642** ms | 8.626 ms | 14.051 ms |
+| **the query's path, inside the reader** | **14.675** ms | 12.044 ms | 19.003 ms |
+
+| the difference, in the same iteration | the median | the least | the most |
+|---|---|---|---|
+| **the query's path less the ladder's path** | **+4.273** ms | +1.884 ms | +9.006 ms |
+| the table's residency: cold less resident | +0.657 ms | −1.925 ms | +5.668 ms |
+| what the reader's work costs the table | +0.357 ms | −1.109 ms | +4.427 ms |
+
+**The sign is what carries the claim.** The query's path is the dearer one in **24 of 24** paired samples,
+by **+4.273 ms** at the median, and **every one of the twenty-four samples is positive**. **So the gap is
+real, and it is the reader's context and not the probe.**
+
+**And the value column's decode is more than half of it.** Read the key column alone and the query's path
+costs **12.306 ms** against the ladder's **10.002 ms** — a difference of **+1.834 ms**. Read the key and the
+value, as the query does, and the difference is **+4.273 ms**. **The decode of the value column — the
+reader's own work between two probes — is 2.439 ms of the charge.**
+
+#### The batch size
+
+The sweep's points are **rows**, and every one of them divides a row group's row count, so no row group
+ends with a partial batch and the sweep is the engine's probe and nothing else. They run in a **rotation of
+four**, twice over: every point takes every position exactly twice, and every pair of points runs in one
+order twice and the other order twice. **The difference is the paired one**, against the engine's own, in
+the same iteration.
+
+| the batch size | the median | less the engine's own | the faster |
+|---|---|---|---|
+| 62,500 | 15.473 ms | +0.397 ms | 10 of 24 |
+| **125,000 — the engine's own** | 14.944 ms | *the reference* | — |
+| 250,000 | 13.252 ms | −1.438 ms | 19 of 24 |
+| **1,000,000** | **9.549 ms** | **−4.926 ms** | **24 of 24** |
+
+**The curve is monotone, and the end of it is sharp.** A batch of **1,000,000** rows — one row group — is
+**4.926 ms** cheaper than the engine's own, faster in **24 of 24** paired samples. **And the yardstick says
+how much of that is the instrument's own**: the engine's own reads **14.944 ms** in the sweep's slot and
+**14.675 ms** in the paired slot — the same measurement, two positions, **0.269 ms** apart.
+
+**And the key column alone says the same thing, more weakly.** The sweep's difference against the engine's
+own is **+0.298 ms** at 62,500, **−0.190 ms** at 250,000 and **−2.054 ms** at 1,000,000 — faster in 20 of 24.
+**The value column's decode is 2.872 ms of the lever.**
+
+#### The query's own parts
+
+**And the query pays it.** The same join-orders query, taken apart at every batch size, the engine's arm
+and `DuckDB`'s arm measured back to back in the same iteration:
+
+| the batch size | the engine's join | `DuckDB`'s join | the paired difference | the engine's scan |
+|---|---|---|---|---|
+| 62,500 | 14.759 ms | 7.777 ms | +6.913 ms | 68.549 ms |
+| **125,000 — the engine's own** | 15.823 ms | 7.782 ms | +8.083 ms | 69.915 ms |
+| 250,000 | 12.370 ms | 7.621 ms | +4.691 ms | 68.380 ms |
+| **1,000,000** | **9.641 ms** | 7.646 ms | **+1.898 ms** | 68.600 ms |
+
+**The engine is slower in 18 of 18 iterations at every batch size, and the scan does not move** — it reads
+**68.380 ms** to **69.915 ms** across all four of them. **So the reader does the same work at every batch
+size, and what moves is the probe's own cost.** At a batch of a row group the engine's join part is
+**6.182 ms** cheaper than at the engine's own, and the paired difference against `DuckDB` falls from
+**+8.083 ms** to **+1.898 ms**.
+
+**And the two measurements are not the same probe.** The instrument's reader path carries **no pushdown**,
+so its probe walks the batch's own rows; the query's join part carries the engine's own predicate mask, so
+its probe walks the mask's survivors. **Both are the engine's own `probe_rows`** over the same six million
+lookups, and **both say the same thing**: the batch size moves the probe, and a row group's worth moves it
+by about five milliseconds.
+
+#### The mechanism, as far as it is measured
+
+**The probe's lookups are random.** The probe side's keys fall **2,999,506** times in **6,000,000** rows —
+half the pairs, which is what a shuffle looks like. So each of the six million lookups lands somewhere else
+in the build table, and the table is **5,999,995** bytes: bigger than any cache the machine has, and every
+lookup is a memory access.
+
+**The probe's cost is the table's residency, and that is measured.** The same probe, back to back, costs
+**9.290 ms** with the table resident and **10.033 ms** with it cold.
+
+**And the reader's own work does not measurably make the table colder.** The same probe, after the query's
+path and the sweep have run, costs **+0.357 ms** more than the resident price, against a spread of **−1.109
+ms** to **+4.427 ms** — at the noise. **And the reader's own work is the same at every batch size**,
+because the scan does not move.
+
+**What is left is the number of times the probe is run.** The engine's own batch size runs the probe **48**
+times over six million rows; a batch of a row group runs it **six**. **And the cost falls with the number
+of runs**, and the curve flattens at one row group, because **the number of batches cannot go below the
+number of row groups**. **What is not yet named** is what a run of the probe costs beyond the lookup itself.
+**That is the open question this section leaves behind.**
+
+#### What this changes
+
+**The next question is not "why is the engine behind". It is "should the reader's default batch size
+move".**
+
+At the engine's own batch size the engine's join part is **15.823 ms** and its paired difference against
+`DuckDB` is **+8.083 ms**. **At a batch of a row group the join part is 9.641 ms and the difference is
++1.898 ms** — **6.182 ms** of the engine's disadvantage gone, and the sign still the engine's in 18 of 18
+iterations. **And the knob is a knob: the default does not move**, so this section changes nothing in the
+engine's behaviour. **The next increment** measures what a batch of a million rows costs in memory — the
+reader holds a batch's key column and value column in memory at once — and decides whether the default
+moves.
+
+**And the published figure stands, and its spread is published with it.** §3ac's join part reads **14.625
+ms** on campaigns taken at a load average of **8.54** to **8.77**; this section's re-measurement of the same
+part, at the engine's own batch size, reads **15.823 ms** at a load of **6.98** to **7.94** — **1.198 ms**
+apart. **The engine did not change** — the knob's default is the engine's own — **so the difference is the
+host's.** **And the load average does not order the two campaigns: the quieter host read slower.** The
+probe is **memory-bound** — its lookups are random and the build table is bigger than any cache — so what
+moves it is the host's **memory traffic**, and a load average does not measure that. The **sign** is
+reproducible: the engine's join is slower in **18 of 18** iterations here, as it is in §3ac's eighteen.
+**§3ac is not corrected, and this section says so where §3ac's figure is read.**
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the
+guard **inside this section**. The reports are `bench-results/probe-paths-run1.json`,
+`bench-results/probe-paths-run2.json`, `bench-results/probe-paths-run3.json`,
+`bench-results/probe-paths-key-only-run1.json`, `bench-results/probe-paths-key-only-run2.json`,
+`bench-results/probe-paths-key-only-run3.json`, and the query's own parts are in
+`bench-results/join-parts-spec048-run1.json` and its two siblings, and in
+`bench-results/join-parts-batch-62500-spec048-run1.json` and its eight siblings. The probe is
+`crates/columnar-engine/examples/probe_paths_probe.rs`, and the query's own parts are spec 046's probe,
+`crates/columnar-bench/src/join_parts.rs`. The decision is in
+[ADR-0060](docs/adr/0060-the-probe-measured-twice.md).
+
+**The conditions**: three campaigns of eight iterations, on one host, with the load average between **6.36**
+and **7.94** — and the host's own drift is published with every difference, because a difference of two
+medians would let the drift land on both sides. **The query's own parts are three campaigns of six
+iterations**, interleaved with the instrument's, so that the host's drift lands on every family equally.
 
 ---
 

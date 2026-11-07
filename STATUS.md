@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **45 specs**, **59 ADRs** and **29 defects** so far, and every one
-of the specs is closed. **And the status has a page**:
+[`constitution.md`](constitution.md). **46 specs**, **60 ADRs** and **29 defects** so far, and every one
+of the specs but the one in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
 cannot go stale.
@@ -329,8 +329,28 @@ replaces a hash join, and the engine has no hash join to pay for.** **What would
 **0.672 ms** — **a filter cannot make the lookup cheaper, because the lookup is the membership test** —
 **so the join's other work has to be found and named.** That is the next increment, and this one does
 not answer it.
-[§3ac](PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart) and
-[§3ad](PERF.md#3ad-the-build-side-s-keys-as-a-filter) have the tables.
+
+**Spec 048 found the join's other work, and it is the reader's context.** The engine's probe is the
+same `probe_rows` in the two paths it runs in — the **ladder's path**, over a materialised column outside
+the reader, and the **query's path**, inside the reader — and measured **in one session, back to back,
+with the order alternated**, the query's path costs **+4.273 ms** more than the ladder's, in **24 of 24**
+paired samples. **And the reader's batch size is what sets it.** The engine's own batch size is
+**125,000** rows, and a batch of **1,000,000** rows — one row group — is **−4.926 ms** against it, faster
+in **24 of 24** paired samples; the curve is monotone, and the point in between is **−1.438 ms** at
+**250,000** rows. **The query pays it too**:
+the engine's join part is **15.823 ms** at the engine's own batch size and **9.641 ms** at a row group's
+worth, and the paired difference against `DuckDB`'s join falls from **+8.083 ms** to **+1.898 ms** —
+**with the scan flat, so the reader does the same work at every batch size.** **And the probe's cost is
+the build table's residency**, which is worth **0.657 ms** and is measured: with the key column alone the
+gap is **+1.834 ms**, so the value column's decode is more than half of the charge. **And the knob is a
+knob**: `ParquetSource::with_reader_batch_rows` names a size in rows, the default does not move, and no
+engine behaviour changed. **What would answer the next question:** whether the default should move — and
+what a batch of a million rows costs in memory, since the reader holds a batch's key column and value
+column at once. **And what is not yet explained:** why a shorter run of the probe costs more per row, when
+the table is equally cold either way and the reader's work is the same.
+[§3ac](PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart),
+[§3ad](PERF.md#3ad-the-build-side-s-keys-as-a-filter) and
+[§3ae](PERF.md#3ae-the-probe-measured-twice) have the tables.
 
 **4. The morsel driver.** The pushdown leaves the operators nothing to do on the cold path, so a
 morsel driver has nothing to drive there. It has not been built, and nothing measured so far says
@@ -609,6 +629,22 @@ for a pinned x86-64 runner; it has not run on one.
   DuckDB** — its filter costs its scan **5.827 ms** and saves its join **51.422 ms**, where the prize
   here is **6.981 ms** — **because it replaces a hash join, and the engine has no hash join to pay for.**
   [ADR-0059](docs/adr/0059-the-build-side-s-keys-as-a-filter.md) records it.
+- **The reader's batch size is a knob now, and the engine's default is the wrong end of the curve.**
+  Spec 048 measured the engine's own probe in the **two paths it runs in** — over a materialised column
+  outside the reader, and inside the reader — **in one session, back to back, with the order
+  alternated**, and the query's path costs **+4.273 ms** more than the ladder's, in **24 of 24** paired
+  samples. **And the batch size is what sets it**: the engine's own **125,000** rows against a row
+  group's **1,000,000** is **−4.926 ms**, faster in **24 of 24** paired samples, and the curve is
+  monotone — **−1.438 ms** at **250,000** rows, **+0.397 ms** at **62,500**. **The query pays it too**
+  — the engine's join part is **15.823 ms** at the
+  engine's own batch size and **9.641 ms** at a row group's worth, and the paired difference against
+  `DuckDB` falls from **+8.083 ms** to **+1.898 ms**, **with the scan flat**. **And the default did not
+  move**: `ParquetSource::with_reader_batch_rows` names a size in rows, and **no engine behaviour
+  changed**. **What is not done:** whether the default *should* move, what a batch of a million rows
+  costs in memory, and **why a shorter run of the probe costs more per row** when the table is equally
+  cold either way and the reader's work is the same.
+  [§3ae](PERF.md#3ae-the-probe-measured-twice) has the tables, and
+  [ADR-0060](docs/adr/0060-the-probe-measured-twice.md) records it.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a

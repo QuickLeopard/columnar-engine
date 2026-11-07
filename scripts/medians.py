@@ -2149,6 +2149,219 @@ def print_key_filter(runs: list[dict]) -> None:
         print(f"{'the host load average':<46}{min(loads):>12.2f} - {max(loads):>12.2f}")
 
 
+# Spec 048's probe-paths: the engine's own probe, in the two paths it runs in.
+#
+# The rungs are the **same probe**, measured three times and once inside the
+# reader: cold, resident, after the reader's work, and inside the reader.
+PROBE_PATHS_RUNGS = (
+    ("ladder_path_ms", "the ladder's path, the table cold"),
+    ("ladder_warm_ms", "the ladder's path again, the table resident"),
+    ("ladder_last_ms", "the ladder's path once more, after the reader's work"),
+    ("query_path_ms", "the query's path, inside the reader"),
+)
+
+# The paired verdicts: both sides are measured back to back in the same
+# iteration, so the machine's drift cannot land on one side.
+PROBE_PATHS_VERDICTS = (
+    ("the_gap_ms", "the query's path less the ladder's path"),
+    ("the_residency_ms", "the table's residency: cold less resident"),
+    ("the_readers_cost_ms", "what the reader's work costs the table"),
+)
+
+
+def _probe_paths_samples(runs: list[dict], key: str) -> list[float]:
+    """One family's samples, pooled over every campaign.
+
+    The pooling is the house's rule: every iteration of every campaign is a
+    sample, and the published figure is the median of the pooled samples.
+    """
+    samples: list[float] = []
+    for run in runs:
+        series = run.get(key) or {}
+        samples.extend(float(value) for value in series.get("samples", []))
+    return samples
+
+
+def _probe_paths_own_point(runs: list[dict]) -> tuple[int, int] | None:
+    """The sweep's point that is the engine's own, and its batch size.
+
+    **Read from the report, not assumed**: the report says which batch size
+    the reader arrived in on the engine's own path, and the sweep's points are
+    named in rows.
+    """
+    for run in runs:
+        own = run.get("the_engine_s_own_batch_rows") or []
+        points = run.get("sweep_batch_rows") or []
+        if not own or not points:
+            continue
+        for index, rows in enumerate(points):
+            if int(rows) == int(own[0]):
+                return index, int(rows)
+    return None
+
+
+def _probe_paths_sweep_values(runs: list[dict], point: int) -> list[float]:
+    """One sweep point's own times, across every iteration."""
+    values: list[float] = []
+    for run in runs:
+        for iteration in run.get("the_iterations", []):
+            entry = next(
+                (e for e in (iteration.get("sweep") or []) if e.get("point") == point), None
+            )
+            if entry is not None:
+                values.append(float(entry["ms"]))
+    return values
+
+
+def _probe_paths_sweep(runs: list[dict], point: int, own: int) -> list[float]:
+    """One sweep point's paired differences against the engine's own.
+
+    **Both sides are measured in the same iteration** -- the sweep's rotation
+    puts every point in every position -- so the difference is the paired one,
+    not the difference of two medians.
+    """
+    values: list[float] = []
+    for run in runs:
+        for iteration in run.get("the_iterations", []):
+            sweep = iteration.get("sweep") or []
+            mine = next((entry for entry in sweep if entry.get("point") == point), None)
+            theirs = next((entry for entry in sweep if entry.get("point") == own), None)
+            if mine is None or theirs is None:
+                continue
+            values.append(float(mine["ms"]) - float(theirs["ms"]))
+    return values
+
+
+def print_probe_paths(runs: list[dict], label: str = "the query's own shape") -> None:
+    """Print the engine's own probe, in the two paths it runs in.
+
+    This is spec 048: the engine's probe is measured in the **ladder's path**
+    -- over a materialised column, outside the reader -- and in the **query's
+    path** -- inside the reader, between the reader's own work -- in the same
+    iteration, back to back, with the order alternated.
+
+    The same probe is measured three times in the ladder's path: **cold**,
+    right after the materialisation; **resident**, at once, with nothing in
+    between; and once more **after the reader's work**. The difference
+    between the first two is the build table's residency, and the difference
+    between the last two is what the reader's work costs the table.
+    """
+    if not runs:
+        return
+
+    iterations = [iteration for run in runs for iteration in run.get("the_iterations", [])]
+    campaigns = len(runs)
+    probe = runs[0].get("probe", "probe-paths")
+
+    print(
+        f"\n=== THE PROBE, TWICE ({label}, {probe} probe, "
+        f"{campaigns} campaigns, {len(iterations)} iterations) ==="
+    )
+    order = runs[0].get("the_probe_side_s_key_order") or {}
+    if order:
+        print(
+            f"the probe side's keys fall {order.get('descents', '?')} times in "
+            f"{order.get('rows', '?')} rows"
+        )
+
+    print("\n-- the paths --")
+    print(f"{'the path':<46}{'median':>11}{'min':>11}{'max':>11}")
+    for key, rung in PROBE_PATHS_RUNGS:
+        values = _probe_paths_samples(runs, key)
+        if not values:
+            continue
+        print(
+            f"{rung:<46}{statistics.median(values):>11.3f}"
+            f"{min(values):>11.3f}{max(values):>11.3f}"
+        )
+
+    print("\n-- the paired differences, same iteration, back to back --")
+    print(f"{'the difference':<64}{'median':>11}{'min':>11}{'max':>11}{'samples':>10}")
+    for key, rung in PROBE_PATHS_VERDICTS:
+        values = _probe_paths_samples(runs, key)
+        if not values:
+            continue
+        print(
+            f"{rung:<64}{statistics.median(values):>11.3f}"
+            f"{min(values):>11.3f}{max(values):>11.3f}{len(values):>10}"
+        )
+
+    own = _probe_paths_own_point(runs)
+    if own is not None:
+        point, rows = own
+        print("\n-- the sweep: the reader's path at each batch size --")
+        print(f"{'the batch size':<24}{'median':>11}{'less the engine\'s own':>24}{'faster':>12}")
+        for index, size in enumerate(runs[0].get("sweep_batch_rows", [])):
+            own_values = _probe_paths_sweep_values(runs, index)
+            if not own_values:
+                continue
+            median = statistics.median(own_values)
+            line = f"{int(size):>23,}{median:>11.3f}"
+            if index == point:
+                line += f"{'-':>24}{'-':>12}"
+            else:
+                values = _probe_paths_sweep(runs, index, point)
+                faster = sum(1 for value in values if value < 0)
+                line += (
+                    f"{statistics.median(values):>+24.3f}"
+                    f"{faster:>7}/{len(values):<4}"
+                )
+            print(line)
+        print(f"the engine's own batch size: {rows:,} rows")
+
+    print("\n-- the correctness --")
+    rows_agree = {bool(run.get("the_rows_agree")) for run in runs}
+    print(f"the rows agree in every campaign: {rows_agree == {True}}")
+    rows = [value for run in runs for value in run.get("the_rows", [])]
+    if rows:
+        print(f"the rows the probe keeps: {min(rows)} - {max(rows)}")
+
+    loads = [
+        iteration["load_average"]
+        for iteration in iterations
+        if iteration.get("load_average") is not None
+    ]
+    if loads:
+        print(f"{'the host load average':<46}{min(loads):>12.2f} - {max(loads):>12.2f}")
+
+
+def print_join_parts_batch_sweep(sets: list[tuple[str, list[dict]]]) -> None:
+    """Print the query's own parts, at each of the reader's batch sizes.
+
+    This is spec 048's other half: the engine's probe is only worth a
+    section if the **query** pays it, so the join-orders query is taken apart
+    at every batch size, the engine's own included.
+
+    The **paired** difference against `DuckDB` is the figure: both sides are
+    measured back to back in the same iteration and the order is alternated.
+    """
+    if not sets:
+        return
+    print("\n=== THE QUERY'S OWN PARTS, AT EACH BATCH SIZE ===")
+    print(f"{'the batch size':<30}{'the engine':>13}{'duckdb':>11}{'paired':>11}{'the scan':>12}")
+    for label, runs in sets:
+        iterations = _join_parts_iterations(runs)
+        engine = _join_parts_side_values(iterations, "engine", "join_ms")
+        duckdb = _join_parts_side_values(iterations, "duckdb", "join_ms")
+        paired = _join_parts_paired(iterations, "engine", "duckdb", "join_ms")
+        scan = _join_parts_side_values(iterations, "engine", "probe_side_read_ms")
+        if not engine:
+            continue
+        print(
+            f"{label:<30}{statistics.median(engine):>13.3f}"
+            f"{statistics.median(duckdb):>11.3f}{statistics.median(paired):>+11.3f}"
+            f"{statistics.median(scan):>12.3f}"
+        )
+    for label, runs in sets:
+        iterations = _join_parts_iterations(runs)
+        paired = _join_parts_paired(iterations, "engine", "duckdb", "join_ms")
+        if paired:
+            print(
+                f"{label:<30}the engine is slower in "
+                f"{sum(1 for value in paired if value > 0)} of {len(paired)} iterations"
+            )
+
+
 def print_drift_ladder(sets: list[tuple[str, list[dict]]]) -> None:
     """Print the drift's own parts: the ladder, and the movement that makes it.
 
@@ -3160,6 +3373,30 @@ def main() -> int:
     key_filter_paths = sorted(Path("bench-results").glob("key-filter-run*.json"))
     if key_filter_paths:
         print_key_filter([load(p) for p in key_filter_paths])
+
+    # Spec 048's probe-paths: the engine's own probe, in the two paths it runs
+    # in -- the query's own shape, and the key alone.
+    probe_paths = sorted(Path("bench-results").glob("probe-paths-run*.json"))
+    if probe_paths:
+        print_probe_paths([load(p) for p in probe_paths], "the query's own shape")
+    probe_paths_key_only = sorted(Path("bench-results").glob("probe-paths-key-only-run*.json"))
+    if probe_paths_key_only:
+        print_probe_paths([load(p) for p in probe_paths_key_only], "the key alone")
+
+    # Spec 048's other half: the query's own parts, at each of the reader's
+    # batch sizes -- the engine's own included.
+    batch_sweep = []
+    for label, pattern in (
+        ("62,500", "join-parts-batch-62500-spec048-run*.json"),
+        ("125,000 (the engine's own)", "join-parts-spec048-run*.json"),
+        ("250,000", "join-parts-batch-250000-spec048-run*.json"),
+        ("1,000,000", "join-parts-batch-1000000-spec048-run*.json"),
+    ):
+        paths = sorted(Path("bench-results").glob(pattern))
+        if paths:
+            batch_sweep.append((label, [load(p) for p in paths]))
+    if batch_sweep:
+        print_join_parts_batch_sweep(batch_sweep)
 
     # Spec 035's ladder: the drift's own parts, over the set the file publishes,
     # the set spec 034 measured beside it, and the set spec 036 measured.

@@ -101,14 +101,14 @@ probe.
 
 **The gap is real, and it is the reader's context — and the reader's batch size is what sets it.**
 
-The engine's own probe costs **12.511 ms** inside the reader and **9.920 ms** outside it, measured **in one
-session, back to back, with the order alternated**: **+2.656 ms**, positive in **24 of 24** paired samples.
-**The reader's batch size moves it**: a batch of a row group — **1,000,000** rows — is **−3.460 ms**
-against the engine's own **125,000**, faster in **24 of 24** paired samples, while the two points in
-between are at the noise. **And the query pays it**: the engine's join part is **12.686 ms** at the
-engine's own batch size and **9.137 ms** at a row group's worth, and the paired difference against
-`DuckDB`'s join falls from **+5.053 ms** to **+1.832 ms** — **with the scan flat**, so the reader does the
-same work at every batch size.
+The engine's own probe costs **14.675 ms** inside the reader and **10.033 ms** outside it, measured **in one
+session, back to back, with the order alternated**: **+4.273 ms**, positive in **24 of 24** paired samples.
+**The reader's batch size moves it**: a batch of a row group — **1,000,000** rows — is **−4.926 ms**
+against the engine's own **125,000**, faster in **24 of 24** paired samples, and the curve is monotone —
+**−1.438 ms** at **250,000** and **+0.397 ms** at **62,500**. **And the query pays it**: the engine's join
+part is **15.823 ms** at the engine's own batch size and **9.641 ms** at a row group's worth, and the paired
+difference against `DuckDB`'s join falls from **+8.083 ms** to **+1.898 ms** — **with the scan flat**, so the
+reader does the same work at every batch size.
 
 **And the knob is a knob**: the default does not move, and no engine behaviour changed. **What is not yet
 explained** — and is the next question — is why a shorter run of the probe costs more per row, when the

@@ -764,6 +764,88 @@ JOIN_PARTS_DIFFERENCES = (
 KEY_FILTER_REPORTS = sorted((ROOT / "bench-results").glob("key-filter-run*.json"))
 KEY_FILTER_SECTION = "### 3ad"
 
+# Spec 048's probe-paths: the engine's own probe, in the two paths it runs in.
+#
+# The section publishes the two paths, the same probe measured cold and
+# resident and after the reader's work, the paired differences between them,
+# and the sweep over the reader's batch sizes.
+PROBE_PATHS_REPORTS = sorted((ROOT / "bench-results").glob("probe-paths-run*.json"))
+PROBE_PATHS_KEY_ONLY_REPORTS = sorted(
+    (ROOT / "bench-results").glob("probe-paths-key-only-run*.json")
+)
+PROBE_PATHS_SECTION = "### 3ae"
+
+# The campaigns the method calls for.
+PROBE_PATHS_CAMPAIGNS = 3
+
+# The paths, and the label the section publishes each under:
+# (measurement, label, places).
+PROBE_PATHS_RUNGS = (
+    ("ladder_path_ms", "the ladder's path, the table cold", 3),
+    ("ladder_warm_ms", "the ladder's path again, the table resident", 3),
+    ("ladder_last_ms", "the ladder's path once more, after the reader's work", 3),
+    ("query_path_ms", "the query's path, inside the reader", 3),
+)
+
+# The paired verdicts, and the label the section publishes each under:
+# (measurement, label, places).
+PROBE_PATHS_VERDICTS = (
+    ("the_gap_ms", "the query's path less the ladder's path", 3),
+    ("the_residency_ms", "the table's residency: cold less resident", 3),
+    ("the_readers_cost_ms", "what the reader's work costs the table", 3),
+)
+
+# The query's own parts, at each of the reader's batch sizes: the set, the
+# label the section publishes it under, and the parts.
+PROBE_PATHS_BATCH_SETS = (
+    ("62,500", "join-parts-batch-62500-spec048-run*.json"),
+    ("125,000", "join-parts-spec048-run*.json"),
+    ("250,000", "join-parts-batch-250000-spec048-run*.json"),
+    ("1,000,000", "join-parts-batch-1000000-spec048-run*.json"),
+)
+
+# The sweep's points the status publishes: the lever, and the two points on
+# the curve that show the lever is monotone.
+STATUS_PROBE_PATHS_SWEEP = ("62,500", "250,000", "1,000,000")
+
+# The figures the status publishes for spec 048, and the report set each is
+# derived from: (label, the report set, the family, the places).
+STATUS_PROBE_PATHS = (
+    (
+        "the gap, the query's path less the ladder's path",
+        "probe-paths-run*.json",
+        "the_gap_ms",
+        3,
+    ),
+    ("the table's residency", "probe-paths-run*.json", "the_residency_ms", 3),
+    ("the gap with the key alone", "probe-paths-key-only-run*.json", "the_gap_ms", 3),
+)
+
+# The query's own parts the status publishes, and the report set each is
+# derived from: (label, the report set, the figure).
+STATUS_PROBE_PATHS_BATCH = (
+    (
+        "the engine's join at the engine's own batch size",
+        "join-parts-spec048-run*.json",
+        "engine:join_ms",
+    ),
+    (
+        "the engine's join at a row group's worth",
+        "join-parts-batch-1000000-spec048-run*.json",
+        "engine:join_ms",
+    ),
+    (
+        "the join's paired difference at the engine's own batch size",
+        "join-parts-spec048-run*.json",
+        "engine:duckdb:join_ms",
+    ),
+    (
+        "the join's paired difference at a row group's worth",
+        "join-parts-batch-1000000-spec048-run*.json",
+        "engine:duckdb:join_ms",
+    ),
+)
+
 # The campaigns the method calls for. A set with fewer is a failure: a set that
 # is not there is not a set of zero figures, it is the absence of the evidence.
 KEY_FILTER_CAMPAIGNS = 3
@@ -1275,6 +1357,75 @@ def _key_filter_samples(runs: list[dict], key: str) -> list[float]:
         series = run.get(key) or {}
         samples.extend(float(value) for value in series.get("samples", []))
     return samples
+
+
+def _probe_paths_samples(runs: list[dict], key: str) -> list[float]:
+    """One family's samples, pooled over every campaign.
+
+    The pooling is the house's rule, and the verdict families carry the paired
+    difference already computed -- the two sides of each are measured back to
+    back in the same iteration, with the order alternated.
+    """
+    samples: list[float] = []
+    for run in runs:
+        series = run.get(key) or {}
+        samples.extend(float(value) for value in series.get("samples", []))
+    return samples
+
+
+def _probe_paths_sweep_values(runs: list[dict], point: int) -> list[float]:
+    """One sweep point's own times, across every iteration.
+
+    The point is found by **the point it carries**, and not by the position it
+    ran in: the sweep's rotation runs the points in a different order every
+    iteration, and a sample read by position would carry the wrong point's
+    name.
+    """
+    values: list[float] = []
+    for run in runs:
+        for iteration in run.get("the_iterations", []):
+            entry = next(
+                (e for e in (iteration.get("sweep") or []) if e.get("point") == point), None
+            )
+            if entry is not None:
+                values.append(float(entry["ms"]))
+    return values
+
+
+def _probe_paths_own_point(runs: list[dict]) -> int | None:
+    """The sweep's point that is the engine's own.
+
+    **Read from the report, not assumed**: the report says which batch size
+    the reader arrived in on the engine's own path, and the sweep's points are
+    named in rows.
+    """
+    for run in runs:
+        own = run.get("the_engine_s_own_batch_rows") or []
+        points = run.get("sweep_batch_rows") or []
+        if not own or not points:
+            continue
+        for index, rows in enumerate(points):
+            if int(rows) == int(own[0]):
+                return index
+    return None
+
+
+def _probe_paths_sweep_difference(runs: list[dict], point: int, own: int) -> list[float]:
+    """One sweep point's paired differences against the engine's own.
+
+    **Both sides are measured in the same iteration**, so the difference is the
+    paired one and not the difference of two medians.
+    """
+    values: list[float] = []
+    for run in runs:
+        for iteration in run.get("the_iterations", []):
+            sweep = iteration.get("sweep") or []
+            mine = next((e for e in sweep if e.get("point") == point), None)
+            theirs = next((e for e in sweep if e.get("point") == own), None)
+            if mine is None or theirs is None:
+                continue
+            values.append(float(mine["ms"]) - float(theirs["ms"]))
+    return values
 
 
 def join_cost_drift(parts: dict[str, list[float]]) -> dict[str, float]:
@@ -3279,6 +3430,221 @@ def main() -> int:
                     f"PERF.md: {label} is not true in every key-filter report: "
                     f"{sorted(states)}"
                 )
+
+    # Spec 048's probe-paths: the engine's own probe, in the two paths it runs
+    # in. The same rule as the key-filter probe's family: a set that is not
+    # there is not a set of zero figures, it is the absence of the evidence.
+    for label, paths in (
+        ("the probe-paths probe", PROBE_PATHS_REPORTS),
+        ("the probe-paths probe, the key alone", PROBE_PATHS_KEY_ONLY_REPORTS),
+    ):
+        if not paths:
+            failures.append(f"{label}'s set is missing")
+        elif len(paths) < PROBE_PATHS_CAMPAIGNS:
+            failures.append(
+                f"{label}'s set has {len(paths)} campaigns, "
+                f"and the method says {PROBE_PATHS_CAMPAIGNS}"
+            )
+
+    for label, pattern in PROBE_PATHS_BATCH_SETS:
+        paths = sorted((ROOT / "bench-results").glob(pattern))
+        if not paths:
+            failures.append(f"the query's parts at {label} rows are missing")
+        elif len(paths) < PROBE_PATHS_CAMPAIGNS:
+            failures.append(
+                f"the query's parts at {label} rows have {len(paths)} campaigns, "
+                f"and the method says {PROBE_PATHS_CAMPAIGNS}"
+            )
+
+    if PROBE_PATHS_REPORTS:
+        probe_paths_runs = [json.loads(path.read_text()) for path in PROBE_PATHS_REPORTS]
+        published = section_of(texts["PERF.md"], PROBE_PATHS_SECTION)
+        if published is None:
+            failures.append(
+                f"PERF.md: the section that publishes the probe-paths figures "
+                f"({PROBE_PATHS_SECTION}) is not in the document"
+            )
+        else:
+            for key, label, places in PROBE_PATHS_RUNGS + PROBE_PATHS_VERDICTS:
+                values = _probe_paths_samples(probe_paths_runs, key)
+                if not values:
+                    failures.append(
+                        f"PERF.md: no figure for {label} in the probe-paths reports"
+                    )
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+
+            # The sweep: each point's own median, and its paired difference
+            # against the engine's own.
+            for point, rows in enumerate(probe_paths_runs[0].get("sweep_batch_rows", [])):
+                values = _probe_paths_sweep_values(probe_paths_runs, point)
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), 3)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: the reader's path at {rows} rows is {rendered} in the "
+                        f"reports but that figure does not appear in the document"
+                    )
+                else:
+                    print(
+                        f"ok  {'PERF.md':<10} "
+                        f"{'the reader\'s path at ' + format(rows, ',') + ' rows':<44} "
+                        f"{rendered}"
+                    )
+
+        # The correctness: a path that returned different rows would be a
+        # different query, and its time would not be the engine's.
+        for key, label in (("the_rows_agree", "the rows agree"),):
+            for name, paths in (
+                ("the probe-paths probe", PROBE_PATHS_REPORTS),
+                ("the probe-paths probe, the key alone", PROBE_PATHS_KEY_ONLY_REPORTS),
+            ):
+                if not paths:
+                    continue
+                runs_for_name = [json.loads(path.read_text()) for path in paths]
+                states = {bool(run.get(key)) for run in runs_for_name}
+                if states == {True}:
+                    print(f"ok  {'PERF.md':<10} {label + ', in every campaign':<44} true")
+                else:
+                    failures.append(
+                        f"PERF.md: {label} is not true in every {name} report: "
+                        f"{sorted(states)}"
+                    )
+
+    if PROBE_PATHS_KEY_ONLY_REPORTS:
+        key_only_runs = [
+            json.loads(path.read_text()) for path in PROBE_PATHS_KEY_ONLY_REPORTS
+        ]
+        published = section_of(texts["PERF.md"], PROBE_PATHS_SECTION)
+        if published is not None:
+            for key, label, places in (
+                ("the_gap_ms", "the gap with the key alone", 3),
+            ):
+                values = _probe_paths_samples(key_only_runs, key)
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+
+    # The query's own parts, at each of the reader's batch sizes: the same
+    # join-parts probe, driven with the batch size named.
+    published = section_of(texts["PERF.md"], PROBE_PATHS_SECTION)
+    for rows, pattern in PROBE_PATHS_BATCH_SETS:
+        paths = sorted((ROOT / "bench-results").glob(pattern))
+        if not paths or published is None:
+            continue
+        parts, differences = _join_parts_figures(paths)
+        for key, label in (
+            ("engine:join_ms", f"the engine's join at {rows} rows"),
+            ("duckdb:join_ms", f"duckdb's join at {rows} rows"),
+            ("engine:probe_side_read_ms", f"the engine's scan at {rows} rows"),
+        ):
+            values = parts.get(key) or []
+            if not values:
+                continue
+            rendered = rendered_figure(statistics.median(values), 3)
+            if not figure_in(published, rendered):
+                failures.append(
+                    f"PERF.md: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+        values = differences.get("engine:duckdb:join_ms") or []
+        if values:
+            rendered = rendered_figure(statistics.median(values), 3)
+            label = f"the join, the engine less duckdb, at {rows} rows"
+            if not figure_in(published, rendered):
+                failures.append(
+                    f"PERF.md: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+
+    # The status's own figures for spec 048, checked against the same reports.
+    #
+    # The status is a **summary**, so its figures are the same ones PERF.md
+    # publishes, checked against the same committed reports: the summary cannot
+    # drift away from the evidence.
+    status_text = STATUS_DOC.read_text().replace("\u2212", "-")
+    for label, pattern, key, places in STATUS_PROBE_PATHS:
+        paths = sorted((ROOT / "bench-results").glob(pattern))
+        if not paths:
+            continue
+        status_runs = [json.loads(path.read_text()) for path in paths]
+        values = _probe_paths_samples(status_runs, key)
+        if not values:
+            continue
+        rendered = rendered_figure(statistics.median(values), places)
+        if not figure_in(status_text, rendered):
+            failures.append(
+                f"STATUS.md: {label} is {rendered} in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {'STATUS.md':<10} {label:<44} {rendered}")
+
+    # The sweep's lever, as the status publishes it: a row group's worth
+    # against the engine's own.
+    paths = sorted((ROOT / "bench-results").glob("probe-paths-run*.json"))
+    if paths:
+        status_runs = [json.loads(path.read_text()) for path in paths]
+        own = _probe_paths_own_point(status_runs)
+        if own is not None:
+            for index, rows in enumerate(status_runs[0].get("sweep_batch_rows", [])):
+                if index == own:
+                    continue
+                # **The status publishes the points it carries**: the lever,
+                # and the two points on the curve that show the lever is
+                # monotone. A point it does not carry is not checked here.
+                if format(int(rows), ",") not in STATUS_PROBE_PATHS_SWEEP:
+                    continue
+                values = _probe_paths_sweep_difference(status_runs, index, own)
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), 3)
+                label = f"the reader's path at {rows} rows, against the engine's own"
+                if not figure_in(status_text, rendered):
+                    failures.append(
+                        f"STATUS.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'STATUS.md':<10} {label:<44} {rendered}")
+
+    for label, pattern, key in STATUS_PROBE_PATHS_BATCH:
+        paths = sorted((ROOT / "bench-results").glob(pattern))
+        if not paths:
+            continue
+        parts, differences = _join_parts_figures(paths)
+        values = parts.get(key) or []
+        if not values:
+            values = differences.get(key) or []
+        if not values:
+            continue
+        rendered = rendered_figure(statistics.median(values), 3)
+        if not figure_in(status_text, rendered):
+            failures.append(
+                f"STATUS.md: {label} is {rendered} in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {'STATUS.md':<10} {label:<44} {rendered}")
 
     # Spec 034's re-measurement: the same code, and the code it replaces,
     # measured back to back on this host. The published figures stand; the
@@ -5429,6 +5795,9 @@ def main() -> int:
         f"{len(JOIN_COST_CHECKS) + len(JOIN_COST_DERIVED_CHECKS)} of the join probe, "
         f"{len(JOIN_PARTS_PARTS) + len(JOIN_PARTS_DIFFERENCES)} of the join-parts probe, "
         f"{len(KEY_FILTER_RUNGS) + len(KEY_FILTER_VERDICTS)} of the key-filter probe, "
+        f"{len(PROBE_PATHS_RUNGS) + len(PROBE_PATHS_VERDICTS)} of the probe-paths probe, "
+        f"{len(PROBE_PATHS_BATCH_SETS) * 4} of the query's parts at each batch size, "
+        f"{len(STATUS_PROBE_PATHS) + len(STATUS_PROBE_PATHS_BATCH) + 1} of the status's probe-paths figures, "
         f"{len(SPEC035_FAMILIES) * (2 * (7 + 3 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
         f"{2 * (11 + 3 * len(SPEC035_LEAVES['cold'])) + 3 + 2 * (2 * len(SPEC035_LEAVES['cold']) + 6) + 3 * len(SPEC036_MOVED) + 6} of the file-state floor, "
         f"{len(WRITE_COST_FAMILIES) * (1 + len(WRITE_COST_SHAPES) + len(WRITE_COST_DERIVED) + 3 + 1)} of the write side, "
