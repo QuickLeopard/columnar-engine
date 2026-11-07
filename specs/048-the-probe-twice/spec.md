@@ -1,8 +1,11 @@
 # Spec 048 — The probe, twice
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-07
+**Finished**: 2026-11-07
 **Predecessor**: [spec 047 — the build side's keys as a filter](../047-the-build-side-s-keys-as-a-filter/spec.md)
+
+**CI green on `378cf06`** -- run 42334500041, sixteen of sixteen jobs.
 
 ## The problem
 
