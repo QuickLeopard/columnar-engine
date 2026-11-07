@@ -4317,8 +4317,13 @@ the set.
 
 | | the one file | the six files | the difference |
 |---|---|---|---|
-| the rows out | **549.167 ms** *(was 3,338.468 ms)* | **550.301 ms** *(was 3,344.893 ms)* | **+1.133 ms** *(was +6.425 ms)* |
-| the write | **1,860.799 ms** *(was 2,040.668 ms)* | **1,836.466 ms** *(was 2,075.327 ms)* | **−24.333 ms** *(was +34.659 ms)* |
+| the rows out | **542.049 ms** *(was 549.167 ms)* | **572.204 ms** *(was 550.301 ms)* | **+30.155 ms** *(was +1.133 ms)* |
+| the write | **1,901.142 ms** *(was 1,860.799 ms)* | **1,958.860 ms** *(was 1,836.466 ms)* | **+57.718 ms** *(was −24.333 ms)* |
+
+**And the store's own change, for the record**: before it, the one file's rows cost **3,338.468 ms** and the six
+files' **3,344.893 ms**, the write **2,040.668 ms** and **2,075.327 ms**, and the differences were **+6.425 ms** and
+**+34.659 ms**. The eager read was **516.196 ms** and the eager rows **2,823.164 ms**, so the eager path's total was
+**3,353.618 ms**.
 
 **The two differences are the host's, and the yardstick says so.** The two arms are measured **back to
 back** in every iteration and **the order they are measured in alternates**, so the host's own movement is
@@ -4326,17 +4331,26 @@ in both sides of every pair -- and the difference between the arms, in every ite
 
 | | the differences, in every iteration | their median |
 |---|---|---|
-| the read | +48.423, −37.925, +168.260, +23.317, −52.658, +170.690, −10.798, +0.945, +5.125 | **+5.125 ms** |
-| the write | −60.948, −174.146, −27.641, −32.745, −36.371, +147.019, −54.045, +12.497, +73.197 | **−32.745 ms** |
+| the read | −0.129, +26.934, +242.115, +2.941, +56.827, +221.959, −20.098, +40.510, +240.976 | **+40.510 ms** |
+| the write | +222.110, +37.885, +123.378, +71.224, −52.968, −31.460, +61.348, +12.858, +68.329 | **+61.348 ms** |
 
 **The read's differences straddle zero, and their spread is wider than the difference of the medians.**
-The read's median (**+5.125 ms**) is **0.9% of the read** -- and their spread runs from −52.658 to
-+170.690 ms, so the spread is forty-three times the median. **The host's load average in those campaigns
-was 5.88, 6.69 and 7.22.** **No difference can be claimed**: the set's cost is inside the noise, which is
-what §3v and §3y found twice already and what the third measurement confirms.
+The read's median (**+40.510 ms**) is **7.5% of the read** -- and their spread runs from −20.098 to
++242.115 ms, so the spread is six times the median. **The host's load average in those campaigns
+was 6.95, 7.0 and 6.76.** **And the third iteration of every campaign is the outlier** -- +242.115,
++221.959 and +240.976 on the read -- **and it is an outlier in every campaign, so it is a property of the
+measurement and not of the host.**
 
-**And the estimate does not move either**: **1,549,500,016 bytes** for both. The rows are the sum of the
-files' rows and the columns are the same, so the budget is charged the same for a set as for one file.
+**And the campaign was taken again**, because the engine's estimate changed and the estimate is one of this
+section's figures. **The set's cost came out at +30.155 ms on the read where it was +1.133 ms, and at
++57.718 ms on the write where it was −24.333 ms.** **The set's cost is still inside the spread, and the
+spread is the host's** -- which is what §3v and §3y found twice already and what this measurement
+confirms.
+
+**And the estimate does not move either**: **975,512,992 bytes** for both *(was 1,549,500,016)*. The rows
+are the sum of the files' rows and the columns are the same, so the budget is charged the same for a set as
+for one file. **And the figure moved because the engine's estimate now charges the batch** --
+[§3ag](#3ag-the-width-statement-paid) has that, and it is the same number for both arms.
 
 **The read is not a copy any more.** The rows the engine hands out are **the rows that were read**: the
 plan's projection, handed out with the reader's own encodings, and **the gather is gone for a plan that
@@ -4345,13 +4359,13 @@ same rows out:
 
 | | the cost |
 |---|---|
-| the engine's eager read | **551.325 ms** *(was 516.196 ms)* |
-| the eager rows: the copy of the columns | **154.858 ms** *(was 2,823.164 ms)* |
-| the eager path's total | **706.634 ms** *(was 3,353.618 ms)* |
+| the engine's eager read | **563.250 ms** *(was 551.325 ms)* |
+| the eager rows: the copy of the columns | **164.513 ms** *(was 154.858 ms)* |
+| the eager path's total | **732.427 ms** *(was 706.634 ms)* |
 
-**The copy is 21.9% of the eager path's cost, and it was 84.2% before.** The copy is what the **eager**
+**The copy is 22.5% of the eager path's cost, and it was 84.2% before.** The copy is what the **eager**
 path pays, because the caller owns the dataset there: the rows are a copy of the columns rather than the
-columns themselves. **And the lazy path does not pay it at all**: the one file's rows cost **549.167 ms**,
+columns themselves. **And the lazy path does not pay it at all**: the one file's rows cost **542.049 ms**,
 which is its scan and nothing else -- the columns are **moved** out of the reader, not copied. **§3ab has
 the before-and-after, and the reason the gather is gone.**
 
@@ -4450,14 +4464,14 @@ the three plain ones ([ADR-0054](docs/adr/0054-the-engines-rows-reach-a-stores-t
 
 | | the cost | before |
 |---|---|---|
-| the one file's rows out | **549.167 ms** | 3,338.468 ms |
-| the eager rows: the copy of the columns | **154.858 ms** | 2,823.164 ms |
-| the eager path's total | **706.634 ms** | 3,353.618 ms |
+| the one file's rows out | **542.049 ms** | 3,338.468 ms |
+| the eager rows: the copy of the columns | **164.513 ms** | 2,823.164 ms |
+| the eager path's total | **732.427 ms** | 3,353.618 ms |
 
-**The rows out are six times faster** -- **549.167 ms** against **3,338.468 ms** -- **and the copy that is
-left is eighteen times smaller**: **154.858 ms** against **2,823.164 ms**. **The lazy path does not pay the
+**The rows out are six times faster** -- **542.049 ms** against **3,338.468 ms** -- **and the copy that is
+left is seventeen times smaller**: **164.513 ms** against **2,823.164 ms**. **The lazy path does not pay the
 copy at all**: it moves the columns out of the reader, so the one file's rows cost the scan and nothing
-else. **And the lazy path is now the cheaper of the two**, by 157.467 ms -- and that difference is the
+else. **And the lazy path is now the cheaper of the two**, by 190.378 ms -- and that difference is the
 copy.
 
 **The round trip is the file, byte for byte.** [§3aa](#3aa-the-sets-rows) has the bytes: the round trip
@@ -4465,8 +4479,10 @@ under the file's own schema is **242,859,461** bytes and **no differing byte**, 
 still differs**, at byte **20,566,725**, because a column that holds no NULL is written REQUIRED. **That is
 the store's rule and not the engine's**, and it is the one difference the round trip has left.
 
-**And the estimate does not move**: **1,549,500,016 bytes**, for one file and for the set. **What the
-budget is charged is what it was**; **what the plan actually uses went down**, and both are published.
+**And the estimate does not move**: **975,512,992 bytes**, for one file and for the set *(was
+1,549,500,016)*. **What the budget is charged is what it was**; **what the plan actually uses went down**, and
+both are published. **And the estimate moved because the engine now charges the batch** --
+[§3ag](#3ag-the-width-statement-paid) has that.
 
 **The gather does not go away.** It is the **right** thing to do when a filter removed rows in the engine, a
 join or a sort made new rows: the survivors are scattered through the batch and have to be pulled out.
@@ -4627,6 +4643,18 @@ the engine's read. **The two sides read the same columns**, and the two sides' a
 answer.
 
 #### What this changes
+
+**The next increment gave the engine** **one** honest statement of what a row costs — the estimate and the batch's
+rule share it — **and made the estimate charge the batch**, so the budget can see the knob's price.
+[§3ag](#3ag-the-width-statement-paid) has that, and **publishes every figure that moves old-and-new, re-measured**.
+
+**And the default still does not move.** Moving it moves **every** published figure the reader's batch size touches
+— the headline table, the thread sweeps, the ladder, the join's parts — and re-measuring those is **spec 051's**
+work.
+
+**The open question** this leaves behind is the one spec 048 left: **why a shorter run of the probe costs more per
+row**, when the table is equally cold either way and the reader's work is the same — and now with **the batch's
+bytes** named as the thing a bigger batch buys and the wide shape pays for.
 
 **The next question is not "why is the engine behind". It is "what does a filter over the build side's
 keys cost, and what does it save".**
@@ -4962,8 +4990,9 @@ widths the engine reads at.
 
 [§3ae](#3ae-the-probe-measured-twice) made the reader's batch size a knob and measured what it **buys**: a batch
 of a row group — **1,000,000** rows — is **4.926 ms** cheaper than the engine's own **125,000**, faster in **24 of
-24** paired samples. **And it did not measure what it costs**, and the engine's own memory estimate does not model
-the batch at all.
+24** paired samples. **And it did not measure what it costs**, and the engine's own memory estimate did not model
+the batch at all. **It does now** — [§3ag](#3ag-the-width-statement-paid) has the statement the estimate and the
+batch's rule share, and the check of it against a measurement.
 
 **So the price is measured here, with a counting global allocator.** It sees every allocation the process makes,
 and it sees the **peak** — which is what a memory budget has to survive. **And the time is measured beside it**, in
@@ -5036,27 +5065,33 @@ size touches — the headline table, the thread sweeps, the ladder, the join's p
 **spec 050's** work. **A rule that is decided and a default that moves are two different acts, and this increment
 does the first.**
 
-#### And the estimate is wrong in both directions
+#### And the estimate was wrong in both directions
 
-**The engine's memory estimate does not model the reader's batch**, and the error runs both ways:
+**The engine's memory estimate did not model the reader's batch**, and the error ran both ways:
 
 - On the **narrow** shape the estimate is **9.15× low**: it says **1,500,016** bytes where the read holds
   **13,719,490** at a whole row group. **The estimate charges the file's rows for the columns the plan
   materialises and nothing for the batch**, and on a query that materialises nothing the batch *is* the read.
 - On the **wide** shape it is **25% high**: **1,549,500,016** against **1,157,291,375**.
 - And the **wide shape is refused by the default budget** — the estimate is more than **256 MiB** — **at every batch
-  size**, because the estimate does not depend on the batch size at all. **So the budget's verdict on a plan is the
-  same whatever the knob says**, and the knob's price is invisible to it. **The refusal itself is right** — the read
-  holds **1,139,591,586** bytes at every size — **but it is right by accident**, and a plan that fits would be
-  refused for the same reason.
+  size**, because the estimate did not depend on the batch size at all. **So the budget's verdict on a plan was the
+  same whatever the knob said**, and the knob's price was invisible to it. **The refusal itself was right** — the read
+  holds **1,139,591,586** bytes at every size — **but it was right by accident**, and a plan that fits would have
+  been refused for the same reason.
 
-**And the estimate's own document says what it gets wrong.** *"A dictionary-encoded string column is a `utf8` column
-to the engine, and costs the same as one: the dictionary is shared by the whole column, and the per-row cost is the
-index."* **And the code charges a `String` header — 24 bytes a row — for a column whose per-row cost is the index's
-four.** **Both paths do it**: the eager path's estimate *has* the chunk's encoding in hand and charges the header
-anyway, and the lazy path's estimate cannot see the encoding at all and charges the same. The estimate's doc and the
-estimate's code disagree, and **neither the estimate nor the budget is checked against a measurement anywhere in this
-repository** until this section.
+**And the estimate has moved since.** The engine now says **one** statement of what a row costs and **charges the
+batch**, so the budget's verdict depends on the batch size — and the narrow shape's estimate is **1.11× high** where
+it was **9.15× low**, and the wide shape's is **16% low** where it was **25% high**. **The wide shape is still
+refused**, and now for a reason that is not an accident: **the plan does not fit**.
+[§3ag](#3ag-the-width-statement-paid) has the figures, and this section's are the ones this section measured.
+
+**And the estimate's own document said what it got wrong.** *"A dictionary-encoded string column is a `utf8`
+column to the engine, and costs the same as one: the dictionary is shared by the whole column, and the per-row cost
+is the index."* **And the code charged a `String` header — 24 bytes a row — for a column whose per-row cost is the
+index's four.** **Both paths did it**: the eager path's estimate *had* the chunk's encoding in hand and charged the
+header anyway, and the lazy path's estimate could not see the encoding at all and charged the same. The estimate's
+doc and the estimate's code disagreed, and **neither the estimate nor the budget was checked against a measurement
+anywhere in this repository** until this section.
 
 #### What this changes
 
@@ -5067,7 +5102,7 @@ costs more per row**, when the table is equally cold either way and the reader's
 **the batch's bytes** named as the thing a bigger batch buys and the wide shape pays for.
 
 Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
-**inside this section**. The reports are `bench-results/batch-memory-run1.json` and its two siblings, and
+**inside this section**. The reports are `bench-results/batch-memory-spec049-run1.json` and its two siblings, and
 `bench-results/batch-sweep-run1.json` and its two siblings. The instruments are
 `crates/columnar-engine/examples/batch_memory_probe.rs` and
 `crates/columnar-engine/examples/batch_sweep_probe.rs`. The decision is in
@@ -5549,3 +5584,127 @@ than the *query*, and it is swept like the other two. See [§2g](#2g-the-load-sw
 that was busy at the start and quieter at the end — see
 [The conditions](#the-conditions). The ratios are
 what the file claims, and they hold.
+### 3ag. The width statement, paid
+
+**What this section is**: **what a row costs**, measured against — and **what the estimate now charges**.
+
+[§3af](#3af-the-batch-sizes-price) priced the reader's batch size and decided the rule's shape: **a byte budget**.
+**And a byte budget has to know what a row costs before the read**, and there was no honest statement of that to
+divide it by.
+
+**The engine charged a `utf8` column 24 bytes a row** — a `String` header — **and a dictionary-encoded column's real
+cost is its index's four**, which the estimate's own document said: *"the dictionary is shared by the whole column,
+and the per-row cost is the index."* **Both paths did it**: the eager path had the chunk's encoding in hand and
+charged the header anyway, and the lazy path could not see the encoding at all.
+
+**And the file's own footer is not the statement either.** A column chunk's `total_uncompressed_size` over its
+`num_values` is the **file's** bytes a row, and it is **the file's pages and not the working set**: the sixteen
+columns come to **70.70** bytes a row that way against the **173.88** the allocator measured, and the file stores
+`l_discount` in **0.50** bytes a row where the engine holds it in **eight**. **So the footer cannot be the
+statement, the schema's type cannot be the statement, and the estimate was not the statement.**
+
+#### The statement
+
+**One statement, in one place, and the estimate and the reader's batch rule both read it.**
+
+| the shape the row takes | the row holds | the bytes a row |
+|---|---|---|
+| a fixed-width value — an `int64` or a `float64` | the value itself | **8** |
+| a dictionary's **index** | an `i32` into the column's dictionary | **4** |
+| a plain string's `String` header | a `String` | **24** |
+
+**And the value's own bytes ride on top**: a plain string's heap holds the string, a dictionary holds its distinct
+values **once** for the whole column, and a number's eight bytes **are** its value.
+
+**And the signal is the schema's own Arrow type, and not the chunk's encodings.** A chunk's `encodings` list names
+`RLE_DICTIONARY` for `l_orderkey` — a column that is not dictionary-encoded at all. A `Dictionary(_, Utf8)` field is
+a column of **indices** and a `Utf8` field is a column of **headers**, and it is the same signal the reader's own
+arrays answer to.
+
+#### The check
+
+**The statement is checked against the allocator's measurement**, at the three widths of
+[§3af](#3af-the-batch-sizes-price), **and the file's own footer is published beside both** — because it is the
+file's pages, and the difference is the point.
+
+| the shape | the columns the reader fetches | the statement | the file's own footer | the measurement | the difference |
+|---|---|---|---|---|---|
+| **the two predicate columns** | 2 | **13.79** | **2.04** | **13.39** | **−0.40** |
+| **the two materialised columns** | 2 | **16.25** | **16.53** | **16.03** | **−0.22** |
+| **the file's sixteen columns** | 16 | **159.02** | **70.70** | **173.88** | **+14.86** |
+
+**All in bytes a row.** **The statement is within 3% on the two narrow shapes and 9% low on the wide one.** **And the
+file's own footer is 2.46× low** on the wide one — **70.70** bytes a row against the **173.88** the allocator
+measured — and **6.56× low** on the narrow one. **On the two materialised columns the footer is within 3%**, and
+that is an accident: the file stores those two columns the way the engine holds them.
+
+**And the wide shape's difference is the plain strings.** **+14.86** bytes a row is the statement being **9.3% low**,
+and the reason is that **the plain string's bytes are held twice in the batch** — once in Arrow's buffer and once in
+the engine's own copy — **and the statement counts them once**. The dictionary path **borrows** the batch's values;
+the plain path **copies** every string out of the batch, one allocation a row. **That is the wide shape's gap.**
+
+#### And the estimate charges the batch
+
+**The estimate now holds the file's rows for the columns the dataset holds, and the batch's rows for the columns the
+reader fetches** — and **so the budget's verdict on a plan depends on the reader's batch size**, which it did not
+before.
+
+| the shape | the batch size | the read's peak | the estimate | the gap |
+|---|---|---|---|---|
+| **the two predicate columns** | 62,500 | **1,166,672** | **2,361,802** | −1,195,130 |
+| | **125,000 — the engine's own** | **2,169,536** | **3,223,586** | −1,054,050 |
+| | 250,000 | **4,099,420** | **4,947,156** | −847,736 |
+| | **1,000,000** | **13,719,522** | **15,288,577** | −1,569,055 |
+| **the two materialised columns** | 62,500 | **132,262,351** | **100,015,642** | +32,246,709 |
+| | **125,000 — the engine's own** | **133,241,851** | **101,031,266** | +32,210,585 |
+| | 250,000 | **135,405,827** | **103,062,516** | +32,343,311 |
+| | **1,000,000** | **147,294,211** | **115,250,016** | +32,044,195 |
+| **the file's sixteen columns** | 62,500 | **1,144,709,903** | **965,574,092** | +179,135,811 |
+| | **125,000 — the engine's own** | **1,157,291,503** | **975,512,992** | +181,778,511 |
+| | 250,000 | **1,183,960,455** | **995,390,808** | +188,569,647 |
+| | **1,000,000** | **1,307,720,215** | **1,114,657,705** | +193,062,510 |
+
+**The gap is the read's peak less the estimate** — a negative gap is the estimate sitting above the read — and
+**the peak is the new campaign's**: the reports hold it, and the guard checks it inside this section.
+
+**And the estimate was one number a shape before, and it was wrong in both directions.** It said **1,500,016** bytes
+on the two predicate columns, **99,000,016** on the two materialised ones, and **1,549,500,016** on the sixteen —
+**and it did not depend on the batch size at all**, so the budget could not see the knob's price. **Now it does**:
+on the narrow shape the estimate says **15,288,577** bytes where the read holds **13,719,522** — **1.11× high** at a
+whole row group where it was **9.15× low** (**1,500,016** against **13,719,490**) — and on the wide one it says
+**975,512,992** where the read holds **1,157,291,503** — **16% low** where it was **25% high** (**1,549,500,016**
+against **1,157,291,375**). **And the reads moved with the estimates**: the campaign was taken again after the
+engine changed, and the read's peak moved by **32** bytes on the narrow shape and **128** on the wide one — so the
+figures here are the new campaign's, and the old ones stand beside them.
+
+**And the wide shape is still refused by the default budget**, at every batch size, and now for a reason that is not
+an accident: **the plan does not fit**. The estimate says **975,512,992** bytes at the engine's own batch size and
+the read holds **1,157,291,503** there *(was 1,157,291,375)* — and the budget is **256 MiB**.
+
+**And the estimate is close, and not an upper bound.** The **statement** is what a row costs in the engine's own
+storage, and the engine's own containers hold **spare capacity** and each string is **a separate allocation** — so
+the estimate runs **16% low** against the wide shape's read. **The measurement is published here so that the
+difference is visible**, and the guard checks the figures in this section against the committed reports.
+
+#### What this changes
+
+**The estimate and the reader's batch rule now share one statement**, so the rule can divide a byte budget by what a
+row costs. **The default still does not move**: moving it moves **every** published figure the reader's batch size
+touches, and re-measuring those is **spec 051's** work.
+
+**And the open question this leaves behind** is the plain string's copy: **the conversion copies every string out of
+the Arrow batch, one allocation a row, and the dictionary path does not**. **That is the wide shape's gap, and it is
+not fixed here** — the fix is a change to the conversion, and it wants its own measurement.
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/batch-width-run1.json` and its two siblings, and
+`bench-results/batch-memory-run1.json` and its two siblings. The instruments are
+`crates/columnar-engine/examples/batch_width_probe.rs` and
+`crates/columnar-engine/examples/batch_memory_probe.rs`. The decision is in
+[ADR-0062](docs/adr/0062-the-width-statement.md).
+
+**The conditions**: three campaigns of three repetitions, on one host, with the load average between **6.46** and
+**6.91**. **The memory is measured with a counting allocator**, and the time is not measured here — a time measured
+beside a counting allocator is not the engine's time.
+
+---

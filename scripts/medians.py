@@ -3138,7 +3138,7 @@ def _pool(runs: list[dict], shape: int, batch: str, key: str) -> list[float]:
     return values
 
 
-def print_batch_memory(runs: list[dict]) -> None:
+def print_batch_memory(runs: list[dict], note: str = "") -> None:
     """Print the price: the peak a read holds, at each width.
 
     This is spec 049: the reader's batch size is a knob, and the knob's price
@@ -3154,21 +3154,20 @@ def print_batch_memory(runs: list[dict]) -> None:
 
     campaigns = len(runs)
     probe = runs[0].get("probe", "batch-memory")
-    print(f"\n=== THE BATCH SIZE'S PRICE ({probe} probe, {campaigns} campaigns) ===")
+    suffix = f", {note}" if note else ""
+    print(f"\n=== THE BATCH SIZE'S PRICE ({probe} probe, {campaigns} campaigns{suffix}) ===")
 
     shapes = runs[0].get("the_shapes") or []
     for index, shape in enumerate(shapes):
         name = shape.get("the_shape", "?")
         columns = shape.get("the_columns_materialised", 0)
-        estimate = int(shape.get("the_estimate_bytes", 0))
         refused = bool(shape.get("refused_at_the_default_budget", False))
         print(f"\n-- the shape: {name} ({columns} materialised columns) --")
-        print(f"{'the engine\'s own estimate':<46}{estimate:>15,} bytes")
         if refused:
             print(f"{'refused at the default budget':<46}{'yes':>15}")
         print(
             f"{'the batch size':<16}{'the peak':>15}{'the held':>15}"
-            f"{'the batches':>13}{'the gap':>15}"
+            f"{'the batches':>13}{'the estimate':>15}{'the gap':>15}"
         )
         for point in shape.get("the_points", []):
             batch = str(point.get("batch_rows"))
@@ -3179,10 +3178,98 @@ def print_batch_memory(runs: list[dict]) -> None:
             peak = statistics.median(peaks)
             held = statistics.median(helds) if helds else 0
             batches = point.get("the_batches", "?")
+            estimate = _scalar(runs, index, batch, "the_estimate_bytes")
+            if not estimate:
+                # Spec 049's own reports carry the estimate once a shape,
+                # because the estimate did not depend on the batch size then.
+                estimate = float(shape.get("the_estimate_bytes", 0) or 0)
             print(
                 f"{int(batch):>15,}{peak:>15,.0f}{held:>15,.0f}"
-                f"{batches:>13,}{peak - estimate:>+15,.0f}"
+                f"{batches:>13,}{estimate:>15,.0f}{peak - estimate:>+15,.0f}"
             )
+
+    rows_agree = {bool(run.get("the_rows_agree")) for run in runs}
+    print("\n-- the correctness --")
+    print(f"the rows agree in every campaign: {rows_agree == {True}}")
+    loads = [float(run.get("the_host_load_average", 0.0)) for run in runs]
+    if loads:
+        print(f"the host load average: {min(loads):.2f} - {max(loads):.2f}")
+
+
+def _scalar(runs: list[dict], shape: int, batch: str, key: str) -> float:
+    """One point's scalar, over every campaign.
+
+    Some figures are one number per point -- the engine's own estimate is
+    computed, not measured, so it does not spread -- and the published figure
+    is the median of the campaigns'.
+    """
+    values: list[float] = []
+    for run in runs:
+        shapes = run.get("the_shapes") or []
+        if shape >= len(shapes):
+            continue
+        for point in shapes[shape].get("the_points", []):
+            if str(point.get("batch_rows")) != str(batch):
+                continue
+            value = point.get(key)
+            if value is not None:
+                values.append(float(value))
+    return statistics.median(values) if values else 0.0
+
+
+def print_batch_width(runs: list[dict]) -> None:
+    """Print the width statement beside the allocator's measurement.
+
+    This is spec 050: the engine now says what a row costs -- **8** for a
+    number, **4** for a dictionary's index, **24** for a plain string's header,
+    and the value's own bytes on top -- and the statement is **checked against
+    the measurement**, because a statement that is not measured against is a
+    guess with a formula.
+
+    **The file's own footer is printed beside both**: it is the file's pages
+    and not the working set's, and the difference is the point.
+    """
+    if not runs:
+        return
+
+    campaigns = len(runs)
+    probe = runs[0].get("probe", "batch-width")
+    print(f"\n=== THE WIDTH STATEMENT ({probe} probe, {campaigns} campaigns) ===")
+
+    shapes = runs[0].get("the_shapes") or []
+    for index, shape in enumerate(shapes):
+        name = shape.get("the_shape", "?")
+        rows = float(shape.get("the_file_rows", 0) or 0)
+        statement = float(shape.get("the_statement_bytes", 0) or 0) / rows if rows else 0.0
+        footer = float(shape.get("the_file_bytes", 0) or 0) / rows if rows else 0.0
+
+        points = shape.get("the_points") or []
+        peaks: list[tuple[int, float]] = []
+        for point_index, point in enumerate(points):
+            values = [
+                float(run["the_shapes"][index]["the_points"][point_index]["the_peak_median"])
+                for run in runs
+                if index < len(run.get("the_shapes") or [])
+                and point_index < len(run["the_shapes"][index].get("the_points") or [])
+            ]
+            if values:
+                peaks.append((int(point.get("batch_rows", 0)), statistics.median(values)))
+
+        measured = 0.0
+        if len(peaks) == 2 and peaks[1][0] != peaks[0][0]:
+            measured = (peaks[1][1] - peaks[0][1]) / (peaks[1][0] - peaks[0][0])
+
+        print(f"\n-- the shape: {name} --")
+        print(f"  the columns the reader fetches: {shape.get('the_columns_fetched', 0)}")
+        print(f"  the columns the dataset holds:   {shape.get('the_columns_held', 0)}")
+        print(f"  the statement:      {statement:>10.2f} bytes a row")
+        print(f"  the file's footer:  {footer:>10.2f} bytes a row")
+        print(f"  the measurement:    {measured:>10.2f} bytes a row")
+        print(f"  the difference:     {measured - statement:>+10.2f} bytes a row")
+        if footer:
+            print(f"  the footer is {measured / footer:.2f}x low")
+        for batch, peak in peaks:
+            print(f"    the peak at {batch:>9,} rows: {peak:>15,.0f}")
 
     rows_agree = {bool(run.get("the_rows_agree")) for run in runs}
     print("\n-- the correctness --")
@@ -3567,9 +3654,26 @@ def main() -> int:
     batch_memory = sorted(Path("bench-results").glob("batch-memory-run*.json"))
     if batch_memory:
         print_batch_memory([load(p) for p in batch_memory])
+
+    # Spec 049's own memory reports, kept: the section that published the
+    # price is a record of that measurement, and its figures are derived from
+    # these reports.
+    batch_memory_spec049 = sorted(
+        Path("bench-results").glob("batch-memory-spec049-run*.json")
+    )
+    if batch_memory_spec049:
+        print_batch_memory(
+            [load(p) for p in batch_memory_spec049], note="spec 049's own measurement"
+        )
     batch_sweep_reports = sorted(Path("bench-results").glob("batch-sweep-run*.json"))
     if batch_sweep_reports:
         print_batch_sweep([load(p) for p in batch_sweep_reports])
+
+    # Spec 050: the width statement, checked against the allocator's
+    # measurement, with the file's own footer beside both.
+    batch_width = sorted(Path("bench-results").glob("batch-width-run*.json"))
+    if batch_width:
+        print_batch_width([load(p) for p in batch_width])
 
     # Spec 035's ladder: the drift's own parts, over the set the file publishes,
     # the set spec 034 measured beside it, and the set spec 036 measured.

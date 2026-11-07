@@ -801,8 +801,17 @@ PROBE_PATHS_VERDICTS = (
 # probe; the **time** is measured beside it, in a probe that has no allocator
 # in it. The two are never in the same measurement.
 BATCH_MEMORY_REPORTS = sorted((ROOT / "bench-results").glob("batch-memory-run*.json"))
+# Spec 049's own memory reports, kept: the section that published them is a
+# record of that measurement, and the estimate it published has since moved.
+BATCH_MEMORY_SPEC049_REPORTS = sorted(
+    (ROOT / "bench-results").glob("batch-memory-spec049-run*.json")
+)
+BATCH_WIDTH_REPORTS = sorted((ROOT / "bench-results").glob("batch-width-run*.json"))
 BATCH_SWEEP_REPORTS = sorted((ROOT / "bench-results").glob("batch-sweep-run*.json"))
 BATCH_PRICE_SECTION = "### 3af"
+# The section that publishes the width statement and the estimate that charges
+# the batch.
+BATCH_WIDTH_SECTION = "### 3ag"
 
 # The campaigns the method calls for. A set with fewer is a failure: a set that
 # is not there is not a set of zero figures, it is the absence of the evidence.
@@ -844,11 +853,15 @@ STATUS_PROBE_PATHS = (
 # The figures the status publishes for spec 049, and the report set each is
 # derived from: (label, the report set, the shape, the batch size, the key).
 STATUS_BATCH_PRICE = (
+    # The estimates are the ones that charge the batch, and they are read from
+    # the reports that measured them. The peaks are published twice: the new
+    # campaign's beside the new estimate, and spec 049's beside the old one.
+    # Each is read from the reports that measured it.
     (
-        "the narrow shape's estimate",
+        "the narrow shape's estimate at a whole row group",
         "batch-memory-run*.json",
         0,
-        None,
+        1_000_000,
         "the_estimate_bytes",
     ),
     (
@@ -859,15 +872,29 @@ STATUS_BATCH_PRICE = (
         "the_peak_bytes",
     ),
     (
-        "the wide shape's estimate",
+        "the narrow shape's peak before, at a whole row group",
+        "batch-memory-spec049-run*.json",
+        0,
+        1_000_000,
+        "the_peak_bytes",
+    ),
+    (
+        "the wide shape's estimate at the engine's own batch size",
         "batch-memory-run*.json",
         2,
-        None,
+        125_000,
         "the_estimate_bytes",
     ),
     (
         "the wide shape's peak at the engine's own batch size",
         "batch-memory-run*.json",
+        2,
+        125_000,
+        "the_peak_bytes",
+    ),
+    (
+        "the wide shape's peak before, at the engine's own batch size",
+        "batch-memory-spec049-run*.json",
         2,
         125_000,
         "the_peak_bytes",
@@ -1425,6 +1452,37 @@ def rendered_bytes(figure: float) -> str:
     return f"{rounded:,}"
 
 
+def rendered_rate(figure: float) -> str:
+    """A rate in bytes a row, as the document writes it.
+
+    The rates are fractions -- a row's cost is not a whole number of bytes --
+    and the documents write them with two decimals, because that is the
+    precision the measurement carries.
+    """
+    return f"{figure:.2f}"
+
+
+def _batch_memory_scalar(runs: list[dict], shape: int, batch: str, key: str) -> float:
+    """One point's computed figure, over every campaign.
+
+    Some figures are **computed** and not measured -- the engine's own estimate
+    is one -- and so they do not spread. The published figure is the median of
+    the campaigns'.
+    """
+    values: list[float] = []
+    for run in runs:
+        shapes = run.get("the_shapes") or []
+        if shape >= len(shapes):
+            continue
+        for point in shapes[shape].get("the_points", []):
+            if str(point.get("batch_rows")) != str(batch):
+                continue
+            value = point.get(key)
+            if value is not None:
+                values.append(float(value))
+    return statistics.median(values) if values else 0.0
+
+
 def _batch_memory_pool(runs: list[dict], shape: int, batch: str, key: str) -> list[float]:
     """One point's samples, pooled over every campaign.
 
@@ -1441,6 +1499,22 @@ def _batch_memory_pool(runs: list[dict], shape: int, batch: str, key: str) -> li
                 continue
             values.extend(float(value) for value in (point.get(key) or []))
     return values
+
+
+def _width_statement_checks() -> int:
+    """How many figures the width statement's section is checked against.
+
+    Every point of every shape is checked three times -- the estimate, the
+    read's own peak and the gap between them -- and every shape's old
+    estimate is checked once more.
+    """
+    if not BATCH_MEMORY_REPORTS or not BATCH_MEMORY_SPEC049_REPORTS:
+        return 0
+    runs = [json.loads(path.read_text()) for path in BATCH_MEMORY_REPORTS]
+    shapes = runs[0].get("the_shapes") or []
+    points = sum(len(shape.get("the_points") or []) for shape in shapes)
+    old = [json.loads(path.read_text()) for path in BATCH_MEMORY_SPEC049_REPORTS]
+    return points * 3 + len(old[0].get("the_shapes") or [])
 
 
 def _batch_sweep_samples(runs: list[dict], family: str, batch: str, key: str) -> list[float]:
@@ -3613,11 +3687,14 @@ def main() -> int:
                         f"{sorted(states)}"
                     )
 
-    if BATCH_MEMORY_REPORTS:
-        price_runs = [json.loads(path.read_text()) for path in BATCH_MEMORY_REPORTS]
+    if BATCH_MEMORY_SPEC049_REPORTS:
+        # Spec 049's own reports: the section that published the batch price is
+        # a record of that measurement, and it is checked against the reports
+        # that measurement produced.
+        price_runs = [json.loads(path.read_text()) for path in BATCH_MEMORY_SPEC049_REPORTS]
         if len(price_runs) < BATCH_PRICE_CAMPAIGNS:
             failures.append(
-                f"PERF.md: the batch-memory probe has {len(runs)} campaigns, and "
+                f"PERF.md: the batch-memory probe has {len(price_runs)} campaigns, and "
                 f"the method says {BATCH_PRICE_CAMPAIGNS}"
             )
         published = section_of(texts["PERF.md"], BATCH_PRICE_SECTION)
@@ -3655,6 +3732,145 @@ def main() -> int:
                             )
                         else:
                             print(f"ok  {'PERF.md':<10} {label_text:<44} {rendered}")
+
+    if BATCH_MEMORY_REPORTS:
+        # The estimate that charges the batch: it moves with the batch size,
+        # and the section that publishes it says so.
+        price_runs = [json.loads(path.read_text()) for path in BATCH_MEMORY_REPORTS]
+        if len(price_runs) < BATCH_PRICE_CAMPAIGNS:
+            failures.append(
+                f"PERF.md: the batch-memory probe has {len(price_runs)} campaigns, and "
+                f"the method says {BATCH_PRICE_CAMPAIGNS}"
+            )
+        published = section_of(texts["PERF.md"], BATCH_WIDTH_SECTION)
+        if published is None:
+            failures.append(
+                f"PERF.md: the section that publishes the width statement's figures "
+                f"({BATCH_WIDTH_SECTION}) is not in the document"
+            )
+        else:
+            for index, shape in enumerate(price_runs[0].get("the_shapes", [])):
+                name = shape.get("the_shape", "?")
+                for point in shape.get("the_points", []):
+                    batch = str(point.get("batch_rows"))
+                    estimate = _batch_memory_scalar(
+                        price_runs, index, batch, "the_estimate_bytes"
+                    )
+                    rendered = rendered_bytes(estimate)
+                    label_text = f"{name} at {int(batch):,} rows, the estimate"
+                    if not figure_in(published, rendered):
+                        failures.append(
+                            f"PERF.md: {label_text} is {rendered} in the reports but "
+                            f"that figure does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {label_text:<44} {rendered}")
+
+                    # The gap is against the read's own peak.
+                    peaks = _batch_memory_pool(price_runs, index, batch, "the_peak_bytes")
+                    if not peaks:
+                        continue
+                    gap = statistics.median(peaks) - estimate
+                    rendered_gap = rendered_bytes(gap)
+                    gap_label = f"{name} at {int(batch):,} rows, the gap"
+                    if not figure_in(published, rendered_gap):
+                        failures.append(
+                            f"PERF.md: {gap_label} is {rendered_gap} in the reports but "
+                            f"that figure does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {gap_label:<44} {rendered_gap}")
+
+                    # The read's own peak: the section publishes it beside the
+                    # estimate, so it is checked against the campaign that
+                    # measured it -- and not against an older one.
+                    rendered_peak = rendered_bytes(statistics.median(peaks))
+                    peak_label = f"{name} at {int(batch):,} rows, the read's peak"
+                    if not figure_in(published, rendered_peak):
+                        failures.append(
+                            f"PERF.md: {peak_label} is {rendered_peak} in the reports but "
+                            f"that figure does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {peak_label:<44} {rendered_peak}")
+
+        # The estimate before: the section that publishes the price published
+        # one number a shape, and the section that publishes the width statement
+        # publishes it old-and-new.
+        if BATCH_MEMORY_SPEC049_REPORTS:
+            old_runs = [
+                json.loads(path.read_text()) for path in BATCH_MEMORY_SPEC049_REPORTS
+            ]
+            for shape in old_runs[0].get("the_shapes", []):
+                name = shape.get("the_shape", "?")
+                estimate = rendered_bytes(shape.get("the_estimate_bytes", 0))
+                label_text = f"{name}, the estimate before"
+                if not figure_in(published, estimate):
+                    failures.append(
+                        f"PERF.md: {label_text} is {estimate} in the reports but "
+                        f"that figure does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label_text:<44} {estimate}")
+
+    if BATCH_WIDTH_REPORTS:
+        # The width statement, checked against the allocator's measurement, with
+        # the file's own footer beside both.
+        width_runs = [json.loads(path.read_text()) for path in BATCH_WIDTH_REPORTS]
+        if len(width_runs) < BATCH_PRICE_CAMPAIGNS:
+            failures.append(
+                f"PERF.md: the batch-width probe has {len(width_runs)} campaigns, and "
+                f"the method says {BATCH_PRICE_CAMPAIGNS}"
+            )
+        published = section_of(texts["PERF.md"], BATCH_WIDTH_SECTION)
+        if published is None:
+            failures.append(
+                f"PERF.md: the section that publishes the width statement's figures "
+                f"({BATCH_WIDTH_SECTION}) is not in the document"
+            )
+        else:
+            for index, shape in enumerate(width_runs[0].get("the_shapes", [])):
+                name = shape.get("the_shape", "?")
+                rows = float(shape.get("the_file_rows", 0) or 0)
+                if not rows:
+                    continue
+                statement = float(shape.get("the_statement_bytes", 0) or 0) / rows
+                footer = float(shape.get("the_file_bytes", 0) or 0) / rows
+
+                peaks: list[tuple[int, float]] = []
+                for point_index, point in enumerate(shape.get("the_points", [])):
+                    values = [
+                        float(
+                            run["the_shapes"][index]["the_points"][point_index][
+                                "the_peak_median"
+                            ]
+                        )
+                        for run in width_runs
+                        if index < len(run.get("the_shapes") or [])
+                        and point_index
+                        < len(run["the_shapes"][index].get("the_points") or [])
+                    ]
+                    if values:
+                        peaks.append((int(point.get("batch_rows", 0)), statistics.median(values)))
+                measured = 0.0
+                if len(peaks) == 2 and peaks[1][0] != peaks[0][0]:
+                    measured = (peaks[1][1] - peaks[0][1]) / (peaks[1][0] - peaks[0][0])
+
+                for label, figure in (
+                    ("the statement, a row", statement),
+                    ("the file's footer, a row", footer),
+                    ("the measurement, a row", measured),
+                    ("the difference, a row", measured - statement),
+                ):
+                    rendered = rendered_rate(figure)
+                    label_text = f"{name}, {label}"
+                    if not figure_in(published, rendered):
+                        failures.append(
+                            f"PERF.md: {label_text} is {rendered} in the reports but "
+                            f"that figure does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {label_text:<44} {rendered}")
 
     if BATCH_SWEEP_REPORTS:
         sweep_runs = [json.loads(path.read_text()) for path in BATCH_SWEEP_REPORTS]
@@ -3812,11 +4028,13 @@ def main() -> int:
             shapes = run.get("the_shapes") or []
             if shape >= len(shapes):
                 continue
-            if key == "the_estimate_bytes":
-                values.append(float(shapes[shape].get(key, 0)))
-                continue
             for point in shapes[shape].get("the_points", []):
                 if batch is not None and int(point.get("batch_rows", 0)) != batch:
+                    continue
+                if key == "the_estimate_bytes":
+                    # The estimate is **computed** and not measured, so it is
+                    # one number per point and not a series.
+                    values.append(float(point.get(key, 0)))
                     continue
                 values.extend(float(value) for value in (point.get(key) or []))
         if not values:
@@ -6002,6 +6220,7 @@ def main() -> int:
         f"{len(PROBE_PATHS_BATCH_SETS) * 4} of the query's parts at each batch size, "
         f"{len(STATUS_PROBE_PATHS) + len(STATUS_PROBE_PATHS_BATCH) + 1} of the status's probe-paths figures, "
         f"{len(BATCH_PRICE_FAMILIES) * 8 + 9} of the batch price, "
+        f"{_width_statement_checks()} of the width statement, "
         f"{len(STATUS_BATCH_PRICE)} of the status's batch-price figures, "
         f"{len(SPEC035_FAMILIES) * (2 * (7 + 3 * len(SPEC035_LEAVES['cold'])) + 9)} of the drift's ladder, "
         f"{2 * (11 + 3 * len(SPEC035_LEAVES['cold'])) + 3 + 2 * (2 * len(SPEC035_LEAVES['cold']) + 6) + 3 * len(SPEC036_MOVED) + 6} of the file-state floor, "

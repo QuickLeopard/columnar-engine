@@ -32,40 +32,41 @@ acts**, and this increment does the first.
 
 ### R1 — What a row costs is **measured against**, not asserted
 
-- [ ] The width statement is **checked against the allocator's measurement** at all three widths, and the check is
+- [x] The width statement is **checked against the allocator's measurement** at all three widths, and the check is
       published: the statement, the measured bytes a row, and the difference.
-- [ ] **And the file's own footer is published beside it**, so that the reader can see that the footer is **2.5×
+- [x] **And the file's own footer is published beside it**, so that the reader can see that the footer is **2.46×
       low** on the wide shape and why the footer's number is the file's and not the working set's.
 
 ### R2 — **One** honest statement of what a row costs
 
-- [ ] A single statement gives the bytes a row of a column costs: **8** for an `int64` or a `float64`, **4** for a
+- [x] A single statement gives the bytes a row of a column costs: **8** for an `int64` or a `float64`, **4** for a
       dictionary-encoded string's **index**, and **24** for a plain string's **header**, plus the bytes the string's
       own heap holds.
-- [ ] **The estimate and the batch's rule share it.** The estimate's per-column charge and the rule's per-row cost
+- [x] **The estimate and the batch's rule share it.** The estimate's per-column charge and the rule's per-row cost
       are the same number, read from the same place.
-- [ ] **The estimate's document and the estimate's code agree**, and the dictionary column's cost is its index.
+- [x] **The estimate's document and the estimate's code agree**, and the dictionary column's cost is its index.
 
 ### R3 — The estimate **charges the batch**, so the budget can see the knob's price
 
-- [ ] The estimate charges the **batch's** transient bytes — the columns the reader fetches, at the **batch's** size
+- [x] The estimate charges the **batch's** transient bytes — the columns the reader fetches, at the **batch's** size
       — beside the **file's** rows for the columns the plan materialises.
-- [ ] **And the budget can then refuse a plan whose batch does not fit**, which today it cannot see.
-- [ ] **The public surface does not break**: the estimate's functions are `pub`, so a new parameter would be a major
-      break; a new function is an addition, and the crate is still unpublished. **The semver baseline moves**, and the
-      move is recorded.
+- [x] **And the budget can then refuse a plan whose batch does not fit**, which today it cannot see.
+- [x] **The public surface does not break**: the estimate's functions are `pub`, so a new parameter would be a major
+      break; a new function is an addition, and the crate is still unpublished. **The semver baseline does not move**,
+      because the trait's new method has a **default body** and `cargo semver-checks` says **202 pass** and **58 skip**
+      against the baseline. **The correction is recorded in ADR-0062.**
 
 ### R4 — The estimate's figures are published **old-and-new**
 
-- [ ] Every published figure the estimate touches is published **old-and-new**, with the reason.
-- [ ] **And the sentence about the query the budget refuses is corrected where it was published**, if the corrected
+- [x] Every published figure the estimate touches is published **old-and-new**, with the reason.
+- [x] **And the sentence about the query the budget refuses is corrected where it was published**, if the corrected
       estimate no longer refuses it.
 
 ### R5 — The answer is published either way
 
-- [ ] A **new section** in `PERF.md`, the decision in an **ADR**, the status's next question rewritten, and the raw
+- [x] A **new section** in `PERF.md`, the decision in an **ADR**, the status's next question rewritten, and the raw
       reports **committed**.
-- [ ] The **guard** checks the published figures **inside the section that publishes them**.
+- [x] The **guard** checks the published figures **inside the section that publishes them**.
 
 ## The scope
 
@@ -102,7 +103,7 @@ the measurement, with the estimate changed.
 
 **Why**: there are three candidate answers to "what does a row cost" — the schema's types, the file's footer, and the
 allocator's measurement — and **the measurement is the only one that is about the working set**. The schema's types
-cannot see a dictionary column; the footer is the **file's** pages and is **2.5× low** on the wide shape.
+cannot see a dictionary column; the footer is the **file's** pages and is **2.46× low** on the wide shape.
 
 **So the statement is written down, checked against the measurement, and published with the measurement beside it.**
 A statement that is not measured against is a guess with a formula.

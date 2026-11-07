@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **48 specs**, **61 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **48 specs**, **62 ADRs** and **29 defects** so far, and every one
 of the specs but the one in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
@@ -350,13 +350,25 @@ engine behaviour changed.
 allocator** measured the **peak** a read holds at three widths: the two predicate columns, the two
 materialised ones, and the file's sixteen. **The bytes a batch holds scale with the width** — a whole row
 group is **12.8 MiB** on a narrow query and **165.8 MiB** on a wide one — **and the knob is named in rows,
-so it cannot see that.** **And the engine's own memory estimate does not model the batch at all**: it says
-**1,500,016** bytes where the read holds **13,719,490**, and it says **1,549,500,016** where the read
-holds **1,157,291,375** — and the **default budget refuses the wide shape at every batch size**, because
-the estimate does not depend on the batch size at all. **So the rule
+so it cannot see that.** **And the engine's own memory estimate did not model the batch at all**: it said
+**1,500,016** bytes where the read holds **13,719,490**, and it said **1,549,500,016** where the read
+holds **1,157,291,375** — and the **default budget refused the wide shape at every batch size**, because
+the estimate did not depend on the batch size at all. **So the rule
 is a byte budget, and the budget is 16 MiB** — bounded by the measurement from both sides, and it gives
 every shape at least what it has today. **And the default does not move yet**: moving it moves **every**
 published figure the batch size touches, and that is the next increment's work.
+
+**And spec 050 gave the engine one honest statement of what a row costs, and made the estimate charge
+the batch.** The statement is **8** bytes a row for a number, **4** for a dictionary's index and **24** for
+a plain string's header, and **the signal is the schema's own Arrow type** — not the chunk's encodings,
+which name `RLE_DICTIONARY` for a column that is not dictionary-encoded at all. **And it is checked
+against the allocator's measurement**: **13.79** bytes a row against **13.39** on the narrow shape,
+**16.25** against **16.03** on the two materialised columns, and **159.02** against **173.88** on the
+file's sixteen — **and the file's own footer is 2.46× low** on the wide one. **So the estimate now says
+**15,288,577** bytes where the read holds **13,719,522** *(was 13,719,490)* — **1.11× high where it was
+9.15× low** — and **975,512,992** where the read holds **1,157,291,503** *(was 1,157,291,375)*. **And the
+wide shape is still refused**, and now
+for a reason that is not an accident: **the plan does not fit**.
 **And what is still not explained:** why a shorter run of the probe costs more per row, when the table is
 equally cold either way and the reader's work is the same.
 [§3ac](PERF.md#3ac-the-join-orders-query-on-both-sides-taken-apart),
@@ -497,11 +509,13 @@ for a pinned x86-64 runner; it has not run on one.
   can now be read by the engine and written back**, and the glue is three lines: the paths go to the set, the
   set's rows come out, the store writes them. **The identity is exact**: the same **6,000,000** rows come out
   of one file and out of six, and **the two files the two round trips write are the same file, byte for
-  byte**. **The set costs nothing that can be claimed** — the rows out are **+1.133 ms** against the one file's
-  *(was +6.425 ms)* and the write **−24.333 ms** *(was +34.659 ms)*, and the differences between the arms in
+  byte**. **The set costs nothing that can be claimed** — the rows out are **+30.155 ms** against the one file's
+  *(was +1.133 ms)* and the write **+57.718 ms** *(was −24.333 ms)*, and the differences between the arms in
   every iteration — measured back to back, with the order alternating — straddle zero with a spread wider
-  than either, on a host whose load average was 5.88, 6.69 and 7.22 — and the estimate does not move either:
-  **1,549,500,016 bytes** for both. **And the round trip is the published file, byte for byte**: under the
+  than either, on a host whose load average was 6.95, 7.0 and 6.76 — and the estimate does not move either:
+  **975,512,992 bytes** for both *(was 1,549,500,016)*. **And the campaign was taken again**, because the
+  engine's estimate changed and the estimate is one of this bullet's figures; the new figures are published and
+  the old ones stand beside them. **And the round trip is the published file, byte for byte**: under the
   file's own schema it writes **242,859,461** bytes and **no differing byte** — the Parquet schema is the
   same and the Arrow schema is the same, because the rows keep the dictionary — while **the store's own rule
   still differs**, at byte **20,566,725**, because a column that holds no NULL is written REQUIRED. **No
@@ -519,8 +533,8 @@ for a pinned x86-64 runner; it has not run on one.
   hands out are **the rows that were read** when no row was removed and nothing reordered them: the engine's
   own chunks, with their own encodings, and **the gather is gone for a plan that filters nothing**. **The lazy
   path moves the columns out of the reader** — no copy at all — and **the eager path copies them**, because
-  the caller owns the dataset there. **The rows out are six times faster**: **549.167 ms** against
-  **3,338.468 ms**, and the copy that is left is **eighteen times smaller**: **154.858 ms** against
+  the caller owns the dataset there. **The rows out are six times faster**: **542.049 ms** against
+  **3,338.468 ms**, and the copy that is left is **seventeen times smaller**: **164.513 ms** against
   **2,823.164 ms**. **And the shape is the plan's**: the rows come out with **7 dictionary columns** and
   **9 plain ones**, the encoding says which shape the caller got, and the store takes both. **The gather
   stays for every plan that needs it** — a filter that removed rows in the engine, a join and a sort — and
@@ -661,15 +675,29 @@ for a pinned x86-64 runner; it has not run on one.
   holds — with a **counting global allocator**, at three widths — and the **time** on both shapes in one session,
   back to back, with the order alternated. **The bytes a batch holds scale with the query's width**: a whole row
   group is **12.8 MiB** on a narrow query and **165.8 MiB** on a wide one, **and the knob is named in rows, so it
-  cannot see that**. **And the engine's memory estimate does not model the batch**: it says **1,500,016** bytes
-  where the read holds **13,719,490**, and **1,549,500,016** where the read holds **1,157,291,375** — and the
-  **default budget refuses the wide shape at every batch size**. **So the rule is a byte budget, and the budget is
-  16 MiB**, bounded by the measurement from both sides and giving every shape at least what it has today.
+  cannot see that**. **And the engine's memory estimate did not model the batch**: it said **1,500,016** bytes where the read
+  holds **13,719,490**, and **1,549,500,016** where the read holds **1,157,291,375** — and the **default budget
+  refused the wide shape at every batch size**. **So the rule is a byte budget, and the budget is 16 MiB**,
+  bounded by the measurement from both sides and giving every shape at least what it has today.
   **What is not done:** the default does not move yet — moving it moves **every** published figure the batch size
-  touches, and that is the next increment's work — and the **estimate and the rule do not yet share one honest
-  statement of what a row costs**.
+  touches, and that is the next increment's work.
   [§3af](PERF.md#3af-the-batch-sizes-price) has the tables, and
   [ADR-0061](docs/adr/0061-the-batch-sizes-price.md) records it.
+- **The engine now says what a row costs, and the estimate charges the batch.** Spec 050 gave the engine **one**
+  statement of what a row costs — **8** bytes a row for a number, **4** for a dictionary's index and **24** for a
+  plain string's header, **and the value's own bytes on top** — and **the signal is the schema's own Arrow type**,
+  not the chunk's encodings, which name `RLE_DICTIONARY` for a column that is not dictionary-encoded at all.
+  **And it is checked against the allocator's measurement**: **13.79** bytes a row against **13.39** on the narrow
+  shape, **16.25** against **16.03** on the two materialised columns, and **159.02** against **173.88** on the
+  file's sixteen — **and the file's own footer is 2.46× low** on the wide one. **So the estimate now says
+  **15,288,577** bytes where the read holds **13,719,522** *(was 13,719,490)* — **1.11× high where it was
+  9.15× low** — and **975,512,992** where the read holds **1,157,291,503** *(was 1,157,291,375)*, **and the
+  budget's verdict on a plan now depends on the reader's batch size**, which it did not before.
+  **What is not done:** the default still does not move — that is the next increment — and **the plain string's
+  copy is not fixed**: the conversion copies every string out of the Arrow batch, one allocation a row, and the
+  dictionary path borrows instead. **That is the wide shape's gap**, and the fix wants its own measurement.
+  [§3ag](PERF.md#3ag-the-width-statement-paid) has the tables, and
+  [ADR-0062](docs/adr/0062-the-width-statement.md) records it.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a
