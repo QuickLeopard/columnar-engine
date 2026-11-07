@@ -1,8 +1,11 @@
 # Spec 050 — The batch size's price, paid
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-07
+**Finished**: 2026-11-07
 **Predecessor**: [spec 049 — the batch size's price](../049-the-batch-sizes-price/spec.md)
+
+**CI green on `c27262c`** -- run 42358361131, sixteen of sixteen jobs.
 
 ## The problem
 

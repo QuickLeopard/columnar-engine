@@ -47,4 +47,4 @@ price is measured; this increment makes the engine's own numbers honest.
 
 - [x] `cargo fmt`, clippy, the whole test suite, `cargo deny`, the wasm32 check, the published-figures guard, the
       links check, the package check and the dashboard check all green.
-- [ ] CI green, and the spec's status is `done` with the date it finished.
+- [x] CI green, and the spec's status is `done` with the date it finished.
