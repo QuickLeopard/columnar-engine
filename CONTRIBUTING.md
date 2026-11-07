@@ -78,7 +78,9 @@ both rot silently on an ARM64 Mac unless they are compiled deliberately. Please 
 ## Working on a performance change
 
 1. **Write the spec.** `specs/NNN-what-it-is/`, with `spec.md` and `tasks.md`. Requirements traced
-   to a principle; an out-of-scope table with reasons.
+   to a principle; an out-of-scope table with reasons. **And update `STATUS.md`'s counts in the same
+   commit, and rebuild the dashboard with it** — the guard checks the tree's spec and ADR counts
+   against the file, and CI's *published figures match the evidence* job fails without it.
 2. **Measure the thing you are about to change**, before you change it, and commit the reports.
 3. **Change the code.**
 4. **Re-measure**, three campaigns, interleaved, with the raw reports committed.
