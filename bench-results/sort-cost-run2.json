@@ -1,5 +1,5 @@
 {
-  "commit": "4eebf78",
+  "commit": "unknown",
   "engine_rows": [
     1417687,
     4825422,
@@ -14,83 +14,83 @@
   ],
   "fallback_iterations": 3,
   "fallbacks_ms": {
-    "operator_all": 540.713792,
-    "operator_text": 48.156
+    "operator_all": 529.109375,
+    "operator_text": 47.354875
   },
-  "file": "data/lineitem.parquet",
-  "host_load_average": 16.59,
+  "file": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem.parquet",
+  "host_load_average": 3.83,
   "iterations": 5,
   "key": "l_extendedprice",
   "limit": 10,
   "parts_ms": {
-    "candidate_block": 0.9974999999999999,
-    "floor_block": 0.953333,
-    "fused_decode": 33.441666000000005,
-    "fused_topk": 39.348583,
+    "candidate_block": 1.0375409999999998,
+    "floor_block": 0.933042,
+    "fused_decode": 31.671208,
+    "fused_topk": 37.616291000000004,
     "key_column": 1.0000000000000002e-6,
-    "operator_cold": 1.0270839999999999,
-    "operator_warm": 1.008833,
-    "read_plain": 3.105334,
-    "read_shape": 3.729041,
-    "read_small": 0.25416700000000003,
-    "rows_range": 1.283541,
-    "stage_cold": 1.682792,
-    "stage_resident": 1.079458
+    "operator_cold": 0.983708,
+    "operator_warm": 0.9877079999999999,
+    "read_plain": 3.0664580000000004,
+    "read_shape": 3.998875,
+    "read_small": 0.26679200000000003,
+    "rows_range": 1.302041,
+    "stage_cold": 2.286917,
+    "stage_resident": 1.02125
   },
   "probe": "sort-cost",
   "rows": 6000000,
   "spreads_ms": {
     "candidate_block": [
-      0.982583,
-      1.0570410000000001
+      1.0031249999999998,
+      1.178417
     ],
     "floor_block": [
-      0.888,
-      1.046208
+      0.916167,
+      1.125542
     ],
     "fused_decode": [
-      32.403209000000004,
-      33.834833
+      31.224709,
+      32.770624999999995
     ],
     "fused_topk": [
-      38.911459,
-      40.297166000000004
+      37.428416999999996,
+      37.784875
     ],
     "key_column": [
       1.0000000000000002e-6,
       1.0000000000000002e-6
     ],
     "operator_cold": [
-      0.9690420000000001,
-      1.2299579999999999
+      0.9527920000000001,
+      1.039417
     ],
     "operator_warm": [
-      0.933084,
-      1.208708
+      0.952833,
+      1.04925
     ],
     "read_plain": [
-      2.949208,
-      3.226708
+      2.969083,
+      3.333542
     ],
     "read_shape": [
-      3.647958,
-      3.893125
+      3.8055,
+      4.4799999999999995
     ],
     "read_small": [
-      0.249167,
-      0.338542
+      0.25679199999999996,
+      0.307208
     ],
     "rows_range": [
-      1.171625,
-      1.37125
+      1.221209,
+      1.369334
     ],
     "stage_cold": [
-      1.533125,
-      1.867834
+      0.9913750000000001,
+      2.502917
     ],
     "stage_resident": [
-      1.00925,
-      3.245083
+      0.9821249999999999,
+      2.396709
     ]
   }
 }

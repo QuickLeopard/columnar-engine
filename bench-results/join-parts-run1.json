@@ -11,28 +11,28 @@
     "threads": 1
   },
   "duckdb_version": "v2.0.0 (Cyanoptera) d54cbbe3df",
-  "code": "19f7980",
+  "code": "038607c-dirty",
   "expected_answer": 11472226962.8901,
   "iterations": [
     {
       "index": 0,
       "order": "engine",
-      "load_average": 8.77,
+      "load_average": 4.22,
       "arms": [
         {
           "side": "engine",
-          "total_ms": 90.106708,
+          "total_ms": 92.612,
           "parts": {
-            "probe_side_read_ms": 66.431711,
-            "build_side_read_ms": 11.812542,
-            "build_side_open_ms": 0.04275,
-            "join_ms": 11.003331,
-            "projection_ms": 0.515458,
-            "aggregate_ms": 0.282084,
+            "probe_side_read_ms": 70.410123,
+            "build_side_read_ms": 11.965,
+            "build_side_open_ms": 0.038375,
+            "join_ms": 9.357502,
+            "projection_ms": 0.536708,
+            "aggregate_ms": 0.278708,
             "rows_to_join": 6000000,
             "rows_out": 216783,
             "bytes_read": null,
-            "outside_parts_ms": 0.01883199999998908
+            "outside_parts_ms": 0.025583999999994944
           },
           "answer": 11472226962.8901,
           "columns_read": [
@@ -46,18 +46,18 @@
         },
         {
           "side": "duckdb",
-          "total_ms": 92.43216699999999,
+          "total_ms": 89.716459,
           "parts": {
-            "probe_side_read_ms": 66.48196199999983,
-            "build_side_read_ms": 11.076211999999979,
+            "probe_side_read_ms": 64.34844600000005,
+            "build_side_read_ms": 10.707121999999988,
             "build_side_open_ms": 0.0,
-            "join_ms": 7.618208999999899,
-            "projection_ms": 0.07445499999999827,
-            "aggregate_ms": 0.42204500000000295,
+            "join_ms": 7.588954999999888,
+            "projection_ms": 0.0763099999999981,
+            "aggregate_ms": 0.40891100000000297,
             "rows_to_join": 216783,
             "rows_out": 216783,
-            "bytes_read": 79321951,
-            "outside_parts_ms": 6.759284000000292
+            "bytes_read": 88463611,
+            "outside_parts_ms": 6.586715000000083
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -71,12 +71,12 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.9783330000000001,
-          "cpu_ms": 85.6747579999997
+          "planning_ms": 1.822291,
+          "cpu_ms": 83.13128599999993
         },
         {
           "side": "duckdb-unprofiled",
-          "total_ms": 93.0,
+          "total_ms": 88.0,
           "parts": null,
           "answer": 11472226962.890097,
           "columns_read": [],
@@ -87,18 +87,18 @@
         },
         {
           "side": "duckdb-filter-off",
-          "total_ms": 138.6545,
+          "total_ms": 129.34925,
           "parts": {
-            "probe_side_read_ms": 60.3473940000001,
-            "build_side_read_ms": 11.279909,
+            "probe_side_read_ms": 58.95968100000002,
+            "build_side_read_ms": 10.654171000000002,
             "build_side_open_ms": 0.0,
-            "join_ms": 59.55110699999845,
-            "projection_ms": 0.10955399999999792,
-            "aggregate_ms": 0.5107630000000007,
+            "join_ms": 53.132127999998424,
+            "projection_ms": 0.07575099999999807,
+            "aggregate_ms": 0.46869699999999853,
             "rows_to_join": 5999998,
             "rows_out": 216783,
-            "bytes_read": 79321951,
-            "outside_parts_ms": 6.855773000001449
+            "bytes_read": 88463611,
+            "outside_parts_ms": 6.058822000001584
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -111,30 +111,30 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.837666,
-          "cpu_ms": 131.80093599999856
+          "planning_ms": 1.622209,
+          "cpu_ms": 123.29213699999846
         }
       ]
     },
     {
       "index": 1,
       "order": "duckdb",
-      "load_average": 8.77,
+      "load_average": 4.22,
       "arms": [
         {
           "side": "duckdb",
-          "total_ms": 96.36,
+          "total_ms": 90.668792,
           "parts": {
-            "probe_side_read_ms": 68.66710899999988,
-            "build_side_read_ms": 11.162793000000002,
+            "probe_side_read_ms": 65.67078899999974,
+            "build_side_read_ms": 11.176788000000009,
             "build_side_open_ms": 0.0,
-            "join_ms": 8.17484599999992,
-            "projection_ms": 0.10287199999999669,
-            "aggregate_ms": 0.4595119999999993,
+            "join_ms": 6.993770999999968,
+            "projection_ms": 0.07332199999999821,
+            "aggregate_ms": 0.4790110000000045,
             "rows_to_join": 216783,
             "rows_out": 216783,
             "bytes_read": 79321951,
-            "outside_parts_ms": 7.7928680000001975
+            "outside_parts_ms": 6.27511100000028
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -148,12 +148,12 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 2.05046,
-          "cpu_ms": 88.56938199999979
+          "planning_ms": 1.841209,
+          "cpu_ms": 84.39709799999973
         },
         {
           "side": "duckdb-unprofiled",
-          "total_ms": 92.0,
+          "total_ms": 89.0,
           "parts": null,
           "answer": 11472226962.890097,
           "columns_read": [],
@@ -164,18 +164,18 @@
         },
         {
           "side": "duckdb-filter-off",
-          "total_ms": 134.95670800000002,
+          "total_ms": 127.63125000000001,
           "parts": {
-            "probe_side_read_ms": 60.012378999999854,
-            "build_side_read_ms": 10.966383,
+            "probe_side_read_ms": 58.58808100000008,
+            "build_side_read_ms": 10.567019000000014,
             "build_side_open_ms": 0.0,
-            "join_ms": 56.97928499999825,
-            "projection_ms": 0.09286099999999732,
-            "aggregate_ms": 0.5328950000000027,
+            "join_ms": 52.00474699999869,
+            "projection_ms": 0.07262699999999837,
+            "aggregate_ms": 0.4496540000000005,
             "rows_to_join": 5999998,
             "rows_out": 216783,
             "bytes_read": 79321951,
-            "outside_parts_ms": 6.372905000001936
+            "outside_parts_ms": 5.949122000001239
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -188,23 +188,23 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.92925,
-          "cpu_ms": 128.5856779999981
+          "planning_ms": 1.6497070000000003,
+          "cpu_ms": 121.68404399999875
         },
         {
           "side": "engine",
-          "total_ms": 94.00987500000001,
+          "total_ms": 87.163791,
           "parts": {
-            "probe_side_read_ms": 68.103752,
-            "build_side_read_ms": 12.043083,
-            "build_side_open_ms": 0.041542,
-            "join_ms": 13.032205999999999,
-            "projection_ms": 0.543167,
-            "aggregate_ms": 0.227417,
+            "probe_side_read_ms": 66.3755,
+            "build_side_read_ms": 11.50675,
+            "build_side_open_ms": 0.03975,
+            "join_ms": 8.492833,
+            "projection_ms": 0.507583,
+            "aggregate_ms": 0.22387500000000002,
             "rows_to_join": 6000000,
             "rows_out": 216783,
             "bytes_read": null,
-            "outside_parts_ms": 0.01870800000000372
+            "outside_parts_ms": 0.017499999999998295
           },
           "answer": 11472226962.8901,
           "columns_read": [
@@ -221,22 +221,22 @@
     {
       "index": 2,
       "order": "engine",
-      "load_average": 8.77,
+      "load_average": 4.22,
       "arms": [
         {
           "side": "engine",
-          "total_ms": 97.154083,
+          "total_ms": 88.753458,
           "parts": {
-            "probe_side_read_ms": 68.95758500000001,
-            "build_side_read_ms": 12.641625,
-            "build_side_open_ms": 0.037792,
-            "join_ms": 14.685082,
-            "projection_ms": 0.529209,
-            "aggregate_ms": 0.27625,
+            "probe_side_read_ms": 67.262959,
+            "build_side_read_ms": 11.727375,
+            "build_side_open_ms": 0.033667,
+            "join_ms": 8.878,
+            "projection_ms": 0.526667,
+            "aggregate_ms": 0.306666,
             "rows_to_join": 6000000,
             "rows_out": 216783,
             "bytes_read": null,
-            "outside_parts_ms": 0.02653999999999712
+            "outside_parts_ms": 0.01812400000000025
           },
           "answer": 11472226962.8901,
           "columns_read": [
@@ -250,18 +250,18 @@
         },
         {
           "side": "duckdb",
-          "total_ms": 92.495625,
+          "total_ms": 87.498,
           "parts": {
-            "probe_side_read_ms": 66.25674699999989,
-            "build_side_read_ms": 11.454130999999997,
+            "probe_side_read_ms": 63.514460000000255,
+            "build_side_read_ms": 10.53634600000001,
             "build_side_open_ms": 0.0,
-            "join_ms": 7.611844999999925,
-            "projection_ms": 0.07715099999999801,
-            "aggregate_ms": 0.42130400000000356,
+            "join_ms": 6.810375999999969,
+            "projection_ms": 0.076689999999998,
+            "aggregate_ms": 0.41175800000000407,
             "rows_to_join": 216783,
             "rows_out": 216783,
             "bytes_read": 79321951,
-            "outside_parts_ms": 6.674447000000171
+            "outside_parts_ms": 6.1483699999997725
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -275,12 +275,12 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.919168,
-          "cpu_ms": 85.82471999999981
+          "planning_ms": 1.6345830000000001,
+          "cpu_ms": 81.35121400000024
         },
         {
           "side": "duckdb-unprofiled",
-          "total_ms": 92.0,
+          "total_ms": 89.0,
           "parts": null,
           "answer": 11472226962.890097,
           "columns_read": [],
@@ -291,18 +291,18 @@
         },
         {
           "side": "duckdb-filter-off",
-          "total_ms": 137.191833,
+          "total_ms": 134.23120899999998,
           "parts": {
-            "probe_side_read_ms": 60.020455999999996,
-            "build_side_read_ms": 11.302370999999985,
+            "probe_side_read_ms": 60.046483999999836,
+            "build_side_read_ms": 10.980173999999991,
             "build_side_open_ms": 0.0,
-            "join_ms": 58.719435999998616,
-            "projection_ms": 0.08768299999999798,
-            "aggregate_ms": 0.5429490000000032,
+            "join_ms": 56.12079299999862,
+            "projection_ms": 0.08345999999999773,
+            "aggregate_ms": 0.49824300000000227,
             "rows_to_join": 5999998,
             "rows_out": 216783,
             "bytes_read": 79321951,
-            "outside_parts_ms": 6.5189380000014125
+            "outside_parts_ms": 6.502055000001519
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -315,30 +315,30 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.919416,
-          "cpu_ms": 130.67468699999858
+          "planning_ms": 1.773751,
+          "cpu_ms": 127.73256999999843
         }
       ]
     },
     {
       "index": 3,
       "order": "duckdb",
-      "load_average": 8.77,
+      "load_average": 4.22,
       "arms": [
         {
           "side": "duckdb",
-          "total_ms": 92.21491599999999,
+          "total_ms": 91.20245800000001,
           "parts": {
-            "probe_side_read_ms": 66.53348499999959,
-            "build_side_read_ms": 10.763248999999984,
+            "probe_side_read_ms": 65.15927899999993,
+            "build_side_read_ms": 10.732357999999996,
             "build_side_open_ms": 0.0,
-            "join_ms": 7.772412999999858,
-            "projection_ms": 0.08183099999999763,
-            "aggregate_ms": 0.512727000000003,
+            "join_ms": 7.310965999999893,
+            "projection_ms": 0.10941799999999617,
+            "aggregate_ms": 0.4010790000000032,
             "rows_to_join": 216783,
             "rows_out": 216783,
             "bytes_read": 79321951,
-            "outside_parts_ms": 6.5512110000005634
+            "outside_parts_ms": 7.489358000000195
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -352,8 +352,8 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.874708,
-          "cpu_ms": 85.66562199999943
+          "planning_ms": 2.020291,
+          "cpu_ms": 83.71472499999982
         },
         {
           "side": "duckdb-unprofiled",
@@ -368,18 +368,18 @@
         },
         {
           "side": "duckdb-filter-off",
-          "total_ms": 137.774583,
+          "total_ms": 130.64175,
           "parts": {
-            "probe_side_read_ms": 60.754292999999805,
-            "build_side_read_ms": 11.067226000000012,
+            "probe_side_read_ms": 58.348645000000054,
+            "build_side_read_ms": 11.359771999999996,
             "build_side_open_ms": 0.0,
-            "join_ms": 58.85843199999843,
-            "projection_ms": 0.08672199999999756,
-            "aggregate_ms": 0.5137819999999976,
+            "join_ms": 53.95527999999851,
+            "projection_ms": 0.07328699999999844,
+            "aggregate_ms": 0.4694430000000013,
             "rows_to_join": 5999998,
             "rows_out": 216783,
             "bytes_read": 79321951,
-            "outside_parts_ms": 6.494128000001751
+            "outside_parts_ms": 6.435323000001446
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -392,23 +392,23 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.935749,
-          "cpu_ms": 131.28199599999823
+          "planning_ms": 1.874083,
+          "cpu_ms": 124.21026099999855
         },
         {
           "side": "engine",
-          "total_ms": 94.30166600000001,
+          "total_ms": 85.35270799999999,
           "parts": {
-            "probe_side_read_ms": 67.75196,
-            "build_side_read_ms": 12.079041,
-            "build_side_open_ms": 0.049833,
-            "join_ms": 13.563582,
-            "projection_ms": 0.548958,
-            "aggregate_ms": 0.28975,
+            "probe_side_read_ms": 64.841999,
+            "build_side_read_ms": 11.131958000000001,
+            "build_side_open_ms": 0.04775,
+            "join_ms": 8.610876,
+            "projection_ms": 0.49537500000000007,
+            "aggregate_ms": 0.205959,
             "rows_to_join": 6000000,
             "rows_out": 216783,
             "bytes_read": null,
-            "outside_parts_ms": 0.018542000000010717
+            "outside_parts_ms": 0.01879100000000733
           },
           "answer": 11472226962.8901,
           "columns_read": [
@@ -425,22 +425,22 @@
     {
       "index": 4,
       "order": "engine",
-      "load_average": 8.77,
+      "load_average": 4.22,
       "arms": [
         {
           "side": "engine",
-          "total_ms": 97.791292,
+          "total_ms": 86.856375,
           "parts": {
-            "probe_side_read_ms": 68.89150099999999,
-            "build_side_read_ms": 11.896875,
-            "build_side_open_ms": 0.037541,
-            "join_ms": 16.030208000000002,
-            "projection_ms": 0.5753750000000001,
-            "aggregate_ms": 0.340334,
+            "probe_side_read_ms": 66.463374,
+            "build_side_read_ms": 11.305000000000001,
+            "build_side_open_ms": 0.032,
+            "join_ms": 8.26146,
+            "projection_ms": 0.524792,
+            "aggregate_ms": 0.24704199999999998,
             "rows_to_join": 6000000,
             "rows_out": 216783,
             "bytes_read": null,
-            "outside_parts_ms": 0.019458000000014408
+            "outside_parts_ms": 0.022706999999996924
           },
           "answer": 11472226962.8901,
           "columns_read": [
@@ -454,18 +454,18 @@
         },
         {
           "side": "duckdb",
-          "total_ms": 91.9075,
+          "total_ms": 91.406958,
           "parts": {
-            "probe_side_read_ms": 65.48499499999984,
-            "build_side_read_ms": 11.405641999999995,
+            "probe_side_read_ms": 66.07030699999973,
+            "build_side_read_ms": 11.24508,
             "build_side_open_ms": 0.0,
-            "join_ms": 7.460926999999944,
-            "projection_ms": 0.08987899999999703,
-            "aggregate_ms": 0.4209510000000008,
+            "join_ms": 7.31440999999993,
+            "projection_ms": 0.07273699999999819,
+            "aggregate_ms": 0.4140500000000048,
             "rows_to_join": 216783,
             "rows_out": 216783,
             "bytes_read": 79321951,
-            "outside_parts_ms": 7.045106000000217
+            "outside_parts_ms": 6.290374000000341
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -479,12 +479,12 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.964376,
-          "cpu_ms": 84.86814399999977
+          "planning_ms": 1.792625,
+          "cpu_ms": 85.11829199999967
         },
         {
           "side": "duckdb-unprofiled",
-          "total_ms": 92.0,
+          "total_ms": 89.0,
           "parts": null,
           "answer": 11472226962.890097,
           "columns_read": [],
@@ -495,18 +495,18 @@
         },
         {
           "side": "duckdb-filter-off",
-          "total_ms": 135.989958,
+          "total_ms": 131.21908299999998,
           "parts": {
-            "probe_side_read_ms": 59.97156599999979,
-            "build_side_read_ms": 10.861517999999993,
+            "probe_side_read_ms": 58.520995999999975,
+            "build_side_read_ms": 11.004527999999995,
             "build_side_open_ms": 0.0,
-            "join_ms": 58.078763999998365,
-            "projection_ms": 0.0846829999999977,
-            "aggregate_ms": 0.5124549999999991,
+            "join_ms": 54.53548899999834,
+            "projection_ms": 0.08203299999999791,
+            "aggregate_ms": 0.4965270000000003,
             "rows_to_join": 5999998,
             "rows_out": 216783,
             "bytes_read": 79321951,
-            "outside_parts_ms": 6.480972000001884
+            "outside_parts_ms": 6.579510000001662
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -519,30 +519,30 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.8192090000000003,
-          "cpu_ms": 129.51315199999814
+          "planning_ms": 1.92025,
+          "cpu_ms": 124.64136499999833
         }
       ]
     },
     {
       "index": 5,
       "order": "duckdb",
-      "load_average": 8.77,
+      "load_average": 4.2,
       "arms": [
         {
           "side": "duckdb",
-          "total_ms": 91.746417,
+          "total_ms": 93.935333,
           "parts": {
-            "probe_side_read_ms": 65.69805399999998,
-            "build_side_read_ms": 10.928287999999988,
+            "probe_side_read_ms": 68.31026699999977,
+            "build_side_read_ms": 11.089497999999999,
             "build_side_open_ms": 0.0,
-            "join_ms": 7.419839999999891,
-            "projection_ms": 0.07966899999999784,
-            "aggregate_ms": 0.418119000000006,
+            "join_ms": 7.287962999999903,
+            "projection_ms": 0.08558799999999739,
+            "aggregate_ms": 0.41870400000000496,
             "rows_to_join": 216783,
             "rows_out": 216783,
             "bytes_read": 79321951,
-            "outside_parts_ms": 7.202447000000134
+            "outside_parts_ms": 6.743313000000313
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -556,12 +556,12 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.76675,
-          "cpu_ms": 84.54826199999988
+          "planning_ms": 1.7560410000000002,
+          "cpu_ms": 87.19501999999967
         },
         {
           "side": "duckdb-unprofiled",
-          "total_ms": 92.0,
+          "total_ms": 89.0,
           "parts": null,
           "answer": 11472226962.890097,
           "columns_read": [],
@@ -572,18 +572,18 @@
         },
         {
           "side": "duckdb-filter-off",
-          "total_ms": 135.253542,
+          "total_ms": 129.267958,
           "parts": {
-            "probe_side_read_ms": 59.62187999999982,
-            "build_side_read_ms": 11.458886000000009,
+            "probe_side_read_ms": 59.01430899999991,
+            "build_side_read_ms": 10.957664000000003,
             "build_side_open_ms": 0.0,
-            "join_ms": 56.96515299999853,
-            "projection_ms": 0.09068099999999747,
-            "aggregate_ms": 0.5354500000000043,
+            "join_ms": 52.55078299999859,
+            "projection_ms": 0.07304099999999845,
+            "aggregate_ms": 0.4509820000000004,
             "rows_to_join": 5999998,
             "rows_out": 216783,
-            "bytes_read": 79321951,
-            "outside_parts_ms": 6.581492000001674
+            "bytes_read": 88463611,
+            "outside_parts_ms": 6.221179000001484
           },
           "answer": 11472226962.890097,
           "columns_read": [
@@ -596,23 +596,23 @@
             "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
           ],
           "probe_in_scan": false,
-          "planning_ms": 1.7329179999999997,
-          "cpu_ms": 128.67438299999836
+          "planning_ms": 1.7254990000000001,
+          "cpu_ms": 123.0484039999985
         },
         {
           "side": "engine",
-          "total_ms": 94.97316599999999,
+          "total_ms": 87.492792,
           "parts": {
-            "probe_side_read_ms": 68.08945700000001,
-            "build_side_read_ms": 12.027750000000001,
-            "build_side_open_ms": 0.037083,
-            "join_ms": 13.887459,
-            "projection_ms": 0.578167,
-            "aggregate_ms": 0.30325,
+            "probe_side_read_ms": 66.74912400000001,
+            "build_side_read_ms": 11.742458000000001,
+            "build_side_open_ms": 0.044417,
+            "join_ms": 8.189251,
+            "projection_ms": 0.48674999999999996,
+            "aggregate_ms": 0.256125,
             "rows_to_join": 6000000,
             "rows_out": 216783,
             "bytes_read": null,
-            "outside_parts_ms": 0.04999999999998295
+            "outside_parts_ms": 0.024666999999993777
           },
           "answer": 11472226962.8901,
           "columns_read": [

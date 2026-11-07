@@ -1,0 +1,630 @@
+{
+  "probe": "join-parts",
+  "machine": {
+    "cpu": "Apple M4 Max",
+    "arch": "aarch64",
+    "cores": 14,
+    "os": "macOS 27.2",
+    "simd": "neon",
+    "forced_simd": "auto",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "threads": 1
+  },
+  "duckdb_version": "v2.0.0 (Cyanoptera) d54cbbe3df",
+  "code": "038607c-dirty",
+  "expected_answer": 11472226962.8901,
+  "iterations": [
+    {
+      "index": 0,
+      "order": "engine",
+      "load_average": 4.2,
+      "arms": [
+        {
+          "side": "engine",
+          "total_ms": 87.142833,
+          "parts": {
+            "probe_side_read_ms": 66.33770999999999,
+            "build_side_read_ms": 11.712208,
+            "build_side_open_ms": 0.036208000000000004,
+            "join_ms": 8.354749,
+            "projection_ms": 0.476833,
+            "aggregate_ms": 0.20666700000000002,
+            "rows_to_join": 6000000,
+            "rows_out": 216783,
+            "bytes_read": null,
+            "outside_parts_ms": 0.018458000000009633
+          },
+          "answer": 11472226962.8901,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice"
+          ],
+          "filters": [],
+          "probe_in_scan": true,
+          "planning_ms": null,
+          "cpu_ms": null
+        },
+        {
+          "side": "duckdb",
+          "total_ms": 90.918625,
+          "parts": {
+            "probe_side_read_ms": 65.77442599999999,
+            "build_side_read_ms": 10.892005999999983,
+            "build_side_open_ms": 0.0,
+            "join_ms": 7.115514999999897,
+            "projection_ms": 0.09156499999999716,
+            "aggregate_ms": 0.400961000000005,
+            "rows_to_join": 216783,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 6.644152000000119
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "optional: l_orderkey IN PRF(o_orderkey)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.855167,
+          "cpu_ms": 84.27630599999988
+        },
+        {
+          "side": "duckdb-unprofiled",
+          "total_ms": 90.0,
+          "parts": null,
+          "answer": 11472226962.890097,
+          "columns_read": [],
+          "filters": [],
+          "probe_in_scan": null,
+          "planning_ms": null,
+          "cpu_ms": null
+        },
+        {
+          "side": "duckdb-filter-off",
+          "total_ms": 133.965458,
+          "parts": {
+            "probe_side_read_ms": 61.620879999999794,
+            "build_side_read_ms": 11.022773000000004,
+            "build_side_open_ms": 0.0,
+            "join_ms": 54.712388999998524,
+            "projection_ms": 0.07581899999999821,
+            "aggregate_ms": 0.4790979999999984,
+            "rows_to_join": 5999998,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 6.054499000001698
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.6860830000000002,
+          "cpu_ms": 127.91833399999832
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "order": "duckdb",
+      "load_average": 4.2,
+      "arms": [
+        {
+          "side": "duckdb",
+          "total_ms": 91.187917,
+          "parts": {
+            "probe_side_read_ms": 65.94504099999938,
+            "build_side_read_ms": 11.107924999999993,
+            "build_side_open_ms": 0.0,
+            "join_ms": 6.972865999999948,
+            "projection_ms": 0.07675199999999786,
+            "aggregate_ms": 0.39630200000000476,
+            "rows_to_join": 216783,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 6.689031000000668
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "optional: l_orderkey IN PRF(o_orderkey)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.6631679999999998,
+          "cpu_ms": 84.50209499999931
+        },
+        {
+          "side": "duckdb-unprofiled",
+          "total_ms": 90.0,
+          "parts": null,
+          "answer": 11472226962.890097,
+          "columns_read": [],
+          "filters": [],
+          "probe_in_scan": null,
+          "planning_ms": null,
+          "cpu_ms": null
+        },
+        {
+          "side": "duckdb-filter-off",
+          "total_ms": 130.49433299999998,
+          "parts": {
+            "probe_side_read_ms": 59.71180100000008,
+            "build_side_read_ms": 10.948949000000004,
+            "build_side_open_ms": 0.0,
+            "join_ms": 53.346641999998376,
+            "projection_ms": 0.08119099999999808,
+            "aggregate_ms": 0.46000499999999994,
+            "rows_to_join": 5999998,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 5.945745000001537
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.7175,
+          "cpu_ms": 124.55012999999845
+        },
+        {
+          "side": "engine",
+          "total_ms": 89.354583,
+          "parts": {
+            "probe_side_read_ms": 67.30012,
+            "build_side_read_ms": 11.847,
+            "build_side_open_ms": 0.038625,
+            "join_ms": 9.349297,
+            "projection_ms": 0.554917,
+            "aggregate_ms": 0.24537499999999998,
+            "rows_to_join": 6000000,
+            "rows_out": 216783,
+            "bytes_read": null,
+            "outside_parts_ms": 0.01924900000000207
+          },
+          "answer": 11472226962.8901,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice"
+          ],
+          "filters": [],
+          "probe_in_scan": true,
+          "planning_ms": null,
+          "cpu_ms": null
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "order": "engine",
+      "load_average": 4.2,
+      "arms": [
+        {
+          "side": "engine",
+          "total_ms": 87.799458,
+          "parts": {
+            "probe_side_read_ms": 66.643621,
+            "build_side_read_ms": 11.664792,
+            "build_side_open_ms": 0.034832999999999996,
+            "join_ms": 8.549087,
+            "projection_ms": 0.542208,
+            "aggregate_ms": 0.344709,
+            "rows_to_join": 6000000,
+            "rows_out": 216783,
+            "bytes_read": null,
+            "outside_parts_ms": 0.020207999999996673
+          },
+          "answer": 11472226962.8901,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice"
+          ],
+          "filters": [],
+          "probe_in_scan": true,
+          "planning_ms": null,
+          "cpu_ms": null
+        },
+        {
+          "side": "duckdb",
+          "total_ms": 90.08025,
+          "parts": {
+            "probe_side_read_ms": 65.60649999999949,
+            "build_side_read_ms": 10.84535900000002,
+            "build_side_open_ms": 0.0,
+            "join_ms": 6.929529999999936,
+            "projection_ms": 0.07127099999999831,
+            "aggregate_ms": 0.38733000000000267,
+            "rows_to_join": 216783,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 6.240260000000561
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "optional: l_orderkey IN PRF(o_orderkey)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.834416,
+          "cpu_ms": 83.84144799999945
+        },
+        {
+          "side": "duckdb-unprofiled",
+          "total_ms": 90.0,
+          "parts": null,
+          "answer": 11472226962.890097,
+          "columns_read": [],
+          "filters": [],
+          "probe_in_scan": null,
+          "planning_ms": null,
+          "cpu_ms": null
+        },
+        {
+          "side": "duckdb-filter-off",
+          "total_ms": 131.332375,
+          "parts": {
+            "probe_side_read_ms": 59.36106599999989,
+            "build_side_read_ms": 11.064619999999996,
+            "build_side_open_ms": 0.0,
+            "join_ms": 54.32070599999865,
+            "projection_ms": 0.160867000000001,
+            "aggregate_ms": 0.5104579999999947,
+            "rows_to_join": 5999998,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 5.914658000001481
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.632208,
+          "cpu_ms": 125.4192589999985
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "order": "duckdb",
+      "load_average": 4.2,
+      "arms": [
+        {
+          "side": "duckdb",
+          "total_ms": 90.562166,
+          "parts": {
+            "probe_side_read_ms": 65.79957799999971,
+            "build_side_read_ms": 11.110328999999984,
+            "build_side_open_ms": 0.0,
+            "join_ms": 6.976087999999952,
+            "projection_ms": 0.07371799999999822,
+            "aggregate_ms": 0.43596600000000396,
+            "rows_to_join": 216783,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 6.166487000000359
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "optional: l_orderkey IN PRF(o_orderkey)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.711333,
+          "cpu_ms": 84.39701199999965
+        },
+        {
+          "side": "duckdb-unprofiled",
+          "total_ms": 89.0,
+          "parts": null,
+          "answer": 11472226962.890097,
+          "columns_read": [],
+          "filters": [],
+          "probe_in_scan": null,
+          "planning_ms": null,
+          "cpu_ms": null
+        },
+        {
+          "side": "duckdb-filter-off",
+          "total_ms": 128.052208,
+          "parts": {
+            "probe_side_read_ms": 58.686321999999855,
+            "build_side_read_ms": 10.677317000000004,
+            "build_side_open_ms": 0.0,
+            "join_ms": 52.19906399999873,
+            "projection_ms": 0.07562899999999823,
+            "aggregate_ms": 0.45214800000000027,
+            "rows_to_join": 5999998,
+            "rows_out": 216783,
+            "bytes_read": 88463611,
+            "outside_parts_ms": 5.961728000001429
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.841708,
+          "cpu_ms": 122.0919799999986
+        },
+        {
+          "side": "engine",
+          "total_ms": 88.73479200000001,
+          "parts": {
+            "probe_side_read_ms": 66.85949600000001,
+            "build_side_read_ms": 11.703292000000001,
+            "build_side_open_ms": 0.040542,
+            "join_ms": 9.344629,
+            "projection_ms": 0.4946249999999999,
+            "aggregate_ms": 0.274959,
+            "rows_to_join": 6000000,
+            "rows_out": 216783,
+            "bytes_read": null,
+            "outside_parts_ms": 0.01724900000000673
+          },
+          "answer": 11472226962.8901,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice"
+          ],
+          "filters": [],
+          "probe_in_scan": true,
+          "planning_ms": null,
+          "cpu_ms": null
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "order": "engine",
+      "load_average": 4.2,
+      "arms": [
+        {
+          "side": "engine",
+          "total_ms": 87.377458,
+          "parts": {
+            "probe_side_read_ms": 66.264419,
+            "build_side_read_ms": 11.865167,
+            "build_side_open_ms": 0.059875,
+            "join_ms": 8.468956,
+            "projection_ms": 0.463667,
+            "aggregate_ms": 0.238083,
+            "rows_to_join": 6000000,
+            "rows_out": 216783,
+            "bytes_read": null,
+            "outside_parts_ms": 0.017290999999985956
+          },
+          "answer": 11472226962.8901,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice"
+          ],
+          "filters": [],
+          "probe_in_scan": true,
+          "planning_ms": null,
+          "cpu_ms": null
+        },
+        {
+          "side": "duckdb",
+          "total_ms": 90.01,
+          "parts": {
+            "probe_side_read_ms": 65.6723289999996,
+            "build_side_read_ms": 10.810785000000001,
+            "build_side_open_ms": 0.0,
+            "join_ms": 6.7676359999999605,
+            "projection_ms": 0.07162099999999831,
+            "aggregate_ms": 0.4130690000000037,
+            "rows_to_join": 216783,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 6.274560000000449
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "optional: l_orderkey IN PRF(o_orderkey)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.7363340000000003,
+          "cpu_ms": 83.73810699999957
+        },
+        {
+          "side": "duckdb-unprofiled",
+          "total_ms": 91.0,
+          "parts": null,
+          "answer": 11472226962.890097,
+          "columns_read": [],
+          "filters": [],
+          "probe_in_scan": null,
+          "planning_ms": null,
+          "cpu_ms": null
+        },
+        {
+          "side": "duckdb-filter-off",
+          "total_ms": 131.001583,
+          "parts": {
+            "probe_side_read_ms": 59.7413839999998,
+            "build_side_read_ms": 10.983717000000004,
+            "build_side_open_ms": 0.0,
+            "join_ms": 53.61233599999856,
+            "projection_ms": 0.09222199999999713,
+            "aggregate_ms": 0.478089999999998,
+            "rows_to_join": 5999998,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 6.093834000001678
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.707918,
+          "cpu_ms": 124.91178999999836
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "order": "duckdb",
+      "load_average": 4.2,
+      "arms": [
+        {
+          "side": "duckdb",
+          "total_ms": 89.70858399999999,
+          "parts": {
+            "probe_side_read_ms": 64.35992800000051,
+            "build_side_read_ms": 11.047354000000013,
+            "build_side_open_ms": 0.0,
+            "join_ms": 7.321293999999932,
+            "projection_ms": 0.07244199999999844,
+            "aggregate_ms": 0.4227080000000064,
+            "rows_to_join": 216783,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 6.484857999999534
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "optional: l_orderkey IN PRF(o_orderkey)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.723125,
+          "cpu_ms": 83.22531000000045
+        },
+        {
+          "side": "duckdb-unprofiled",
+          "total_ms": 89.0,
+          "parts": null,
+          "answer": 11472226962.890097,
+          "columns_read": [],
+          "filters": [],
+          "probe_in_scan": null,
+          "planning_ms": null,
+          "cpu_ms": null
+        },
+        {
+          "side": "duckdb-filter-off",
+          "total_ms": 128.42375,
+          "parts": {
+            "probe_side_read_ms": 58.50457499999994,
+            "build_side_read_ms": 10.847751999999991,
+            "build_side_open_ms": 0.0,
+            "join_ms": 52.90726099999843,
+            "projection_ms": 0.076873999999998,
+            "aggregate_ms": 0.4572050000000006,
+            "rows_to_join": 5999998,
+            "rows_out": 216783,
+            "bytes_read": 79321951,
+            "outside_parts_ms": 5.6300830000016475
+          },
+          "answer": 11472226962.890097,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice",
+            "o_orderkey"
+          ],
+          "filters": [
+            "(l_orderkey >= 6)",
+            "((o_orderdate >= '1994-01-01') AND (o_orderdate < '1995-01-01'))"
+          ],
+          "probe_in_scan": false,
+          "planning_ms": 1.6774170000000002,
+          "cpu_ms": 122.79549999999837
+        },
+        {
+          "side": "engine",
+          "total_ms": 86.919792,
+          "parts": {
+            "probe_side_read_ms": 66.001042,
+            "build_side_read_ms": 11.541083,
+            "build_side_open_ms": 0.04125,
+            "join_ms": 8.558541,
+            "projection_ms": 0.5179590000000001,
+            "aggregate_ms": 0.241625,
+            "rows_to_join": 6000000,
+            "rows_out": 216783,
+            "bytes_read": null,
+            "outside_parts_ms": 0.018291999999988207
+          },
+          "answer": 11472226962.8901,
+          "columns_read": [
+            "l_orderkey",
+            "l_extendedprice"
+          ],
+          "filters": [],
+          "probe_in_scan": true,
+          "planning_ms": null,
+          "cpu_ms": null
+        }
+      ]
+    }
+  ]
+}

@@ -10,7 +10,7 @@
     "threads": 1
   },
   "dataset": {
-    "path": "data/lineitem.parquet",
+    "path": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem.parquet",
     "rows": 6000000,
     "bytes": 242859461,
     "scale_factor": 1,
@@ -28,72 +28,60 @@
       "workers": 1,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 14.641791,
-      "engine_scan_ms": 14.627834,
-      "engine_operators_ms": 0.00075,
-      "duckdb_ms": 33.0,
-      "polars_ms": 197.191,
-      "datafusion_ms": 35.408
+      "engine_ms": 14.776584,
+      "engine_scan_ms": 14.765875,
+      "engine_operators_ms": 0.000875,
+      "duckdb_ms": 32.0,
+      "polars_ms": 191.844,
+      "datafusion_ms": 35.707
     },
     {
       "threads": 2,
       "workers": 2,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 7.5165,
-      "engine_scan_ms": 7.504167,
-      "engine_operators_ms": 0.000708,
+      "engine_ms": 7.414750000000001,
+      "engine_scan_ms": 7.4005,
+      "engine_operators_ms": 0.001041,
       "duckdb_ms": 20.0,
-      "polars_ms": 99.109,
-      "datafusion_ms": 27.71
+      "polars_ms": 101.328,
+      "datafusion_ms": 25.708
     },
     {
       "threads": 4,
       "workers": 4,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 5.375249999999999,
-      "engine_scan_ms": 5.361791,
-      "engine_operators_ms": 0.00045799999999999997,
+      "engine_ms": 5.550916,
+      "engine_scan_ms": 5.537209000000001,
+      "engine_operators_ms": 0.00075,
       "duckdb_ms": 14.0,
-      "polars_ms": 66.179,
-      "datafusion_ms": 16.798
-    },
-    {
-      "threads": 6,
-      "workers": 6,
-      "filter_workers": 1,
-      "projection_workers": 1,
-      "engine_ms": 3.827417,
-      "engine_scan_ms": 3.814167,
-      "engine_operators_ms": 0.0006670000000000001,
-      "duckdb_ms": 10.0,
-      "polars_ms": 37.156,
-      "datafusion_ms": 18.541
+      "polars_ms": 65.023,
+      "datafusion_ms": 15.905
     },
     {
       "threads": 8,
       "workers": 6,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 4.303792,
-      "engine_scan_ms": 4.292208,
-      "engine_operators_ms": 0.000834,
-      "duckdb_ms": 10.0,
-      "polars_ms": 36.638,
-      "datafusion_ms": 11.286
+      "engine_ms": 4.053625,
+      "engine_scan_ms": 4.044125,
+      "engine_operators_ms": 0.000624,
+      "duckdb_ms": 9.0,
+      "polars_ms": 35.602,
+      "datafusion_ms": 11.018
     },
     {
       "threads": 14,
       "workers": 6,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 4.159042,
-      "engine_scan_ms": 4.146958,
-      "engine_operators_ms": 0.000583,
-      "duckdb_ms": 10.0,
-      "polars_ms": 38.031,
-      "datafusion_ms": 11.878
+      "engine_ms": 4.000875,
+      "engine_scan_ms": 3.9895,
+      "engine_operators_ms": 0.001375,
+      "duckdb_ms": 9.0,
+      "polars_ms": 35.23,
+      "datafusion_ms": 11.477
     }
   ]
 }

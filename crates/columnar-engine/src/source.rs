@@ -488,12 +488,8 @@ impl ParquetSource {
     /// **The knob's plan**: the engine's own derived batch size, or the size
     /// the caller named.
     fn batch_plan(&self) -> BatchPlan {
-        self.reader_batch_rows.map_or(
-            BatchPlan::UnderBytes {
-                budget: DEFAULT_READER_BATCH_BYTES,
-            },
-            BatchPlan::Fixed,
-        )
+        self.reader_batch_rows
+            .map_or(BatchPlan::UnderBytes { budget: DEFAULT_READER_BATCH_BYTES }, BatchPlan::Fixed)
     }
 
     /// Where the file is.
@@ -666,9 +662,7 @@ impl ParquetSource {
     pub fn batch_rows_for(&self, read: &[usize], workers: usize) -> usize {
         match self.batch_plan() {
             BatchPlan::Fixed(rows) => rows,
-            BatchPlan::UnderBytes { budget } => {
-                self.batch_rows_under_bytes(budget, read, workers)
-            }
+            BatchPlan::UnderBytes { budget } => self.batch_rows_under_bytes(budget, read, workers),
         }
     }
 
@@ -710,8 +704,8 @@ impl ParquetSource {
         read: &[usize],
         workers: usize,
     ) -> usize {
-        let per_row = self.row_bytes_of(read);
-        if per_row == 0 {
+        let per_row_eighths = self.row_eighth_bytes_of(read);
+        if per_row_eighths == 0 {
             // A read that fetches nothing holds nothing, so the budget does not
             // bind it: the batch is the row group's own rows.
             return self.batch_rows_for_groups(row_groups, usize::MAX);
@@ -719,22 +713,29 @@ impl ParquetSource {
         // **The floor**: a budget too small to buy the smallest usable batch
         // still buys that batch, because a read has to read something.
         let share = budget_bytes / workers.max(1);
-        let limit = (share / per_row).max(MIN_READER_BATCH_ROWS);
+        // **The budget is in bytes and the rate is in eighths of a byte**, so
+        // the budget is multiplied by eight before the division: the rule
+        // divides the budget by the **statement's** cost of a row, and not by
+        // a rounded-up version of it.
+        let limit = (share.saturating_mul(8) / per_row_eighths).max(MIN_READER_BATCH_ROWS);
         self.batch_rows_for_groups(row_groups, limit)
     }
 
-    /// The bytes one row of a read of these columns costs.
+    /// The bytes one row of a read of these columns costs, **in eighths of a
+    /// byte**.
     ///
     /// **The statement's per-column cost**, over the columns the read takes,
-    /// and the validity bit each column's rows carry.
+    /// and the validity bit each column's rows carry -- **in eighths of a
+    /// byte**, because a bit is an eighth of a byte and a per-row cost in whole
+    /// bytes would round it up to **eight times** the truth. **This is the
+    /// statement the estimate reads too**, so the estimate and the rule
+    /// cannot disagree about what a row costs.
     #[must_use]
-    pub fn row_bytes_of(&self, read: &[usize]) -> usize {
+    pub fn row_eighth_bytes_of(&self, read: &[usize]) -> usize {
+        let rows = self.rows();
         read.iter()
             .filter_map(|&index| self.columns.get(index).map(|column| (index, column)))
-            .map(|(index, _column)| {
-                let cost = self.column_cost(index);
-                cost.per_row(self.rows()).saturating_add(1)
-            })
+            .map(|(index, _column)| self.column_cost(index).per_row_eighths(rows))
             .sum()
     }
 
@@ -1069,12 +1070,7 @@ impl ParquetSource {
                 // The budget is divided by **the columns this read fetches**,
                 // so the batch is the read's own.
                 let projection = scan_projection(columns, pushdown);
-                self.batch_rows_under_bytes_for(
-                    row_groups.as_deref(),
-                    budget,
-                    &projection,
-                    workers,
-                )
+                self.batch_rows_under_bytes_for(row_groups.as_deref(), budget, &projection, workers)
             }
         };
         let reader = self.reader(columns, pushdown, row_groups, batch_rows)?;
@@ -1443,9 +1439,7 @@ mod tests {
 
     use columnar_core::{ComparisonOp, Predicate};
 
-    use super::{
-        gcd, largest_divisor_at_most, ParquetSource, MIN_READER_BATCH_ROWS,
-    };
+    use super::{gcd, largest_divisor_at_most, ParquetSource, MIN_READER_BATCH_ROWS};
     use crate::plan::ResolvedFilter;
 
     /// A predicate over a column, by the column's index.

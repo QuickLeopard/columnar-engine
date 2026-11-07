@@ -1,11 +1,12 @@
 {
-  "code": "382b8b6-clean",
+  "code": "038607c-dirty",
   "probe": "batch-width",
   "the_batch_sizes": [
     62500,
     1000000
   ],
-  "the_host_load_average": 6.46,
+  "the_default_s_batch_bytes": 16777216,
+  "the_host_load_average": 4.95,
   "the_repeats": 3,
   "the_rows_agree": true,
   "the_shapes": [
@@ -28,6 +29,29 @@
       ],
       "the_columns_fetched": 2,
       "the_columns_held": 0,
+      "the_default_s_batch_by_workers": [
+        {
+          "the_batch_rows": 1000000,
+          "the_workers": 1
+        },
+        {
+          "the_batch_rows": 500000,
+          "the_workers": 2
+        },
+        {
+          "the_batch_rows": 250000,
+          "the_workers": 4
+        },
+        {
+          "the_batch_rows": 200000,
+          "the_workers": 6
+        },
+        {
+          "the_batch_rows": 62500,
+          "the_workers": 14
+        }
+      ],
+      "the_default_s_batch_rows": 1000000,
       "the_file_bytes": 12253416,
       "the_file_rows": 6000000,
       "the_points": [
@@ -87,6 +111,29 @@
       ],
       "the_columns_fetched": 2,
       "the_columns_held": 2,
+      "the_default_s_batch_by_workers": [
+        {
+          "the_batch_rows": 1000000,
+          "the_workers": 1
+        },
+        {
+          "the_batch_rows": 500000,
+          "the_workers": 2
+        },
+        {
+          "the_batch_rows": 250000,
+          "the_workers": 4
+        },
+        {
+          "the_batch_rows": 125000,
+          "the_workers": 6
+        },
+        {
+          "the_batch_rows": 62500,
+          "the_workers": 14
+        }
+      ],
+      "the_default_s_batch_rows": 1000000,
       "the_file_bytes": 99183060,
       "the_file_rows": 6000000,
       "the_points": [
@@ -244,6 +291,29 @@
       ],
       "the_columns_fetched": 16,
       "the_columns_held": 16,
+      "the_default_s_batch_by_workers": [
+        {
+          "the_batch_rows": 100000,
+          "the_workers": 1
+        },
+        {
+          "the_batch_rows": 50000,
+          "the_workers": 2
+        },
+        {
+          "the_batch_rows": 25000,
+          "the_workers": 4
+        },
+        {
+          "the_batch_rows": 15625,
+          "the_workers": 6
+        },
+        {
+          "the_batch_rows": 6250,
+          "the_workers": 14
+        }
+      ],
+      "the_default_s_batch_rows": 100000,
       "the_file_bytes": 424201308,
       "the_file_rows": 6000000,
       "the_points": [

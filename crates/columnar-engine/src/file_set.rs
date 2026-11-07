@@ -323,18 +323,21 @@ impl FileSetSource {
         storage.cost(self.column_value_bytes(index))
     }
 
-    /// The bytes one row of a read of these columns costs.
+    /// The bytes one row of a read of these columns costs, **in eighths of a
+    /// byte**.
     ///
     /// **The statement's per-column cost**, over the columns the read takes,
-    /// and the validity bit each column's rows carry.
+    /// and the validity bit each column's rows carry -- **in eighths of a
+    /// byte**, because a bit is an eighth of a byte and a per-row cost in whole
+    /// bytes would round it up to **eight times** the truth. **This is the
+    /// statement the estimate reads too**, so the estimate and the rule
+    /// cannot disagree about what a row costs.
     #[must_use]
-    pub fn row_bytes_of(&self, read: &[usize]) -> usize {
+    pub fn row_eighth_bytes_of(&self, read: &[usize]) -> usize {
+        let rows = self.rows();
         read.iter()
             .filter_map(|&index| self.columns.get(index).map(|column| (index, column)))
-            .map(|(index, _column)| {
-                let cost = self.column_cost(index);
-                cost.per_row(self.rows()).saturating_add(1)
-            })
+            .map(|(index, _column)| self.column_cost(index).per_row_eighths(rows))
             .sum()
     }
 
@@ -362,8 +365,8 @@ impl FileSetSource {
         read: &[usize],
         workers: usize,
     ) -> usize {
-        let per_row = self.row_bytes_of(read);
-        if per_row == 0 {
+        let per_row_eighths = self.row_eighth_bytes_of(read);
+        if per_row_eighths == 0 {
             // A read that fetches nothing holds nothing, so the budget does not
             // bind it: the batch is the row group's own rows.
             return self.batch_rows_under(usize::MAX);
@@ -371,7 +374,11 @@ impl FileSetSource {
         // **The floor**: a budget too small to buy the smallest usable batch
         // still buys that batch, because a read has to read something.
         let share = budget_bytes / workers.max(1);
-        let limit = (share / per_row).max(MIN_READER_BATCH_ROWS);
+        // **The budget is in bytes and the rate is in eighths of a byte**, so
+        // the budget is multiplied by eight before the division: the rule
+        // divides the budget by the **statement's** cost of a row, and not by
+        // a rounded-up version of it.
+        let limit = (share.saturating_mul(8) / per_row_eighths).max(MIN_READER_BATCH_ROWS);
         self.batch_rows_under(limit)
     }
 

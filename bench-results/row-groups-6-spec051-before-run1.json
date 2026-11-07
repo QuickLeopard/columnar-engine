@@ -1,0 +1,243 @@
+{
+  "columns": [
+    {
+      "bit_width": 4,
+      "compressed_bytes": 3023401,
+      "counterfactual_bytes": 11644415,
+      "counterfactual_encoding": "PLAIN",
+      "counterfactual_style": "plain",
+      "dictionary_data_bytes": 3012309,
+      "dictionary_page_bytes": 528,
+      "dictionary_pages": 294,
+      "dictionary_values": 11,
+      "encoding": "RLE_DICTIONARY",
+      "measurements_ms": {
+        "arrow_decode": 3.0958330000000003,
+        "counterfactual_arrow_decode": 18.918708,
+        "counterfactual_parquet_decode": 21.216084,
+        "expansion": 1.781291,
+        "expansion_buffers": 0.21383400000000002,
+        "expansion_gather": 1.543625,
+        "parquet_decode": 6.064540999999999,
+        "probe_decode": 6.23125,
+        "probe_indices": 4.34425
+      },
+      "name": "l_discount",
+      "plain_data_bytes": 0,
+      "plain_pages": 0,
+      "role": "predicate",
+      "rows": 6000000,
+      "spreads_ms": {
+        "arrow_decode": [
+          3.046834,
+          3.193667
+        ],
+        "counterfactual_arrow_decode": [
+          18.435958,
+          19.793374999999997
+        ],
+        "counterfactual_parquet_decode": [
+          20.860583,
+          21.5975
+        ],
+        "expansion": [
+          1.760916,
+          1.873
+        ],
+        "expansion_buffers": [
+          0.205917,
+          0.220292
+        ],
+        "expansion_gather": [
+          1.526416,
+          1.673417
+        ],
+        "parquet_decode": [
+          5.950042,
+          6.125458
+        ],
+        "probe_decode": [
+          5.926209,
+          8.013042
+        ],
+        "probe_indices": [
+          4.34425,
+          4.34425
+        ]
+      }
+    },
+    {
+      "bit_width": 13,
+      "compressed_bytes": 9904661,
+      "counterfactual_bytes": 26980304,
+      "counterfactual_encoding": "PLAIN",
+      "counterfactual_style": "plain",
+      "dictionary_data_bytes": 9762309,
+      "dictionary_page_bytes": 235248,
+      "dictionary_pages": 294,
+      "dictionary_values": 4901,
+      "encoding": "RLE_DICTIONARY",
+      "measurements_ms": {
+        "arrow_decode": 4.602667,
+        "counterfactual_arrow_decode": 31.840958000000004,
+        "counterfactual_parquet_decode": 33.316041999999996,
+        "expansion": 1.8154160000000001,
+        "expansion_buffers": 0.21575000000000003,
+        "expansion_gather": 1.54975,
+        "parquet_decode": 6.828542,
+        "probe_decode": 8.402708,
+        "probe_indices": 6.914791
+      },
+      "name": "l_quantity",
+      "plain_data_bytes": 0,
+      "plain_pages": 0,
+      "role": "predicate",
+      "rows": 6000000,
+      "spreads_ms": {
+        "arrow_decode": [
+          4.502,
+          6.281041999999999
+        ],
+        "counterfactual_arrow_decode": [
+          31.520167,
+          31.988333
+        ],
+        "counterfactual_parquet_decode": [
+          33.03425,
+          33.678666
+        ],
+        "expansion": [
+          1.708083,
+          2.2170829999999997
+        ],
+        "expansion_buffers": [
+          0.20249999999999999,
+          0.219
+        ],
+        "expansion_gather": [
+          1.517125,
+          1.613333
+        ],
+        "parquet_decode": [
+          6.605459,
+          6.977792
+        ],
+        "probe_decode": [
+          8.317791999999999,
+          8.67775
+        ],
+        "probe_indices": [
+          6.914791,
+          6.914791
+        ]
+      }
+    },
+    {
+      "bit_width": 18,
+      "compressed_bytes": 36451424,
+      "counterfactual_bytes": 47499678,
+      "counterfactual_encoding": "RLE_DICTIONARY",
+      "counterfactual_style": "dictionary",
+      "dictionary_data_bytes": 1634717,
+      "dictionary_page_bytes": 6313096,
+      "dictionary_pages": 42,
+      "dictionary_values": 131411,
+      "encoding": "PLAIN",
+      "measurements_ms": {
+        "arrow_decode": 32.436209,
+        "counterfactual_arrow_decode": 33.420541,
+        "counterfactual_parquet_decode": 36.148459,
+        "expansion": 1.0423749999999998,
+        "expansion_buffers": 0.221292,
+        "expansion_gather": 0.755417,
+        "parquet_decode": 34.089957999999996,
+        "probe_decode": 34.874041
+      },
+      "name": "l_extendedprice",
+      "plain_data_bytes": 41646592,
+      "plain_pages": 258,
+      "role": "materialised",
+      "rows": 6000000,
+      "spreads_ms": {
+        "arrow_decode": [
+          31.249542,
+          32.515584
+        ],
+        "counterfactual_arrow_decode": [
+          33.293875,
+          34.007834
+        ],
+        "counterfactual_parquet_decode": [
+          35.784417,
+          36.389083
+        ],
+        "expansion": [
+          0.9955,
+          1.145458
+        ],
+        "expansion_buffers": [
+          0.211333,
+          0.240833
+        ],
+        "expansion_gather": [
+          0.732875,
+          0.823708
+        ],
+        "parquet_decode": [
+          33.440666,
+          35.554415999999996
+        ],
+        "probe_decode": [
+          33.987084,
+          35.462584
+        ]
+      }
+    }
+  ],
+  "commit": "unknown",
+  "file": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem.parquet",
+  "host_load_average": 2.91,
+  "iterations": 5,
+  "machine": "14 logical cores",
+  "probe": "materialised-column",
+  "query": {
+    "measurements_ms": {
+      "predicates_and_both": 51.143875,
+      "predicates_and_discount": 19.437834000000002,
+      "predicates_and_price": 50.946625000000004,
+      "predicates_only": 18.994,
+      "q6_revenue": 52.091625,
+      "q6_revenue_operators": 1.301166,
+      "q6_revenue_scan": 50.770084
+    },
+    "name": "q6-revenue",
+    "spreads_ms": {
+      "predicates_and_both": [
+        50.707415999999995,
+        51.735875
+      ],
+      "predicates_and_discount": [
+        19.164458999999997,
+        24.693541
+      ],
+      "predicates_and_price": [
+        50.361667,
+        51.08325
+      ],
+      "predicates_only": [
+        18.734792,
+        19.256458000000002
+      ],
+      "q6_revenue": [
+        51.754083,
+        52.147416
+      ]
+    },
+    "sql": "SELECT sum(l_extendedprice * (1 - l_discount)) FROM {table} WHERE l_shipdate >= '1994-01-01' AND l_shipdate < '1995-01-01' AND l_discount >= 0.05 AND l_discount <= 0.07 AND l_quantity < 24",
+    "survivors": 110915,
+    "value": 5526985127.48064
+  },
+  "row_groups": 6,
+  "rows": 6000000,
+  "writer_dictionary_page_limit": 1048576
+}

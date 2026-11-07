@@ -1,0 +1,150 @@
+{
+  "batch_in_the_tree": 125000,
+  "commit": "4eebf78",
+  "file": "data/lineitem.parquet",
+  "host_load_average": 0.0,
+  "iterations": 9,
+  "limit_in_the_tree": 131072,
+  "old_batch_rows": 65536,
+  "probe": "batch-size",
+  "shapes": [
+    {
+      "candidates": [
+        {
+          "batch": 65536,
+          "scan_ms": 15.050708
+        },
+        {
+          "batch": 125000,
+          "scan_ms": 15.343375
+        }
+      ],
+      "limits": [
+        {
+          "batch": 1024,
+          "limit": 1024,
+          "rows": 2178861,
+          "scan_ms": 14.765666
+        },
+        {
+          "batch": 2048,
+          "limit": 2048,
+          "rows": 2178861,
+          "scan_ms": 14.306625
+        },
+        {
+          "batch": 4096,
+          "limit": 4096,
+          "rows": 2178861,
+          "scan_ms": 16.164834
+        },
+        {
+          "batch": 8000,
+          "limit": 8192,
+          "rows": 2178861,
+          "scan_ms": 14.650417000000001
+        },
+        {
+          "batch": 15625,
+          "limit": 16384,
+          "rows": 2178861,
+          "scan_ms": 14.292792
+        },
+        {
+          "batch": 31250,
+          "limit": 32768,
+          "rows": 2178861,
+          "scan_ms": 13.625665999999999
+        },
+        {
+          "batch": 62500,
+          "limit": 65536,
+          "rows": 2178861,
+          "scan_ms": 16.467959
+        },
+        {
+          "batch": 125000,
+          "limit": 131072,
+          "rows": 2178861,
+          "scan_ms": 14.887666000000001
+        },
+        {
+          "batch": 250000,
+          "limit": 262144,
+          "rows": 2178861,
+          "scan_ms": 14.440875
+        }
+      ],
+      "shape": "one column, one predicate"
+    },
+    {
+      "candidates": [
+        {
+          "batch": 65536,
+          "scan_ms": 18.368542
+        },
+        {
+          "batch": 125000,
+          "scan_ms": 14.282792
+        }
+      ],
+      "limits": [
+        {
+          "batch": 1024,
+          "limit": 1024,
+          "rows": 315203,
+          "scan_ms": 126.3985
+        },
+        {
+          "batch": 2048,
+          "limit": 2048,
+          "rows": 315203,
+          "scan_ms": 67.37662499999999
+        },
+        {
+          "batch": 4096,
+          "limit": 4096,
+          "rows": 315203,
+          "scan_ms": 41.259292
+        },
+        {
+          "batch": 8000,
+          "limit": 8192,
+          "rows": 315203,
+          "scan_ms": 27.736792
+        },
+        {
+          "batch": 15625,
+          "limit": 16384,
+          "rows": 315203,
+          "scan_ms": 21.764625
+        },
+        {
+          "batch": 31250,
+          "limit": 32768,
+          "rows": 315203,
+          "scan_ms": 17.441209
+        },
+        {
+          "batch": 62500,
+          "limit": 65536,
+          "rows": 315203,
+          "scan_ms": 15.288708
+        },
+        {
+          "batch": 125000,
+          "limit": 131072,
+          "rows": 315203,
+          "scan_ms": 14.240834000000001
+        },
+        {
+          "batch": 250000,
+          "limit": 262144,
+          "rows": 315203,
+          "scan_ms": 14.150625
+        }
+      ],
+      "shape": "the real Q6's predicate set"
+    }
+  ]
+}

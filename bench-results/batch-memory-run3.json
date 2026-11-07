@@ -1,19 +1,21 @@
 {
-  "code": "382b8b6-clean",
+  "code": "038607c-dirty",
   "probe": "batch-memory",
   "the_batch_sizes": [
     62500,
+    100000,
     125000,
     250000,
     1000000
   ],
-  "the_host_load_average": 6.91,
+  "the_host_load_average": 3.38,
   "the_repeats": 3,
   "the_rows_agree": true,
   "the_shapes": [
     {
       "refused_at_the_default_budget": false,
       "the_columns_materialised": 0,
+      "the_engine_s_own_batch_rows": 1000000,
       "the_points": [
         {
           "batch_rows": 62500,
@@ -31,6 +33,24 @@
             1166672
           ],
           "the_peak_median": 1166672,
+          "the_rows": 315203
+        },
+        {
+          "batch_rows": 100000,
+          "the_batches": 60,
+          "the_estimate_bytes": 2878872,
+          "the_held_after_bytes": [
+            1261,
+            1261,
+            1261
+          ],
+          "the_held_median": 1261,
+          "the_peak_bytes": [
+            1723920,
+            1723920,
+            1723920
+          ],
+          "the_peak_median": 1723920,
           "the_rows": 315203
         },
         {
@@ -94,6 +114,7 @@
     {
       "refused_at_the_default_budget": false,
       "the_columns_materialised": 2,
+      "the_engine_s_own_batch_rows": 1000000,
       "the_points": [
         {
           "batch_rows": 62500,
@@ -111,6 +132,24 @@
             132262351
           ],
           "the_peak_median": 132262351,
+          "the_rows": 6000000
+        },
+        {
+          "batch_rows": 100000,
+          "the_batches": 60,
+          "the_estimate_bytes": 100625016,
+          "the_held_after_bytes": [
+            103900281,
+            103900281,
+            103900281
+          ],
+          "the_held_median": 103900281,
+          "the_peak_bytes": [
+            107268751,
+            107268751,
+            107268751
+          ],
+          "the_peak_median": 107268751,
           "the_rows": 6000000
         },
         {
@@ -174,6 +213,7 @@
     {
       "refused_at_the_default_budget": true,
       "the_columns_materialised": 16,
+      "the_engine_s_own_batch_rows": 100000,
       "the_points": [
         {
           "batch_rows": 62500,
@@ -191,6 +231,24 @@
             1144709903
           ],
           "the_peak_median": 1144709903,
+          "the_rows": 6000000
+        },
+        {
+          "batch_rows": 100000,
+          "the_batches": 60,
+          "the_estimate_bytes": 971537430,
+          "the_held_after_bytes": [
+            998791586,
+            998791586,
+            998791586
+          ],
+          "the_held_median": 998791586,
+          "the_peak_bytes": [
+            1012041759,
+            1012041759,
+            1012041759
+          ],
+          "the_peak_median": 1012041759,
           "the_rows": 6000000
         },
         {

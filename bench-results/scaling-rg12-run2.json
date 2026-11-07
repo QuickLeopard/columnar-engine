@@ -10,7 +10,7 @@
     "threads": 1
   },
   "dataset": {
-    "path": "data/lineitem-rg12.parquet",
+    "path": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem-rg12.parquet",
     "rows": 6000000,
     "bytes": 248255088,
     "scale_factor": 1,
@@ -28,72 +28,60 @@
       "workers": 1,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 15.479625,
-      "engine_scan_ms": 15.467375,
-      "engine_operators_ms": 0.000875,
-      "duckdb_ms": 30.0,
-      "polars_ms": 192.175,
-      "datafusion_ms": 37.838
+      "engine_ms": 13.972916999999999,
+      "engine_scan_ms": 13.959292,
+      "engine_operators_ms": 0.001209,
+      "duckdb_ms": 29.0,
+      "polars_ms": 186.589,
+      "datafusion_ms": 36.506
     },
     {
       "threads": 2,
       "workers": 2,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 7.929,
-      "engine_scan_ms": 7.910125000000001,
-      "engine_operators_ms": 0.000959,
+      "engine_ms": 7.513334,
+      "engine_scan_ms": 7.492249999999999,
+      "engine_operators_ms": 0.000708,
       "duckdb_ms": 19.0,
-      "polars_ms": 96.11,
-      "datafusion_ms": 23.829
+      "polars_ms": 98.078,
+      "datafusion_ms": 24.383
     },
     {
       "threads": 4,
       "workers": 4,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 4.256791000000001,
-      "engine_scan_ms": 4.244083,
-      "engine_operators_ms": 0.000624,
+      "engine_ms": 4.788083,
+      "engine_scan_ms": 4.77625,
+      "engine_operators_ms": 0.0011250000000000001,
       "duckdb_ms": 12.0,
-      "polars_ms": 50.923,
-      "datafusion_ms": 17.097
-    },
-    {
-      "threads": 6,
-      "workers": 6,
-      "filter_workers": 1,
-      "projection_workers": 1,
-      "engine_ms": 4.198582999999999,
-      "engine_scan_ms": 4.184542,
-      "engine_operators_ms": 0.000584,
-      "duckdb_ms": 10.0,
-      "polars_ms": 36.32,
-      "datafusion_ms": 14.109
+      "polars_ms": 50.027,
+      "datafusion_ms": 16.201
     },
     {
       "threads": 8,
       "workers": 8,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 3.7945,
-      "engine_scan_ms": 3.781792,
-      "engine_operators_ms": 0.0009170000000000001,
+      "engine_ms": 3.978792,
+      "engine_scan_ms": 3.969042,
+      "engine_operators_ms": 0.0006670000000000001,
       "duckdb_ms": 9.0,
-      "polars_ms": 37.155,
-      "datafusion_ms": 11.507
+      "polars_ms": 35.004,
+      "datafusion_ms": 11.533
     },
     {
       "threads": 14,
       "workers": 12,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 4.814625,
-      "engine_scan_ms": 4.8029589999999995,
-      "engine_operators_ms": 0.00075,
-      "duckdb_ms": 8.0,
-      "polars_ms": 30.464,
-      "datafusion_ms": 12.448
+      "engine_ms": 5.159458,
+      "engine_scan_ms": 5.145459,
+      "engine_operators_ms": 0.001291,
+      "duckdb_ms": 7.0,
+      "polars_ms": 26.746,
+      "datafusion_ms": 10.546
     }
   ]
 }

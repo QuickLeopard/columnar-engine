@@ -1,10 +1,8 @@
 {
-  "batch_in_the_tree": 125000,
-  "commit": "4eebf78",
-  "file": "data/lineitem.parquet",
+  "commit": "unknown",
+  "file": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem.parquet",
   "host_load_average": 0.0,
   "iterations": 9,
-  "limit_in_the_tree": 131072,
   "old_batch_rows": 65536,
   "probe": "batch-size",
   "shapes": [
@@ -12,11 +10,11 @@
       "candidates": [
         {
           "batch": 65536,
-          "scan_ms": 13.131125
+          "scan_ms": 12.517166
         },
         {
-          "batch": 125000,
-          "scan_ms": 13.289209
+          "batch": 1000000,
+          "scan_ms": 12.44725
         }
       ],
       "limits": [
@@ -24,68 +22,69 @@
           "batch": 1024,
           "limit": 1024,
           "rows": 2178861,
-          "scan_ms": 15.114042
+          "scan_ms": 14.716083
         },
         {
           "batch": 2048,
           "limit": 2048,
           "rows": 2178861,
-          "scan_ms": 14.233708
+          "scan_ms": 13.763208
         },
         {
           "batch": 4096,
           "limit": 4096,
           "rows": 2178861,
-          "scan_ms": 14.671292000000001
+          "scan_ms": 14.07675
         },
         {
           "batch": 8000,
           "limit": 8192,
           "rows": 2178861,
-          "scan_ms": 14.349667
+          "scan_ms": 13.626417
         },
         {
           "batch": 15625,
           "limit": 16384,
           "rows": 2178861,
-          "scan_ms": 13.604916999999999
+          "scan_ms": 13.267875
         },
         {
           "batch": 31250,
           "limit": 32768,
           "rows": 2178861,
-          "scan_ms": 13.288540999999999
+          "scan_ms": 12.707415999999998
         },
         {
           "batch": 62500,
           "limit": 65536,
           "rows": 2178861,
-          "scan_ms": 13.213875
+          "scan_ms": 12.698417
         },
         {
           "batch": 125000,
           "limit": 131072,
           "rows": 2178861,
-          "scan_ms": 13.157958
+          "scan_ms": 12.833041
         },
         {
           "batch": 250000,
           "limit": 262144,
           "rows": 2178861,
-          "scan_ms": 13.277417
+          "scan_ms": 12.480875000000001
         }
       ],
-      "shape": "one column, one predicate"
+      "shape": "one column, one predicate",
+      "the_engine_s_own_batch": 1000000
     },
     {
       "candidates": [
         {
           "batch": 65536,
-          "scan_ms": 18.638624999999998
+          "scan_ms": 17.786917
         },
         {
-          "batch": 125000,
-          "scan_ms": 14.656459
+          "batch": 1000000,
+          "scan_ms": 14.825083
         }
       ],
       "limits": [
@@ -93,58 +92,60 @@
           "batch": 1024,
           "limit": 1024,
           "rows": 315203,
-          "scan_ms": 121.468458
+          "scan_ms": 111.62254200000001
         },
         {
           "batch": 2048,
           "limit": 2048,
           "rows": 315203,
-          "scan_ms": 67.116083
+          "scan_ms": 61.484292
         },
         {
           "batch": 4096,
           "limit": 4096,
           "rows": 315203,
-          "scan_ms": 41.379917
+          "scan_ms": 38.023334
         },
         {
           "batch": 8000,
           "limit": 8192,
           "rows": 315203,
-          "scan_ms": 29.316333
+          "scan_ms": 26.336667000000002
         },
         {
           "batch": 15625,
           "limit": 16384,
           "rows": 315203,
-          "scan_ms": 20.745541
+          "scan_ms": 19.558666
         },
         {
           "batch": 31250,
           "limit": 32768,
           "rows": 315203,
-          "scan_ms": 17.830917000000003
+          "scan_ms": 16.421875
         },
         {
           "batch": 62500,
           "limit": 65536,
           "rows": 315203,
-          "scan_ms": 17.030832999999998
+          "scan_ms": 14.901875
         },
         {
           "batch": 125000,
           "limit": 131072,
           "rows": 315203,
-          "scan_ms": 15.92375
+          "scan_ms": 14.106666
         },
         {
           "batch": 250000,
           "limit": 262144,
           "rows": 315203,
-          "scan_ms": 15.3145
+          "scan_ms": 13.736625
         }
       ],
-      "shape": "the real Q6's predicate set"
+      "shape": "the real Q6's predicate set",
+      "the_engine_s_own_batch": 1000000
     }
-  ]
+  ],
+  "the_default_s_batch_bytes": 16777216
 }

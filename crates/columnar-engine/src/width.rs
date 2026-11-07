@@ -144,6 +144,25 @@ impl RowCost {
         let value = if rows == 0 { 0 } else { self.value.div_ceil(rows) };
         self.holder.saturating_add(value)
     }
+
+    /// The bytes one row of a column of this shape costs, **in eighths of a
+    /// byte**.
+    ///
+    /// **The unit is the point.** A column's rows carry a **validity bit**,
+    /// and a bit is an **eighth of a byte** a row: a per-row cost in whole
+    /// bytes cannot carry it, and rounding it up to a byte would make it
+    /// **eight times** the truth. So the rate is carried in eighths, and the
+    /// reader's batch rule divides the budget by it -- which is what makes the
+    /// rule and the estimate read **the same statement**.
+    ///
+    /// The value's own bytes are spread over the rows and **rounded up**, for
+    /// the same reason the estimate rounds them up: the estimate is meant to
+    /// be on the safe side of the truth.
+    #[must_use]
+    pub fn per_row_eighths(self, rows: usize) -> usize {
+        let value = if rows == 0 { 0 } else { self.value.saturating_mul(8).div_ceil(rows) };
+        self.holder.saturating_mul(8).saturating_add(value).saturating_add(1)
+    }
 }
 
 /// The storage of a column of the given Arrow type.

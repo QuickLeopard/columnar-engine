@@ -631,14 +631,33 @@ fn the_byte_rule_divides_the_budget_by_the_width() {
     // many rows that is.
     let budget = 16 * 1024;
     let batch = source.batch_rows_under_bytes(budget, &read, 1);
-    let bytes = batch.saturating_mul(source.row_bytes_of(&read));
+    let bytes = batch.saturating_mul(source.row_eighth_bytes_of(&read)) / 8;
     assert!(bytes <= budget, "the batch's bytes fit under the budget");
 
     // And a budget that is too small for one row still buys a batch: a read
-    // has to read something.
+    // has to read something. **The smallest batch this file can give is one
+    // row group**, because a batch never ends a row group early.
     let floor = source.batch_rows_under_bytes(0, &read, 1);
     assert!(floor > 0, "the floor buys a batch");
-    assert!(floor * source.row_bytes_of(&read) >= 4_096, "the floor is 4,096 rows");
+    assert_eq!(floor, GROUP_ROWS, "the floor is one row group");
+}
+
+#[test]
+fn the_rules_rate_is_the_statements_own() {
+    let source = source("byte-rate");
+
+    // **The statement's rate, in eighths of a byte**: a number's row is its
+    // own eight bytes, and its column's validity bit is **an eighth of a
+    // byte** -- and not a whole byte, which would make the rule eight times
+    // dearer than the truth and take the batch away from the shape that
+    // earns it.
+    assert_eq!(source.row_eighth_bytes_of(&[0]), 65, "eight bytes and a bit");
+
+    // And the batch the budget buys fits that rate.
+    let budget = 16 * 1024;
+    let batch = source.batch_rows_under_bytes(budget, &[0], 1);
+    let bytes = batch * source.row_eighth_bytes_of(&[0]) / 8;
+    assert!(bytes <= budget, "the batch's bytes fit under the budget");
 }
 
 #[test]
@@ -659,8 +678,8 @@ fn the_budget_is_divided_by_the_reads_width() {
     // And each one divides the row group's rows, and fits the budget.
     assert_eq!(10_000 % narrow, 0, "the narrow batch divides the rows");
     assert_eq!(10_000 % wide, 0, "the wide batch divides the rows");
-    assert!(narrow * source.row_bytes_of(&[0]) <= budget);
-    assert!(wide * source.row_bytes_of(&[0, 1, 2]) <= budget);
+    assert!(narrow * source.row_eighth_bytes_of(&[0]) / 8 <= budget);
+    assert!(wide * source.row_eighth_bytes_of(&[0, 1, 2]) / 8 <= budget);
 }
 
 #[test]
@@ -675,7 +694,7 @@ fn the_workers_share_the_budget() {
     let six = source.batch_rows_under_bytes(400_000, &[0], 6);
     assert!(six < one, "the workers share the budget");
     assert_eq!(10_000 % six, 0, "the shared batch divides the rows");
-    let bytes = six * source.row_bytes_of(&[0]);
+    let bytes = six * source.row_eighth_bytes_of(&[0]) / 8;
     assert!(bytes * 6 <= 400_000, "the read's batch memory fits the budget");
 }
 

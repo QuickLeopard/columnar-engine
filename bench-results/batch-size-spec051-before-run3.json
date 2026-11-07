@@ -1,0 +1,150 @@
+{
+  "batch_in_the_tree": 125000,
+  "commit": "unknown",
+  "file": "/Volumes/My Data/Work/MiniMax Code/Columnar Engine/data/lineitem.parquet",
+  "host_load_average": 0.0,
+  "iterations": 9,
+  "limit_in_the_tree": 131072,
+  "old_batch_rows": 65536,
+  "probe": "batch-size",
+  "shapes": [
+    {
+      "candidates": [
+        {
+          "batch": 65536,
+          "scan_ms": 12.46575
+        },
+        {
+          "batch": 125000,
+          "scan_ms": 12.319958000000002
+        }
+      ],
+      "limits": [
+        {
+          "batch": 1024,
+          "limit": 1024,
+          "rows": 2178861,
+          "scan_ms": 14.106584
+        },
+        {
+          "batch": 2048,
+          "limit": 2048,
+          "rows": 2178861,
+          "scan_ms": 13.522834
+        },
+        {
+          "batch": 4096,
+          "limit": 4096,
+          "rows": 2178861,
+          "scan_ms": 13.909958
+        },
+        {
+          "batch": 8000,
+          "limit": 8192,
+          "rows": 2178861,
+          "scan_ms": 13.426125
+        },
+        {
+          "batch": 15625,
+          "limit": 16384,
+          "rows": 2178861,
+          "scan_ms": 13.166584
+        },
+        {
+          "batch": 31250,
+          "limit": 32768,
+          "rows": 2178861,
+          "scan_ms": 12.707709
+        },
+        {
+          "batch": 62500,
+          "limit": 65536,
+          "rows": 2178861,
+          "scan_ms": 12.499833
+        },
+        {
+          "batch": 125000,
+          "limit": 131072,
+          "rows": 2178861,
+          "scan_ms": 12.479416
+        },
+        {
+          "batch": 250000,
+          "limit": 262144,
+          "rows": 2178861,
+          "scan_ms": 12.178916999999998
+        }
+      ],
+      "shape": "one column, one predicate"
+    },
+    {
+      "candidates": [
+        {
+          "batch": 65536,
+          "scan_ms": 17.654666
+        },
+        {
+          "batch": 125000,
+          "scan_ms": 13.779042
+        }
+      ],
+      "limits": [
+        {
+          "batch": 1024,
+          "limit": 1024,
+          "rows": 315203,
+          "scan_ms": 108.693917
+        },
+        {
+          "batch": 2048,
+          "limit": 2048,
+          "rows": 315203,
+          "scan_ms": 60.592667000000006
+        },
+        {
+          "batch": 4096,
+          "limit": 4096,
+          "rows": 315203,
+          "scan_ms": 37.220417
+        },
+        {
+          "batch": 8000,
+          "limit": 8192,
+          "rows": 315203,
+          "scan_ms": 26.025333
+        },
+        {
+          "batch": 15625,
+          "limit": 16384,
+          "rows": 315203,
+          "scan_ms": 19.522833
+        },
+        {
+          "batch": 31250,
+          "limit": 32768,
+          "rows": 315203,
+          "scan_ms": 16.292
+        },
+        {
+          "batch": 62500,
+          "limit": 65536,
+          "rows": 315203,
+          "scan_ms": 14.697208
+        },
+        {
+          "batch": 125000,
+          "limit": 131072,
+          "rows": 315203,
+          "scan_ms": 13.902542
+        },
+        {
+          "batch": 250000,
+          "limit": 262144,
+          "rows": 315203,
+          "scan_ms": 13.37775
+        }
+      ],
+      "shape": "the real Q6's predicate set"
+    }
+  ]
+}

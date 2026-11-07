@@ -1,0 +1,96 @@
+{
+  "commit": "4eebf78",
+  "engine_rows": [
+    1417687,
+    4825422,
+    739243,
+    2420600,
+    1055130,
+    4722314,
+    740022,
+    5519752,
+    100190,
+    3891326
+  ],
+  "fallback_iterations": 3,
+  "fallbacks_ms": {
+    "operator_all": 540.713792,
+    "operator_text": 48.156
+  },
+  "file": "data/lineitem.parquet",
+  "host_load_average": 16.59,
+  "iterations": 5,
+  "key": "l_extendedprice",
+  "limit": 10,
+  "parts_ms": {
+    "candidate_block": 0.9974999999999999,
+    "floor_block": 0.953333,
+    "fused_decode": 33.441666000000005,
+    "fused_topk": 39.348583,
+    "key_column": 1.0000000000000002e-6,
+    "operator_cold": 1.0270839999999999,
+    "operator_warm": 1.008833,
+    "read_plain": 3.105334,
+    "read_shape": 3.729041,
+    "read_small": 0.25416700000000003,
+    "rows_range": 1.283541,
+    "stage_cold": 1.682792,
+    "stage_resident": 1.079458
+  },
+  "probe": "sort-cost",
+  "rows": 6000000,
+  "spreads_ms": {
+    "candidate_block": [
+      0.982583,
+      1.0570410000000001
+    ],
+    "floor_block": [
+      0.888,
+      1.046208
+    ],
+    "fused_decode": [
+      32.403209000000004,
+      33.834833
+    ],
+    "fused_topk": [
+      38.911459,
+      40.297166000000004
+    ],
+    "key_column": [
+      1.0000000000000002e-6,
+      1.0000000000000002e-6
+    ],
+    "operator_cold": [
+      0.9690420000000001,
+      1.2299579999999999
+    ],
+    "operator_warm": [
+      0.933084,
+      1.208708
+    ],
+    "read_plain": [
+      2.949208,
+      3.226708
+    ],
+    "read_shape": [
+      3.647958,
+      3.893125
+    ],
+    "read_small": [
+      0.249167,
+      0.338542
+    ],
+    "rows_range": [
+      1.171625,
+      1.37125
+    ],
+    "stage_cold": [
+      1.533125,
+      1.867834
+    ],
+    "stage_resident": [
+      1.00925,
+      3.245083
+    ]
+  }
+}
