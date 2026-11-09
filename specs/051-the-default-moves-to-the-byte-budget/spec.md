@@ -1,7 +1,8 @@
 # Spec 051 — The default moves to the byte budget
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-07
+**Finished**: 2026-11-09
 **Predecessor**: [spec 050 — the batch size's price, paid](../050-the-batch-sizes-price-paid/spec.md)
 
 ## The problem

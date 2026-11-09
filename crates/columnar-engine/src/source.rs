@@ -146,16 +146,18 @@ impl SourceColumn {
 /// [ADR-0061](../../../docs/adr/0061-the-batch-sizes-price.md).
 ///
 /// **16 MiB** is bounded by the measurement from **both sides**: above the narrow
-/// shapes' whole row group (**12.8 MiB**) and at or below the wide shape's own
-/// batch (**20.7 MiB**). And the rule gives **every** shape at least what it had:
-/// the narrow shapes get the whole row group, and the wide shape gets
-/// **62,500** rows, which the measurement says is a small win.
+/// shapes' whole row group (**12.8 MiB** and **15.3 MiB**) and at or below the wide
+/// shape's next batch (**20.7 MiB**, **125,000** rows). And the rule gives **every**
+/// shape at least what it had: the narrow shapes get the whole row group --
+/// **1,000,000** rows -- and the wide shape gets **100,000**, which the measurement
+/// says is the cheapest point of its own curve.
 ///
 /// **The budget is the read's, and the workers share it.** A parallel read
 /// holds one batch per worker, so a read on six workers gives each of them a
 /// sixth of the budget. **At one worker -- the measurement's setting, and the
 /// headline's -- the rule is exactly the published one**: the narrow shapes get
-/// the whole row group and the wide shape gets 62,500 rows.
+/// the whole row group and the wide shape gets **100,000** rows; at six workers
+/// the wide shape gets **15,625**.
 ///
 /// **The batch size is still a divisor of the row group's row count**, so that
 /// no row group ends with a partial batch -- a partial batch costs the parquet

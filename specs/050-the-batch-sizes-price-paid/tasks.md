@@ -1,6 +1,6 @@
 # Spec 050 — The batch size's price, paid — tasks
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-07
 **Spec**: [spec.md](spec.md)
 

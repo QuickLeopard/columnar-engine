@@ -78,6 +78,11 @@ regression, and the shared budget is the reading that cannot produce one.
   the wide shape's batch is **100,000** where it published **62,500** -- because the rule divides the budget by the
   **statement**, and the statement is **9% low** on the wide shape
   ([§3ag](../../PERF.md#3ag-the-width-statement-paid)). The correction is recorded here.
+- **And the constant's own doc comment was corrected with it.** The public surface's `DEFAULT_READER_BATCH_BYTES`
+  still named the wide shape's batch **62,500**, where the rule gives it **100,000** -- the same stale figure, in
+  the same increment, on the surface an embedder reads. **It names **100,000** now**, and it says what the rule
+  gives at six workers too. **The defect is published here rather than only fixed**: the rule's output moved with
+  the rate, and every place that stated it moved with the rule.
 - **And the rate was wrong at first**: the rule charged a **whole byte** a column a row for the validity bit,
   where the statement charges an **eighth** of a byte. That made the rule eight times dearer than the truth on
   that term, and the two materialised columns got **500,000** rows where the rule publishes **1,000,000**. The rate
