@@ -3221,6 +3221,14 @@ the verdict's state, on the cold path, is **sound**;
 the verdict, on the resident path, is **unattributed**;
 the verdict's state, on the resident path, is **sound**.
 
+**And the pairing has since moved, and the verdict published here is the verdict of this set.** The context's
+two sides — the query's account of the join stage and the standalone's account of the same work — were taken
+**hundreds of milliseconds apart** here, so the file's state and the machine's movement over that distance were
+**not common to both sides** and could not cancel in the difference the context is.
+**[§3aj](#3aj-the-contexts-two-sides-in-one-account) moved the two sides into one account, back to back, and
+publishes the verdict that set carries with the yardstick it was made with.** **The verdict published in this
+section is the verdict of this set**, and it is kept beside the newer one rather than replaced by it.
+
 **And the verdict spec 030 published is kept beside it, as the figure it was** -- **unattributed**, on a
 band of **0.418 ms** against the machine's own **0.936 ms** -- **annotated not sound**, because a band
 narrower than the machine's own movement could not tell what it judged. It is **not** published as a
@@ -3758,6 +3766,15 @@ drift — the larger of them:
 - the verdict, on the resident path, is **the memory's**
 - the verdict's state, on the resident path, is **sound**
 - the resident path's yardstick is **1.119 ms**
+
+**And the floors were the last of the instrument's own defects, and the gap's own sides were the next.** The two
+floors are back to back in the iteration, and the machine's movement and the file's state can be paired with the
+leaves they judge. **But the context's two sides — the query's account of the join stage and the standalone's
+account of the same work — were still taken hundreds of milliseconds apart**, so the file's state and the machine's
+movement over that distance were not common to them and could not cancel in the difference.
+**[§3aj](#3aj-the-contexts-two-sides-in-one-account) moved them into one account, back to back, with the order
+alternating, and publishes the verdict that set carries.** **The verdicts published in this section are the
+verdicts of this set**, and they are kept beside the newer one rather than replaced by it.
 
 **So the file's state did not move enough on this host, today, to widen any yardstick that mattered** —
 only the open's gap's, from **0.258 ms** to **0.361 ms**, and that leaf is at the noise under both.
@@ -6300,3 +6317,132 @@ Every figure in this section is derived from the committed reports by `scripts/m
 [ADR-0064](docs/adr/0064-the-reader-does-not-own-the-decode.md).
 
 **The conditions**: three campaigns, on one host, at a load average of **6.02**, and the load average is in every report.
+
+### 3aj. The context's two sides, in one account
+
+**The open question was the context** — the engine's own account of its join stage, less the same work measured on its
+own — and the verdict was **unattributed**. **The two sides of it were too far apart to carry a verdict.** The report's
+own **separation** says how far apart they were taken: **271.672 ms** on the cold path and **325.075 ms** on the resident
+one, where the two floors are **8.069 ms** apart. **So the file's state and the machine's movement over those hundreds of
+milliseconds were not common to both sides, and they did not cancel in the difference.**
+
+**And the instrument changed.** The iteration is now **two path accounts**: each account holds the path's query and the
+path's standalone work **back to back**, and each account carries **its own build side's work**, so that every leaf of that
+path's ladder is a difference of two measurements taken inside one account. The whole iteration is **reversed** in the odd
+iterations, so that every position effect lands on the other side in the next one.
+
+**And the separation fell, and it fell unevenly.** The report carries the separation **per iteration** now, and not only
+as a median, so the two geometries are told apart: the **even** iterations take the query first and the **odd** ones take
+it last, and the two are not the same distance apart:
+
+| the separation | the cold path | the resident path |
+|---|---|---|
+| the build side's gap — **the query first**, the even iterations | **48.413 ms** | **15.746 ms** |
+| the build side's gap — **the standalone first**, the odd iterations | **187.695 ms** | **91.776 ms** |
+| the open's gap — **the query first** | **54.175 ms** | **21.684 ms** |
+| the open's gap — **the standalone first** | **182.059 ms** | **85.911 ms** |
+| the probe's own remainder — **the query first** | **128.261 ms** | **93.250 ms** |
+| the probe's own remainder — **the standalone first** | **107.079 ms** | **13.280 ms** |
+| **the separation, as the report publishes it** — the largest of the leaves | **185.773 ms** *(was 271.672 ms)* | **92.934 ms** *(was 325.075 ms)* |
+
+**And the ladder, on the set this increment measured** — three campaigns, the host's load average **4.55**, **4.34** and
+**4.31** — with the file-aware yardstick beside the machine's own:
+
+| the part | the cold path | its spread | the machine's yardstick | the file-aware yardstick | the state |
+|---|---|---|---|---|---|
+| the build side's gap | **0.225 ms** *(was −0.017 ms)* | 0.117 ms *(was 0.274 ms)* | 0.612 ms *(was 0.587 ms)* | 0.612 ms *(was 0.587 ms)* | at the noise |
+| the open's gap | **0.004 ms** *(was 0.032 ms)* | 0.017 ms *(was 0.016 ms)* | 0.097 ms *(was 0.240 ms)* | 0.353 ms *(was 0.378 ms)* | at the noise |
+| the probe's row-number offset | **−0.037 ms** *(was 0.269 ms)* | 0.289 ms *(was 0.718 ms)* | 0.664 ms *(was 0.495 ms)* | 0.664 ms *(was 0.495 ms)* | at the noise *(was inconclusive)* |
+| the probe's own remainder | **0.046 ms** *(was 0.134 ms)* | 0.209 ms *(was 0.394 ms)* | 0.373 ms *(was 0.514 ms)* | 0.373 ms *(was 0.514 ms)* | at the noise |
+| the part in no gap | **0.000 ms** *(was 0.000 ms)* | 0.000 ms *(was 0.000 ms)* | 0.547 ms *(was 0.566 ms)* | 0.547 ms *(was 0.566 ms)* | at the noise |
+| **the context** | **0.032 ms** *(was 0.152 ms)* | **0.567 ms** *(was 0.787 ms)* | — | — | **unattributed** *(was unattributed)* |
+
+| the part | the resident path | its spread | the machine's yardstick | the file-aware yardstick | the state |
+|---|---|---|---|---|---|
+| the build side's gap | **−0.119 ms** *(was −0.197 ms)* | 0.655 ms *(was 0.186 ms)* | 0.528 ms *(was 0.933 ms)* | 0.528 ms *(was 0.933 ms)* | inconclusive *(was at the noise)* |
+| the open's gap | **0.005 ms** *(was 0.015 ms)* | 0.039 ms *(was 0.017 ms)* | 0.097 ms *(was 0.240 ms)* | 0.353 ms *(was 0.378 ms)* | at the noise |
+| the probe's file state | **−0.884 ms** *(was −0.598 ms)* | 0.365 ms *(was 0.944 ms)* | 0.687 ms *(was 1.502 ms)* | 0.687 ms *(was 1.502 ms)* | **a part of the context** *(was at the noise)* |
+| the probe's own remainder | **0.520 ms** *(was 0.256 ms)* | 0.544 ms *(was 0.852 ms)* | 0.688 ms *(was 1.251 ms)* | 0.688 ms *(was 1.251 ms)* | at the noise |
+| the part in no gap | **0.000 ms** *(was 0.000 ms)* | 0.000 ms *(was 0.000 ms)* | 0.148 ms *(was 0.773 ms)* | 0.353 ms *(was 0.378 ms)* | at the noise |
+| **the context** | **−0.712 ms** *(was −0.928 ms)* | **0.718 ms** *(was 0.664 ms)* | — | — | **the memory's** *(was unattributed)* |
+
+**And the leaves' states, one vocabulary per level, and each of them a published sentence:**
+
+the build side's gap, on the cold path, is **at the noise**;
+the open's gap, on the cold path, is **at the noise**;
+the probe's row-number offset, on the cold path, is **at the noise**;
+the probe's own remainder, on the cold path, is **at the noise**;
+the part in no gap, on the cold path, is **at the noise**;
+
+-- resident --
+
+the build side's gap, on the resident path, is **inconclusive**;
+the open's gap, on the resident path, is **at the noise**;
+the probe's file state, on the resident path, is **a part of the context**;
+the probe's own remainder, on the resident path, is **at the noise**;
+the part in no gap, on the resident path, is **at the noise**;
+
+**And the verdicts are published as one word and one state each** — the word is a mechanism and the state is not:
+
+the verdict, on the cold path, is **unattributed**;
+the verdict's state, on the cold path, is **sound**;
+the cold path's yardstick is **0.612 ms**;
+the verdict, on the resident path, is **the memory's**;
+the verdict's state, on the resident path, is **sound**;
+the resident path's yardstick is **0.687 ms**;
+
+**And the verdict the pairing replaces, published beside it:**
+
+the verdict, on the cold path, is **unattributed**;
+the verdict's state, on the cold path, is **sound**;
+the verdict, on the resident path, is **unattributed**;
+the verdict's state, on the resident path, is **sound**.
+
+**And the cold path's context is at the noise, and the file's state is most of what moves it.** The context is
+**0.032 ms** and its own spread over the three campaigns is **0.567 ms** — **seventeen times** the context. **The file's
+state accounts for 0.353 ms of that spread and the machine's own movement for 0.097 ms**, so **62.2%** of the movement is
+the file's and **17.1%** is the machine's, and **0.117 ms** is left over once both are taken out. **And the context itself
+is inside what is left.** So the file's state is **not** shown to be the whole of the cold path's context — **and it is not
+shown not to be**: with the file's state taken out, there is still **0.117 ms** of spread against a context of
+**0.032 ms**.
+
+**And the resident path's drift is moved the same way.** Its context's spread is **0.718 ms**, the file's own read
+drifts **0.353 ms** of it and the machine's own movement **0.097 ms** — **49.1%** and **13.5%** — and **0.269 ms** is
+left once both are taken out, against a context of **−0.712 ms**.
+
+**And the resident path's context is attributed, to the memory's.** The query's resident probe reads a column the dataset
+has held since it was loaded, with the build side's read in between, while the standalone reads its column afresh — and
+that leaf is **−0.884 ms** against a yardstick of **0.687 ms**, with its own spread of **0.365 ms** narrower than the
+yardstick. **So on the path where the two sides do not share the file's state, the file's state is the whole of the
+context.**
+
+**And the cold path's two sides do share it.** Both read the file inside the reader — the query's probe in the reader's
+batches and the standalone's probe over the same batches — so the file's state is common to both sides, and **what is left
+after it cancels is 0.032 ms, at the noise.**
+
+**And the order's own cost is published, because the order is not neutral.** The **even** iterations take the query first
+and the **odd** ones take it last, and the difference between the two orders' medians is **0.454 ms** on the cold path
+*(was 0.523 ms)* and **1.286 ms** on the resident one *(was 0.229 ms)*. **On the cold path the order could not have moved
+a leaf out of the noise**: the widest it moved any of them is 0.589 ms, and the leaves it moved are the build side's gap
+and the probe's own remainder, both far inside their yardsticks. **On the resident path the order moved the probe's file
+state by 1.286 ms — wider than the leaf itself — so that attribution is published with the receipt beside it: the leaf's
+value is the median of the two geometries, and the query's build side's read is what moves the held column the leaf
+measures.**
+
+**And the floors are still back to back, and the interleaving's added work is still nothing.** The two floors are
+**7.790 ms** apart *(was 8.069 ms)*, the build side's file state is **0.721 ms** *(was 1.361 ms)*, and the interleaving's
+added work is **0.000 ms** — it adds no clock read: every quantity is still timed by exactly the two clock reads it was
+timed by, and the per-iteration values are written, not timed.
+
+**And the figures that moved are published old and new, with the reason: the pairing moved.** Every figure above is
+published beside the figure the pairing it replaces gave, and the reason is the same for all of them — **the two sides of
+the difference were taken back to back, and they were not before.**
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/join-cost-spec053-run1.json` and its two siblings, and the set the
+pairing replaces is `bench-results/join-cost-run1.json` and its two siblings, kept beside it. The instrument is
+`crates/columnar-engine/examples/join_cost_probe.rs`, and the decision is in
+[ADR-0065](docs/adr/0065-the-contexts-two-sides-in-one-account.md).
+
+**The conditions**: three campaigns, on one host, at a load average of **4.55**, **4.34** and **4.31**, and the load
+average is in every report.

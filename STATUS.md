@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **51 specs**, **64 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **51 specs**, **65 ADRs** and **29 defects** so far, and every one
 of the specs but the one in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
@@ -157,8 +157,9 @@ taken **in the same session**, interleaved. The remainder was **3.337 ms** befor
 artefacts of the instrument rather than the engine's cost — the crate boundary, and a warm buffer where
 the query probes a column the reader has just written.
 
-**And the verdicts, with the yardstick each was made with.** The context's verdict is published in the
-house's own sentences, and the yardstick it was made with is published beside it:
+**And the verdicts of the set this file publishes, with the yardstick each was made with.** The
+context's verdict is published in the house's own sentences, and the yardstick it was made with is
+published beside it:
 the verdict, on the cold path, is **unattributed**;
 the verdict's state, on the cold path, is **sound**;
 the cold path's yardstick is **0.495 ms** — the probe's own remainder's own, the largest leaf on
@@ -242,12 +243,57 @@ finding.
 
 ### The questions the engine has not answered
 
-**1. The context — it is decomposed, and in this set the verdict is unattributed.** The join's stage's
-residual is 7.393 ms on the resident path, and the standalone probe of the same work is 8.408 ms. The
-gap is **−0.928 ms**: inside the query, the probe accounts for *less* than it does in a quiet
-process. On the cold path the same gap is **0.152 ms** — positive where the resident one is negative
-— and it was **0.149 ms** on the old code, measured on this host back to back, and **−0.157 ms** on the
-code this increment replaces, measured in the same session as this one.
+**1. The context — it is decomposed, and spec 053 measured it with its two sides back to back. The
+answer is that the file's state is the whole of it where the two sides do not share it, and that on
+the cold path there is nothing left to attribute.** On the set spec 053 measured, the context is
+**0.032 ms** on the cold path and **−0.712 ms** on the resident one — the cold path's spread is
+**0.567 ms** and the resident path's is **0.718 ms**. The cold path's verdict is **unattributed** and
+**sound**, and the resident path's is **the memory's** and **sound**: the probe's file state is
+**−0.884 ms** against a yardstick of **0.687 ms**, with its own spread of **0.365 ms** narrower than
+the yardstick. **So the question is closed.**
+
+**And the verdicts, in the house's own sentences, on the set spec 053 measured:**
+
+the verdict, on the cold path, is **unattributed**;
+the verdict's state, on the cold path, is **sound**;
+the cold path's yardstick is **0.612 ms**;
+the verdict, on the resident path, is **the memory's**;
+the verdict's state, on the resident path, is **sound**;
+the resident path's yardstick is **0.687 ms**;
+
+**And the reason the two sides are back to back is the reason the question stood.** The context is a
+difference between the query's account of the join stage and the standalone's account of the same work,
+and the two were **271.672 ms** apart on the cold path and **325.075 ms** on the resident one, where
+the two floors are **8.069 ms** apart. **So the file's state and the machine's movement over those
+hundreds of milliseconds were not common to both sides, and they could not cancel in the difference.**
+Spec 053 moved the two sides into **one account** — the path's query and the path's standalone work,
+back to back, with the order alternating — and the separation fell to **185.773 ms** and **92.934 ms**,
+and the file's state and the machine's movement are common to both sides at last.
+
+**And the file's share of the cold path's context is published.** The context's spread is **0.567 ms**,
+the file's own read drifts **0.353 ms** of it and the machine's own movement **0.097 ms** — **62.2%**
+and **17.1%** — and **0.117 ms** is left once both are taken out, against a context of **0.032 ms**. **So
+the file's state is not shown to be the whole of it, and it is not shown not to be:** with the file's
+state taken out there is still more spread than context.
+
+**And the cold path's two sides share the file's state.** Both read the file inside the reader, so it
+is common to both sides and cancels, and what is left after it cancels is **0.032 ms**, at the noise.
+The resident path's two sides do not share it — the query's resident probe reads a column the dataset
+has held since it was loaded, with the build side's read in between, while the standalone reads its
+column afresh — and **there the file's state is the whole of the context.**
+
+**And the receipt that goes with the verdict is published too.** The order is not neutral: the order's
+own cost is **0.454 ms** on the cold path, and it could not have moved a leaf out of the noise; on the
+resident path it is **1.286 ms** and it moved the probe's file state by more than the leaf itself, so
+that attribution is published with that receipt beside it. The ladder, the yardsticks, the verdict and
+the separation are in [`PERF.md` §3aj](PERF.md#3aj-the-contexts-two-sides-in-one-account), the decision
+is in [ADR-0065](docs/adr/0065-the-contexts-two-sides-in-one-account.md), and it is written down as
+[`spec 053`](specs/053-the-cold-paths-context/spec.md).
+
+**And the sets before it are kept beside it.** On the set the pairing replaces the context was
+**0.152 ms** on the cold path and **−0.928 ms** on the resident one, and the verdict was **unattributed**
+on both; the cold path's context was **0.149 ms** on the old code, measured on this host back to back,
+and **−0.157 ms** on the code this increment replaces, measured in the same session as this one.
 
 **Spec 030 took it apart, and the answer was that it cannot be attributed.** The join stage's plan
 output now reports its **parts**, so the build side's in-query cost is the engine's own account of

@@ -34,6 +34,12 @@ QUERY_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("query-cost-bef
 SORT_COST_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-run*.json"))
 SORT_COST_BEFORE_REPORTS = sorted((ROOT / "bench-results").glob("sort-cost-before-run*.json"))
 JOIN_COST_REPORTS = sorted((ROOT / "bench-results").glob("join-cost-run*.json"))
+# Spec 053's set: the context's two sides, taken back to back, in one
+# account. It is published in its own section, beside the set the pairing
+# replaces, which is kept where it is.
+JOIN_COST_SPEC053_REPORTS = sorted(
+    (ROOT / "bench-results").glob("join-cost-spec053-run*.json")
+)
 JOIN_COST_BEFORE_REPORTS = sorted(
     (ROOT / "bench-results").glob("join-cost-spec030-before-run*.json")
 )
@@ -1815,6 +1821,7 @@ WRITE_COST_REPORTS = sorted((ROOT / "bench-results").glob("write-cost-run*.json"
 WRITE_COST_ENGINE_BATCH_REPORTS = sorted(
     (ROOT / "bench-results").glob("write-cost-engine-batch-run*.json")
 )
+SPEC053_SECTION = "### 3aj"
 SPEC037_SECTION = "### 3s"
 
 WRITE_COST_FAMILIES = (
@@ -3495,6 +3502,7 @@ def main() -> int:
         join_derived: dict[str, dict[str, list[float]]] = {}
         for which, paths in (
             ("after", JOIN_COST_REPORTS),
+            ("spec053", JOIN_COST_SPEC053_REPORTS),
             ("before", JOIN_COST_BEFORE_REPORTS),
             ("spec030", JOIN_COST_SPEC030_REPORTS),
             ("spec029", JOIN_COST_SPEC029_REPORTS),
@@ -4978,6 +4986,276 @@ def main() -> int:
                     )
                 else:
                     print(f"ok  {'PERF.md':<10} {f'the hunt: {label}':<60} {rendered}")
+
+    # Spec 053: the context's two sides, in one account -- the ladder, the
+    # yardsticks, the verdict, the separation and the file's share, in the
+    # section that publishes them. The set the pairing replaces is beside it,
+    # and every figure that moved is published old and new.
+    context_section = section_of(texts["PERF.md"], SPEC053_SECTION)
+    if context_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the context's two sides "
+            f"({SPEC053_SECTION}) is not in the document"
+        )
+    elif not JOIN_COST_SPEC053_REPORTS:
+        failures.append(
+            "the join probe's set for the set spec 053 measured is not in the tree"
+        )
+    elif len(JOIN_COST_SPEC053_REPORTS) < MIN_CAMPAIGNS:
+        failures.append(
+            f"the join probe's set for the set spec 053 measured has "
+            f"{len(JOIN_COST_SPEC053_REPORTS)} campaigns, and the method says "
+            f"{MIN_CAMPAIGNS}"
+        )
+    else:
+        new_paths = JOIN_COST_SPEC053_REPORTS
+        old_paths = JOIN_COST_REPORTS
+        new_parts, new_derived = _join_cost_figures(new_paths)
+        old_parts, old_derived = _join_cost_figures(old_paths)
+        new_runs = [json.loads(path.read_text()) for path in new_paths]
+        old_runs = [json.loads(path.read_text()) for path in old_paths]
+
+        def context_wanted(
+            label: str, figure: float, places: int
+        ) -> None:
+            """One figure of the section, looked for inside it."""
+            rendered = rendered_figure(figure, places)
+            if not figure_in(context_section, rendered):
+                failures.append(
+                    f"PERF.md: the set spec 053 measured's {label} is {rendered} by "
+                    f"the reports but that figure does not appear in the section"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+
+        for path in ("cold", "resident"):
+            new_yardsticks = join_cost_yardstick(new_parts, path)
+            new_aware = join_cost_yardstick_file_aware(new_parts, path)
+            old_yardsticks = join_cost_yardstick(old_parts, path)
+            old_aware = join_cost_yardstick_file_aware(old_parts, path)
+            new_verdict = join_cost_verdict(new_parts, new_derived, path, new_aware)
+            old_verdict = join_cost_verdict(old_parts, old_derived, path, old_aware)
+            # The **context** itself, and its own spread.
+            for figure_label, key in (
+                ("the context", f"the_context_{path}"),
+                ("the context's spread", f"the_context_{path}"),
+            ):
+                values = new_derived.get(key, [])
+                old_values = old_derived.get(key, [])
+                if not values or not old_values:
+                    continue
+                if figure_label == "the context":
+                    context_wanted(
+                        f"the {path} path's context",
+                        statistics.median(values),
+                        3,
+                    )
+                    context_wanted(
+                        f"the {path} path's context, the pairing it replaces",
+                        statistics.median(old_values),
+                        3,
+                    )
+                else:
+                    context_wanted(
+                        f"the {path} path's context's spread",
+                        max(values) - min(values),
+                        3,
+                    )
+                    context_wanted(
+                        f"the {path} path's context's spread, the pairing it replaces",
+                        max(old_values) - min(old_values),
+                        3,
+                    )
+            # The **leaves**: the value, the spread, and the two yardsticks.
+            for key, name, _places, _word, _sides in JOIN_COST_LEAVES[path]:
+                values = new_derived.get(key, [])
+                old_values = old_derived.get(key, [])
+                if not values or not old_values:
+                    continue
+                context_wanted(f"the {path} path's {name}", statistics.median(values), 3)
+                context_wanted(
+                    f"the {path} path's {name}, the pairing it replaces",
+                    statistics.median(old_values),
+                    3,
+                )
+                context_wanted(
+                    f"the {path} path's {name}'s spread",
+                    max(values) - min(values),
+                    3,
+                )
+                context_wanted(
+                    f"the {path} path's {name}'s spread, the pairing it replaces",
+                    max(old_values) - min(old_values),
+                    3,
+                )
+                context_wanted(
+                    f"the {path} path's {name}'s machine's yardstick",
+                    new_yardsticks[key],
+                    3,
+                )
+                context_wanted(
+                    f"the {path} path's {name}'s machine's yardstick, the pairing it replaces",
+                    old_yardsticks[key],
+                    3,
+                )
+                context_wanted(
+                    f"the {path} path's {name}'s file-aware yardstick",
+                    new_aware[key],
+                    3,
+                )
+                context_wanted(
+                    f"the {path} path's {name}'s file-aware yardstick, the pairing it replaces",
+                    old_aware[key],
+                    3,
+                )
+                # The leaf's **state**, as a published sentence.
+                leaf = next(
+                    leaf for leaf in new_verdict["leaves"] if leaf[0] == key
+                )
+                for phrase in leaf_state_phrases(name, path, leaf[6]):
+                    if phrase in context_section:
+                        break
+                else:
+                    failures.append(
+                        f"PERF.md: the set spec 053 measured's {path} path's {name}'s "
+                        f"state is {leaf[6]} by the reports but the section does not "
+                        f"publish it"
+                    )
+            # The **verdict**, its state and its yardstick.
+            for label, phrase in join_cost_path_phrases(new_verdict, path):
+                if phrase not in context_section:
+                    failures.append(
+                        f"PERF.md: the set spec 053 measured's {label} does not publish "
+                        f"{phrase}: the reports say {phrase}"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{label}':<60} {phrase}")
+            for label, phrase in join_cost_path_phrases(old_verdict, path):
+                if label != "the resident path's verdict":
+                    continue
+                if phrase not in context_section:
+                    failures.append(
+                        f"PERF.md: the set spec 053 measured's {label}, the pairing it "
+                        f"replaces, does not publish {phrase}"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {f'{label}, the pairing it replaces':<60} {phrase}")
+
+        # The **separation**: the two geometries, and the figure the report
+        # publishes. The old instrument published no per-iteration separation,
+        # so the old figure is the median alone.
+        for path in ("cold", "resident"):
+            for leaf in ("the build side's gap", "the open's gap"):
+                evens = [
+                    sorted(run["separation_series_ms"][path][leaf][0::2])[1]
+                    for run in new_runs
+                ]
+                odds = [
+                    sorted(run["separation_series_ms"][path][leaf][1::2])[1]
+                    for run in new_runs
+                ]
+                context_wanted(
+                    f"the {path} path's {leaf}'s separation, the query first",
+                    statistics.median(evens),
+                    3,
+                )
+                context_wanted(
+                    f"the {path} path's {leaf}'s separation, the standalone first",
+                    statistics.median(odds),
+                    3,
+                )
+        for key, label in (
+            ("the_separation_cold", "the cold path's separation"),
+            ("the_separation_resident", "the resident path's separation"),
+            ("the_order_s_cost_cold", "the cold path's order's own cost"),
+            ("the_order_s_cost_resident", "the resident path's order's own cost"),
+            ("the_floors_separation", "the floors' separation"),
+            ("the_build_file_state", "the build side's file state"),
+            ("the_added_work_cost", "the interleaving's added work"),
+        ):
+            values = new_derived.get(key, [])
+            old_values = old_derived.get(key, [])
+            if not values:
+                continue
+            context_wanted(label, statistics.median(values), 3)
+            if old_values:
+                context_wanted(f"{label}, the pairing it replaces", statistics.median(old_values), 3)
+
+        # The **file's share of the context**: the context's own spread, the
+        # file's own drift, the machine's own drift, and what is left once both
+        # are taken out.
+        drifts = join_cost_drift(new_parts)
+        for path in ("cold", "resident"):
+            values = new_derived.get(f"the_context_{path}", [])
+            if not values:
+                continue
+            context_spread = max(values) - min(values)
+            context_wanted(f"the {path} path's context's drift", context_spread, 3)
+            file_drift = drifts.get(JOIN_COST_FILE_FLOOR, 0.0)
+            machine_drift = drifts.get(JOIN_COST_FLOOR, 0.0)
+            context_wanted(f"the {path} path's file's drift", file_drift, 3)
+            context_wanted(f"the {path} path's machine's drift", machine_drift, 3)
+            context_wanted(
+                f"the {path} path's context's drift, the file's state and the machine's taken out",
+                context_spread - file_drift - machine_drift,
+                3,
+            )
+            context_wanted(
+                f"the {path} path's file's share of the context's drift",
+                100.0 * file_drift / context_spread,
+                1,
+            )
+            context_wanted(
+                f"the {path} path's machine's share of the context's drift",
+                100.0 * machine_drift / context_spread,
+                1,
+            )
+
+        # The **status file's question**, on the set spec 053 measured: the
+        # context's two figures and the verdict that closed it.
+        status_questions = section_of(texts.get("STATUS.md", ""), STATUS_SECTIONS["questions"])
+        if status_questions is not None and JOIN_COST_SPEC053_REPORTS:
+            question_parts, question_derived = _join_cost_figures(JOIN_COST_SPEC053_REPORTS)
+            for path in ("cold", "resident"):
+                values = question_derived.get(f"the_context_{path}", [])
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), 3)
+                if not figure_in(status_questions, rendered):
+                    failures.append(
+                        f"STATUS.md: the question's context on the {path} path is {rendered} "
+                        f"by the set spec 053 measured but that figure does not appear in "
+                        f"the section that publishes it"
+                    )
+                else:
+                    label = "the question's context, " + path
+                    print(f"ok  {'STATUS.md':<10} {label:<40} {rendered}")
+                spread = max(values) - min(values)
+                rendered = rendered_figure(spread, 3)
+                if not figure_in(status_questions, rendered):
+                    failures.append(
+                        f"STATUS.md: the question's context's spread on the {path} path is "
+                        f"{rendered} by the set spec 053 measured but that figure does not "
+                        f"appear in the section that publishes it"
+                    )
+                else:
+                    label = "the question's spread, " + path
+                    print(f"ok  {'STATUS.md':<10} {label:<40} {rendered}")
+            for path in ("cold", "resident"):
+                verdict = join_cost_verdict(
+                    question_parts, question_derived, path,
+                    join_cost_yardstick_file_aware(question_parts, path),
+                )
+                if not verdict:
+                    continue
+                for label, phrase in join_cost_path_phrases(verdict, path):
+                    if phrase not in status_questions:
+                        failures.append(
+                            f"STATUS.md: the question does not carry {label}: the set spec 053 "
+                            f"measured says {phrase}"
+                        )
+                    else:
+                        print(f"ok  {'STATUS.md':<10} {f'{label}':<40} {phrase}")
 
     # Spec 037: the write side -- the write, the commit, the bytes and the
     # read-back, in the section that publishes them. Two sets: the same rows

@@ -2407,6 +2407,187 @@ def print_join_parts_batch_sweep(sets: list[tuple[str, list[dict]]]) -> None:
             )
 
 
+# The ladder's leaves, per path: the figure, the leaf's name, and **the sides
+# the leaf stands on** -- the measurements whose drifts the yardstick takes.
+#
+# The sides are the same ones the guard uses, derived here again and not
+# imported: two derivations that agree are a check, one that imports the other
+# is not.
+CONTEXT_LEAVES = {
+    "cold": (
+        ("the build side's gap", "the_build_gap_cold", ("engine_build_cold", "build_whole")),
+        ("the open's gap", "the_open_gap_cold", ("engine_open_cold", "build_open")),
+        (
+            "the probe's row-number offset",
+            "the_probe_row_offset",
+            ("probe_batches", "probe_batches_no_offset"),
+        ),
+        (
+            "the probe's own remainder",
+            "the_probe_residual_cold",
+            ("engine_probe_cold", "probe_batches_no_offset"),
+        ),
+        ("the part in no gap", "the_host_remainder_cold", ("stage_cold",)),
+    ),
+    "resident": (
+        ("the build side's gap", "the_build_gap_resident", ("engine_build_resident", "build_whole")),
+        ("the open's gap", "the_open_gap_resident", ("engine_open_resident", "build_open")),
+        ("the probe's file state", "the_probe_file_state", ("probe_held", "probe_column")),
+        ("the probe's own remainder", "the_probe_residual_resident", ("engine_probe_resident", "probe_held")),
+        ("the part in no gap", "the_host_remainder_resident", ("stage_resident",)),
+    ),
+}
+
+# The two floors: the machine's own measure and the file's own read.
+CONTEXT_MACHINE_FLOOR = "floor_probe"
+CONTEXT_FILE_FLOOR = "build_read"
+
+
+def context_drift(runs: list[dict]) -> dict[str, float]:
+    """Each part's drift: the range of its medians over the campaigns."""
+    medians: dict[str, list[float]] = {}
+    for run in runs:
+        for name, value in run["parts_ms"].items():
+            medians.setdefault(name, []).append(value)
+    return {name: max(values) - min(values) for name, values in medians.items()}
+
+
+def context_yardsticks(runs: list[dict], path: str, file_aware: bool = True) -> dict[str, float]:
+    """Each leaf's yardstick, with the file's state in it.
+
+    The yardstick is the sum of the drifts of the measurements the leaf stands
+    on, the machine's own drift, and the **file-state floor's** drift -- the
+    larger of them.
+    """
+    drifts = context_drift(runs)
+    machine = drifts.get(CONTEXT_MACHINE_FLOOR, 0.0)
+    file_state = drifts.get(CONTEXT_FILE_FLOOR, 0.0)
+    yardsticks: dict[str, float] = {}
+    for _name, key, sides in CONTEXT_LEAVES[path]:
+        sides_drifts = [drifts[side] for side in sides if side in drifts]
+        floors = [sum(sides_drifts), machine]
+        if file_aware:
+            floors.append(file_state)
+        yardsticks[key] = max(floors)
+    return yardsticks
+
+
+def context_states(runs: list[dict], path: str) -> dict[str, str]:
+    """Each leaf's state: at the noise, inconclusive, or a part of the context."""
+    yardsticks = context_yardsticks(runs, path)
+    states: dict[str, str] = {}
+    for _name, key, _sides in CONTEXT_LEAVES[path]:
+        values = [run["derived_ms"][key] for run in runs]
+        value = sorted(values)[len(values) // 2]
+        own = max(values) - min(values)
+        if own > yardsticks[key]:
+            states[key] = "inconclusive"
+        elif abs(value) > yardsticks[key]:
+            states[key] = "a part of the context"
+        else:
+            states[key] = "at the noise"
+    return states
+
+
+def context_verdict(runs: list[dict], path: str) -> str:
+    """The path's verdict: the word of the largest leaf that counts."""
+    states = context_states(runs, path)
+    yardsticks = context_yardsticks(runs, path)
+    words = {
+        "the_build_gap_cold": "the build side's",
+        "the_build_gap_resident": "the build side's",
+        "the_open_gap_cold": "the clock's",
+        "the_open_gap_resident": "the clock's",
+        "the_probe_row_offset": "the clock's",
+        "the_probe_file_state": "the memory's",
+        "the_probe_residual_cold": "the probe's",
+        "the_probe_residual_resident": "the probe's",
+        "the_host_remainder_cold": "the host's",
+        "the_host_remainder_resident": "the host's",
+    }
+    counted = [
+        (abs(sorted([run["derived_ms"][key] for run in runs])[len(runs) // 2]), key)
+        for key, state in states.items()
+        if state == "a part of the context"
+    ]
+    if not counted:
+        return "unattributed"
+    _size, key = max(counted)
+    return words[key]
+
+
+def print_context_accounts(sets: list[tuple[str, list[dict]]]) -> None:
+    """Print the context's two sides, in one account: the ladder and the verdict.
+
+    This is spec 053: the context is a difference between the query's account of
+    the join stage and the standalone's account of the same work, and the two
+    were taken hundreds of milliseconds apart.  The iteration is now two path
+    accounts, each holding the path's query and the path's standalone work back
+    to back, and the whole iteration is reversed in the odd iterations.
+
+    So the ladder is printed per path -- the leaves, their spreads, the two
+    yardsticks and their states -- and the verdict with it, and the separation
+    is printed in the two geometries it now has.
+    """
+    leaves = {
+        "cold": (
+            ("the build side's gap", "the_build_gap_cold"),
+            ("the open's gap", "the_open_gap_cold"),
+            ("the probe's row-number offset", "the_probe_row_offset"),
+            ("the probe's own remainder", "the_probe_residual_cold"),
+            ("the part in no gap", "the_host_remainder_cold"),
+        ),
+        "resident": (
+            ("the build side's gap", "the_build_gap_resident"),
+            ("the open's gap", "the_open_gap_resident"),
+            ("the probe's file state", "the_probe_file_state"),
+            ("the probe's own remainder", "the_probe_residual_resident"),
+            ("the part in no gap", "the_host_remainder_resident"),
+        ),
+    }
+    for label, runs in sets:
+        if not runs:
+            continue
+        print(f"\n=== THE CONTEXT'S TWO SIDES -- {label} ({len(runs)} campaigns) ===")
+        for path in ("cold", "resident"):
+            def median(values: list[float]) -> float:
+                ordered = sorted(values)
+                return ordered[len(ordered) // 2]
+
+            def spread(values: list[float]) -> float:
+                return max(values) - min(values)
+
+            context = [run["derived_ms"][f"the_context_{path}"] for run in runs]
+            print(f"\n-- the {path} path: the context {median(context):.3f} ms,"
+                  f" its spread {spread(context):.3f} ms")
+            yardsticks = context_yardsticks(runs, path)
+            machine_yardsticks = context_yardsticks(runs, path, file_aware=False)
+            states = context_states(runs, path)
+            for name, key in leaves[path]:
+                values = [run["derived_ms"][key] for run in runs]
+                value = median(values)
+                own = spread(values)
+                print(f"   {name:<48} {value:8.3f} ms   spread {own:7.3f} ms"
+                      f"   machine {machine_yardsticks[key]:7.3f} ms"
+                      f"   file-aware {yardsticks[key]:7.3f} ms"
+                      f"   {states[key]}")
+            print(f"   the campaigns' contexts: {[round(v, 3) for v in context]}")
+            print(f"   the verdict: {context_verdict(runs, path)}")
+        for name in ("the_separation_cold", "the_separation_resident",
+                     "the_order_s_cost_cold", "the_order_s_cost_resident",
+                     "the_floors_separation", "the_build_file_state",
+                     "the_added_work_cost"):
+            values = [run["derived_ms"][name] for run in runs]
+            print(f"   {name:<48} {[round(v, 3) for v in values]}   median {median(values):.3f}")
+        if "separation_series_ms" in runs[0]:
+            for path in ("cold", "resident"):
+                for leaf in ("the build side's gap", "the open's gap"):
+                    evens = [median(run["separation_series_ms"][path][leaf][0::2]) for run in runs]
+                    odds = [median(run["separation_series_ms"][path][leaf][1::2]) for run in runs]
+                    print(f"   the {path} path's {leaf}: the query first {median(evens):.3f} ms,"
+                          f" the standalone first {median(odds):.3f} ms")
+
+
 def print_drift_ladder(sets: list[tuple[str, list[dict]]]) -> None:
     """Print the drift's own parts: the ladder, and the movement that makes it.
 
@@ -3935,6 +4116,20 @@ def main() -> int:
     ]
     if floor_sets:
         print_file_state_floor(floor_sets)
+
+    # Spec 053: the context's two sides, in one account -- the ladder and the
+    # verdict on the set this increment measured, and the set the pairing
+    # replaces beside it.
+    context_sets = [
+        (label, [load(p) for p in sorted(Path("bench-results").glob(pattern))])
+        for label, pattern in (
+            ("the set spec 053 measured", "join-cost-spec053-run*.json"),
+            ("the set the pairing replaces", "join-cost-run*.json"),
+        )
+        if sorted(Path("bench-results").glob(pattern))
+    ]
+    if context_sets:
+        print_context_accounts(context_sets)
 
     # The hunt: nine more campaigns of the same instrument, published because
     # they say whether the file's state moved at all on this host.
