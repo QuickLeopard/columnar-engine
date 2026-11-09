@@ -682,6 +682,7 @@ FAMILY_SECTIONS: dict[str, tuple[str, ...]] = {
     "dictionary-cost": ("### 3k",),
     "scan-cost": ("### 3l",),
     "rle-expansion": ("### 3g",),
+    "own-decode": ("### 3ai",),
 }
 
 
@@ -3238,6 +3239,61 @@ def dictionary_cost_slope(
     if low is None or high is None:
         return None
     return (high - low) / span
+
+
+# Spec 052: the reader that owns the decode -- ADR-0018's shape, measured again
+# on the code that is here now, and the engine's own reader beside it.
+OWN_DECODE_CHECKS = [
+    ("PERF.md", "the engine's own scan", "the_engine_s_own_default", 3),
+    ("PERF.md", "the reader, by row group", "e3", 3),
+    ("PERF.md", "the same, with the expansion", "e4", 3),
+    ("PERF.md", "the reader, the whole file's", "e", 3),
+    ("PERF.md", "the same, with the expansion, the whole file's", "e2", 3),
+]
+
+# The differences the section publishes: what the reader costs, what the idea
+# it carries is worth, and what the shape's own handicap is.
+OWN_DECODE_DERIVED_CHECKS = [
+    ("PERF.md", "the reader's cost against the engine's scan", "the_reader_s_cost", 3),
+    ("PERF.md", "the prize the reader carries", "the_prize", 3),
+    ("PERF.md", "the shape's own handicap", "the_handicap", 3),
+]
+
+
+def own_decode_figure(runs: list[dict], key: str) -> float | None:
+    """The median of the reader's own figures, or the difference between them.
+
+    **The shapes are named the way the section names them**, so a figure that
+    appears elsewhere in the document cannot satisfy the check by accident.
+    """
+    if not runs:
+        return None
+    values: list[float] = []
+    for run in runs:
+        reader = run.get("the_engine_s_own_reader", {})
+        if key == "the_reader_s_cost":
+            by_group = reader.get("e3")
+            engine = reader.get("the_engine_s_own_default")
+            if by_group is None or engine is None:
+                return None
+            values.append(by_group - engine)
+        elif key == "the_prize":
+            by_group = reader.get("e3")
+            expanded = reader.get("e4")
+            if by_group is None or expanded is None:
+                return None
+            values.append(expanded - by_group)
+        elif key == "the_handicap":
+            whole = reader.get("e")
+            by_group = reader.get("e3")
+            if whole is None or by_group is None:
+                return None
+            values.append(whole - by_group)
+        elif key in reader:
+            values.append(float(reader[key]))
+        else:
+            return None
+    return statistics.median(values) if values else None
 
 
 def scan_cost_figure(runs: list[dict], key: str) -> float | None:
@@ -5974,6 +6030,38 @@ def main() -> int:
                 continue
             rendered = f"{figure:.{places}f}"
             if rendered not in scoped_text(texts, doc, "dictionary-cost"):
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
+
+
+    # Spec 052: the reader that owns the decode.
+    own_decode_runs = load_reports("own-decode-run*.json")
+    if own_decode_runs:
+        for doc, label, key, places in OWN_DECODE_CHECKS:
+            figure = own_decode_figure(own_decode_runs, key)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the reader's reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in scoped_text(texts, doc, "own-decode"):
+                failures.append(
+                    f"{doc}: {label} is {rendered} in the reports but that figure "
+                    f"does not appear in the document"
+                )
+            else:
+                print(f"ok  {doc:<10} {label:<46} {rendered}")
+
+        for doc, label, key, places in OWN_DECODE_DERIVED_CHECKS:
+            figure = own_decode_figure(own_decode_runs, key)
+            if figure is None:
+                failures.append(f"{doc}: no figure for {label} in the reader's reports")
+                continue
+            rendered = f"{figure:.{places}f}"
+            if rendered not in scoped_text(texts, doc, "own-decode"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"

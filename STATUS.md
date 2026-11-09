@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **50 specs**, **63 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **50 specs**, **64 ADRs** and **29 defects** so far, and every one
 of the specs but the one in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
@@ -292,8 +292,10 @@ column — the expansion of six million RLE indices costs **1.77 ms** where the 
 hypothesis never pays for itself. **And the bump is in the decode, not in the expansion**: Arrow's own
 decode of the column is **4.26 ms** now, where the set this increment replaces had **4.21 ms**, while the
 expansion's own cost moved with the
-host. **What would answer it:** a file with a page index, or a reader that owns the Parquet decode.
-Neither is in scope of what the project has done so far.
+host. **What would answer it:** a file with a page index. **A reader that owns the Parquet decode was measured
+and refused** -- spec 052 built the shape, measured it on the code that is here now, and found it **4.957 ms
+slower** than the engine's own scan, with the idea it carries worth **1.141 ms** inside it. **So the decode
+stays the parquet crate's**, and what is left of the question is **a file with a page index**.
 
 **3. `join-orders`, cold: the parts are taken apart, and the engine's lookup is the faster one.** The
 engine is **87.8 ms** against DuckDB's **89.0 ms** — **ahead on the median** — where the set this
@@ -426,8 +428,10 @@ join's probe path says the opposite**: the engine's own batch is now a whole row
 minimum of the curve** — the query's path costs **−0.159 ms** against the ladder's, where the set this
 increment replaces had **+4.273 ms**. **And a smaller budget is not free either**: at **4 MiB** the wide
 shape's batch would be **20,000** rows, and the sweep's lowest rung is **62,500**. **And the scan's curve
-is about to change again**, because the next increment makes the reader own the Parquet decode, and the
-decode is what the batch's optimum turns on. **What would answer it:** the budget's number, measured with
+was about to change again**, because the next increment was to make the reader own the Parquet decode, and the
+decode is what the batch's optimum turns on. **And it does not**: the reader was measured and it is **4.957 ms
+slower** than the engine's own scan, so the decode is not going to move and **the budget's number is settled**,
+at **16 MiB**. **What would answer the rest of it:** the budget's number, measured with
 the decode in place — **not** a smaller number chosen on a guess now.
 
 ### The work the project has not done
@@ -757,6 +761,15 @@ the decode in place — **not** a smaller number chosen on a guess now.
   **the plain string's copy**, which is still not fixed.
   [§3ah](PERF.md#3ah-the-default-moved) has the tables, and
   [ADR-0063](docs/adr/0063-the-default-moves-to-the-byte-budget.md) records it.
+- **The reader does not own the decode, and the reason is priced.** Spec 052 measured the shape ADR-0018 refused, on
+  the code that is here now, at the batch the rule now produces -- and **the shape that could win** as well: **the
+  engine's own reader**, with the page walk, the dictionary and the indices, and **no expansion at all**. **The engine's
+  own reader is 4.957 ms slower** than the engine's own scan, and the idea it carries -- **never expanding the
+  predicate's column** -- is worth **1.141 ms** inside it. **So the reader is not built**, the decode stays the parquet
+  crate's, and **the byte budget's number is settled**, at **16 MiB**. **And the sentences that promised the reader are
+  corrected where they were published**, in [§3ah](PERF.md#3ah-the-default-moved) and here.
+  [§3ai](PERF.md#3ai-the-reader-owns-the-decode) has the tables, and
+  [ADR-0064](docs/adr/0064-the-reader-does-not-own-the-decode.md) records it.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a

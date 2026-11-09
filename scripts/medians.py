@@ -1193,6 +1193,51 @@ def print_scan_cost(files: list[tuple[str, list[dict]]]) -> None:
     print(line)
 
 
+def print_own_decode(files: list[tuple[str, list[dict]]]) -> None:
+    """Print the reader that owns the decode.
+
+    This is spec 052: ADR-0018's shape, measured again on the code that is
+    here now, and the shape it did not measure -- **the engine's own reader**,
+    with the page walk, the dictionary and the indices, and no expansion at
+    all.
+    """
+    if not files:
+        return
+    campaigns = min(len(runs) for _, runs in files)
+    print(f"\n=== THE READER THAT OWNS THE DECODE ({campaigns} campaigns each) ===")
+    for name, runs in files:
+        batches = [entry["batch_rows"] for entry in runs[0]["the_measurements"]]
+        print(f"\n-- {name}: the shapes at each batch size --")
+        print(f"{'the batch':>10} {'A the crate':>16} {'B Arrow':>16} {'C the old shape':>18} {'D the engine':>18}")
+        for index, batch in enumerate(batches):
+            def median(key: str) -> float:
+                return statistics.median(
+                    [run["the_measurements"][index][key] for run in runs]
+                )
+
+            print(
+                f"{batch:>10} {median('a'):>16.3f} {median('b'):>16.3f} "
+                f"{median('c'):>18.3f} {median('d'):>18.3f}"
+            )
+
+        def reader_median(key: str) -> float:
+            return statistics.median(
+                [run["the_engine_s_own_reader"][key] for run in runs]
+            )
+
+        engine = reader_median("the_engine_s_own_default")
+        whole = reader_median("e")
+        whole_expanded = reader_median("e2")
+        by_group = reader_median("e3")
+        by_group_expanded = reader_median("e4")
+        print(f"\n-- {name}: the reader's own shapes --")
+        print(f"  {'the engine\'s own scan':<44}{engine:>10.3f} ms")
+        print(f"  {'the reader, by row group':<44}{by_group:>10.3f} ms   {by_group - engine:+.3f} ms")
+        print(f"  {'the same, with the expansion':<44}{by_group_expanded:>10.3f} ms   {by_group_expanded - by_group:+.3f} ms")
+        print(f"  {'the reader, the whole file\'s':<44}{whole:>10.3f} ms   {whole - by_group:+.3f} ms")
+        print(f"  {'the same, with the expansion':<44}{whole_expanded:>10.3f} ms   {whole_expanded - whole:+.3f} ms")
+
+
 def _query_cost_figures(
     files: list[tuple[str, list[dict]]],
 ) -> tuple[dict[str, dict[str, list[float]]], dict[str, dict[str, list[list[float]]]]]:
@@ -3962,6 +4007,13 @@ def main() -> int:
     kernel_paths = sorted(Path("bench-results").glob("kernel-run*.json"))
     if kernel_paths:
         print_kernel([load(p) for p in kernel_paths])
+
+    # Spec 052: the reader that owns the decode -- ADR-0018's shape, measured
+    # again on the code that is here now.
+    own_decode_runs = [
+        load(p) for p in sorted(Path("bench-results").glob("own-decode-run*.json"))
+    ]
+    print_own_decode([("own-decode", own_decode_runs)])
 
     return 0
 

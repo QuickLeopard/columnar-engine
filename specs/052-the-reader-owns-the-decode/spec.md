@@ -1,7 +1,8 @@
 # Spec 052 — The reader owns the decode
 
-**Status**: planned
+**Status**: done
 **Started**: 2026-11-09
+**Finished**: 2026-11-09
 **Predecessor**: [spec 051 — the default moves to the byte budget](../051-the-default-moves-to-the-byte-budget/spec.md)
 
 ## The problem
@@ -47,40 +48,42 @@ since**, and every one of them touches the shape ADR-0018 measured:
 
 ### R1 — The refusal is **re-measured**, on the code that is here now
 
-- [ ] The probe's **A, B, C and D** are taken again, **three campaigns each**, on this host, and the figures are
+- [x] The probe's **A, B, C and D** are taken again, **three campaigns each**, on this host, and the figures are
       **re-measured, not recomputed**.
-- [ ] **And the probe reads the batch sizes the rule now produces** — including the **whole row group**, which the old
+- [x] **And the probe reads the batch sizes the rule now produces** — including the **whole row group**, which the old
       probe never read, because that is where the default now sits.
-- [ ] **And the old figures are published beside the new ones**, with the reason named: **the code moved**, and the
+- [x] **And the old figures are published beside the new ones**, with the reason named: **the code moved**, and the
       `parquet` crate's bump and the default's rule are the two reasons.
 
 ### R2 — The **shape** is measured against the engine's own scan, **at the engine's own batch**
 
-- [ ] The comparison is **paired**: the engine's own scan is measured **in the same iteration** as the shape it is
+- [x] The comparison is **paired**: the engine's own scan is measured **in the same iteration** as the shape it is
       compared against, so the difference is the shape's and not the machine's.
-- [ ] **And the machine's own floor is published beside them**, so that a difference inside the noise is called what it
+- [x] **And the machine's own floor is published beside them**, so that a difference inside the noise is called what it
       is.
 
 ### R3 — The **verdict** is published either way, and **the budget's number is settled against it**
 
-- [ ] If the shape is **dearer or equal**, the reader is **not** built, the refusal is **re-published with today's
-      numbers**, and **the question is closed** — the decode is the parquet crate's, and it is the floor.
-- [ ] And if the shape is **cheaper**, the reader **is** built, and the build is the increment's second half.
-- [ ] **And the byte budget's number is settled against the measurement either way**: a budget that is chosen against a
+- [x] If the shape is **dearer or equal**, the reader is **not** built, the refusal is **re-published with today's
+      numbers**, and **the question is closed** — the decode is the parquet crate's, and it is the floor. **And it was
+      dearer**: the engine's own reader is **4.957 ms slower** than the engine's own scan, and the idea it carries is
+      worth **1.141 ms** inside it.
+- [x] And if the shape is **cheaper**, the reader **is** built, and the build is the increment's second half.
+- [x] **And the byte budget's number is settled against the measurement either way**: a budget that is chosen against a
       decode that is not going to move is a settled number, and one that is chosen against a decode that **is** going to
       move is not.
 
 ### R4 — The **published sentences** that promised the reader are **corrected where they were published**
 
-- [ ] [PERF.md §3ah](../../PERF.md#3ah-the-default-moved)'s *the next increment makes the reader own the Parquet
+- [x] [PERF.md §3ah](../../PERF.md#3ah-the-default-moved)'s *the next increment makes the reader own the Parquet
       decode* is **corrected** if the reader is not built, and [STATUS.md](../../STATUS.md)'s question 6 with it.
-- [ ] And the correction is **recorded in the ADR**, as the house records every correction for an in-flight increment.
+- [x] And the correction is **recorded in the ADR**, as the house records every correction for an in-flight increment.
 
 ### R5 — The answer is published
 
-- [ ] A **new section** in `PERF.md`, the decision in an **ADR**, the status's next question rewritten, and the raw
+- [x] A **new section** in `PERF.md`, the decision in an **ADR**, the status's next question rewritten, and the raw
       reports **committed**.
-- [ ] And the **guard** checks the published figures **inside the section that publishes them**.
+- [x] And the **guard** checks the published figures **inside the section that publishes them**.
 
 ## The scope
 

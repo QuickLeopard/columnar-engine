@@ -6181,10 +6181,12 @@ chosen by a measurement from both sides -- above the narrow shapes' whole row gr
 the wide shape's next batch (**20.7 MiB**, **125,000 rows**) -- and the rule's output is what that number produces,
 per width and per worker count, in the table above. **A smaller budget would move the narrow shapes to the predicate
 set's optimum and the wide shape below anything measured**: at **4 MiB** the wide shape's batch would be **25,000
-rows**, and the sweep's lowest rung is **62,500**. **And the scan's curve is about to change anyway**: the next
-increment makes the reader own the Parquet decode, and the decode is what the batch's optimum turns on. **So the
+rows**, and the sweep's lowest rung is **62,500**. **And the scan's curve was about to change anyway**: the next
+increment was to make the reader own the Parquet decode, and the decode is what the batch's optimum turns on. **So the
 number is not changed on a guess here.** It is named, measured, and left open: **the byte budget's number, once the
-reader owns the decode.**
+reader owns the decode.** **And the reader does not own it** -- spec 052 measured the shape and found it **4.957 ms
+slower** than the engine's own scan, so the decode is not going to move and **the number is settled**, at **16 MiB**
+([§3ai](#3ai-the-reader-owns-the-decode)).
 
 **And the set the file published before** -- measured on an earlier day, on the tree at spec 050's close -- is kept
 under its own name, `bench-results/<family>-spec050-run<n>.json`, so the figure the file published is still
@@ -6214,3 +6216,87 @@ The decision is in [ADR-0063](docs/adr/0063-the-default-moves-to-the-byte-budget
 campaigns were the busiest, and the load average is in every report.
 
 ---
+
+### 3ai. The reader owns the decode
+
+**The house promised the reader, and the measurement says no.** [§3ah](#3ah-the-default-moved) said that *the scan's
+curve is about to change anyway, because the next increment makes the reader own the Parquet decode*, and it left **the
+byte budget's number** open until that happens. **And the promise was made on the strength of a decision taken before the
+code it describes existed**: [ADR-0018](docs/adr/0018-the-scan-reads-the-parquet-decode.md) prototyped the rewrite and
+**refused** it — *the scan's read is the Parquet decode, and owning it is not worth it*.
+
+**And the refusal was stale.** It was taken on **2026-10-26**, against a tree that no longer exists, and **three things
+moved since**, each of which touches the shape it measured: the `parquet` crate bumped from 54 to **58.4.1**; the
+default's rule moved from a row limit to a **byte budget**, so the engine's own batch for the narrow shapes is now a
+**whole row group** — and the old probe never read one; and the pushdown gained a **dictionary path** the old shape did
+not have. **So the shape is measured again, on the code that is here now, at the batch sizes the rule now produces.**
+
+**And the shape that could win is measured too** — the one ADR-0018 did not have: **the engine's own reader**, with the
+page walk, the dictionary and the indices, and **no expansion at all**. The predicate's column is dictionary-encoded, so
+the reader compares the **dictionary** — eleven values — once, and the rows are selected **by the indices**. The expansion
+of six million floats never happens.
+
+**Six shapes**, on the same file, in the same process, warm, three campaigns each:
+
+| the shape | the batch | the median |
+|---|---|---|
+| **A** — the parquet crate's own decode of the two columns | 1,000,000 | 8.764 ms |
+| **B** — Arrow's decode of the same two columns | 1,000,000 | 7.490 ms |
+| **C** — A, plus the predicate over the decoded buffer, plus the compaction | 1,000,000 | 13.108 ms |
+| **D** — the engine's own scan, as it is today | 1,000,000 | 12.291 ms |
+
+**And D at every batch size the rule produces**, beside the shapes:
+
+| the batch | A — the crate | B — Arrow | C — the old shape | D — the engine |
+|---|---|---|---|---|
+| **1,000,000 — the rule's own at one worker** | 8.764 ms | 7.490 ms | 13.108 ms | 12.291 ms |
+| 500,000 | 8.245 ms | 7.369 ms | 12.987 ms | 12.459 ms |
+| 250,000 | 8.226 ms | 7.457 ms | 12.844 ms | 12.252 ms |
+| 62,500 | 8.423 ms | 7.352 ms | 13.191 ms | 12.417 ms |
+| 16,384 | 8.891 ms | 7.585 ms | 14.013 ms | 12.895 ms |
+| 65,536 | 8.448 ms | 7.531 ms | 13.232 ms | 12.289 ms |
+| 4,096 | 8.793 ms | 8.576 ms | 13.210 ms | 13.968 ms |
+
+**And the reader's own shapes**, against the engine's own scan at its own default:
+
+| the shape | the median | against the engine's scan |
+|---|---|---|
+| **D** — the engine's own scan | **12.435 ms** | *the reference* |
+| **E3** — the engine's own reader, **row group by row group** | **17.392 ms** | **+4.957 ms** |
+| **E4** — the same, **with the expansion** | **18.500 ms** | +6.244 ms |
+| **E** — the engine's own reader, **the whole file's** | **17.812 ms** | +5.529 ms |
+| **E2** — the same, **with the expansion** | **19.202 ms** | +6.633 ms |
+
+**And every difference is the median of the campaigns' own paired differences**, not the difference of two medians: the
+two sides are measured in the same campaign, so their difference is the shape's and not the machine's.
+
+**So the reader is not worth building, and the reason is priced.** The engine's own reader is **4.957 ms slower** than
+the engine's own scan, and the idea it carries — **never expanding the predicate's column** — is worth **1.141 ms**
+inside it (E4 − E3). **The shape's own handicap is 0.453 ms** (E − E3): the whole file's mask, and the file read in
+two passes instead of one. **So the reader costs more than three times the prize it carries.**
+
+**And the mechanism is named.** The parquet crate's decode is **one pass**: it reads the indices and gathers the values
+in the same loop, and hands the engine an expanded array. **The engine's own reader is three passes**: the indices, the
+dictionary's answer mapped through them, and then the survivors gathered. **And the map is a scalar lookup a row where
+the expansion is a vectorised comparison** — which is why the engine's own dictionary path exists for strings, and why
+the house's own history says it *cost 41 ms before it was fixed*. **The expansion is not the expensive part; the map that
+would avoid it is dearer.**
+
+**And ADR-0018's refusal holds.** The old shape C is **13.108 ms** where the engine's own scan is **12.291 ms**, at the
+batch the rule now produces — **0.840 ms** of Arrow's layer, paired over the campaigns, the old ADR measured, on a different day and a
+different crate. **So the decode is the parquet crate's, and it is the floor.**
+
+**And the instrument is checked against the reference it measures against.** Every shape's survivors are compared, **value
+by value**, with the engine's own scan's — **2,178,861 rows** — and the probe stops if they disagree. **The engine's own
+reader is not trusted to answer about itself.**
+
+**And the budget's number is settled against this.** The byte budget's number was left open *until the reader owns the
+decode*, and the decode **is not going to move**: the reader is **4.957 ms slower**, and the parquet crate's decode is
+what the engine reads through. **So the number is not waiting for the reader — it is settled**, and it stays **16 MiB**.
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/own-decode-run1.json` and its two siblings. The instrument is
+`crates/columnar-engine/examples/own_decode_probe.rs`, and the decision is in
+[ADR-0064](docs/adr/0064-the-reader-does-not-own-the-decode.md).
+
+**The conditions**: three campaigns, on one host, at a load average of **6.02**, and the load average is in every report.
