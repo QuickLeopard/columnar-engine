@@ -1,6 +1,7 @@
 # Spec 053 — The cold path's context
 
-**Status**: planned
+**Status**: done
+**Finished**: 2026-11-09
 **Started**: 2026-11-09
 **Predecessor**: [spec 052 — the reader does not own the decode](../052-the-reader-owns-the-decode/spec.md)
 
@@ -41,41 +42,42 @@ refuses* — **and a measurement taken far from the thing is not a measurement o
 
 ### R1 — The context's **two sides** are measured **back to back**
 
-- [ ] The **query's account** and the **standalone's account** of the same work are taken **back to back**, with the
+- [x] The **query's account** and the **standalone's account** of the same work are taken **back to back**, with the
       **order alternating** between the iterations — the way the floors are taken now.
-- [ ] **And each path's account carries its own build side's work**, so that the two sides of every leaf of that path's
+- [x] **And each path's account carries its own build side's work**, so that the two sides of every leaf of that path's
       ladder are one account apart rather than one campaign apart.
-- [ ] **And the separation is published** — how far apart the two sides of each difference were taken — and it is
+- [x] **And the separation is published** — how far apart the two sides of each difference were taken — and it is
       **compared with the old separation**, so the reader can see the pairing move.
 
 ### R2 — The **verdict** is given, on the cold path, with the **file-aware yardstick**
 
-- [ ] The cold path's context is published against the **file-aware yardstick** — the larger of the machine's own drift
-      and the file-state floor's own drift — beside the yardstick the old verdict used.
-- [ ] **And the file state's share of the context** is published: what is left of the context once the file's state is
+- [x] The cold path's context is published against the **file-aware yardstick** — the sum of the drifts of the
+      measurements the leaf stands on, the machine's own drift, and the file-state floor's own drift, **the larger of
+      them** — beside the yardstick the old verdict used.
+- [x] **And the file state's share of the context** is published: what is left of the context once the file's state is
       taken out.
-- [ ] **And the resident path's verdict is published beside it**, so the two paths are judged the same way.
+- [x] **And the resident path's verdict is published beside it**, so the two paths are judged the same way.
 
 ### R3 — The answer is published **either way**
 
-- [ ] If the file state is **the whole of it**, the cold path's context is **attributed** to it, and the open question is
+- [x] If the file state is **the whole of it**, the cold path's context is **attributed** to it, and the open question is
       **closed**.
-- [ ] And if it is **not**, the question closes as **unattributable at this spread** — with the measurement published,
+- [x] And if it is **not**, the question closes as **unattributable at this spread** — with the measurement published,
       the yardstick beside it, and the reason named.
-- [ ] **And the old figures are published beside the new ones**, with the reason: **the pairing moved**, and the old
+- [x] **And the old figures are published beside the new ones**, with the reason: **the pairing moved**, and the old
       pairing's defect is named.
 
 ### R4 — The **published sentences** that rest on the old pairing are **corrected where they were published**
 
-- [ ] [§3q](../../PERF.md#3q-the-drifts-own-parts) and [§3r](../../PERF.md#3r-the-file-state-floor)'s account of the
+- [x] [§3q](../../PERF.md#3q-the-drifts-own-parts) and [§3r](../../PERF.md#3r-the-file-state-floor)'s account of the
       context's verdict, and [STATUS.md](../../STATUS.md)'s question 1.
-- [ ] And the correction is **recorded in the ADR**, as the house records every correction for an in-flight increment.
+- [x] And the correction is **recorded in the ADR**, as the house records every correction for an in-flight increment.
 
 ### R5 — The answer is published
 
-- [ ] A **new section** in `PERF.md`, the decision in an **ADR**, the status's question rewritten, and the raw reports
+- [x] A **new section** in `PERF.md`, the decision in an **ADR**, the status's question rewritten, and the raw reports
       **committed**.
-- [ ] And the **guard** checks the published figures **inside the section that publishes them**.
+- [x] And the **guard** checks the published figures **inside the section that publishes them**.
 
 ## The scope
 
