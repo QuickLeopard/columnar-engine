@@ -33,4 +33,13 @@
 # unpublished**, so no embedder depended on the old name. **The revision below
 # is therefore the commit that made the change**, and every commit after it is
 # gated against the new surface.
-b655d1a
+#
+# **And spec 051 changed it once more.** `row_bytes_of` left the public surface
+# -- the rule's rate is carried in eighths of a byte, so the rate is read in
+# eighths -- and `row_eighth_bytes_of` took its place. **The crates are still
+# unpublished**, so no embedder depended on the old name. **The revision below
+# is therefore the commit that made the change**, and every commit after it is
+# gated against the new surface. The revision before that was `b655d1a`, the
+# code commit of spec 051, which established the surface this revision
+# replaces.
+2481c30

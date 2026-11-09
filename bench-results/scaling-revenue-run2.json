@@ -28,60 +28,72 @@
       "workers": 1,
       "filter_workers": 1,
       "projection_workers": 1,
-      "engine_ms": 52.910125,
-      "engine_scan_ms": 51.490500000000004,
-      "engine_operators_ms": 1.451333,
-      "duckdb_ms": 67.0,
-      "polars_ms": 194.243,
-      "datafusion_ms": 111.872
+      "engine_ms": 49.431000000000004,
+      "engine_scan_ms": 48.090958,
+      "engine_operators_ms": 1.3653739999999999,
+      "duckdb_ms": 64.0,
+      "polars_ms": 186.112,
+      "datafusion_ms": 103.779
     },
     {
       "threads": 2,
       "workers": 2,
       "filter_workers": 2,
       "projection_workers": 2,
-      "engine_ms": 28.379667,
-      "engine_scan_ms": 27.044042,
-      "engine_operators_ms": 2.468625,
-      "duckdb_ms": 38.0,
-      "polars_ms": 104.777,
-      "datafusion_ms": 77.825
+      "engine_ms": 26.393625,
+      "engine_scan_ms": 25.218500000000002,
+      "engine_operators_ms": 1.173917,
+      "duckdb_ms": 36.0,
+      "polars_ms": 103.51,
+      "datafusion_ms": 72.197
     },
     {
       "threads": 4,
       "workers": 4,
       "filter_workers": 4,
       "projection_workers": 4,
-      "engine_ms": 20.332124999999998,
-      "engine_scan_ms": 19.052875,
-      "engine_operators_ms": 1.179831,
-      "duckdb_ms": 26.0,
-      "polars_ms": 67.361,
-      "datafusion_ms": 42.977
+      "engine_ms": 19.526334,
+      "engine_scan_ms": 18.437583,
+      "engine_operators_ms": 1.104,
+      "duckdb_ms": 25.0,
+      "polars_ms": 68.709,
+      "datafusion_ms": 40.821
+    },
+    {
+      "threads": 6,
+      "workers": 6,
+      "filter_workers": 6,
+      "projection_workers": 6,
+      "engine_ms": 12.164041000000001,
+      "engine_scan_ms": 10.938,
+      "engine_operators_ms": 1.2401659999999999,
+      "duckdb_ms": 16.0,
+      "polars_ms": 38.025,
+      "datafusion_ms": 41.471
     },
     {
       "threads": 8,
       "workers": 6,
       "filter_workers": 8,
       "projection_workers": 8,
-      "engine_ms": 12.77975,
-      "engine_scan_ms": 11.376459,
-      "engine_operators_ms": 1.3368330000000002,
-      "duckdb_ms": 17.0,
-      "polars_ms": 37.262,
-      "datafusion_ms": 26.527
+      "engine_ms": 12.055292,
+      "engine_scan_ms": 10.744333,
+      "engine_operators_ms": 1.298542,
+      "duckdb_ms": 16.0,
+      "polars_ms": 36.793,
+      "datafusion_ms": 25.476
     },
     {
       "threads": 14,
       "workers": 6,
       "filter_workers": 14,
       "projection_workers": 14,
-      "engine_ms": 12.974,
-      "engine_scan_ms": 11.28575,
-      "engine_operators_ms": 1.637876,
-      "duckdb_ms": 17.0,
-      "polars_ms": 37.037,
-      "datafusion_ms": 27.166
+      "engine_ms": 12.248417,
+      "engine_scan_ms": 10.575625,
+      "engine_operators_ms": 1.645958,
+      "duckdb_ms": 16.0,
+      "polars_ms": 36.406,
+      "datafusion_ms": 25.898
     }
   ]
 }

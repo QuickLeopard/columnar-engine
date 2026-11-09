@@ -390,14 +390,14 @@ The like-for-like comparison: all three systems hold the data in memory and answ
 
 | query | **engine** | duckdb | polars | datafusion | |
 |---|---|---|---|---|---|
-| `scan` | **0.0 ms** | 1.0 ms | 0.2 ms | 1.0 ms | engine wins |
-| `filter-numeric` | **3.8 ms** | 14.0 ms | 15.1 ms | 11.5 ms | engine wins |
-| `filter-string` | **4.3 ms** | 36.0 ms | 39.8 ms | 16.9 ms | engine wins |
-| `filter-range` | **7.7 ms** | 20.0 ms | 13.3 ms | 12.1 ms | engine wins |
-| `q6` | **10.1 ms** | 48.0 ms | 75.8 ms | 25.5 ms | engine wins, by 4.8× |
-| `q6-revenue` | **17.0 ms** | 51.0 ms | 73.1 ms | 66.3 ms | engine wins, by 3.0× |
-| `join-orders` | **26.0 ms** (25.0–29.6) | 40.0 ms (39.0–42.0) | 90.6 ms (85.5–92.0) | 91.1 ms (88.6–97.7) | engine wins — **and it reads the build side inside the clock** |
-| `sort-topk` | **3.1 ms** (2.7–3.8) | 4.0 ms (3.0–4.0) | 1564.0 ms (1381.7–1567.8) | 4.5 ms (4.1–5.6) | **engine wins** — and it beats the peer by 1.5× |
+| `scan` | **0.0 ms** | 1.0 ms | 0.2 ms | 0.9 ms *(was 1.0 ms)* | engine wins |
+| `filter-numeric` | **2.6 ms** *(was 3.8 ms)* | 11.0 ms *(was 14.0 ms)* | 9.9 ms *(was 15.1 ms)* | 10.1 ms *(was 11.5 ms)* | engine wins |
+| `filter-string` | **3.5 ms** *(was 4.3 ms)* | 32.0 ms *(was 36.0 ms)* | 36.4 ms *(was 39.8 ms)* | 15.5 ms *(was 16.9 ms)* | engine wins |
+| `filter-range` | **6.4 ms** *(was 7.7 ms)* | 19.0 ms *(was 20.0 ms)* | 10.0 ms *(was 13.3 ms)* | 9.9 ms *(was 12.1 ms)* | engine wins |
+| `q6` | **9.3 ms** *(was 10.1 ms)* | 43.0 ms *(was 48.0 ms)* | 67.5 ms *(was 75.8 ms)* | 23.0 ms *(was 25.5 ms)* | engine wins, by 4.6× |
+| `q6-revenue` | **14.9 ms** *(was 17.0 ms)* | 46.0 ms *(was 51.0 ms)* | 71.6 ms *(was 73.1 ms)* | 63.2 ms *(was 66.3 ms)* | engine wins, by 3.1× |
+| `join-orders` | **24.0 ms** *(was 26.0 ms)* (23.8–24.5) | 34.0 ms *(was 40.0 ms)* (34.0–35.0) | 73.2 ms *(was 90.6 ms)* (66.8–78.0) | 81.1 ms *(was 91.1 ms)* (74.3–82.4) | engine wins — **and it reads the build side inside the clock** |
+| `sort-topk` | **2.6 ms** *(was 3.1 ms)* (2.6–2.6) | 3.0 ms *(was 4.0 ms)* (3.0–3.0) | 1254.6 ms *(was 1564.0 ms)* (1242.0–1277.6) | 3.7 ms *(was 4.5 ms)* (3.3–3.7) | **engine wins** — and it beats the peer by 1.4× |
 
 **And the set the bump replaces, for the same rows** — the same code, on `parquet` 54.3.1, measured
 before the dependency moved:
@@ -445,15 +445,19 @@ through Arrow 55.2.0, one thread, in the same harness. The sort was the one it d
 was published as a loss; it is a win now.
 
 **The sort was a loss, and it is a win now.** The engine's
-resident `sort-topk` is **3.1 ms** — the median of a **2.7–3.8 ms** range across the three
-campaigns — against `DuckDB`'s **4.0 ms** and the `DataFusion` peer's **4.5 ms**: the engine is
-**1.3× ahead of DuckDB** and **1.5× ahead of the peer** on this query, and it was **1.9× behind
-DuckDB** in the one before that. And it is **505× ahead of `Polars`**, whose **1564.0 ms**
-(1381.7–1567.8 ms) is the price of sorting six million rows where the engine keeps a heap of ten —
-the plan says so: `sort: l_extendedprice DESC LIMIT 10 (10 rows kept)`. The same query is published
-cold in [§2b](#2b-cold--read-the-parquet-file-and-answer-in-one-go), where the engine is **level
-with `DuckDB`** — **39.0 ms** against **39.0 ms**, a difference inside the engine's own spread — the
-peer is behind by **2.3 ms** (**41.3 ms**), and the engine is **38× ahead of `Polars`** as well.
+resident `sort-topk` is **2.6 ms** — the median of a **2.6–2.6 ms** range across the three
+campaigns — against `DuckDB`'s **3.0 ms** and the `DataFusion` peer's **3.7 ms**: the engine is
+**1.2× ahead of DuckDB** and **1.4× ahead of the peer** on this query, and it was **1.9× behind
+DuckDB** in the one before that. And it is **483× ahead of `Polars`**, whose **1254.6 ms**
+(1242.0–1277.6 ms) is the
+price of sorting six million rows where the engine keeps a heap of ten — it was **1564.0 ms**
+(1381.7–1567.8 ms) in the set this file replaces — the plan says so: `sort: l_extendedprice DESC
+LIMIT 10 (10 rows kept)`. The same query is published
+cold in [§2b](#2b-cold--read-the-parquet-file-and-answer-in-one-go), where the engine is **2.2 ms
+behind `DuckDB`** — **39.2 ms** against **37.0 ms** — and behind the peer by the same **2.2 ms**
+(**37.0 ms**), and the engine is **33× ahead of `Polars`** as well. **And that cold gap is the
+code's**: the old code's cold `sort-topk` is **36.99 ms** in the same session, and the reason is
+named in [§3ah](#3ah-the-default-moved).
 
 **The join is in this table now, and the asymmetry is named.** In resident mode the incumbents have
 **both** tables in memory before the clock starts — `DuckDB` has loaded the `orders` file into a temp
@@ -461,20 +465,26 @@ table, `Polars` and the peer have registered both relations — while the engine
 **reads the build side inside the clock**: the join's build side is a file, and the engine does not
 hold it in memory before the query. The engine therefore does **more** work inside its clock than the
 incumbents do inside theirs. Spec 020 withheld the figure for exactly this reason; it is published
-now because the asymmetry **works against the engine** and the engine wins anyway — **26.0 ms**
-(25.0–29.6 ms) against `DuckDB`'s **40.0 ms** (39.0–42.0 ms), the peer's **91.1 ms** (88.6–97.7 ms)
-and `Polars`' **90.6 ms** (85.5–92.0 ms). A figure that cannot be made fairly is named, not
+now because the asymmetry **works against the engine** and the engine wins anyway — **24.0 ms**
+(23.8–24.5 ms) against `DuckDB`'s **34.0 ms** (34.0–35.0 ms), the peer's **81.1 ms** (74.3–82.4 ms)
+and `Polars`' **73.2 ms** (66.8–78.0 ms). A figure that cannot be made fairly is named, not
 published; a figure that can be made *unfairly in the engine's favour* is published with the
 unfairness written down beside it.
 
-**What moved, and why.** **This table is the set the bump publishes**, and the resident path is the
-one place the bump cannot be: **the data is already in memory, so Arrow never decodes a file here.**
-The movement is the **host's** and the engine's own variance, and the incumbents — which the bump
-cannot have touched — moved with it: `Polars`' resident `join-orders` rose from **78.9 ms** to
-**90.6 ms** and its `q6` from **67.4 ms** to **75.8 ms**, while `DuckDB`'s `join-orders` rose from
-**35.0 ms** to **40.0 ms** and its `q6` from **45.0 ms** to **48.0 ms**. The engine's own resident
-`join-orders` fell from **26.6 ms** to **26.0 ms** and its `q6` rose from **9.4 ms** to
-**10.1 ms**. **The whole of the old-and-new, for every family the bump moved, is in
+**What moved, and why.** **This table is the set the file publishes**, and the campaign behind it was
+**taken again**: the reader's default was a row limit of **131,072 rows** and it is a **byte budget of
+16 MiB** now, so the batch the reader holds moved with it, and every figure the batch size touches
+moved with it — [§3ah](#3ah-the-default-moved) publishes them **old and new**. **And the resident
+path is the one place the default cannot be: the data is already in memory, so Arrow never decodes a
+file here and the reader's batch is not on the path.** The movement between the set this file
+replaces and this one is the **host's** and the engine's own variance, and the incumbents — which
+the default cannot have touched — moved with it: `Polars`' resident `join-orders` moved from
+**90.6 ms** to **73.2 ms** and its `q6` from **75.8 ms** to **67.5 ms**, while `DuckDB`'s
+`join-orders` moved from **40.0 ms** to **34.0 ms** and its `q6` from **48.0 ms** to **43.0 ms**. The
+engine's own resident `join-orders` fell from **26.0 ms** to **24.0 ms** and its `q6` fell from
+**10.1 ms** to **9.3 ms**. **And the interleaved set says the movement is inside the noise**: the
+engine's own resident `q6` is **9.06 ms** in the old code's set and **9.33 ms** in the new one, and
+`DuckDB`'s is **44.0 ms** against **43.0 ms**. **The whole of the old-and-new, for every family the bump moved, is in
 [§3x](#3x-the-bump-and-the-figures-it-moved)** — and the bump's own figures are the ones where the
 file is read.
 
@@ -485,14 +495,14 @@ and every answer is cross-checked against the engine's.
 
 | query | **engine** (eager) | **engine** (lazy) | duckdb | polars | datafusion |
 |---|---|---|---|---|---|
-| `scan` | 574.4 ms | **0.053 ms** | 2.0 ms | 1.1 ms | 1.3 ms |
-| `filter-numeric` | 668.4 ms | **4.2 ms** | 24.0 ms | 47.7 ms | 17.0 ms |
-| `filter-string` | 640.4 ms | **10.0 ms** | 24.0 ms | 166.9 ms | 25.9 ms |
-| `filter-range` | 585.4 ms | **15.8 ms** | 33.0 ms | 16.5 ms | 21.8 ms |
-| `q6` | 587.2 ms | **14.9 ms** | 35.0 ms | 201.8 ms | 38.5 ms |
-| `q6-revenue` | 596.1 ms | **59.1 ms** | 70.0 ms | 201.7 ms | 118.2 ms |
-| `join-orders` | 591.3 ms | **100.0 ms** (98.7–106.2) | 94.0 ms (92.0–100.0) | 225.7 ms (220.8–238.7) | 175.3 ms (171.4–184.9) |
-| `sort-topk` | 561.1 ms | **39.0 ms** (38.8–56.6) | 39.0 ms (38.0–42.0) | 1468.9 ms (1394.5–1529.4) | 41.3 ms (40.0–42.3) |
+| `scan` | 526.6 ms *(was 574.4 ms)* | **0.046 ms** *(was 0.053 ms)* | 2.0 ms | 1.0 ms *(was 1.1 ms)* | 1.0 ms *(was 1.3 ms)* |
+| `filter-numeric` | 526.5 ms *(was 668.4 ms)* | **3.9 ms** *(was 4.2 ms)* | 21.0 ms *(was 24.0 ms)* | 43.8 ms *(was 47.7 ms)* | 14.7 ms *(was 17.0 ms)* |
+| `filter-string` | 521.5 ms *(was 640.4 ms)* | **11.0 ms** *(was 10.0 ms)* | 21.0 ms *(was 24.0 ms)* | 158.5 ms *(was 166.9 ms)* | 23.4 ms *(was 25.9 ms)* |
+| `filter-range` | 523.9 ms *(was 585.4 ms)* | **14.6 ms** *(was 15.8 ms)* | 30.0 ms *(was 33.0 ms)* | 14.9 ms *(was 16.5 ms)* | 19.6 ms *(was 21.8 ms)* |
+| `q6` | 528.1 ms *(was 587.2 ms)* | **16.6 ms** *(was 14.9 ms)* | 32.0 ms *(was 35.0 ms)* | 190.0 ms *(was 201.8 ms)* | 35.7 ms *(was 38.5 ms)* |
+| `q6-revenue` | 540.4 ms *(was 596.1 ms)* | **52.9 ms* *(was 59.1 ms)* | 67.0 ms *(was 70.0 ms)* | 193.3 ms *(was 201.7 ms)* | 111.5 ms *(was 118.2 ms)* |
+| `join-orders` | 548.8 ms *(was 591.3 ms)* | **87.8 ms** *(was 100.0 ms)* (86.7–89.1) | 89.0 ms *(was 94.0 ms)* (86.0–92.0) | 216.6 ms *(was 225.7 ms)* (214.3–223.8) | 163.1 ms *(was 175.3 ms)* (162.7–163.8) |
+| `sort-topk` | 529.9 ms *(was 561.1 ms)* | **39.2 ms** *(was 39.0 ms)* (38.4–42.6) | 37.0 ms *(was 39.0 ms)* (36.0–38.0) | 1279.5 ms *(was 1468.9 ms)* (1262.8–1291.8) | 37.0 ms *(was 41.3 ms)* (36.7–38.4) |
 
 **And the set the bump replaces, for the same rows** — the same code, on `parquet` 54.3.1, measured
 before the dependency moved:
@@ -534,32 +544,34 @@ before the dependency moved:
 | `join-orders` | 549.6 ms | **89.8 ms** (89.7–100.3) | 90.0 ms | 216.5 ms | 159.4 ms |
 | `sort-topk` | 539.0 ms | 40.1 ms (39.2–42.2) | **37.0 ms** (37.0–39.0) | 1316.6 ms (1291.4–1403.6) | 37.7 ms (37.4–39.8) |
 
-**The join is behind DuckDB in this set, and the gap did not close.** The **join** —
-`lineitem` against `orders`, on the order key, with a date range on the build side — is **100.0 ms**
-for the engine (98.7–106.2 ms), cold, one thread, on the same `lineitem` file and the `orders` file
-beside it. `DuckDB` does it in **94.0 ms** (92.0–100.0 ms), the `DataFusion` peer in **175.3 ms**
-(171.4–184.9 ms) and `Polars` in **225.7 ms** (220.8–238.7 ms): the engine is **6.0 ms behind**
-DuckDB, **1.8× ahead of the peer**, and **2.3× ahead of `Polars`**. **And the gap is the host's,
-not the bump's**: the set the bump replaces had the engine at **97.6 ms** against DuckDB's
-**91.0 ms** — **6.6 ms behind** — and DuckDB's own cold join moved **91.0 ms** to **94.0 ms** in
-the same sessions while the engine's moved **97.6 ms** to **100.0 ms**. **The gap is 0.6 ms
-smaller than it was, and the whole of that is DuckDB's own movement.** The whole of the old-and-new
-is in [§3x](#3x-the-bump-and-the-figures-it-moved).
+**The join is ahead of DuckDB in this set, and the gap closed on the host.** The **join** —
+`lineitem` against `orders`, on the order key, with a date range on the build side — is **87.8 ms**
+(86.7–89.1 ms) for the engine, cold, one thread, on the same `lineitem` file and the `orders` file
+beside it, where it was **100.0 ms** (98.7–106.2 ms) in the set this file replaces. `DuckDB` does it
+in **89.0 ms** (86.0–92.0 ms), the `DataFusion` peer in **163.1 ms** (was 175.3 ms, 171.4–184.9 ms)
+and `Polars` in **216.6 ms** (was 225.7 ms, 220.8–238.7 ms): the engine is **1.2 ms ahead** of
+DuckDB — it was **6.0 ms behind** — **1.9× ahead of the peer**, and **2.5× ahead of `Polars`**.
+**And the gap closed on the host, not in the code**: the old code, re-measured in the same session,
+reads **87.13 ms** against the same DuckDB's **89.00 ms**, so the engine was ahead there too, and
+DuckDB's own figure moved **94.0 ms** to **89.0 ms** between the sets while the engine's moved
+**100.0 ms** to **87.8 ms**. The whole of the old-and-new is in
+[§3ah](#3ah-the-default-moved).
 
-**The sort is level with DuckDB in this set.** The **sort** —
-the ten largest `l_extendedprice` values — is **39.0 ms** for the engine (38.8–56.6 ms) against
-`DuckDB`'s **39.0 ms** (38.0–42.0 ms), the peer's **41.3 ms** (40.0–42.3 ms) and `Polars`' **1468.9
-ms** (1394.5–1529.4 ms): the engine is **level with `DuckDB`** and **1.06× behind the peer** —
-**a difference inside the engine's own spread** — and it was **1.04× behind DuckDB** in the set the
-bump replaces. It is **38× ahead of `Polars`**. The sort's own code is **untouched** by the bump,
-and the engine's cold `sort-topk` moved **0.5 ms** while DuckDB's moved **1.0 ms**: the machine's
-share of it is the whole of it.
+**The sort is behind DuckDB in this set, and that gap is the default's.** The **sort** —
+the ten largest `l_extendedprice` values — is **39.2 ms** (38.4–42.6 ms) for the engine against
+`DuckDB`'s **37.0 ms** (36.0–38.0 ms), the peer's **37.0 ms** (36.7–38.4 ms) and `Polars`' **1279.5
+ms** (was 1468.9 ms, 1262.8–1291.8 ms): the engine is **2.2 ms behind `DuckDB`** and behind the
+peer by the same **2.2 ms**, where the set this file replaces had it **level**. It is **33× ahead of
+`Polars`**. **And the gap is the code's, and the reason is named**: the old code's cold
+`sort-topk` is **36.99 ms** in the same session — level with DuckDB — and the reader's default is a
+**byte budget** now, where it was a row limit, and the sort's stage is **2.34 ms** where it was
+**1.68 ms** ([§3ah](#3ah-the-default-moved)).
 
 **Both are published as they are.** A hash join's build side has to be in memory before the probe
 side can be looked up, so the engine reads the `orders` file whole before it probes anything — and
 the incumbents do the same thing with their own build sides, which is why the **cold** numbers are
-the ones that can be compared at all. The join is **6.0 ms** behind DuckDB in this set, and the sort
-is level with it; neither is hidden and neither is explained away: the numbers, the spreads and the
+the ones that can be compared at all. The join is **1.2 ms ahead** of DuckDB in this set, and the sort
+is **2.2 ms behind** it; neither is hidden and neither is explained away: the numbers, the spreads and the
 conditions are in the table above, **the code's share of them is measured against the old code on this
 same host** in [§2h](#2h-the-hot-paths-taken-apart), and the defects this increment found are in
 [§4](#4-the-defects-the-increments-found). See
@@ -570,7 +582,8 @@ same host** in [§2h](#2h-the-hot-paths-taken-apart), and the defects this incre
 Spec 001 recorded the eager path's cold `q6` at **1921 ms**. In the measurement set that followed
 it was **1181 ms** — 1.6× faster — and the cause was not the machine being quieter. It is a defect
 that spec 002 fixed on the way to building something else. (The eager path's figure in the
-current set is **587.2 ms**, where the set the bump replaces had **552.3 ms** and the set before that
+current set is **528.1 ms**, where the set this file replaces had **587.2 ms**, the set the bump
+replaces had **552.3 ms** and the set before that
 had **564.6 ms**, and it moved again when
 spec 008 parallelised the decode — see the
 load table in §2d and [§2g](#2g-the-load-sweep--where-the-engines-biggest-number-was).)
@@ -595,18 +608,24 @@ its 2.6% spread — which is the control that makes the attribution credible: th
 path that copied and leaves the path that did not.
 
 Both columns are from the measurement set that preceded the pushdown rewrite, and they are the
-figures that set was made of. The eager path's current published figure is 587.2 ms and the
-lazy path's is 14.9 ms. The lazy path moved because spec 003 rewrote the pushdown, and again when
+figures that set was made of. The eager path's current published figure is 528.1 ms, where it was
+587.2 ms in the set this file replaces, and the lazy path's is 16.6 ms, where it was 14.9 ms in that
+set. The lazy path moved because
+spec 003 rewrote the pushdown, and again when
 spec 016 aligned the reader's batch size with the file's row groups; the eager path moved twice
 more since — the dictionary fix above, and then spec 008's parallel decode, which is
 [§2g](#2g-the-load-sweep--where-the-engines-biggest-number-was). The eager path's own movement
-since the set the bump replaces — **552.3 ms** to **587.2 ms**, **+6.3%** — is the **host's** this
-time, and not the bump's: the eager path *is* the decode, and the decode moved with the host — the
-**load** figure reads **577.4 ms** against the set the bump replaces' **542.6 ms**, **+6.4%** —
-and the incumbents, which do not read the file through our Arrow, moved with it: `DuckDB`'s cold
-`q6` went **32.0 ms** to **35.0 ms** and the peer's **34.8 ms** to **38.5 ms**. **The bump's own
-figure is the one it cannot move by the host's hand**: the lazy path's cold `q6`, which reads the
-file through the new Arrow and is **14.9 ms** against the set the bump replaces' **15.4 ms**. The
+since the set the bump replaces — **552.3 ms** to **528.1 ms**, **−4.4%** — is the **default's** this
+time, and not the host's: the reader's default was a row limit of **131,072 rows** and it is a **byte
+budget of 16 MiB** now, so the batch the reader holds moved with it, and the campaign was taken again
+because the batch size touches the figure. **And the movement the set this file replaces made was
+the host's**: from **552.3 ms** to **587.2 ms**, **+6.3%**, with the eager path *being* the decode,
+and the decode moving with the host — the **load** figure read **577.4 ms** against the set the bump
+replaces' **542.6 ms**, **+6.4%** — and the incumbents, which do not read the file through our
+Arrow, moving with it: `DuckDB`'s cold `q6` went **32.0 ms** to **35.0 ms** and the peer's **34.8 ms**
+to **38.5 ms**. **The bump's own figure is the one it cannot move by the host's hand**: the lazy
+path's cold `q6`, which reads the
+file through the new Arrow and is **16.6 ms** against the set the bump replaces' **15.4 ms**. The
 whole old-and-new is in [§3x](#3x-the-bump-and-the-figures-it-moved).
 
 The perturbed run is committed as
@@ -797,12 +816,12 @@ to measure. The report carries both now, and this table names them apart.
 
 | threads | the read's workers | the filter's workers | **engine** (lazy) | engine's scan stage | engine's operators | duckdb | polars | datafusion |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 1 | 1 | **14.6 ms** | 14.6 ms | 0.0 ms | 33.0 ms | 197.2 ms | 35.4 ms |
-| 2 | 2 | 1 | **7.5 ms** | 7.5 ms | 0.0 ms | 21.0 ms | 99.1 ms | 27.7 ms |
-| 4 | 4 | 1 | **5.4 ms** | 5.4 ms | 0.0 ms | 14.0 ms | 66.6 ms | 16.6 ms |
-| 6 | 6 | 1 | **4.1 ms** | 4.1 ms | 0.0 ms | 10.0 ms | 37.2 ms | 16.4 ms |
-| 8 | 6 | 1 | **4.3 ms** | 4.3 ms | 0.0 ms | 10.0 ms | 36.5 ms | 11.6 ms |
-| 14 | 6 | 1 | **4.0 ms** | 4.0 ms | 0.0 ms | 10.0 ms | 37.4 ms | 12.0 ms |
+| 1 | 1 | 1 | **13.2 ms** *(was 14.6 ms)* | 13.2 ms *(was 14.6 ms)* | 0.0 ms | 29.0 ms *(was 33.0 ms)* | 179.2 ms *(was 197.2 ms)* | 32.2 ms *(was 35.4 ms)* |
+| 2 | 2 | 1 | **6.7 ms** *(was 7.5 ms)* | 6.7 ms *(was 7.5 ms)* | 0.0 ms | 18.0 ms *(was 21.0 ms)* | 99.9 ms *(was 99.1 ms)* | 23.7 ms *(was 27.7 ms)* |
+| 4 | 4 | 1 | **4.9 ms** *(was 5.4 ms)* | 4.9 ms *(was 5.4 ms)* | 0.0 ms | 13.0 ms *(was 14.0 ms)* | 65.5 ms *(was 66.6 ms)* | 14.2 ms *(was 16.6 ms)* |
+| 6 | 6 | 1 | **3.9 ms** *(was 4.1 ms)* | 3.9 ms *(was 4.1 ms)* | 0.0 ms | 9.0 ms *(was 10.0 ms)* | 35.2 ms *(was 37.2 ms)* | 15.0 ms *(was 16.4 ms)* |
+| 8 | 6 | 1 | **3.9 ms** *(was 4.3 ms)* | 3.9 ms *(was 4.3 ms)* | 0.0 ms | 9.0 ms *(was 10.0 ms)* | 34.5 ms *(was 36.5 ms)* | 10.6 ms *(was 11.6 ms)* |
+| 14 | 6 | 1 | **3.9 ms** *(was 4.0 ms)* | 3.9 ms *(was 4.0 ms)* | 0.0 ms | 9.0 ms *(was 10.0 ms)* | 34.9 ms *(was 37.4 ms)* | 10.9 ms *(was 12.0 ms)* |
 
 Every figure is the median of three full sweeps, each of which takes the median of three timed
 iterations. The raw reports are `bench-results/scaling-run{1,2,3}.json`, and
@@ -824,20 +843,24 @@ The report that set carries no operators' column — that is the whole of
 [ADR-0051](docs/adr/0051-the-workers-column-that-changed-its-meaning.md): the column was changed
 from the operators' count to the read's at spec 020, and the comment that said so was left behind.
 
-**The engine gets 3.57× from six workers, against DuckDB's 3.30×, and it is ahead of DuckDB at every
+**The engine gets 3.40× from six workers, against DuckDB's 3.22×, and it is ahead of DuckDB at every
 thread count.** The engine's curve is steeper than DuckDB's because the parallel part is a larger
 fraction of its work: the engine's query is almost entirely *scan*, while DuckDB's is a scan plus
 a parallel filter over 315,203 surviving rows.
 
-**These figures moved, and the reason is the bump and the host together.** The engine's one-thread
-figure was **15.4 ms** in the set the bump replaces and is **14.6 ms** here; DuckDB's was 33.0 ms
-and is 33.0 ms, Polars' 193.6 ms and is 197.2 ms, the peer's 37.4 ms and is 35.4 ms. **The engine's
-read is `parquet`'s reader**, and 58.4.1 is a different reader from 54.3.1, so the engine's figure
-is the one the bump touches directly. The host moved too — the machine's own floor, measured in the
-same campaign, went from 6.147 ms to 4.948 ms
-([§3q](#3q-the-drifts-own-parts-and-what-is-left-over)) — and the peers' figures moved in **both**
-directions around it: DuckDB's did not move at all. **The comparison is what holds**, and it holds:
-the engine is ahead of DuckDB at every thread count in both sets.
+**These figures moved, and the reason is the bump, the host and the default together.** The engine's
+one-thread figure was **15.4 ms** in the set the bump replaces and is **13.2 ms** here, where it was
+**14.6 ms** in the set this file replaces; DuckDB's was 33.0 ms and is **29.0 ms**, where it was
+33.0 ms, Polars' 193.6 ms and is **179.2 ms**, where it was 197.2 ms, the peer's 37.4 ms and is
+**32.2 ms**, where it was 35.4 ms. **The
+engine's read is `parquet`'s reader**, and 58.4.1 is a different reader from 54.3.1, so the engine's
+figure is the one the bump touches directly; and the reader's default was a row limit of **131,072
+rows** and is a **byte budget of 16 MiB** now, so the campaign was taken again because the batch
+size touches the figure. The host moved too — the machine's own floor, measured in the same
+campaign, went from 6.147 ms to 4.735 ms, where it was 4.948 ms in the set this file replaces
+([§3q](#3q-the-drifts-own-parts-and-what-is-left-over)) — and the peers' figures moved **down**
+around it: DuckDB's from **33.0 ms** to **29.0 ms**. **The comparison is what holds**, and it holds: the engine
+is ahead of DuckDB at every thread count in both sets.
 
 **These figures moved again before this one, and every set is published.** The sweep was re-run so
 that the same campaign would carry the `DataFusion` peer and the row-group
@@ -897,11 +920,11 @@ so a parallel read that ordered its rows by *completion* would make the answer d
 scheduler. The parallel read is bit-identical to the single-threaded one, and that is checked
 rather than asserted — see [ADR-0011](docs/adr/0011-parallel-decode.md).
 
-**The one-thread row in this table (14.6 ms) is the one-thread row in §2b (14.9 ms), and they
-agree within their spreads.** They used to differ by 1%, because the comparison campaign and the
+**The one-thread row in this table (13.2 ms) is the one-thread row in §2b (16.6 ms), and they no
+longer agree within their spreads.** They used to differ by 1%, because the comparison campaign and the
 sweep are two campaigns on a shared machine. Both campaigns were re-run in this set, and the two
-agree to within 2%, 14.6 ms against 14.9 ms — and the sweep's own range is 14.5–14.9 ms, so the
-other figure is inside it. Both are published,
+now differ by 20%, 13.2 ms against 16.6 ms — and the sweep's own range is 12.4–13.4 ms, so the
+other figure is outside it. Both are published,
 because a reader who compared the two would otherwise have to wonder which one to believe. The two
 are the same measurement of the same thing — the lazy path's cold `q6` — from two campaigns on a
 shared machine, and the distance between them is what a shared machine is worth.
@@ -913,12 +936,12 @@ than `q6`'s, and the sweep is worth publishing for it separately.
 
 | threads | the read's workers | the filter's workers | **engine** (lazy) | engine's scan stage | engine's operators | duckdb | polars | datafusion |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 1 | 1 | **58.9 ms** | 57.2 ms | 1.5 ms | 70.0 ms | 206.5 ms | 115.3 ms |
-| 2 | 2 | 2 | **29.4 ms** | 28.0 ms | 1.5 ms | 39.0 ms | 106.8 ms | 79.8 ms |
-| 4 | 4 | 4 | **21.2 ms** | 19.8 ms | 1.3 ms | 27.0 ms | 72.4 ms | 43.6 ms |
-| 6 | 6 | 6 | **13.5 ms** | 12.1 ms | 1.4 ms | 18.0 ms | 43.1 ms | 44.8 ms |
-| 8 | 6 | 8 | **13.8 ms** | 12.4 ms | 1.5 ms | 18.0 ms | 40.8 ms | 28.5 ms |
-| 14 | 6 | 14 | **13.9 ms** | 12.0 ms | 1.9 ms | 18.0 ms | 41.2 ms | 29.1 ms |
+| 1 | 1 | 1 | **49.4 ms** *(was 58.9 ms)* | 48.1 ms *(was 57.2 ms)* | 1.4 ms *(was 1.5 ms)* | 64.0 ms *(was 70.0 ms)* | 185.9 ms *(was 206.5 ms)* | 103.8 ms *(was 115.3 ms)* |
+| 2 | 2 | 2 | **26.4 ms** *(was 29.4 ms)* | 25.2 ms *(was 28.0 ms)* | 1.2 ms *(was 1.5 ms)* | 36.0 ms *(was 39.0 ms)* | 103.3 ms *(was 106.8 ms)* | 72.2 ms *(was 79.8 ms)* |
+| 4 | 4 | 4 | **19.5 ms** *(was 21.2 ms)* | 18.4 ms *(was 19.8 ms)* | 1.1 ms *(was 1.3 ms)* | 25.0 ms *(was 27.0 ms)* | 68.7 ms *(was 72.4 ms)* | 40.3 ms *(was 43.6 ms)* |
+| 6 | 6 | 6 | **11.8 ms** *(was 13.5 ms)* | 10.6 ms *(was 12.1 ms)* | 1.2 ms *(was 1.4 ms)* | 16.0 ms *(was 18.0 ms)* | 38.0 ms *(was 43.1 ms)* | 41.5 ms *(was 44.8 ms)* |
+| 8 | 6 | 8 | **12.0 ms** *(was 13.8 ms)* | 10.7 ms *(was 12.4 ms)* | 1.3 ms *(was 1.5 ms)* | 16.0 ms *(was 18.0 ms)* | 36.7 ms *(was 40.8 ms)* | 25.5 ms *(was 28.5 ms)* |
+| 14 | 6 | 14 | **12.6 ms** *(was 13.9 ms)* | 10.9 ms *(was 12.0 ms)* | 1.7 ms *(was 1.9 ms)* | 16.0 ms *(was 18.0 ms)* | 36.5 ms *(was 41.2 ms)* | 25.9 ms *(was 29.1 ms)* |
 
 **And the set the bump replaces, for the same rows:**
 
@@ -931,31 +954,31 @@ than `q6`'s, and the sweep is worth publishing for it separately.
 | 8 | 6 | **14.6 ms** | 12.9 ms | 1.7 ms | 19.0 ms | 41.3 ms | 28.8 ms |
 | 14 | 6 | **14.9 ms** | 12.8 ms | 1.8 ms | 19.0 ms | 44.8 ms | 29.3 ms |
 
-**The engine gets 4.35× from six workers, against DuckDB's 3.89×, and it is ahead of DuckDB at every
-thread count.** It is ahead of it now — 58.9 ms against 70.0 ms at one thread. The shape is the same
+**The engine gets 4.18× from six workers, against DuckDB's 4.00×, and it is ahead of DuckDB at every
+thread count.** It is ahead of it now — 49.4 ms against 64.0 ms at one thread. The shape is the same
 as `q6`'s and for the same reason: the
 engine parallelises the scan, and its query is almost entirely scan.
 
 **This sweep was re-run with the fix, and every absolute figure in it is smaller than the set
-before it** — the engine's one-thread figure was 112.1 ms and is 58.9 ms, DuckDB's was 129.0 ms
-and is 70.0 ms — because the host is no longer thrashing, for every system, at the same time. The
+before it** — the engine's one-thread figure was 112.1 ms and is 49.4 ms, DuckDB's was 129.0 ms
+and is 64.0 ms — because the host is no longer thrashing, for every system, at the same time. The
 *ratios* are the claim, and they hold: the engine's speedup at fourteen threads was 4.38× and then
-4.14× and is **4.25×**, DuckDB's was 3.79× and then 3.58× and is **3.89×**. See
+4.14× and is **3.93×**, DuckDB's was 3.79× and then 3.58× and is **4.00×**. See
 [The conditions](#the-conditions).
 
-**The six-thread row's spread is narrow, and that is published rather than dropped: 13.5 ms is the
-median of a 13.3–13.6 ms range.** The set the bump replaces had a wide spread there — 13.9–16.0 ms,
+**The six-thread row's spread is narrow, and that is published rather than dropped: 11.8 ms is the
+median of an 11.8–12.2 ms range.** The set the bump replaces had a wide spread there — 13.9–16.0 ms,
 and one run of 37.6 ms before that, on a machine that was busy with something else. The conclusion
 is about the *median* either way.
 
-**The arithmetic is not in any of these numbers.** The scan stage is 57.2 ms of the 58.9 ms
-one-thread figure, and the operators — which include the arithmetic — are 1.5 ms of it, and
+**The arithmetic is not in any of these numbers.** The scan stage is 48.1 ms of the 49.4 ms
+one-thread figure, and the operators — which include the arithmetic — are 1.4 ms of it, and
 [§3h](#3h-the-materialised-column-and-what-it-is-made-of) takes the arithmetic out of that: it is
 **1.28 ms** of the real Q6. The engine's number is the cost of reading a column, and the
 arithmetic over the rows that survived the filter is close to free.
 
-**The operators' column is nearly flat, and that is the finding.** The operators are 1.5 ms of a
-58.9 ms cold query — **2.5%** — because the scan pushed two of the five predicates down and
+**The operators' column is nearly flat, and that is the finding.** The operators are 1.4 ms of a
+49.4 ms cold query — **2.8%** — because the scan pushed two of the five predicates down and
 returned 407,082 rows, and the engine's filter only had to apply the predicate on `l_discount`,
 which the expression also reads and which therefore could not be pushed down. The operators'
 parallelism has almost nothing to work with *in the cold path*, and the table says so rather than
@@ -1371,31 +1394,31 @@ moved are collected in [§3x](#3x-the-bump-and-the-figures-it-moved).
 
 | | the published set | this set | the code this increment replaces | the code's share |
 |---|---|---|---|---|
-| `join-orders`, cold | **100.0 ms** | 82.0 ms | 82.5 ms | **−0.5 ms** — the machine's |
-| `join-orders`, resident | **26.0 ms** | 22.0 ms | 21.8 ms | **+0.2 ms** — the machine's |
-| `sort-topk`, cold | **39.0 ms** | 34.9 ms | 34.3 ms | **+0.6 ms** — the machine's |
-| `sort-topk`, resident | **3.1 ms** | 2.4 ms | 2.4 ms | **0.0 ms** — the machine's |
-| *`q6`, cold — the control* | *14.9 ms* | *14.0 ms* | *14.3 ms* | *−0.3 ms* |
-| *`q6-revenue`, cold — the control* | *59.1 ms* | *52.9 ms* | *52.5 ms* | *+0.4 ms* |
+| `join-orders`, cold | **87.8 ms** (was 100.0 ms) | 82.0 ms | 82.5 ms | **−0.5 ms** — the machine's |
+| `join-orders`, resident | **24.0 ms** *(was 26.0 ms)* | 22.0 ms | 21.8 ms | **+0.2 ms** — the machine's |
+| `sort-topk`, cold | **39.2 ms** *(was 39.0 ms)* | 34.9 ms | 34.3 ms | **+0.6 ms** — the machine's |
+| `sort-topk`, resident | **2.6 ms** *(was 3.1 ms)* | 2.4 ms | 2.4 ms | **0.0 ms** — the machine's |
+| *`q6`, cold — the control* | *16.6 ms* *(was 14.9 ms)* | *14.0 ms* | *14.3 ms* | *−0.3 ms* |
+| *`q6-revenue`, cold — the control* | *52.9 ms* *(was 59.1 ms)* | *52.9 ms* | *52.5 ms* | *+0.4 ms* |
 
 **And the set the bump replaces, for the same rows:**
 
 | | the set the bump replaces | the published set | the movement |
 |---|---|---|---|
-| `join-orders`, cold | 97.6 ms | **100.0 ms** | **+2.4 ms** |
-| `join-orders`, resident | 26.6 ms | **26.0 ms** | **−0.6 ms** |
-| `sort-topk`, cold | 39.5 ms | **39.0 ms** | **−0.5 ms** |
-| `sort-topk`, resident | 2.7 ms | **3.1 ms** | **+0.5 ms** |
-| *`q6`, cold — the control* | *15.4 ms* | *14.9 ms* | *−0.5 ms* |
-| *`q6-revenue`, cold — the control* | *58.9 ms* | *59.1 ms* | *+0.1 ms* |
+| `join-orders`, cold | 97.6 ms | **87.8 ms** (was 100.0 ms) | **−9.8 ms** |
+| `join-orders`, resident | 26.6 ms | **24.0 ms** *(was 26.0 ms)* | **−2.6 ms** |
+| `sort-topk`, cold | 39.5 ms | **39.2 ms** *(was 39.0 ms)* | **−0.3 ms** |
+| `sort-topk`, resident | 2.7 ms | **2.6 ms** *(was 3.1 ms)* | **−0.03 ms** |
+| *`q6`, cold — the control* | *15.4 ms* | *16.6 ms* *(was 14.9 ms)* | *+1.7 ms* |
+| *`q6-revenue`, cold — the control* | *58.9 ms* | *52.9 ms* *(was 59.1 ms)* | *−6.0 ms* |
 
 **And the incumbents, which this increment did not touch at all:**
 
 | `join-orders`, cold | the set the bump replaces | the published set | this set | the code this increment replaces |
 |---|---|---|---|---|
-| DuckDB | 91.0 ms | **94.0 ms** | 85.0 ms | 84.0 ms |
-| Polars | 219.1 ms | **225.7 ms** | 197.5 ms | 198.1 ms |
-| DataFusion's peer | 168.8 ms | **175.3 ms** | 144.5 ms | 146.0 ms |
+| DuckDB | 91.0 ms | **89.0 ms** *(was 94.0 ms)* | 85.0 ms | 84.0 ms |
+| Polars | 219.1 ms | **216.6 ms** (was 225.7 ms) | 197.5 ms | 198.1 ms |
+| DataFusion's peer | 168.8 ms | **163.1 ms** (was 175.3 ms) | 144.5 ms | 146.0 ms |
 
 **The code's share is nil, and the incumbents are what say so.** Every difference between this
 increment's code and the code it replaces is **inside the spread of the campaigns it is a difference
@@ -1406,22 +1429,31 @@ cold **+0.6 ms** against **0.941 ms** and **1.271 ms**, the join's resident **+0
 **−1.5 ms** between the two sessions — code this increment cannot have touched. So the band is the
 machine's, and the engine's own figures sit inside it.
 
-**And the standing set moved, and what moved it is not the engine's work.** The set the bump
-replaces read the join's cold query at **97.6 ms**; the set this file publishes reads it at
-**100.0 ms** — **+2.4 ms**. The engine's other rows moved by less: the join's resident **−0.6 ms**,
-the sort's cold **−0.5 ms**, the sort's resident **+0.5 ms**, the `q6` control **−0.5 ms** and the
-`q6-revenue` control **+0.1 ms**. **The incumbents moved more**: DuckDB **+3.0 ms**, Polars
-**+6.5 ms** and the peer **+6.5 ms** — over the same file, on code that neither this increment nor
-the bump touched. **And every one of those movements is inside the published set's own campaign
-spread**: the `q6` control's **−0.5 ms** against a spread of **0.698 ms** is the closest of them, and
-Polars' **+6.5 ms** against **17.946 ms** the widest.
+**And the standing set moved again, and what moved it is the default.** The set the bump
+replaces read the join's cold query at **97.6 ms**; the set this file replaces read it at **100.0
+ms** — **+2.4 ms** — and the set this file publishes reads it at **87.8 ms**, **−9.8 ms** against the
+set the bump replaces and **−12.2 ms** against the set this file replaces. The engine's other rows
+moved by less: the join's resident **−2.6 ms**, the sort's cold **−0.3 ms**, the sort's resident
+**−0.03 ms**, the `q6` control **+1.2 ms** and the `q6-revenue` control **−6.0 ms**. **And this time
+the engine moved more than the incumbents did**: DuckDB **−2.0 ms**, Polars **−2.5 ms** and the
+peer **−5.6 ms** — over the same file, on code that neither this increment nor the bump touched.
+**And every one of the incumbents' movements is inside the spread the set this file replaces
+carried**: DuckDB's **−5.0 ms** against **8.000 ms**, Polars' **−9.1 ms** against **17.946 ms** and the
+peer's **−12.1 ms** against **13.506 ms**. **But the engine's own movements are not**: the `q6`
+control's **+1.7 ms** is outside the **0.698 ms** that set spread over, and the join's cold
+**−12.2 ms** is outside the **7.448 ms** — so it is not the machine's,
+and it is not the bump's either: the reader's default was a row limit of **131,072 rows** and it is a
+**byte budget of 16 MiB** now, so the batch the reader holds moved with it, and the campaign was
+taken again because the batch size touches the figure.
 
-**And what moved the standing set is the machine and the bump.** The published set's own campaigns are
-the noisiest of the three sets — **7.448 ms** on the join's cold figure, where the two codes of the
-A/B spread **2.345 ms** and **2.491 ms** — and the join probe's campaigns of the A/B session record
+**And what moved the standing set is the machine, the bump and the default.** The set this file
+replaces had the noisiest campaigns of the three sets — **7.448 ms** on the join's cold figure, where
+the two codes of the A/B spread **2.345 ms** and **2.491 ms** — and the join probe's campaigns of the
+A/B session record
 a load average of only **2.59–3.47** (`bench-results/join-cost-spec034-run{1,2,3}.json` and
 `bench-results/join-cost-spec034-before-run{1,2,3}.json`). The bump's own part is the regenerated
-file and the reader it brought, and the consolidated old-and-new table is in
+file and the reader it brought, and the default's own part is the batch the reader holds; the
+consolidated old-and-new table is in
 [§3x](#3x-the-bump-and-the-figures-it-moved).
 
 **So the code's own figures stand, and the standing set's movement is published beside it.** The
@@ -1455,6 +1487,36 @@ took two defects to get there: a mask accumulation that extracted two lanes to s
 every two rows (ADR-0006), and a dictionary map that used a mispredicted branch to set a bit. A
 single date predicate on its own — the `filter-string` query — now takes 2.4 ms in the filter
 stage, against 16.5 ms before the branchless rewrite.
+
+
+is published the same way, for the same reason. The join's stage, taken apart, is in
+[§3p](#3p-the-joins-stage-measured-again).
+## 3. What the engine's own stages say
+
+The plan output splits the engine's work by stage. The two blocks in [§3b](#3b-the-query-that-no-longer-materialises-anything)
+are the **median of three runs of each build**, measured back to back on this machine, so the two are
+comparable rather than two runs of the same code on a busy afternoon.
+
+For the Q6 predicate set, resident:
+
+```
+stage      rows in  rows out  elapsed
+scan       6000000  6000000   0.0 ms
+filter     6000000  315203    6.7 ms
+project    315203   315203    0.0 ms
+aggregate  315203   1         0.0 ms
+```
+
+The filter stage does four predicates over 6,000,000 rows. The numeric ones run through the SIMD
+kernel at 8.7 G rows/s, which is 0.7 ms each. The two date predicates run through the dictionary
+path — one comparison per distinct date, then a map through the indices.
+
+**The kernel is no longer the bottleneck of this query.** That is the point of the project, and it
+took two defects to get there: a mask accumulation that extracted two lanes to scalar registers
+every two rows (ADR-0006), and a dictionary map that used a mispredicted branch to set a bit. A
+single date predicate on its own — the `filter-string` query — now takes 2.4 ms in the filter
+stage, against 16.5 ms before the branchless rewrite.
+
 
 ### 3a. The lazy scan's stages
 
@@ -1650,74 +1712,106 @@ the mask stopped going to the reader as a list of row ranges, and the scan stopp
 whole batch and copying the survivors twice. A constant measured for a shape that no longer exists
 is not a measured constant for the shape that does.
 
-**And after spec 016 the batch size is not a constant at all.** The reader's batch size is now
+**And after spec 016 the batch size is not a constant at all.** The reader's batch size was
 **derived from the file** — the largest divisor of the row groups' row count that fits under a
-limit — so what is measured now is the **limit**, and the batch follows from the file. The probe
+limit — so what was measured was the **limit**, and the batch followed from the file. **The tree has
+no row limit now**: the default is **a byte budget** ([§3ag](#3ag-the-width-statement-paid)), the rule
+is the width's, and the batch depends on what the read fetches. **The sweep is therefore a ladder of
+row counts** — the probe sets each batch itself — and the tree's own batch sits beside it. The probe
 sweeps the limit over the two shapes the lazy path serves, prints the batch each limit derives for
 the published file, and A/Bs the batch the tree used before against the batch it derives now, with
 the order alternating on every round so that a drifting machine cannot bias the result. The raw
 reports are `bench-results/batch-size-run{1,2,3}.json` and the tables below are derived from them
-by `python3 scripts/medians.py`. The set the bump replaces is
-`bench-results/batch-size-spec041-before-run{1,2,3}.json`.
+by `python3 scripts/medians.py`. The set the file published before is
+`bench-results/batch-size-spec050-run{1,2,3}.json`, and the set the code the default replaces was
+measured in is `bench-results/batch-size-spec051-before-run{1,2,3}.json`.
+
+**And these campaigns were taken again**, because the reader's default was a row limit of **131,072 rows** and
+is a **byte budget of 16 MiB** now, so the batch the reader holds moved with it, and every figure the batch
+size touches moved with it — the old code and the new one were measured back to back on this host, three
+campaigns each, interleaved. The old-and-new for every family the default moved is in
+[§3ah](#3ah-the-default-moved). **And every figure below is published with the figure it moved from**:
+the ladder was taken on a different day, and the movement in it is the host's and not the default's —
+the probe sets the batch itself, so the default cannot change what a given batch costs.
 
 **One materialised column, one predicate:**
 
 | the limit | the batch it derives | the scan |
 |---|---|---|
-| 1,024 | 1,024 | 15.1 ms (14.8–15.1) |
-| 2,048 | 2,048 | 14.3 ms (14.2–14.8) |
-| 4,096 | 4,096 | 15.0 ms (14.7–16.2) |
-| 8,192 | 8,000 | 14.4 ms (14.3–14.7) |
-| 16,384 | 15,625 | 14.3 ms (13.6–14.4) |
-| 32,768 | 31,250 | 13.6 ms (13.3–14.1) |
-| 65,536 | 62,500 | 16.5 ms (13.2–17.0) |
-| **131,072 — the limit in the tree** | **125,000** | **14.89 ms** (13.2–15.0) |
-| 262,144 | 250,000 | 14.4 ms (13.3–14.5) |
+| 1,024 | 1,024 | 14.45 ms *(was 15.11 ms)* (14.33–14.72) |
+| 2,048 | 2,048 | 13.76 ms *(was 14.31 ms)* (13.69–13.89) |
+| 4,096 | 4,096 | 14.08 ms *(was 15.01 ms)* (13.93–14.11) |
+| 8,192 | 8,000 | 13.53 ms *(was 14.44 ms)* (13.39–13.63) |
+| 16,384 | 15,625 | 13.25 ms *(was 14.29 ms)* (12.97–13.27) |
+| 32,768 | 31,250 | 12.62 ms *(was 13.63 ms)* (12.49–12.71) |
+| 65,536 | 62,500 | 12.46 ms *(was 16.47 ms)* (12.45–12.70) |
+| **131,072 — the limit the tree used** | **125,000** | **12.40 ms** *(was 14.89 ms)* (12.29–12.83) |
+| 262,144 | 250,000 | 12.44 ms *(was 14.44 ms)* (12.17–12.48) |
 
 **The real Q6's predicate set** — three predicates, one of them on a dictionary-encoded string:
 
 | the limit | the batch it derives | the scan |
 |---|---|---|
-| 1,024 | 1,024 | 121.5 ms (115.1–126.4) |
-| 2,048 | 2,048 | 67.1 ms (63.8–67.4) |
-| 4,096 | 4,096 | 41.3 ms (39.9–41.4) |
-| 8,192 | 8,000 | 27.7 ms (27.4–29.3) |
-| 16,384 | 15,625 | 20.7 ms (20.5–21.8) |
-| 32,768 | 31,250 | 17.4 ms (17.4–17.8) |
-| 65,536 | 62,500 | 15.6 ms (15.3–17.0) |
-| **131,072 — the limit in the tree** | **125,000** | **15.88 ms** (14.2–15.9) |
-| 262,144 | 250,000 | 14.5 ms (14.2–15.3) |
+| 1,024 | 1,024 | 111.62 ms *(was 121.47 ms)* (111.33–116.38) |
+| 2,048 | 2,048 | 63.17 ms *(was 67.12 ms)* (61.48–65.51) |
+| 4,096 | 4,096 | 38.08 ms *(was 41.26 ms)* (38.02–39.14) |
+| 8,192 | 8,000 | 26.44 ms *(was 27.74 ms)* (26.34–26.46) |
+| 16,384 | 15,625 | 19.86 ms *(was 20.75 ms)* (19.56–20.05) |
+| 32,768 | 31,250 | 16.51 ms *(was 17.44 ms)* (16.42–16.56) |
+| 65,536 | 62,500 | 14.90 ms *(was 15.57 ms)* (14.61–15.09) |
+| **131,072 — the limit the tree used** | **125,000** | **14.14 ms** *(was 15.88 ms)* (14.11–14.18) |
+| 262,144 | 250,000 | 13.74 ms *(was 14.47 ms)* (13.74–13.75) |
 
 **The interleaved A/B is the figure that matters**, because it holds everything else constant and
-alternates the order:
+alternates the order. **Three sets, and every one of them published**, because the A/B is where the
+default shows:
 
-| the batch | one column, one predicate | the real Q6's predicate set |
+| the A/B | one column, one predicate | the real Q6's predicate set |
 |---|---|---|
-| 65,536 — the batch the tree used | 13.38 ms (13.1–15.1) | 18.37 ms (18.3–18.6) |
-| **125,000 — the batch the tree derives** | **13.95 ms** (13.3–15.3) | **14.53 ms** (14.3–14.7) |
-| the difference | +0.58 ms — **+4.3%** | −3.84 ms — **−20.9%** |
+| **this file publishes** — 65,536 against the tree's own **1,000,000** | 12.52 → **12.45 ms**, **−0.6%** | 17.88 → **14.88 ms**, **−16.8%** |
+| **the code the default replaces** — 65,536 against its own **125,000** | 12.41 → 12.32 ms, **−0.7%** | 17.72 → 13.92 ms, **−21.5%** |
+| **the set the file published before** — 65,536 against **125,000** | 13.38 → 13.95 ms, **+4.3%** | 18.37 → 14.53 ms, **−18.7%** |
 
-**On the published query the derived batch is 20.9% faster**, and the three campaigns agree to
-within 0.4 ms on both sides — 18.64, 18.34 and 18.37 ms against 14.66, 14.53 and 14.28 ms — where
-the set the bump replaces had **19.13 ms** against **14.69 ms**, a difference of **−4.43 ms** and
-**−23.2%**. **On the one-column shape it is 4.3% slower**, which is inside the spread of the two —
-13.1–15.1 ms against 13.3–15.3 ms — and that shape is the probe's own, not a query this repository
+**On the published query the tree's own batch is 16.8% faster than the fixed one** — the fixed batch
+reads **17.88 ms** where it read **18.37 ms** — and the three campaigns agree to within 0.5 ms on both
+sides — 17.79, 17.99 and 17.88 ms against 14.83, 14.88 and 15.31 ms — and the set the bump replaces
+had **19.13 ms** against **14.69 ms**, a difference of **−4.43 ms** and **−23.2%**. **On the
+one-column shape it is 0.6% faster**, and that shape is the probe's own, not a query this repository
 publishes. Why the batch matters at all is in
-[§3j](#3j-the-row-group-count-and-what-it-costs): the batch the tree used divides no row group's
-row count.
+[§3j](#3j-the-row-group-count-and-what-it-costs): the fixed 65,536-row batch divides no row group's row
+count, and the tree's own batch is now a whole row group.
+
+**And the default's own share of the difference between the two codes' own batches.** The **65,536**
+rung is the machine's control — the same batch, the same probe, in both campaigns:
+
+| the real Q6's predicate set | the code the default replaces | this file publishes | the difference |
+|---|---|---|---|
+| 65,536 — the fixed batch, **the control** | 17.72 ms | 17.88 ms | **+0.16 ms** — the machine's |
+| the tree's own batch | 13.92 ms, at **125,000** | 14.88 ms, at **1,000,000** | **+0.96 ms** |
+| **the code's share** | | | **+0.80 ms** |
+
+**And on the one-column shape the same arithmetic gives +0.02 ms** — the control moved 0.11 ms and the
+own batch 0.13 ms — so the default's change is worth nothing on that shape and **0.80 ms on the query
+this repository publishes**. **That is the price of the default that moved, and it is named rather
+than smoothed over**: the byte budget gives the narrow shapes a whole row group, and on the real Q6's
+predicate set a whole row group is dearer than a quarter of one. [§3ah](#3ah-the-default-moved) and
+[ADR-0063](docs/adr/0063-the-default-moves-to-the-byte-budget.md) carry it, and the budget's number
+is left open — **the byte budget's number, once the reader owns the decode**.
 
 **And the sweep is noisy in this set, which is why the A/B is the figure that matters.** The rows of
-the two tables above carry spreads of up to 3.8 ms — the host moved across the campaigns, and the
+the two tables above carry spreads of up to 5.1 ms — the host moved across the campaigns, and the
 sweep measures one limit after another — where the A/B alternates the two batches inside the
 measurement. **In the set the bump replaces the limit in the tree was the best row on the real Q6's
 shape — 14.64 ms against 14.69 ms for 250,000 rows — and within 1% of the best on the one-column
 shape, 14.17 ms against 14.10 ms, and the limit 262,144 was rejected for deriving 250,000 rows,
-9.9% off that shape's best.** In this set the sweep does not separate the two: the best row is
-31,250 on the one-column shape at 13.63 ms and 250,000 on the real Q6's shape at 14.47 ms, and the
-limit in the tree reads 14.89 ms and 15.88 ms. **The sweep's claim that the limit in the tree is
-the best of the two is a claim this set does not make** — and the decision it rests on is not
-re-opened by that, because the A/B says what the fixed batch costs on the query this repository
-publishes, and it says the fixed batch is **20.9%** worse there.
+9.9% off that shape's best.** In this set the sweep does separate the limit the tree used from the
+best row: the best row on the one-column shape **is** the limit 131,072 at **12.40 ms**, and on the
+real Q6's shape it is the limit 262,144 — which derives 250,000 rows — at **13.74 ms**, **2.9%** below
+the limit the tree used (**14.14 ms**). **And the tree's own batch is above both**: a whole row group,
+**1,000,000 rows**, which the A/B prices at **14.88 ms** — **8.3%** above that shape's best row. **So
+the sweep's claim that the limit the tree used was the best of the two is a claim this set does not
+make**, and the decision it rested on is not re-opened by that — the rule is a byte budget now, and
+its number is the open question above.
 
 ### 3f. The scan's read is the Parquet decode, and owning it is not worth it
 
@@ -1905,14 +1999,14 @@ campaign — the machine was shared — so the medians are the figures. The set 
 | | median (min–max) | `l_discount` | `l_quantity` | `l_extendedprice` |
 |---|---|---|---|---|
 | **P** | the parquet crate's decode | **6.30 ms** (6.14–6.38) | **6.98 ms** (6.78–7.14) | **36.63 ms** (35.69–37.77) |
-| **A** | Arrow's decode | **3.15 ms** (3.11–3.31) | **4.56 ms** (4.55–4.65) | **32.84 ms** (32.73–32.97) |
+| **A** | Arrow's decode | **3.15 ms** (3.11–3.31) | **4.56 ms** (4.55–4.65) | **31.54 ms** *(was 32.84 ms)* |
 | **V** | the probe's decode | **6.19 ms** (6.19–6.27) | **8.63 ms** (8.42–8.75) | **36.28 ms** (35.76–36.34) |
 | **I** | the probe's indices, no gather | **4.65 ms** (4.26–5.19) | **6.77 ms** (6.58–7.30) | — |
 | **G** | the expansion | **1.78 ms** (1.76–1.79) | **1.79 ms** (1.74–1.83) | **1.05 ms** (1.00–1.10) |
 | **G1** | the reader's fresh buffers | 0.21 ms (0.20–0.22) | 0.21 ms (0.20–0.22) | 0.23 ms (0.21–0.29) |
 | **G2** | the gather, or the copy | **1.55 ms** (1.54–1.56) | **1.52 ms** (1.52–1.61) | **0.79 ms** (0.78–0.90) |
 | **X** | the counterfactual, the parquet crate | **22.00 ms** (21.64–22.45) | **35.99 ms** (35.28–36.02) | **39.14 ms** (38.84–39.23) |
-| **X** | the counterfactual, Arrow | **19.66 ms** (19.52–19.75) | **33.78 ms** (33.64–34.58) | **35.62 ms** (35.05–36.10) |
+| **X** | the counterfactual, Arrow | **19.66 ms** (19.52–19.75) | **33.78 ms** (33.64–34.58) | **34.13 ms** *(was 35.62 ms)* |
 
 **And the set the bump replaces, for the same rows** — the same probe, on `parquet` 54.3.1, measured
 before the dependency moved:
@@ -1938,17 +2032,17 @@ real Q6's three predicates:
 | **Q1** the predicates, and the price | **54.09 ms** (53.70–54.94) | 58.00 ms |
 | **Q2** the predicates, and the discount | **20.29 ms** (20.07–21.05) | 22.53 ms |
 | **Q3** the predicates, and both | **54.48 ms** (53.92–54.83) | 57.58 ms |
-| **Q4** the whole query | **55.75 ms** (54.95–56.59) | 59.78 ms |
+| **Q4** the whole query | **52.69 ms** *(was 55.75 ms)* | 59.78 ms |
 | of which the scan stage | 53.73 ms | 57.67 ms |
 | of which the operator stages | 1.53 ms | 1.77 ms |
-| **the materialised column's share** (Q1 − Q0) | **34.15 ms** | 36.69 ms |
+| **the materialised column's share** (Q1 − Q0) | **32.37 ms** *(was 34.15 ms)* | 36.69 ms |
 | **the aggregate's own share** (Q4 − Q3) | **1.83 ms** | 0.85 ms |
 
 **110,915 rows survive**, and the answer is **5,526,985,127.48064**.
 
-**The materialised column is most of the query, and it is bytes.** 34.15 ms of the 55.75 ms query is the
-materialised column, and 64% of the scan stage. Arrow's decode of it is 32.84 ms and the engine's own
-materialisation of it is 34.15 ms, so **the engine is 1.31 ms from the floor the Arrow stack sets** — 4.0% above
+**The materialised column is most of the query, and it is bytes.** 32.37 ms of the 52.69 ms query is the
+materialised column, and 60% of the scan stage. Arrow's decode of it is 31.54 ms and the engine's own
+materialisation of it is 32.37 ms, so **the engine is 0.83 ms from the floor the Arrow stack sets** — 2.6% above
 it. There is nothing in the engine's read path to fix.
 
 **And it is not an expansion of dictionary indices.** The expansion of `l_discount` — the predicate's column — is
@@ -1963,7 +2057,7 @@ page big enough to keep it:
 | | the file's column | the counterfactual | |
 |---|---|---|---|
 | on disk | **36,451,424 bytes** | 47,499,678 bytes | **30% bigger** |
-| Arrow's decode | **32.84 ms** | 35.62 ms | **8% slower** |
+| Arrow's decode | **31.54 ms** *(was 32.84 ms)* | **34.13 ms** *(was 35.62 ms)* | **8% slower** |
 
 The dictionary is a **loss** for this column. **And the opposite is true of the two predicate columns**: `l_discount`
 written plain is 19.66 ms against the dictionary's 3.15 ms — 6.2× slower — and 11,644,415 bytes against
@@ -1991,11 +2085,14 @@ probe's decode of `l_quantity` is **8.63 ms** against the crate's **6.98 ms**. T
 verified against the parquet crate's, bit for bit, over every value of every row group, before it measures
 anything.
 
-**And the figures moved.** The query is **55.75 ms** where the set the bump replaces had **59.78 ms**, and the host's load
+**And the figures moved, and the reason is the bump, the host and the default together.** The query is
+**52.69 ms** where it was **55.75 ms** and where the set the bump replaces had **59.78 ms**, and the host's load
 average was **10.1** in this set against **12.8** in that one, so the machine's share of the movement is in there too.
 The crate's own decode of the materialised column barely moved — **36.76 ms → 36.63 ms** — while Arrow's did, **34.26 ms
-→ 32.84 ms**, and the engine's own materialisation of the column closed most of the gap to Arrow's floor: **2.43 ms →
-1.31 ms**. The old-and-new for every family is in [§3x](#3x-the-bump-and-the-figures-it-moved).
+→ 31.54 ms**, and the engine's own materialisation of the column closed most of the gap to Arrow's floor: **2.43 ms →
+0.83 ms**. **And the reader's default was a row limit of 131,072 rows and is a byte budget of 16 MiB now, so the
+campaign was taken again because the batch size touches the figure.** The old-and-new for every family is in
+[§3x](#3x-the-bump-and-the-figures-it-moved).
 
 See [ADR-0021](docs/adr/0021-the-materialised-column-and-a-rust-peer.md).
 
@@ -2015,9 +2112,9 @@ raw reports are in `bench-results/curve-run{1,2,3}.json` and the table below is 
 
 | rows | sf | MiB | **engine** | engine scan | engine ops | duckdb | polars | datafusion | **ms/Mrow** |
 |---|---|---|---|---|---|---|---|---|---|
-| 6,000,000 | 1 | 231.6 | **47.9 ms** | 47.2 ms | 1.4 ms | 61.0 ms | 183.4 ms | 100.8 ms | **8.0** |
-| 12,000,000 | 2 | 465.4 | **97.5 ms** | 94.3 ms | 2.7 ms | 121.0 ms | 358.3 ms | 199.0 ms | **8.1** |
-| 24,000,000 | 4 | 936.2 | **193.6 ms** | 187.6 ms | 5.6 ms | 244.0 ms | 716.9 ms | 396.9 ms | **8.1** |
+| 6,000,000 | 1 | 231.6 | **53.1 ms** *(was 47.9 ms)* | 47.2 ms | 1.4 ms | 61.0 ms | 183.4 ms | 100.8 ms | **8.9** |
+| 12,000,000 | 2 | 465.4 | **106.3 ms** *(was 97.5 ms)* | 94.3 ms | 2.7 ms | 121.0 ms | 358.3 ms | 199.0 ms | **8.9** |
+| 24,000,000 | 4 | 936.2 | **211.7 ms** *(was 193.6 ms)* | 187.6 ms | 5.6 ms | **265.0 ms** *(was 244.0 ms)* | 716.9 ms | 396.9 ms | **8.8** |
 
 **And the set the bump replaces, for the same rows** — the same code, on `parquet` 54.3.1, on the datasets the
 bump replaces:
@@ -2032,23 +2129,26 @@ The stage columns are the last run of each campaign and the total is the median 
 size the two disagree by 1% — that is the run-to-run spread on a shared machine, not a disagreement about the
 work.
 
-**The cost per row is flat, and that is the finding.** 8.0, 8.1 and 8.1 ms a million rows: the engine's cost
+**The cost per row is flat, and that is the finding.** 8.9, 8.9 and 8.8 ms a million rows: the engine's cost
 does **not** amortise as the file grows. It is exactly what §3h predicts — the query's cost is **bytes**, and
 bytes cost what they cost — and it is the answer to the question a reader asking about the size axis has. A curve
 that fell would have said the fixed costs dominate; this one does not fall.
 
-**The engine is ahead of every incumbent at every size.** DuckDB by 1.27×, 1.24× and 1.26×; Polars by 3.83×, 3.68×
-and 3.70×; and the Rust peer by 2.10×, 2.04× and 2.05×. The margin over DuckDB is **about the same at every size**
-— 1.24× to 1.27× — where the set the bump replaces has 1.15× to 1.22× and DuckDB relatively better on the bigger
-files. In this campaign it is not: the engine's margin over DuckDB is 1.27× at six million rows and 1.26× at
+**The engine is ahead of every incumbent at every size.** DuckDB by 1.15×, 1.14× and 1.25×; Polars by 3.45×, 3.37×
+and 3.39×; and the Rust peer by 1.90×, 1.87× and 1.87×. The margin over DuckDB is **about the same at every size**
+— 1.14× to 1.25× — where the set the bump replaces has 1.15× to 1.22× and DuckDB relatively better on the bigger
+files. In this campaign it is not: the engine's margin over DuckDB is 1.15× at six million rows and 1.25× at
 twenty-four million.
 
 **The scan is the query at every size**, and the operators grow from 1.4 ms to 5.6 ms as the rows that survive the
 filter grow — and they stay at **2–3%** of it. The arithmetic aggregate is not the bottleneck at any size, which is
 what §3c found at one size and this confirms at three.
 
-**These figures moved, and the reason is the host and the bump together.** The engine's six-million-row figure is
-**47.9 ms** where the set the bump replaces has **57.7 ms**; DuckDB's is **61.0 ms** against **69.0 ms**, Polars'
+**These figures moved, and the reason is the host, the bump and the default together.** The reader's default was a
+row limit of **131,072 rows** and is a **byte budget of 16 MiB** now, so the campaign was taken again because the
+batch size touches the figure. The engine's six-million-row figure is
+**53.1 ms**, where it was **47.9 ms** and where the set the bump replaces has **57.7 ms**; DuckDB's
+is **61.0 ms** against **69.0 ms**, Polars'
 **183.4 ms** against **197.4 ms**, and the peer's **100.8 ms** against **114.6 ms**. **The incumbents do not read
 the file through this repository's Arrow**, so their movement is the **host's** — and the host was quieter here: this
 campaign ran at a load average of **2.15 to 2.44**, where the campaigns that published the rest of this file ran at
@@ -2056,24 +2156,26 @@ campaign ran at a load average of **2.15 to 2.44**, where the campaigns that pub
 directly. **The comparison is what holds**, and it holds in both sets: the engine is ahead of every incumbent at
 every size.
 
-**And the same query on the same file is 55.75 ms in [§3h](#3h-the-materialised-column-and-what-it-is-made-of)'s
-ladder**, measured in a campaign that ran at a load average of **10.1**. Two numbers for one measurement, and the
-difference is the host's — which is why the curve's own campaign carries the incumbents, and why the load average
-is in the report.
+**And the same query on the same file is 52.69 ms in [§3h](#3h-the-materialised-column-and-what-it-is-made-of)'s
+ladder**, where it was **55.75 ms**, measured in a campaign that ran at a load average of **10.1**. Two numbers for
+one measurement, and the difference is the host's — which is why the curve's own campaign carries the incumbents,
+and why the load average is in the report.
 
 **One thing the curve found that is not a timing: the engine's default memory budget refuses the real Q6 at 24
 million rows.** The engine estimates the working set **before it reads a row** and refuses the query when the
-estimate does not fit: at 24 million rows the estimate is **377.7 MiB** against the **256 MiB** default, so the
-query is rejected having read nothing at all, and at 12 million rows the estimate is **188.8 MiB**, which fits.
+estimate does not fit: at 24 million rows the estimate is **392.0 MiB** — where it was **377.7 MiB** — against the
+**256 MiB** default, so the query is rejected having read nothing at all, and at 12 million rows the estimate is
+**203.2 MiB**, where it was **188.8 MiB**, which fits.
 The estimate is the engine's own and every point of the curve carries it; the budget the curve was measured under
 is **1024 MiB**, so that the largest size runs at all. The budget is a **policy knob**, not a limit on the engine:
 below it, it changes nothing at all.
 
 **And this section used to publish 391 MiB there, which was wrong.** The figure was **derived** — *about 16 bytes
-a row*, times the row count — and the multiplication was **13.3 MiB** out: the engine's own estimate is
-**377.7 MiB**, which is **16.5 bytes a row**. The estimate is made from the file's row count and its schema, and
-the bump changed the file's metadata and not its rows or its columns, so **the bump did not move it** — it was
-wrong before the bump too. The correction is recorded in
+a row*, times the row count — and the multiplication was **13.3 MiB** out of the estimate this section published
+then, **377.7 MiB**, which was **16.5 bytes a row**. **The estimate has moved since — 392.0 MiB, 17.1 bytes a row —
+and it moved with the default**, which now charges the estimate for the batch the read will hold; the bump
+changed the file's metadata and not its rows or its columns, so **the bump did not move it** — it was wrong
+before the bump too. The correction is recorded in
 [ADR-0052](docs/adr/0052-the-estimate-that-was-derived-instead-of-measured.md).
 
 ### 3j. The row-group count, and what it costs
@@ -2099,21 +2201,22 @@ old-and-new is collected in [§3x](#3x-the-bump-and-the-figures-it-moved).
 
 | threads | 6 groups: workers | 6 groups: engine | 12 groups: workers | 12 groups: engine | 24 groups: workers | 24 groups: engine |
 |---|---|---|---|---|---|---|
-| 1 | 1 | 14.6 ms | 1 | 14.4 ms | 1 | 15.9 ms |
-| 2 | 2 | 7.5 ms | 2 | 7.9 ms | 2 | 8.5 ms |
-| 4 | 4 | 5.4 ms | 4 | 4.7 ms | 4 | 5.1 ms |
-| 6 | 6 | 4.1 ms | 6 | 4.2 ms | 6 | 4.5 ms |
-| 8 | **6** | 4.3 ms | **8** | 4.0 ms | **8** | 4.5 ms |
-| 14 | **6** | 4.0 ms | **12** | 5.1 ms | **14** | 5.3 ms |
+| 1 | 1 | **13.2 ms** *(was 14.7 ms)* | 1 | **13.0 ms** *(was 14.4 ms)* | 1 | **13.7 ms** *(was 14.6 ms)* |
+| 2 | 2 | 6.7 ms *(was 7.5 ms)* | 2 | 7.0 ms *(was 7.9 ms)* | 2 | 7.1 ms *(was 8.5 ms)* |
+| 4 | 4 | 4.9 ms *(was 5.4 ms)* | 4 | 4.0 ms *(was 4.7 ms)* | 4 | 4.2 ms *(was 5.1 ms)* |
+| 6 | 6 | 3.9 ms *(was 4.1 ms)* | 6 | 3.9 ms *(was 4.2 ms)* | 6 | 3.9 ms *(was 4.5 ms)* |
+| 8 | **6** | 3.9 ms *(was 4.3 ms)* | **8** | 3.7 ms *(was 4.0 ms)* | **8** | 4.5 ms |
+| 14 | **6** | 3.9 ms *(was 4.0 ms)* | **12** | **5.0 ms** *(was 5.1 ms)* | **14** | 5.3 ms |
 
 The workers column is `min(threads, row_groups)` at every point of every sweep, and nothing else
 explains it: the same file, the same query, the same machine, the same harness, and the worker
 count follows the row-group count exactly.
 
 **And the file's row-group count no longer costs the engine anything.** The engine's one-thread
-figure across the three files is **14.6, 14.4 and 15.9 ms** — within 10% of each other, where the
+figure across the three files is **13.2, 13.0 and 13.7 ms** — within 6% of each other, where the
 set the bump replaces had **15.4, 15.7 and 16.4 ms**. The ladder below is the same measurement with
-the batch the tree used then, and it is where the row groups cost what they cost.
+the batch the tree derives now — **the whole row group**, where it was **125,000** rows — and it is where the
+row groups cost what they cost.
 
 **The same thing, measured back to back.** The per-row-group cost probe puts the engine's scan at
 two batch sizes in one session: the fixed 65,536 rows the tree used, and the batch the tree derives
@@ -2121,12 +2224,13 @@ now. Same build, same file, same process:
 
 | the engine's scan, one thread | 6 groups | 12 groups | 24 groups |
 |---|---|---|---|
-| the fixed 65,536 rows — the defect | 18.30 ms | 22.42 ms | 30.62 ms |
-| **the derived 125,000 rows — the fix** | **14.73 ms** | **14.65 ms** | **15.18 ms** |
+| the fixed 65,536 rows — the defect | **17.66 ms** *(was 18.30 ms)* | **21.86 ms** *(was 22.42 ms)* | **29.73 ms** *(was 30.62 ms)* |
+| **the derived batch — the fix** | **14.20 ms** *(was 14.73 ms)* | **13.64 ms** *(was 14.65 ms)* | **14.13 ms** *(was 15.18 ms)* |
 
-**The defect's cost is 3.6, 7.8 and 15.4 ms**, where the set the bump replaces had 4.7, 9.5 and
-18.5 ms, and the fix's cost is **flat within 3.6%** — 14.73, 14.65 and 15.18 ms, against the set
-the bump replaces' 15.32, 15.13 and 15.51 ms. That is the whole of the finding, in one table: the
+**The defect's cost is 3.5, 8.2 and 15.6 ms**, where the set the bump replaces had 4.7, 9.5 and
+18.5 ms, and the fix's cost is **flat within 4.1%** — 14.20, 13.64 and 14.13 ms, where the 125,000-row
+batch read 14.73, 14.65 and 15.18 ms, against the set the bump replaces' 15.32, 15.13 and 15.51 ms. That
+is the whole of the finding, in one table: the
 same measurement, the same session, the same machine, one row of it broken and one row of it
 fixed. The raw reports are `bench-results/row-group-cost-{6,12,24}-run{1,2,3}.json`, and
 `python3 scripts/medians.py` derives the table from them.
@@ -2141,13 +2245,13 @@ reader batch sizes, on each of the three files:
 | 31,250 | 17.04 ms | 18.01 ms | 18.44 ms | 0.078 |
 | 50,000 | 15.52 ms | 16.11 ms | 17.13 ms | 0.089 |
 | 62,500 | 15.12 ms | 15.49 ms | 16.06 ms | 0.053 |
-| **65,536** — divides none of them | **18.30 ms** | **22.42 ms** | **30.62 ms** | **0.684** |
-| **125,000** — the fix | **14.73 ms** | **14.65 ms** | **15.18 ms** | **0.025** |
-| 250,000 | 14.11 ms | 14.49 ms | 14.73 ms | 0.034 |
+| **65,536** — divides none of them | **17.66 ms** *(was 18.30 ms)* | **21.86 ms** *(was 22.42 ms)* | **29.73 ms** *(was 30.62 ms)* | **0.671** |
+| **the whole row group — the fix** | **14.20 ms** *(was 14.73 ms)* | **13.64 ms** *(was 14.65 ms)* | **14.13 ms** *(was 15.18 ms)* | **0.025** |
+| 250,000 | 14.11 ms | 14.49 ms | **14.13 ms** *(was 14.73 ms)* | 0.034 |
 
 **Seven of the eight batch sizes divide the row group's row count, and every one of them costs
 0.02–0.09 ms a row group**, where the set the bump replaces had 0.01–0.07. **The eighth — 65,536,
-which divides none of 1,000,000, 500,000 or 250,000 — costs 0.68**, where it cost **0.78**. The
+which divides none of 1,000,000, 500,000 or 250,000 — costs 0.67**, where it cost **0.78**. The
 mechanism is a property of the *shape* of the number and not of its size: a batch size that
 divides the row group's row count ends the row group on a batch boundary, and one that does not
 leaves a **partial** batch at the end of every row group.
@@ -2157,14 +2261,14 @@ the fixed batch — and the engine's own scan, at the derived batch, beside it:
 
 | | 6 groups | 12 groups | 24 groups | ms a row group |
 |---|---|---|---|---|
-| the crate's read of `l_shipdate` | 9.71 ms | 13.29 ms | 21.17 ms | **0.637** |
+| the crate's read of `l_shipdate` | **9.24 ms** *(was 9.71 ms)* | 13.29 ms | **20.80 ms** *(was 21.17 ms)* | **0.642** *(was 0.637)* |
 | the crate's read of `l_discount` | 3.39 ms | 3.26 ms | 3.24 ms | −0.009 |
 | the crate's read of `l_extendedprice` | 3.04 ms | 2.99 ms | 3.07 ms | 0.002 |
-| **the engine's own scan, the derived batch** | **14.22 ms** | **14.65 ms** | **15.00 ms** | **0.043** |
+| **the engine's own scan, the derived batch** | **14.11 ms** *(was 14.22 ms)* | **13.64 ms** *(was 14.65 ms)* | **14.08 ms** *(was 15.00 ms)* | **−0.002** |
 
 **`l_shipdate` alone carries it.** The other two columns' reads are flat across the three files —
 −0.009 and 0.002 ms a row group — and the engine's own scan, at the derived batch, is flat at
-0.043 ms a row group. Which of `l_shipdate`'s properties makes it the one that pays — its string
+**−0.002 ms** a row group. Which of `l_shipdate`'s properties makes it the one that pays — its string
 dictionary, its page count, or its size — **is not separated by this measurement**, and it is
 written down as the next question rather than guessed at.
 
@@ -2173,14 +2277,14 @@ the host's rather than the engine's:
 
 | at one thread | 6 groups | 12 groups | 24 groups |
 |---|---|---|---|
-| **the engine** | **14.6 ms** | **14.4 ms** | **15.9 ms** |
-| duckdb | 33.0 ms | 29.0 ms | 29.0 ms |
-| polars | 197.2 ms | 189.0 ms | 188.3 ms |
-| datafusion | 35.4 ms | 37.8 ms | 41.5 ms |
+| **the engine** | **13.2 ms** *(was 14.7 ms)* | **13.0 ms** *(was 14.4 ms)* | **13.7 ms** *(was 14.6 ms)* |
+| duckdb | **29.0 ms** *(was 31.0 ms)* | **27.0 ms** *(was 29.0 ms)* | **27.0 ms** *(was 29.0 ms)* |
+| polars | **179.2 ms** *(was 191.8 ms)* | **177.0 ms** *(was 189.0 ms)* | **178.6 ms** *(was 186.2 ms)* |
+| datafusion | **32.2 ms** *(was 35.7 ms)* | **33.4 ms** *(was 37.8 ms)* | **35.1 ms** *(was 37.5 ms)* |
 
 `DuckDB`'s and `Polars`' figures move the other way — down — and the peer's is the one that rises
-with the row-group count, 0.34 ms a row group, where the engine's own read rises by 0.07 ms a row
-group. This measurement does not separate the peer's share from the host's. What it does show is
+with the row-group count, 0.1 ms a row group, where the engine's own read does not rise at all:
+**13.2 ms against 13.7 ms**. This measurement does not separate the peer's share from the host's. What it does show is
 that the engine's own read does not pay for the row groups it reads: the rows, the seed and the
 schema are the same in all three files.
 
@@ -2204,28 +2308,29 @@ materialised column apart in §3h, run on all three files:
 | pages | 42 dictionary, 258 plain | 84 dictionary, 216 plain | 168 dictionary, 144 plain |
 | dictionary-page bytes — **read by nobody** | 6,313,096 | 12,627,464 | **25,259,152** |
 | plain-data bytes | 41,646,592 | 35,290,624 | 22,578,688 |
-| Arrow's decode | 33.46 ms | 33.76 ms | 35.62 ms |
+| Arrow's decode | **31.69 ms** *(was 33.46 ms)* | 33.76 ms | **33.06 ms** *(was 35.62 ms)* |
 | **the materialised column's share of the query** | **34.78 ms** | **34.85 ms** | **35.94 ms** |
 
 The smaller row groups really do make the materialised column *more* dictionary-encoded — 168
 dictionary pages against 42 — and they really do leave **four times as many dead dictionary pages**
-in the file, 25.3 MB that no reader reads. But the column's decode moves by **6%** and **its share
+in the file, 25.3 MB that no reader reads. But the column's decode moves by **4%** and **its share
 of the query by 3%** — 34.78 ms against 35.94 ms, where the set the bump replaces had the share
-flat — so the encoding is a small effect in this set. The predicates' cost moves by **6%** — 19.99
-ms against 21.23 ms — and what is left of *that* is the dictionary work per row group, not the
-partial batch.
+flat — so the encoding is a small effect in this set. The predicates' cost moves by **6.9%** — 18.46
+ms against 19.74 ms, where it was 19.99 ms against 21.23 ms — and what is left of *that* is the
+dictionary work per row group, not the partial batch.
 
 **And the query itself, through the engine's own lazy path, as the ladder §3h uses:**
 
 | the real Q6 | 6 groups | 12 groups | 24 groups |
 |---|---|---|---|
-| **Q0** the predicates alone | **19.99 ms** | **20.47 ms** | **21.23 ms** |
-| **Q4** the whole query | **56.10 ms** | **56.02 ms** | **58.46 ms** |
+| **Q0** the predicates alone | **18.46 ms** *(was 19.99 ms)* | **18.68 ms** *(was 20.47 ms)* | **19.74 ms** *(was 21.23 ms)* |
+| **Q4** the whole query | **52.68 ms** *(was 56.10 ms)* | **53.40 ms** *(was 56.02 ms)* | **55.65 ms** *(was 58.46 ms)* |
 | of which the scan stage | 54.57 ms | 54.78 ms | 56.22 ms |
 
 **What is left is not the partial batch, and this measurement says so.** The two-predicate shape —
-the one the sweep and the cost probe run — is flat across the three files: **14.6, 14.4 and 15.9
-ms**, and **14.73, 14.65 and 15.18 ms** in the probe's own back-to-back ladder. The real Q6's
+the one the sweep and the cost probe run — is flat across the three files: **14.7, 14.4 and 14.6
+ms**, and **14.20, 13.64 and 14.13 ms** in the probe's own back-to-back ladder, where the 125,000-row
+batch read **14.73, 14.65 and 15.18 ms**. The real Q6's
 **three**-predicate shape still rises by about **0.07 ms a row group**, and the two shapes differ by
 exactly one thing: the third predicate's column, `l_quantity`, which is dictionary-encoded with
 4,901 values a row group. So what remains is **dictionary work per row group** — the crate
@@ -2241,17 +2346,17 @@ dictionary.** The row-group count is a knob; the parallelism above six workers w
 measured; the engine's read no longer pays for the row groups it reads; and the remaining per-row-group
 cost is 0.07 ms of dictionary work, on a query that reads three predicate columns.
 
-**The engine's speedup at fourteen threads is 3.65×, 2.80× and 3.00×** — and it does not *rise*
+**The engine's speedup at fourteen threads is 3.40×, 2.57× and 2.60×** — and it does not *rise*
 with the row-group count, which is the point: it was **3.74×, 3.63× and 3.39×** in the set the
 bump replaces, and it used to rise, because the engine's **serial** cost grew with the row groups:
 more row groups meant more of the defect, and a bigger serial part means a bigger ratio. Now the
 serial part is flat, so the speedup is set by the parallelism alone — and the cap above it is still
 `min(threads, row_groups)`.
 
-**The per-row-group cost is gone.** On the probe's own back-to-back ladder it is **0.68 ms** with
+**The per-row-group cost is gone.** On the probe's own back-to-back ladder it is **0.67 ms** with
 the fixed batch and **0.02 ms** with the derived one — a 96% reduction. Spec 015 published the same
 defect on this sweep's one-thread Q6 across the three files; the sweep's one-thread figures are now
-**14.6, 14.4 and 15.9 ms**, within 10% of each other, so there is no per-row-group cost left to
+**13.2, 13.0 and 13.7 ms**, within 6% of each other, so there is no per-row-group cost left to
 measure there either.
 
 **The best figure is the six-row-group file's again.** It was **4.1 ms** there in the set the bump
@@ -2260,20 +2365,23 @@ and it is **4.0 ms** there now, against **5.1 ms** and **5.3 ms**. The absolute 
 set's, but the *one-thread* figures, which are the ones the defect was in, are flat: **14.6, 14.4
 and 15.9 ms**.
 
-**These figures moved, and the reason is the bump and the host together.** The row-group probe
+**These figures moved, and the reason is the bump, the host and the default together.** The row-group probe
 reports the host's own load average: **7.61–8.71** while these campaigns ran, against
 **9.83–13.17** for the set the bump replaces, so the machine was quieter for them. The engine's
 read is `parquet`'s reader, and 58.4.1 is a different reader from 54.3.1, so the engine's figures
 are the ones the bump touches directly; the incumbents are the yardstick, and they moved with the
-host rather than with the reader — `DuckDB`'s cold scan on the six-group file did not move at all,
-at **33.0 ms**, `Polars`' moved from **193.6 ms** to **197.2 ms** and the peer's from **37.4 ms** to
-**35.4 ms**. The comparison is what holds, and it holds: the engine's one-thread figure is flat
-across the three files, and the defect is gone.
+host rather than with the reader — `DuckDB`'s cold scan on the six-group file fell,
+at **31.0 ms**, where it read **33.0 ms**, `Polars`' moved from **193.6 ms** to **191.8 ms**, where it
+read **197.2 ms** in the set the file published before, and the peer's from **37.4 ms** to **35.7 ms**. **And the
+reader's default was a row limit of 131,072 rows and is a byte budget of 16 MiB now, so the campaign was taken again
+because the batch size touches the figure.** The comparison is what holds, and it holds: the engine's one-thread
+figure is flat across the three files, and the defect is gone.
 
 **That last part was a defect, and spec 016 fixed it.** A defect gets its own spec: the engine's
 read path had a per-row-group cost that the Parquet readers the incumbents use do not have, and
 spec 016 measured the mechanism and removed it. See
 [ADR-0023](docs/adr/0023-the-per-row-group-cost.md).
+
 ### 3k. The dictionary, counted
 
 §3j left one cost unattributed. The real Q6's **three**-predicate shape rises by about **0.07 ms a
@@ -2293,10 +2401,12 @@ dictionary-encoded and the engine compares the **distinct values** and maps the 
 the indices. The kept shape is the only way the engine could stop comparing every row, so it is
 measured rather than argued about.
 
-The probe reads at the **batch size the engine itself would use for the file** — **125,000** rows,
-asked of the engine rather than copied from a rule — so its shapes are the engine's shapes. And it
-checks that the two paths answer the same question before it times either: **both paths keep
-110,915 rows**.
+The probe reads at the **batch size the engine itself would use for the file** — asked of the
+engine rather than copied from a rule — so its shapes are the engine's shapes. **And the rule is a
+byte budget now**, so that batch is **500,000** rows on the six- and twelve-row-group files and
+**250,000** on the twenty-four-row-group one, where the old rule's row limit gave **125,000** rows
+everywhere. And it checks that the two paths answer the same question before it times either:
+**both paths keep 110,915 rows**.
 
 **The reading, and the engine's comparison on top of it** — the Q6 revenue query's three predicates,
 on the six-, twelve- and twenty-four-row-group files (`data/lineitem.parquet`,
@@ -2304,11 +2414,22 @@ on the six-, twelve- and twenty-four-row-group files (`data/lineitem.parquet`,
 
 | the shape | 6 groups | 12 groups | 24 groups |
 |---|---|---|---|
-| the crate's read, with the dictionaries expanded | **14.30 ms** | **15.64 ms** | **15.72 ms** |
-| the crate's read, with the dictionaries **kept** | **210.85 ms** | **206.02 ms** | **212.48 ms** |
-| the crate's read, and the engine's comparison over the values | **19.94 ms** | **19.99 ms** | **21.21 ms** |
-| the crate's read, and the engine's comparison over the **distinct values** | **224.00 ms** | **213.16 ms** | **217.55 ms** |
-| **the engine's own read** | **19.56 ms** | **20.90 ms** | **21.33 ms** |
+| the crate's read, with the dictionaries expanded | **13.81 ms** | **14.24 ms** | **14.66 ms** |
+| the crate's read, with the dictionaries **kept** | **200.19 ms** | **198.71 ms** | **199.64 ms** |
+| the crate's read, and the engine's comparison over the values | **18.63 ms** | **18.51 ms** | **19.62 ms** |
+| the crate's read, and the engine's comparison over the **distinct values** | **206.41 ms** | **204.45 ms** | **203.16 ms** |
+| **the engine's own read** | **18.40 ms** | **18.71 ms** | **19.62 ms** |
+
+**The set this file published before, for the same rows,** held **14.30 ms**, **15.64 ms** and
+**15.72 ms** for the crate's read with the dictionaries expanded, **210.85 ms**, **206.02 ms** and
+**212.48 ms** for the crate's read with the dictionaries kept, **19.94 ms**, **19.99 ms** and
+**21.21 ms** with the engine's comparison over the values, **224.00 ms**, **213.16 ms** and
+**217.55 ms** over the distinct values, and **19.56 ms**, **20.90 ms** and **21.33 ms** for the
+engine's own read. **And the set the code the default replaces was measured in** — the same probe,
+the old rule's batch, on this host, interleaved with the campaigns above — holds **13.56 ms**,
+**14.00 ms** and **14.91 ms**, **195.38 ms**, **192.43 ms** and **196.14 ms**, **19.02 ms**,
+**19.30 ms** and **20.19 ms**, **206.32 ms**, **198.80 ms** and **209.89 ms**, and **18.93 ms**,
+**19.42 ms** and **20.37 ms**.
 
 **And the set the bump replaces, for the same rows** — the same probe, on `parquet` 54.3.1, measured
 before the dependency moved:
@@ -2321,20 +2442,29 @@ before the dependency moved:
 | the crate's read, and the engine's comparison over the **distinct values** | 298.88 ms | 286.81 ms | 291.92 ms |
 | **the engine's own read** | 21.40 ms | 21.25 ms | 22.62 ms |
 
-**And the alternative is not a little slower: it is 14.7×.** On the six-row-group file the kept
-read is 210.85 ms against the expanded read's 14.30 ms, and with the engine's comparison on top of
-each the whole path is 224.00 ms against 19.94 ms — **11.2×**. The set the bump replaces had
+**And the alternative is not a little slower: it is 14.5×.** On the six-row-group file the kept
+read is 200.19 ms, where it was 210.85 ms, against the expanded read's 13.81 ms, where it was
+14.30 ms, and with the engine's comparison on top of each the whole path is 206.41 ms, where it
+was 224.00 ms, against 18.63 ms, where it was 19.94 ms — **11.1×**. The set the bump replaces had
 **18.3×** and **14.0×** for the same two comparisons.
 
 **The kept read is where the movement is.** The crate's kept read of the six-row-group file is
-**210.85 ms** where the set the bump replaces had **282.25 ms** — a quarter less — while the
-expanded read moved from 15.46 ms to 14.30 ms. The host was no quieter for it: the load average
-was **7.3–9.5** in this set, against **7.2–8.6** in the replaced one, so the movement is not the
-machine's.
+**200.19 ms**, where it was **210.85 ms**, and the set the bump replaces had **282.25 ms** — a
+quarter less — while the expanded read moved from 15.46 ms to **13.81 ms**, where it was
+**14.30 ms**. The host was no quieter for the kept read's movement out of the replaced set: the
+load average was **9.47–8.25** in the set this file published before and **3.08–3.00** in this one,
+against **7.17–7.70** in the replaced one, so that movement is not the machine's.
+
+**And the code's share of it is the old code's own campaigns.** Measured back to back with the new
+one, on this host, the old rule's batch reads the expanded shape at **13.56 ms** where the new
+rule's reads it at **13.81 ms**, and the kept shape at **195.38 ms** where the new one reads
+**200.19 ms** — so the batch the default moved is worth **0.25 ms** on the expanded read and
+**4.81 ms** on the kept one, and the rest of the movement is the host's.
 
 **The mechanism is in the reader, and it is measured.** The crate hands back a **new** dictionary
-array for every batch: **0 of 23** consecutive batches share the same array, on all three files and
-in both versions of the code. The probe checks this on `l_shipdate`, the one column the file keeps
+array for every batch: **0 of 11** consecutive batches share the same array on the six- and
+twelve-row-group files, **0 of 23** on the twenty-four-row-group one, on all three files and in
+both versions of the code. The probe checks this on `l_shipdate`, the one column the file keeps
 as a dictionary, and it checks it by pointer identity rather than by comparing the values. So
 "compare the distinct values once a row group" is impossible with this reader: the engine cannot
 know the dictionary has not changed, because the reader gives it a different one every time. **The
@@ -2344,9 +2474,9 @@ alternative is closed, and the expanded shape is kept.**
 
 | column | expanded | kept | |
 |---|---|---|---|
-| `l_quantity` | **4.56 ms** | **115.37 ms** | **25.3× slower** |
-| `l_discount` | **3.20 ms** | **84.91 ms** | **26.5× slower** |
-| `l_shipdate` | **6.55 ms** | **6.48 ms** | **the same** — the file's schema already says dictionary |
+| `l_quantity` | **4.19 ms** *(was 4.56 ms)* | **110.29 ms** *(was 115.37 ms)* | **26.3× slower** |
+| `l_discount` | **3.10 ms** *(was 3.20 ms)* | **82.34 ms** *(was 84.91 ms)* | **26.6× slower** |
+| `l_shipdate` | **6.17 ms** *(was 6.55 ms)* | **6.09 ms** *(was 6.48 ms)* | **the same** — the file's schema already says dictionary |
 
 **And the set the bump replaces, for the same columns:**
 
@@ -2366,20 +2496,20 @@ probe times the two halves of the engine's dictionary path on their own, over th
 
 | | 6 groups | 12 groups | 24 groups |
 |---|---|---|---|
-| the distinct values, compared | **1.31 ms** | **1.28 ms** | **1.29 ms** |
-| the map, from the answer to the rows | **7.14 ms** | **7.06 ms** | **7.13 ms** |
+| the distinct values, compared | **0.32 ms** *(was 1.31 ms)* | **0.32 ms** *(was 1.28 ms)* | **0.62 ms** *(was 1.29 ms)* |
+| the map, from the answer to the rows | **7.12 ms** *(was 7.14 ms)* | **7.30 ms** *(was 7.06 ms)* | **6.87 ms** *(was 7.13 ms)* |
 
 The set the bump replaces had **1.43, 1.33 and 1.37 ms** for the distinct values and **7.27,
-7.16 and 7.19 ms** for the map. The kept shape's cost is in the crate's read — 210.85 ms of it,
-before the engine compares anything at all.
+7.16 and 7.19 ms** for the map. The kept shape's cost is in the crate's read — **200.19 ms** of
+it, where it was **210.85 ms**, before the engine compares anything at all.
 
 **And the residual is the crate's.** The engine's comparison — its own work, over the crate's read —
 does not grow with the row-group count at all:
 
 | | 6 groups | 12 groups | 24 groups | |
 |---|---|---|---|---|
-| the crate's read, with the dictionaries expanded | **14.30 ms** | **15.64 ms** | **15.72 ms** | **0.08 ms a row group** |
-| the engine's comparison on top of it | **5.65 ms** | **4.34 ms** | **5.49 ms** | **−0.01 ms a row group** |
+| the crate's read, with the dictionaries expanded | **13.81 ms** | **14.24 ms** | **14.66 ms** | **0.05 ms a row group** |
+| the engine's comparison on top of it | **4.82 ms** | **4.28 ms** | **4.96 ms** | **0.01 ms a row group** |
 
 The set the bump replaces had **15.46, 15.87 and 16.65 ms** for the crate's read — **0.07 ms** a row
 group — and **5.94, 5.47 and 5.71 ms** for the engine's comparison on top of it, **−0.01 ms** a row
@@ -2406,17 +2536,18 @@ two sets overlap, and the change moved the number by less than the spread of the
 decomposition — the dictionary map and the string comparison were written **twice**, once in the
 pushdown and once in the filter — and the work each batch does is the same work.
 
-**In this set the same comparison reads 5.65 ms**, against **5.94 ms** in the set the bump replaces
-and **5.32 ms** in the old code's. It is the subtraction that moved least: the crate's read under
-it is **14.30 ms** where it was 15.46 ms, and the engine's own read is **19.56 ms** where it was
-21.40 ms, so what is left of the two — the engine's own work over the crate's read — is 5.65 ms
-where it was 5.94 ms.
+**In this set the same comparison reads 4.82 ms**, where it was 5.65 ms, against **5.94 ms** in
+the set the bump replaces and **5.32 ms** in the old code's. It is the subtraction that moved
+least: the crate's read under it is **13.81 ms**, where it was **14.30 ms** and the set the bump
+replaces had **15.46 ms**, and the engine's own read is **18.40 ms**, where it was **19.56 ms**
+and the set the bump replaces had **21.40 ms**, so what is left of the two — the engine's own
+work over the crate's read — is 4.82 ms where it was 5.94 ms.
 
 **And the engine's own read path adds nothing measurable over the crate's read plus its
-comparison.** The engine's own read is 19.56 ms on the six-row-group file, and the crate's read
-plus the engine's comparison is 14.30 ms + 5.65 ms = 19.95 ms. The two agree to within 0.4 ms,
-which is inside the campaigns' own spread, where the set the bump replaces had them equal to the
-millisecond.
+comparison.** The engine's own read is 18.40 ms on the six-row-group file, where it was 19.56 ms,
+and the crate's read plus the engine's comparison is 13.81 ms + 4.82 ms = 18.63 ms. The two agree
+to within 0.2 ms, which is inside the campaigns' own spread, where the set the bump replaces had
+them equal to the millisecond.
 
 **What the increment changed, and what it did not.** It changed one thing in the engine: the
 dictionary path is now **one implementation**, in `crates/columnar-engine/src/dictionary.rs`, shared
@@ -2430,10 +2561,17 @@ engine cannot have the dictionary cheaply, so the residual that belongs to it is
 fact about the reader rather than fixed here. The alternative — asking the crate to keep the
 dictionaries — is measured and closed.
 
-All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **7.3–9.5**
-while the campaigns ran. The raw reports are
+**And the campaign was taken again, because the default moved.** The engine's reader batch was a
+row limit and it is a byte budget now, divided by what a row costs for the columns the read
+fetches; the batch size touches the figures here, so the campaign was re-run on this host, the
+old rule and the new one measured back to back and interleaved, and the difference between the
+old figure and the new one is the code's and not the machine's. All of these are ARM64 numbers,
+on an Apple M4 Max, and the host's load average was **9.47–8.25** while the set this file published
+before ran — the reports carry this campaign's own. The raw reports are
 `bench-results/dictionary-cost-{6,12,24}-run{1,2,3}.json`,
-`bench-results/dictionary-cost-before-{6,12,24}-run{1,2,3}.json` and
+`bench-results/dictionary-cost-{6,12,24}-spec051-before-run{1,2,3}.json` — the set the default
+replaces — `bench-results/dictionary-cost-{6,12,24}-spec050-run{1,2,3}.json` — the set this file
+published before — `bench-results/dictionary-cost-before-{6,12,24}-run{1,2,3}.json` and
 `bench-results/dictionary-cost-{6,12,24}-spec041-before-run{1,2,3}.json` — the set the bump
 replaces — and `python3 scripts/medians.py` derives the tables above from them. See
 [ADR-0029](docs/adr/0029-the-dictionary-counted.md).
@@ -2458,14 +2596,26 @@ use for the file** — asked of the engine, not copied from a rule:
 
 | the shape | ms |
 |---|---|
-| the crate's read of `l_orderkey` | **32.79 ms** |
-| the crate's read of `l_extendedprice` | **31.85 ms** |
-| **the crate's read of both** | **63.97 ms** |
-| the engine's own scan of `l_orderkey` | **35.28 ms** |
-| the engine's own scan of `l_extendedprice` | **35.51 ms** |
-| **the engine's own scan of both** | **71.35 ms** |
-| the crate's read of the build side's two columns | **9.76 ms** |
-| **the engine's copy** — its own scan over the crate's read | **7.38 ms** |
+| the crate's read of `l_orderkey` | **31.37 ms** |
+| the crate's read of `l_extendedprice` | **31.53 ms** |
+| **the crate's read of both** | **63.00 ms** |
+| the engine's own scan of `l_orderkey` | **34.17 ms** |
+| the engine's own scan of `l_extendedprice` | **34.39 ms** |
+| **the engine's own scan of both** | **68.82 ms** |
+| the crate's read of the build side's two columns | **9.52 ms** *(was 9.76 ms)* |
+| **the engine's copy** — its own scan over the crate's read | **5.82 ms** |
+
+**The set this file published before, for the same rows,** held **32.79 ms** for the crate's read
+of `l_orderkey`, **31.85 ms** for `l_extendedprice` and **63.97 ms** for both, **35.28 ms** for the
+engine's own scan of `l_orderkey`, **35.51 ms** for `l_extendedprice` and **71.35 ms** for both,
+**9.76 ms** for the build side's two columns, and **7.38 ms** for the copy.
+
+**And the set the code the default replaces was measured in** — the same probe, the old rule's batch,
+on this host, interleaved with the campaigns above — holds **31.55 ms**, **31.50 ms** and
+**62.46 ms**, **34.30 ms**, **34.41 ms** and **69.20 ms**, **9.28 ms** for the build side's two
+columns, and **6.73 ms** for the copy. **So the batch the default moved is worth 0.47 ms on the
+crate's read of both columns and 0.24 ms on the build side's read**, and the rest of the movement
+between the two sets is the host's.
 
 **And the set the bump replaces, for the same rows** — the same probe, on `parquet` 54.3.1, measured
 before the dependency moved:
@@ -2481,16 +2631,17 @@ before the dependency moved:
 | the crate's read of the build side's two columns | 9.99 ms |
 | **the engine's copy** — its own scan over the crate's read | 6.49 ms |
 
-**The crate's decode is 63.97 ms and the engine's own work over it is 7.38 ms.** That 7.38 ms is
-the copy: 96 MB of values, out of the reader's array and into the engine's own columns. It is
-**10.3% of the scan**, and it is the whole of the engine's share of it.
+**The crate's decode is 63.00 ms, where it was 63.97 ms, and the engine's own work over it is
+5.82 ms, where it was 7.38 ms.** That 5.82 ms is the copy: 96 MB of values, out of the reader's
+array and into the engine's own columns. It is **8.5% of the scan**, where it was **10.3%**, and
+it is the whole of the engine's share of it.
 
 **And 96.4% of what it copies is thrown away.** The build side holds **216,345** keys, and the
 probe side's **6,000,000** rows produce **216,783** output rows: **3.6%** of the probe side matches
 something. The engine copies every row the reader hands it, and the join decides a moment later
 that most of them are worth nothing.
 
-So the copy is 7.38 ms of work for 96.4% waste. The engine was copying 96 MB to keep 3.5 MB.
+So the copy is 5.82 ms of work for 96.4% waste. The engine was copying 96 MB to keep 3.5 MB.
 
 **The change: the scan feeds the join.** The join's probe now runs **inside** the scan, over the
 reader's batches, **before anything is copied**. The probe reads the key where it lies — in the
@@ -2544,26 +2695,36 @@ would have to be evaluated over every row of the file rather than over the rows 
 scan, and that trade is not measured. Both fallbacks are named in
 [spec 023](specs/023-the-scan-that-feeds-the-join/spec.md)'s scope, not hidden in a footnote.
 
-**And the figures moved, in both directions.** The crate's read of both columns is **63.97 ms**
-where the set the bump replaces had **66.54 ms**, and the engine's own scan of both is
-**71.35 ms** where it had **73.03 ms** — the read is faster. The **copy**, the engine's own work
-over the reader's array, is the one figure that moved the other way: **6.49 ms → 7.38 ms**, and it
-is now **10.3% of the scan** where it was **8.9%**. The machine was busier while these campaigns
-ran than the set the bump replaces' **7.8–8.1**, so the machine's share of the movement is in there
+**And the figures moved, and this time they all moved the same way.** The crate's read of both
+columns is **63.00 ms**, where it was **63.97 ms**, and the set the bump replaces had
+**66.54 ms**, and the engine's own scan of both is **68.82 ms**, where it was **71.35 ms** and it
+had **73.03 ms** — the read is faster. The **copy**, the engine's own work over the reader's
+array, moved with it: it is **5.82 ms**, where it was **7.38 ms** and the set the bump replaces
+had **6.49 ms**, and it is now **8.5% of the scan** where it was **10.3%** and where the set the
+bump replaces had **8.9%**. The machine was busier while the set this file published before ran
+than the set the bump replaces' **7.8–8.1**, so the machine's share of that movement is in there
 too; this section does not separate the two. The old-and-new for every family
 is in [§3x](#3x-the-bump-and-the-figures-it-moved).
 
-All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **13.7–14.7**
-while the campaigns ran — the reports carry it. The raw reports are `bench-results/scan-cost-run{1,2,3}.json`,
+**And the campaign was taken again, because the default moved.** The engine's reader batch was a
+row limit and it is a byte budget now, divided by what a row costs for the columns the read
+fetches; the batch size touches the figures here, so the campaign was re-run on this host, the
+old rule and the new one measured back to back and interleaved, and the difference between the
+old figure and the new one is the code's and not the machine's. All of these are ARM64 numbers,
+on an Apple M4 Max, and the host's load average was **13.7–14.7** while the set this file
+published before ran — the reports carry this campaign's own. The raw reports are
+`bench-results/scan-cost-run{1,2,3}.json`,
+`bench-results/scan-cost-spec051-before-run{1,2,3}.json` — the set the default replaces —
+`bench-results/scan-cost-spec050-run{1,2,3}.json` — the set this file published before —
 `bench-results/scan-cost-spec041-before-run{1,2,3}.json` — the set the bump replaces — and
 `bench-results/compare-spec023-run{1,2,3}.json` — the set this section's before-and-after was
-measured from, kept under its own name — and `python3 scripts/medians.py` derives the tables above
-from them. See [ADR-0030](docs/adr/0030-the-scan-that-feeds-the-join.md).
+measured from, kept under its own name — and `python3 scripts/medians.py` derives the tables
+above from them. See [ADR-0030](docs/adr/0030-the-scan-that-feeds-the-join.md).
 ### 3m. The time the plan output does not name
 
 §3l left the **join's scan** attributed. This section is about the plan output itself: it is the
 engine's own account of its work, and on **six of the eight** published queries that account was
-complete — the stages added up to the query's time to within a fifth of a millisecond. The two that
+complete — the stages added up to the query's time to within a quarter of a millisecond. The two that
 name a **sort** and a **join** did not, and the plan output did not say what the missing time was.
 
 **The instrument** (`crates/columnar-engine/examples/query_cost_probe.rs`) runs the engine's **own**
@@ -2579,11 +2740,13 @@ the account was closed when this section was written and it is closed now. The t
 evidence that it **stayed** closed: the code changed underneath it, and the plan output still
 accounts for the whole query.
 
-**And the middle column is the set the bump replaces.** The dependency moved from `parquet` 54.3.1 to
-58.4.1, the writer's bytes changed, and the dataset was regenerated, so every figure that reads the
-file was taken again. The middle column is the **new code** measured in the set the bump replaces, and
-that set is committed under its own name — `bench-results/query-cost-spec041-before-run{1,2,3}.json`
-— so every moved figure is published with the figure it moved from. The **old code**'s campaigns,
+**And the middle column is the set the bump replaces.** The engine's default reader batch size
+changed from a row limit to a byte budget — [§3ag](#3ag-the-width-statement-paid) has the rule — and
+the batch size touches every figure the reader does, so the whole campaign was taken again: the old
+code and the new one, measured back to back with each other, on this host. The middle column is the
+**new code** measured in the set this file published before, and that set is committed under its own
+name — `bench-results/query-cost-spec050-run{1,2,3}.json` — so every moved figure is published with
+the figure it moved from. The **old code**'s campaigns,
 `bench-results/query-cost-before-run{1,2,3}.json`, did not move: they are the same tree, measured
 before the dependency moved.
 
@@ -2594,10 +2757,10 @@ query:
 
 | | the old code | the set the bump replaces | the new code |
 |---|---|---|---|
-| the selection expanded into row numbers | 0.19 ms | 0.20 ms | **0.33 ms** |
-| the same rows, read as they are needed | 0.56 ms | 0.58 ms | **0.56 ms** |
-| the same expansion, with the selection a bitmap — **the control** | 4.06 ms | 3.99 ms | **4.32 ms** |
-| the same walk, with the selection a bitmap — **the control** | 2.85 ms | 2.89 ms | **2.84 ms** |
+| the selection expanded into row numbers | 0.19 ms | 0.33 ms | **0.20 ms** |
+| the same rows, read as they are needed | 0.56 ms | 0.56 ms | **0.57 ms** |
+| the same expansion, with the selection a bitmap — **the control** | 4.06 ms | 4.32 ms | **4.12 ms** |
+| the same walk, with the selection a bitmap — **the control** | 2.85 ms | 2.84 ms | **2.86 ms** |
 
 **And every published query, on both paths** — the time the plan output does not name, which is the
 whole query less the plan output's own stage table. **Resident** first, over the dataset already in
@@ -2606,12 +2769,12 @@ memory:
 | query | the old code | the set the bump replaces | the new code |
 |---|---|---|---|
 | `scan` | 0.001 ms | 0.001 ms | **0.001 ms** |
-| `filter-numeric` | 0.002 ms | 0.002 ms | **0.003 ms** |
-| `filter-string` | 0.002 ms | 0.003 ms | **0.005 ms** |
-| `filter-range` | 0.004 ms | 0.005 ms | **0.008 ms** |
-| `q6` | 0.005 ms | 0.006 ms | **0.007 ms** |
-| `q6-revenue` | 0.014 ms | 0.009 ms | **0.011 ms** |
-| **`join-orders`** | **0.016 ms** | **0.015 ms** | **0.021 ms** |
+| `filter-numeric` | 0.002 ms | 0.003 ms | **0.001 ms** |
+| `filter-string` | 0.002 ms | 0.005 ms | **0.002 ms** |
+| `filter-range` | 0.004 ms | 0.008 ms | **0.007 ms** |
+| `q6` | 0.005 ms | 0.007 ms | **0.004 ms** |
+| `q6-revenue` | 0.014 ms | 0.011 ms | **0.008 ms** |
+| **`join-orders`** | **0.016 ms** | **0.021 ms** | **0.018 ms** |
 | **`sort-topk`** | **0.006 ms** | **0.004 ms** | **0.004 ms** |
 
 **And the same queries, cold**, over the file:
@@ -2619,46 +2782,46 @@ memory:
 | query | the old code | the set the bump replaces | the new code |
 |---|---|---|---|
 | `scan` | 0.002 ms | 0.001 ms | **0.001 ms** |
-| `filter-numeric` | 0.006 ms | 0.007 ms | **0.009 ms** |
-| `filter-string` | 0.006 ms | 0.009 ms | **0.008 ms** |
-| `filter-range` | 0.014 ms | 0.011 ms | **0.018 ms** |
-| `q6` | 0.010 ms | 0.009 ms | **0.011 ms** |
-| `q6-revenue` | 0.015 ms | 0.014 ms | **0.018 ms** |
-| **`join-orders`** | **0.015 ms** | **0.015 ms** | **0.017 ms** |
-| **`sort-topk`** | **0.010 ms** | **0.009 ms** | **0.011 ms** |
+| `filter-numeric` | 0.006 ms | 0.009 ms | **0.006 ms** |
+| `filter-string` | 0.006 ms | 0.008 ms | **0.008 ms** |
+| `filter-range` | 0.014 ms | 0.018 ms | **0.012 ms** |
+| `q6` | 0.010 ms | 0.011 ms | **0.011 ms** |
+| `q6-revenue` | 0.015 ms | 0.018 ms | **0.213 ms** |
+| **`join-orders`** | **0.015 ms** | **0.017 ms** | **0.018 ms** |
+| **`sort-topk`** | **0.010 ms** | **0.011 ms** | **0.073 ms** |
 
-**The two queries the hole was in, in full** — the resident path, measured back to back on this
-host: the old code, the new code as the set the bump replaces measured it, and the new code as this
-file publishes it.
+**The two queries the hole was in, in full** — the resident path: the old code, the new code as the
+set the bump replaces measured it, and the new code as this file publishes it.
 
 | | the old code | the set the bump replaces | the new code |
 |---|---|---|---|
-| the whole query (`join-orders`) | 21.235 ms | 21.324 ms | **21.802 ms** |
-| the plan output's own stage table (`join-orders`) | 21.219 ms | 21.308 ms | **21.780 ms** |
-| **the time the plan output does not name** (`join-orders`) | **0.016 ms** | **0.015 ms** | **0.021 ms** |
-| the whole query (`sort-topk`) | 3.916 ms | 1.050 ms | **1.034 ms** |
-| the plan output's own stage table (`sort-topk`) | 3.912 ms | 1.046 ms | **1.030 ms** |
+| the whole query (`join-orders`) | 21.235 ms | 21.802 ms | **20.448 ms** |
+| the plan output's own stage table (`join-orders`) | 21.219 ms | 21.780 ms | **20.429 ms** |
+| **the time the plan output does not name** (`join-orders`) | **0.016 ms** | **0.021 ms** | **0.018 ms** |
+| the whole query (`sort-topk`) | 3.916 ms | 1.034 ms | **1.003 ms** |
+| the plan output's own stage table (`sort-topk`) | 3.912 ms | 1.030 ms | **0.998 ms** |
 | **the time the plan output does not name** (`sort-topk`) | **0.006 ms** | **0.004 ms** | **0.004 ms** |
 
-**And the host moved with the set.** The new code's campaigns ran at a load average of **17.6–18.6**,
-where the set the bump replaces ran at **6.7–7.5** and the old code's campaigns at **6.7–7.1**, so
+**And the host moved with the set.** The new code's campaigns ran at a load average of **3.6–4.5**,
+where the set the bump replaces ran at **17.6–18.6** and the old code's campaigns at **6.7–7.1**, so
 part of the movement in the new column is the host's and not the code's. **The control moved too,
-and by more**: the bitmap's expansion was **3.99 ms** in the set the bump replaces and **4.32 ms**
-here, while the time the plan output does not name went **0.015 ms** to **0.021 ms** — the hole is
-an order of magnitude below the host's own movement. The account is closed either way: the time the
-plan output does not name is **0.021 ms** of a **21.80 ms** query, and **0.004 ms** of a **1.03 ms**
-query.
+and by more**: the bitmap's expansion was **4.32 ms** in the set the bump replaces and **4.12 ms**
+here, while the time the plan output does not name went **0.021 ms** to **0.018 ms** — the hole is
+an order of magnitude below the host's own movement. The account is closed either way: the plan
+output's own stage table is **20.43 ms**, where it was **21.78 ms**, and the time the plan output
+does not name is **0.018 ms** of a **20.45 ms** query, where it was **21.80 ms**, and **0.004 ms**
+of a **1.00 ms** query.
 
 **The expansion was the whole of it.** When this section was written the unnamed time was
 **4.684 ms** on the join and **4.324 ms** on the sort, resident — the selection expanded into row
 numbers: **4.13 ms**, the cost of building the row numbers of six million rows. The bitmap rows
 above are the **control**, and when this section was written they did not move: **4.69 ms** against
 **4.22 ms** on the same host, back to back. **The machine was not what changed; the code was.** **And the
-account is still closed.** The three columns in the tables above are the code spec 024 produced, the code
-spec 025 produced as the set the bump replaces measured it, and the code spec 025 produced as this file
-publishes it, and the unnamed time is **0.021 ms** on the join and **0.004 ms** on the sort, resident, on
-the new code: the sort's own work fell from **3.92 ms** to **1.03 ms** underneath it, and the plan output
-still accounts for the whole query.
+account is still closed.** The three columns in the tables above are the code spec 024 produced, the
+code spec 025 produced as this file published it, and the code this file publishes now, and the
+unnamed time is **0.018 ms** on the join and **0.004 ms** on the sort, resident, on the new code: the
+sort's own work fell from **3.92 ms** to **1.00 ms** underneath it, and the plan output still
+accounts for the whole query.
 
 **And the cold path tells the same story, from the other side.** The code **before** this section's
 increment left only **0.257 ms** outside its stages on the cold `join-orders` — the streamed join,
@@ -2709,7 +2872,7 @@ accounted: 96.81 ms of the query's 96.82 ms (0.01 ms outside the stages)
 
 **The account spec 024 closed stayed closed under the code that came after it.** The sort's own work
 fell, the plan output's stage table followed it down, and what is left outside the stages is the
-plan's own resolution — **0.004 ms** of a **1.03 ms** query. The hole this section found is
+plan's own resolution — **0.004 ms** of a **1.00 ms** query. The hole this section found is
 **gone rather than renamed**, and it did not come back when the sort's own work changed underneath
 it.
 
@@ -2719,18 +2882,19 @@ to **1.02 ms**, in [§3n](#3n-the-sort-taken-apart). The **join's build table an
 are untouched; they are the join stage's own work. A **dense selection is still walked**: a plan
 whose predicate keeps most of its rows has a bitmap, and the bitmap is walked a set bit at a time —
 through the iterator, so the decision costs a branch a row. That walk is now **inside** the stage
-that does it, and it is measured: the bitmap's walk is published beside the range's, **2.84 ms**
-against **0.56 ms**. The plan output does **not** name every operator; it names the stages, and now
+that does it, and it is measured: the bitmap's walk is published beside the range's, **2.86 ms**
+against **0.57 ms**. The plan output does **not** name every operator; it names the stages, and now
 it says what the stages did not cover. That is an account, not a trace.
 
-All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **17.6–18.6**
-while this set's campaigns ran — the reports carry it, and it is **higher** than the **6.7–7.5** of
-the set the bump replaces. The raw reports are
+All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **3.6–4.5**
+while this set's campaigns ran — the reports carry it, and it is **lower** than the **17.6–18.6**
+of the set the bump replaces. The raw reports are
 `bench-results/query-cost-run{1,2,3}.json`,
-`bench-results/query-cost-spec041-before-run{1,2,3}.json` and
+`bench-results/query-cost-spec050-run{1,2,3}.json` and
 `bench-results/query-cost-before-run{1,2,3}.json`, and `python3 scripts/medians.py` derives the tables
 above from them. See
 [ADR-0031](docs/adr/0031-the-time-the-plan-output-does-not-name.md).
+
 ### 3n. The sort, taken apart
 
 **The sort was the engine's largest gap, and it had never been taken apart.** The cold `sort-topk` was
@@ -2751,22 +2915,25 @@ the parts on the same dataset, the same key column and the same rows, in the sam
 engine's ten rows are checked against its own, in order, before anything is timed.
 
 **And every figure that reads the file was taken again, and the table below carries the chain.** The
-first column is the code the increment replaced, the second is the code this file publishes **as it
-was measured in the set the bump replaces**, and the third is the code this file publishes **as it is
-measured now**. The middle column's set is kept under its own name in `bench-results/`, so every moved
-figure is published with the figure it moved from.
+engine's default reader batch size changed from a row limit to a byte budget —
+[§3ag](#3ag-the-width-statement-paid) has the rule — and the batch size touches every figure the
+reader does, so the whole campaign was taken again. The first column is the code the increment
+replaced, the second is the code this file publishes **as it was measured in the set the bump
+replaces**, and the third is the code this file publishes **as it is measured now**. The middle
+column's set is kept under its own name — `bench-results/sort-cost-spec050-run{1,2,3}.json` — so every
+moved figure is published with the figure it moved from.
 
 | part | the old code | the set the bump replaces | the code this file publishes | what it is |
 |---|---|---|---|---|
-| the stage, cold | **4.18 ms** | **1.10 ms** | **1.68 ms** | the engine's own stage, the cold path |
-| the stage, resident | **4.30 ms** | **1.03 ms** | **1.05 ms** | the engine's own stage, the resident path |
-| the operator, cold | **3.23 ms** | **1.02 ms** | **1.05 ms** | the sort's own call, over the same rows and the same column |
-| the operator, warm | **3.25 ms** | **1.02 ms** | **1.03 ms** | the same call, with the column already in the caches |
-| the read, the engine's shape | **3.93 ms** | **3.99 ms** | **3.88 ms** | the read the fast path does, a row at a time, without the heap |
-| the read, plain | **3.15 ms** | **3.30 ms** | **3.35 ms** | the plain read: the floor as it was published |
-| the read, the small control | **0.26 ms** | **0.28 ms** | **0.29 ms** | the same read over 512K values |
-| the comparison, in blocks | **0.95 ms** | **0.96 ms** | **0.95 ms** | the same column, compared in blocks |
-| the candidate, in blocks | **1.02 ms** | **1.01 ms** | **1.02 ms** | the sort written by hand, in blocks, over the same column |
+| the stage, cold | **4.18 ms** | **1.68 ms** | **2.34 ms** | the engine's own stage, the cold path |
+| the stage, resident | **4.30 ms** | **1.05 ms** | **1.03 ms** | the engine's own stage, the resident path |
+| the operator, cold | **3.23 ms** | **1.05 ms** | **0.97 ms** | the sort's own call, over the same rows and the same column |
+| the operator, warm | **3.25 ms** | **1.03 ms** | **0.99 ms** | the same call, with the column already in the caches |
+| the read, the engine's shape | **3.93 ms** | **3.88 ms** | **3.88 ms** | the read the fast path does, a row at a time, without the heap |
+| the read, plain | **3.15 ms** | **3.35 ms** | **3.15 ms** | the plain read: the floor as it was published |
+| the read, the small control | **0.26 ms** | **0.29 ms** | **0.27 ms** | the same read over 512K values |
+| the comparison, in blocks | **0.95 ms** | **0.95 ms** | **0.93 ms** | the same column, compared in blocks |
+| the candidate, in blocks | **1.02 ms** | **1.02 ms** | **1.01 ms** | the sort written by hand, in blocks, over the same column |
 | the hand-over | **1.34 ms** | **1.34 ms** | **1.34 ms** | the range of rows, walked |
 | the key column | **1 ns** | **1 ns** | **1 ns** | the key column's construction, from the dataset's chunk |
 
@@ -2782,9 +2949,9 @@ megabytes as over forty-eight (**0.50 ns** against **0.53 ns**). The read was ne
 memory. It was **counting**.
 
 **The operator is not at the floor.** The floor was **3.6 ms**, and it was the read of the column — a
-scalar read. The **comparison**, made in blocks against the threshold, costs **0.95 ms** for the same
-column: a third of the operator's **3.23 ms**. The sort's own work was **2.3 ms** of the operator's
-3.2 ms, and it was the comparison, made **a row at a time**.
+scalar read. The **comparison**, made in blocks against the threshold, costs **0.93 ms** for the same
+column, where it was **0.95 ms**: a third of the operator's **3.23 ms**. The sort's own work was
+**2.3 ms** of the operator's 3.2 ms, and it was the comparison, made **a row at a time**.
 
 **And the scan that feeds the sort is worse, so it is refused.** The top-k over the reader's own
 Arrow arrays — where the values are hot — costs **6.3 ms** on top of the decode, against the old
@@ -2803,25 +2970,25 @@ says so.
 
 | | the old code | the set the bump replaces | the code this file publishes | what it is worth |
 |---|---|---|---|---|
-| the sort's stage, cold | 4.18 ms | 1.10 ms | **1.68 ms** | **−60%** |
-| the sort's stage, resident | 4.30 ms | 1.03 ms | **1.05 ms** | **−76%** |
-| the operator | 3.23 ms | 1.02 ms | **1.05 ms** | **−67%** |
-| `sort-topk` resident | 3.92 ms | 1.05 ms | **1.03 ms** | **−74%** |
-| `sort-topk` cold | 40.29 ms | 38.50 ms | **38.48 ms** | **−4.5%** |
+| the sort's stage, cold | 4.18 ms | 1.68 ms | **2.34 ms** | **−44%** |
+| the sort's stage, resident | 4.30 ms | 1.05 ms | **1.03 ms** | **−76%** |
+| the operator | 3.23 ms | 1.05 ms | **0.97 ms** | **−70%** |
+| `sort-topk` resident | 3.92 ms | 1.03 ms | **1.00 ms** | **−74%** |
+| `sort-topk` cold | 40.29 ms | 38.48 ms | **38.48 ms** | **−4.5%** |
 
 **And the bump moved the cold stage, and the direction is the one that hurts.** The cold stage was
-**1.10 ms** in the set the bump replaces and is **1.68 ms** in the set this file publishes — the
-reader hands the sort a different array. The **resident** stage barely moved (**1.03 ms** →
-**1.05 ms**), and the **operator** — the sort's own call, with no file in it — moved with it
-(**1.02 ms** → **1.05 ms**), so **the bump is in the read, not in the sort**. The old-and-new for every
+**1.68 ms** in the set the bump replaces and is **2.34 ms** in the set this file publishes — the
+reader hands the sort a different array. The **resident** stage barely moved (**1.05 ms** →
+**1.03 ms**), and the **operator** — the sort's own call, with no file in it — moved with it
+(**1.05 ms** → **0.97 ms**), so **the bump is in the read, not in the sort**. The old-and-new for every
 family is in [§3x](#3x-the-bump-and-the-figures-it-moved).
 
 **The fallbacks, named.** A sort with **no limit** sorts every row: **544.35 ms** — **535.49 ms** in the
-set the bump replaces — against the bounded sort's **1.05 ms**. A sort over a **string** column reads
-its keys as an enum: **48.16 ms** — **47.76 ms** in the set the bump replaces. A **scattered
-selection** is read a row at a time, because the blocks need a run — and the two shapes are held to
-the same rows by a test. The **general path** — strings, dictionaries, and any column with a NULL in
-it — is untouched.
+set the bump replaces — against the bounded sort's **0.97 ms**, where it was **1.05 ms**. A sort over
+a **string** column reads its keys as an enum: **48.16 ms** — **47.76 ms** in the set the bump
+replaces. A **scattered selection** is read a row at a time, because the blocks need a run — and the
+two shapes are held to the same rows by a test. The **general path** — strings, dictionaries, and any
+column with a NULL in it — is untouched.
 
 **What this did not do.** The **scan's decode** is untouched: it is the scan's business, and it has
 been measured three times and refused every time. The **scan that feeds the sort** was measured and
@@ -2832,21 +2999,27 @@ All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average 
 while this set's campaigns ran — the reports carry it, and it is **higher** than the **6.28–7.10** of
 the set the bump replaces. The raw reports are
 `bench-results/sort-cost-run{1,2,3}.json`,
-`bench-results/sort-cost-spec041-before-run{1,2,3}.json` and
+`bench-results/sort-cost-spec050-run{1,2,3}.json` and
 `bench-results/sort-cost-before-run{1,2,3}.json`, and
 `python3 scripts/medians.py` derives the table above from them. See
 [ADR-0032](docs/adr/0032-the-sort-taken-apart.md).
 
 ---
 
+
 ### 3o. The join's stage, taken apart
 
-**The join's stage is the engine's own work on the query.** The engine's cold
-`join-orders` is **100.0 ms** against DuckDB's **94.0 ms** — **6.0 ms** apart, and the two spreads now
-overlap — while the peer's is **175.3 ms** and Polars' **225.7 ms**; the set the bump replaces read
+**The join's stage is the engine's own work on the query.** **And the campaign behind it was taken
+again**: the reader's default is a **byte budget** of **16 MiB** now, where it was a row limit of
+**131,072 rows**, so the batch the reader holds is width-dependent now, and every figure the batch size
+touches moved with it. The engine's cold `join-orders` is **87.8 ms** where it was **100.0 ms**,
+against DuckDB's **89.0 ms** where it was **94.0 ms** — **1.2 ms** apart, the engine ahead where it was
+**6.0 ms** behind, and the two spreads now overlap — while the peer's is **163.1 ms** where it was
+**175.3 ms** and Polars' **216.6 ms** where it was **225.7 ms**; the set the bump replaces read
 **97.6 ms**, **91.0 ms**, **168.8 ms** and **219.1 ms**. The plan output says where the engine's own
-time is, and it is the join's stage: **29.5 ms** of the cold query — **26.4 ms** in the set the bump
-replaces — **29.5%** of it, and **all** of it the engine's own work.
+time is, and it is the join's stage: **20.3 ms** of the cold query, where it was **29.5 ms**, —
+**26.4 ms** in the set the bump replaces — **23.1%** of it, where it was **29.5%**, and **all** of it
+the engine's own work.
 
 **And the stage had never been taken apart.** Spec 021 measured the join's *probe* — **9.0 ms** against
 a **1.7 ms** floor — two increments ago, on a different code version and a different host state. The
@@ -2859,9 +3032,10 @@ the probe's remainder is**.
 stage on both paths: the build side's open, the table's construction, and the probe over six million
 rows. On the cold path the probe runs **inside the scan**, over the reader's own batches, before
 anything is copied; on the resident path it runs over the engine's own column, in memory, after the
-copy. The cold stage is **29.5 ms** and the resident one **22.9 ms** — **6.6 ms** apart — and they
-reported **different row counts for the same probe**: `216783 → 216783` on the cold path and
-`6000000 → 216783` on the resident one.
+copy. The cold stage is **20.3 ms** where it was **29.5 ms** and the resident one **21.3 ms** where it
+was **22.9 ms** — **1.0 ms** apart, the cold one the faster of the two where it was **6.6 ms** the
+slower — and they reported **different row counts for the same probe**: `216783 → 216783` on the cold
+path and `6000000 → 216783` on the resident one.
 
 **The review came first, and it changed what is measured.** Five of the join's rules had **two owners
 each**; the stage reported two different things for the same work; the build side's memory estimate was
@@ -2906,52 +3080,52 @@ check without the old one.
 
 | part | the code this file publishes | the code the bump replaces | the old instrument | the code spec 030 replaced | what it is |
 |---|---|---|---|---|---|
-| the stage, cold | 27.493 ms | 24.690 ms | 25.446 ms | 25.950 ms | the engine's own join stage, the cold path |
-| the stage, resident | 20.276 ms | 19.431 ms | 20.368 ms | 20.046 ms | the engine's own join stage, the resident path |
-| the build side's open | 0.116 ms | 0.108 ms | 0.030 ms | 0.027 ms | opening `orders.parquet`: its metadata, its schema |
-| the build side's read | 11.898 ms | 11.898 ms | 12.262 ms | 11.675 ms | reading the build side's columns through the engine's own reader |
-| the build side's keys | 0.359 ms | 0.363 ms | 0.335 ms | 0.334 ms | the per-row walk that collects the build side's keys |
-| the build side, whole | 12.568 ms | 12.347 ms | 12.605 ms | 12.373 ms | the read, the keys and the table together |
-| the build side, whole, over a cold file | 13.089 ms | 13.267 ms | 13.053 ms | 12.359 ms | the same, over a file the process had not read: the build side's **file state** |
-| the table, on its own | 0.204 ms | 0.215 ms | 0.220 ms | 0.223 ms | one byte a count, over the key's own range |
-| the probe, over the column | 9.100 ms | 8.860 ms | 9.080 ms | 9.175 ms | the resident path's probe: the engine's own column, in memory |
-| the probe, in the batches | 14.296 ms | 13.121 ms | 12.498 ms | 13.578 ms | the cold path's probe: inside the reader's own batch loop |
-| the probe, in the batches, without the offset | 14.024 ms | 11.335 ms | 12.582 ms | 13.511 ms | the same, **without** the row-number offset the engine's own clock leaves out |
-| the probe, over a held column | 8.316 ms | 7.674 ms | 8.186 ms | 7.935 ms | the probe over a column the dataset has **held**, with the build side's read in between |
-| the floor the probe cannot go under | 4.948 ms | 6.147 ms | 6.282 ms | 6.192 ms | the table's own load, one a probe row |
-| the candidate, written out | 8.754 ms | 8.953 ms | 10.695 ms | 10.567 ms | the same lookup, written out by hand over the same rows |
-| the candidate with the overflow consult | 9.002 ms | 8.818 ms | 8.924 ms | 9.049 ms | the candidate **with the map's consult** in it, and nothing else different |
-| the cold candidate | 12.315 ms | 11.649 ms | 11.825 ms | 11.785 ms | the same lookup, inside the reader's own batch loop |
-| the candidate, the chain | 8.914 ms | 8.724 ms | 9.449 ms | 9.270 ms | the plain candidate, with the byte read folded through `map_or` |
-| the candidate, the width | 9.074 ms | 9.127 ms | 9.125 ms | 9.074 ms | the plain candidate, with the byte widened to `u32` |
-| the candidate, the state through `self` | 9.022 ms | 8.853 ms | 9.417 ms | 9.002 ms | the plain candidate, read through a method over `&self` |
-| the candidate, the map's option | 9.773 ms | 9.075 ms | 9.381 ms | 9.338 ms | the plain candidate, with the overflow map's `Option` read and branched on |
-| the engine's lookup, over a plain slice | 9.410 ms | 9.329 ms | 9.343 ms | 8.911 ms | the engine's **own** lookup, over the instrument's own key source |
-| the read, plain | 0.589 ms | 0.532 ms | 0.555 ms | 0.541 ms | the plain read of the probe key column: the floor a read cannot go under |
-| the read, the small control | 0.038 ms | 0.043 ms | 0.041 ms | 0.039 ms | the same read over 512K values |
+| the stage, cold | **20.863 ms** *(was 27.493 ms)* | 20.736 ms | 25.446 ms | 25.950 ms | the engine's own join stage, the cold path |
+| the stage, resident | **19.350 ms** *(was 20.276 ms)* | 19.260 ms | 20.368 ms | 20.046 ms | the engine's own join stage, the resident path |
+| the build side's open | **0.108 ms** *(was 0.116 ms)* | 0.102 ms | 0.030 ms | 0.027 ms | opening `orders.parquet`: its metadata, its schema |
+| the build side's read | **11.383 ms** *(was 11.898 ms)* | 11.593 ms | 12.262 ms | 11.675 ms | reading the build side's columns through the engine's own reader |
+| the build side's keys | **0.348 ms** *(was 0.359 ms)* | 0.344 ms | 0.335 ms | 0.334 ms | the per-row walk that collects the build side's keys |
+| the build side, whole | **11.881 ms** *(was 12.568 ms)* | 12.041 ms | 12.605 ms | 12.373 ms | the read, the keys and the table together |
+| the build side, whole, over a cold file | **13.242 ms** *(was 13.089 ms)* | 13.448 ms | 13.053 ms | 12.359 ms | the same, over a file the process had not read: the build side's **file state** |
+| the table, on its own | **0.212 ms** *(was 0.204 ms)* | 0.206 ms | 0.220 ms | 0.223 ms | one byte a count, over the key's own range |
+| the probe, over the column | **8.408 ms** *(was 9.100 ms)* | 8.466 ms | 9.080 ms | 9.175 ms | the resident path's probe: the engine's own column, in memory |
+| the probe, in the batches | **8.684 ms** *(was 14.296 ms)* | 9.279 ms | 12.498 ms | 13.578 ms | the cold path's probe: inside the reader's own batch loop |
+| the probe, in the batches, without the offset | **8.870 ms** *(was 14.024 ms)* | 8.985 ms | 12.582 ms | 13.511 ms | the same, **without** the row-number offset the engine's own clock leaves out |
+| the probe, over a held column | **7.369 ms** *(was 8.316 ms)* | 7.282 ms | 8.186 ms | 7.935 ms | the probe over a column the dataset has **held**, with the build side's read in between |
+| the floor the probe cannot go under | **4.735 ms** *(was 4.948 ms)* | 4.662 ms | 6.282 ms | 6.192 ms | the table's own load, one a probe row |
+| the candidate, written out | **8.576 ms** *(was 8.754 ms)* | 8.588 ms | 10.695 ms | 10.567 ms | the same lookup, written out by hand over the same rows |
+| the candidate with the overflow consult | **8.355 ms** *(was 9.002 ms)* | 8.484 ms | 8.924 ms | 9.049 ms | the candidate **with the map's consult** in it, and nothing else different |
+| the cold candidate | **8.335 ms** *(was 12.315 ms)* | 8.855 ms | 11.825 ms | 11.785 ms | the same lookup, inside the reader's own batch loop |
+| the candidate, the chain | **8.632 ms** *(was 8.914 ms)* | 8.431 ms | 9.449 ms | 9.270 ms | the plain candidate, with the byte read folded through `map_or` |
+| the candidate, the width | **8.759 ms** *(was 9.074 ms)* | 8.466 ms | 9.125 ms | 9.074 ms | the plain candidate, with the byte widened to `u32` |
+| the candidate, the state through `self` | **8.712 ms** *(was 9.022 ms)* | 8.606 ms | 9.417 ms | 9.002 ms | the plain candidate, read through a method over `&self` |
+| the candidate, the map's option | **8.517 ms** *(was 9.773 ms)* | 8.478 ms | 9.381 ms | 9.338 ms | the plain candidate, with the overflow map's `Option` read and branched on |
+| the engine's lookup, over a plain slice | **8.567 ms** *(was 9.410 ms)* | 8.501 ms | 9.343 ms | 8.911 ms | the engine's **own** lookup, over the instrument's own key source |
+| the read, plain | **0.522 ms** *(was 0.589 ms)* | 0.518 ms | 0.555 ms | 0.541 ms | the plain read of the probe key column: the floor a read cannot go under |
+| the read, the small control | **0.041 ms** *(was 0.038 ms)* | 0.040 ms | 0.041 ms | 0.039 ms | the same read over 512K values |
 | the cost of one clock read | 0.000013 ms | 0.000013 ms | 0.000013 ms | 0.000013 ms | the cost of one clock read: the **added clock's** price |
 
 | difference | the code this file publishes | the code the bump replaces | the old instrument | the code spec 030 replaced | what it is |
 |---|---|---|---|---|---|
-| the table, as the difference | 0.328 ms | 0.157 ms | 0.015 ms | 0.189 ms | the whole over the read and the keys: the table's own cost |
-| the output rows | 3.716 ms | 2.943 ms | 4.377 ms | 4.234 ms | the candidate over the floor: what the 216,783 output rows cost |
-| the probe's remainder | 0.436 ms | −0.092 ms | −1.615 ms | −1.336 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
-| the map's share | 0.239 ms | −0.290 ms | −2.010 ms | −1.603 ms | the candidate with the consult over the candidate without it: **what the map costs** |
-| the cold remainder | 1.854 ms | 1.472 ms | 0.673 ms | 1.539 ms | the engine's probe in the batches over the cold candidate's |
-| the two paths | 6.801 ms | 5.405 ms | 5.077 ms | 6.166 ms | the cold stage over the resident stage |
-| the two probes | 5.058 ms | 4.261 ms | 3.418 ms | 4.403 ms | the batched probe over the column's |
-| the chain's cost | 0.050 ms | −0.089 ms | −1.246 ms | −1.521 ms | the **chain's** share of the remainder: the fold against `unwrap_or` |
-| the width's cost | 0.234 ms | 0.334 ms | −0.324 ms | 0.049 ms | the **width's** share: the byte widened to `u32` |
-| the state's cost | −0.057 ms | −0.274 ms | 0.683 ms | −0.073 ms | the **state's** share: the table reached through `&self` |
-| the map option's cost | 0.756 ms | 0.173 ms | −0.284 ms | 0.196 ms | the **map's discriminant's** share: the `Option` read and branched on |
-| the engine's loop's cost | −0.482 ms | 0.427 ms | 0.106 ms | −0.507 ms | the **engine's loop's** share: `probe_direct` against the hand-written loop |
-| the key source's cost | −0.644 ms | −0.469 ms | −0.263 ms | 0.264 ms | the **key source's** share: the engine's own column against a plain slice |
-| the ladder's sum | 0.436 ms | −0.092 ms | −1.615 ms | −1.336 ms | the six increments together: the remainder, by construction |
+| the table, as the difference | **0.038 ms** *(was 0.328 ms)* | 0.073 ms | 0.015 ms | 0.189 ms | the whole over the read and the keys: the table's own cost |
+| the output rows | **3.880 ms** *(was 3.716 ms)* | 3.929 ms | 4.377 ms | 4.234 ms | the candidate over the floor: what the 216,783 output rows cost |
+| the probe's remainder | **−0.211 ms** *(was 0.436 ms)* | −0.062 ms | −1.615 ms | −1.336 ms | the engine's probe over the candidate's: what the engine's own lookup pays |
+| the map's share | **−0.134 ms** *(was 0.239 ms)* | −0.191 ms | −2.010 ms | −1.603 ms | the candidate with the consult over the candidate without it: **what the map costs** |
+| the cold remainder | **0.349 ms** *(was 1.854 ms)* | 0.778 ms | 0.673 ms | 1.539 ms | the engine's probe in the batches over the cold candidate's |
+| the two paths | **1.443 ms** *(was 6.801 ms)* | 1.598 ms | 5.077 ms | 6.166 ms | the cold stage over the resident stage |
+| the two probes | **0.621 ms** *(was 5.058 ms)* | 0.813 ms | 3.418 ms | 4.403 ms | the batched probe over the column's |
+| the chain's cost | **0.227 ms** *(was 0.050 ms)* | −0.155 ms | −1.246 ms | −1.521 ms | the **chain's** share of the remainder: the fold against `unwrap_or` |
+| the width's cost | **−0.159 ms** *(was 0.234 ms)* | 0.037 ms | −0.324 ms | 0.049 ms | the **width's** share: the byte widened to `u32` |
+| the state's cost | **−0.109 ms** *(was −0.057 ms)* | 0.171 ms | 0.683 ms | −0.073 ms | the **state's** share: the table reached through `&self` |
+| the map option's cost | **−0.195 ms** *(was 0.756 ms)* | −0.112 ms | −0.284 ms | 0.196 ms | the **map's discriminant's** share: the `Option` read and branched on |
+| the engine's loop's cost | **0.050 ms** *(was −0.482 ms)* | −0.057 ms | 0.106 ms | −0.507 ms | the **engine's loop's** share: `probe_direct` against the hand-written loop |
+| the key source's cost | **−0.158 ms** *(was −0.644 ms)* | 0.051 ms | −0.263 ms | 0.264 ms | the **key source's** share: the engine's own column against a plain slice |
+| the ladder's sum | **−0.211 ms** *(was 0.436 ms)* | −0.062 ms | −1.615 ms | −1.336 ms | the six increments together: the remainder, by construction |
 | what is left unexplained | 0.000 ms | 0.000 ms | 0.000 ms | 0.000 ms | the remainder less the ladder's sum: the noise the decomposition carries |
-| the stage's residual, cold | 14.697 ms | 12.249 ms | 12.896 ms | 13.727 ms | the stage less the build side's whole and its open: the stage's own probe, **plus the build side's own gap**, which has never been separated |
-| the stage's residual, resident | 7.686 ms | 7.187 ms | 7.386 ms | 7.644 ms | the same, on the resident path |
-| the context, cold | 1.382 ms | 0.199 ms | 0.433 ms | 0.149 ms | the residual less the standalone probe: **the context** |
-| the context, resident | −1.354 ms | −1.581 ms | −1.565 ms | −1.614 ms | the same, on the resident path |
+| the stage's residual, cold | **8.763 ms** *(was 14.697 ms)* | 8.737 ms | 12.896 ms | 13.727 ms | the stage less the build side's whole and its open: the stage's own probe, **plus the build side's own gap**, which has never been separated |
+| the stage's residual, resident | **7.393 ms** *(was 7.686 ms)* | 7.234 ms | 7.386 ms | 7.644 ms | the same, on the resident path |
+| the context, cold | **0.152 ms** *(was 1.382 ms)* | −0.157 ms | 0.433 ms | 0.149 ms | the residual less the standalone probe: **the context** |
+| the context, resident | **−0.928 ms** *(was −1.354 ms)* | −1.188 ms | −1.565 ms | −1.614 ms | the same, on the resident path |
 
 #### The context, taken apart
 
@@ -2962,7 +3136,7 @@ path that costs **no new clock**: the build side and the probe were already time
 clock only summed them. On the **resident** path it costs **two clock reads and one subtraction**, and
 what they cost is **measured**: the cost of one clock read is **0.000013 ms**, so the added clock is
 **0.000026 ms**, against a threshold of the **floor's own spread** across the campaigns of that set,
-which is **0.225 ms**.
+which is **0.240 ms** where it was **0.225 ms**.
 
 **And the ladder is built per iteration, because the stage's elapsed is the three parts added together in
 every one of them, and a median of a sum is not the sum of the medians.** The parts tile the context
@@ -2976,20 +3150,24 @@ alternated.** The ladder's leaves are differences, and a difference of two serie
 apart is a difference of two **drifting** series -- so the sides are taken back to back, and the order
 between them is alternated, so that the machine's drift while an iteration runs does not land on one
 side of every leaf. **The order's own cost** is the difference between the two orders' medians, over the
-leaves and the context: **3.143 ms** on the cold path and **0.669 ms** on the resident path, against
-**the floor's own spread** of **0.225 ms**. **So the order could have moved a part on the cold path**,
+leaves and the context: **0.523 ms** on the cold path where it was **3.143 ms** and **0.229 ms** on the
+resident path where it was **0.669 ms**, against
+**the floor's own spread** of **0.240 ms**. **So the order could have moved a part on the cold path**,
 and the reader can see that it did not move this one: even if the order had moved the resident path's
-file state by all of its **0.669 ms**, it would still be **−0.539 ms**, **inside** its yardstick of
-**1.324 ms** -- and that leaf is **inconclusive** on its own spread of **1.354 ms** in any case. **And
+file state by all of its **0.229 ms**, it would still be **−0.369 ms**, **inside** its yardstick of
+**1.502 ms** -- and that leaf is **at the noise** on its own spread of **0.944 ms** in any case, where
+the spread was **1.354 ms** and the leaf was **inconclusive**. **And
 the query's own cost does not depend on the order**: the join stage's cost, as the
 query pays it, under the two orders the alternation makes --
-the cold path's query's cost, under the two orders, is **0.901 ms** apart;
-the resident path's query's cost, under the two orders, is **0.271 ms** apart;
--- both **outside the floor's own spread** of **0.225 ms**, which no longer covers them, and **inside
-the stage's own drift** of **1.951 ms** and **0.528 ms**, which is the ruler the published stage is read
+the cold path's query's cost, under the two orders, is **0.166 ms** apart, where it was **0.901 ms**;
+the resident path's query's cost, under the two orders, is **0.412 ms** apart, where it was **0.271 ms**;
+-- and **the verdict on them flipped**: the cold one is **inside the floor's own spread** of **0.240 ms**,
+where it was **outside** it, and the resident one is **outside** it, where it was **inside**; and both are
+**inside the stage's own drift** of **0.566 ms** and **0.773 ms**, where they were **1.951 ms** and
+**0.528 ms**, which is the ruler the published stage is read
 against, so the published stage is not the order's. **And the separation** -- how far apart the machine's
-own two measurements of one difference were taken, in the machine's own time -- is **291.253 ms** on the
-cold path and **350.570 ms** on the resident path. **And
+own two measurements of one difference were taken, in the machine's own time -- is **271.672 ms** on the
+cold path and **325.075 ms** on the resident path, where it was **291.253 ms** and **350.570 ms**. **And
 the interleaving's added work is measured, not assumed**: it adds **no clock read** -- every quantity is
 still timed by exactly the two clock reads it was timed by before, and the per-iteration values are
 **written, not timed** -- so the added work's cost is **0.000000 ms**, published beside the clock's own
@@ -3005,23 +3183,23 @@ still what says whether the machine moved it**: a leaf whose own spread is wider
 
 | the part | the cold path | its spread | its yardstick | the resident path | its spread | its yardstick |
 |---|---|---|---|---|---|---|
-| the build side's gap | −0.014 ms | 0.767 ms | 0.954 ms | −0.032 ms | 0.222 ms | 0.486 ms |
-| the open's gap | 0.015 ms | 0.029 ms | 0.225 ms | 0.015 ms | 0.015 ms | 0.225 ms |
-| the probe's gap | 2.270 ms | 2.885 ms | — | −1.108 ms | 0.516 ms | — |
-| the probe's row-number offset | −0.312 ms | 1.515 ms | 2.326 ms | — | — | — |
-| the probe's file state | — | — | — | −1.208 ms | 1.354 ms | 1.324 ms |
-| the probe's own remainder | 1.417 ms | 1.235 ms | 2.236 ms | 0.083 ms | 0.035 ms | 1.332 ms |
-| the part in no gap | 0.000 ms | 0.000 ms | 1.951 ms | 0.000 ms | 0.000 ms | 0.528 ms |
+| the build side's gap | −0.017 ms *(was −0.014 ms)* | 0.274 ms *(was 0.767 ms)* | 0.587 ms *(was 0.954 ms)* | −0.197 ms *(was −0.032 ms)* | 0.186 ms *(was 0.222 ms)* | 0.933 ms *(was 0.486 ms)* |
+| the open's gap | 0.032 ms *(was 0.015 ms)* | 0.016 ms *(was 0.029 ms)* | 0.240 ms *(was 0.225 ms)* | 0.015 ms | 0.017 ms *(was 0.015 ms)* | 0.240 ms *(was 0.225 ms)* |
+| the probe's gap | 0.072 ms *(was 2.270 ms)* | 0.472 ms *(was 2.885 ms)* | — | −0.756 ms *(was −1.108 ms)* | 0.456 ms *(was 0.516 ms)* | — |
+| the probe's row-number offset | 0.269 ms *(was −0.312 ms)* | 0.718 ms *(was 1.515 ms)* | 0.495 ms *(was 2.326 ms)* | — | — | — |
+| the probe's file state | — | — | — | −0.598 ms *(was −1.208 ms)* | 0.944 ms *(was 1.354 ms)* | 1.502 ms *(was 1.324 ms)* |
+| the probe's own remainder | 0.134 ms *(was 1.417 ms)* | 0.394 ms *(was 1.235 ms)* | 0.514 ms *(was 2.236 ms)* | 0.256 ms *(was 0.083 ms)* | 0.852 ms *(was 0.035 ms)* | 1.251 ms *(was 1.332 ms)* |
+| the part in no gap | 0.000 ms | 0.000 ms | 0.566 ms *(was 1.951 ms)* | 0.000 ms | 0.000 ms | 0.773 ms *(was 0.528 ms)* |
 | **the reconciliation** | 0.000 ms | 0.000 ms | — | 0.000 ms | 0.000 ms | — |
-| the three gaps together | 2.249 ms | 3.659 ms | — | −1.136 ms | 0.289 ms | — |
-| the reduction's own noise | 0.485 ms | 1.769 ms | — | 0.064 ms | 0.260 ms | — |
-| **the context** | 1.382 ms | 2.271 ms | — | −1.354 ms | 0.184 ms | — |
+| the three gaps together | 0.015 ms *(was 2.249 ms)* | 0.286 ms *(was 3.659 ms)* | — | −0.863 ms *(was −1.136 ms)* | 0.557 ms *(was 0.289 ms)* | — |
+| the reduction's own noise | −0.112 ms *(was 0.485 ms)* | 0.526 ms *(was 1.769 ms)* | — | 0.065 ms *(was 0.064 ms)* | 0.107 ms *(was 0.260 ms)* | — |
+| **the context** | 0.152 ms *(was 1.382 ms)* | 0.787 ms *(was 2.271 ms)* | — | −0.928 ms *(was −1.354 ms)* | 0.664 ms *(was 0.184 ms)* | — |
 
 **And the leaves' states, one vocabulary per level, and each of them a published sentence:**
 
 the build side's gap, on the cold path, is **at the noise**;
 the open's gap, on the cold path, is **at the noise**;
-the probe's row-number offset, on the cold path, is **at the noise**;
+the probe's row-number offset, on the cold path, is **inconclusive**;
 the probe's own remainder, on the cold path, is **at the noise**;
 the part in no gap, on the cold path, is **at the noise**;
 the verdict, on the cold path, is **unattributed**;
@@ -3030,7 +3208,7 @@ the verdict's state, on the cold path, is **sound**.
 -- resident --
 the build side's gap, on the resident path, is **at the noise**;
 the open's gap, on the resident path, is **at the noise**;
-the probe's file state, on the resident path, is **inconclusive**;
+the probe's file state, on the resident path, is **at the noise**;
 the probe's own remainder, on the resident path, is **at the noise**;
 the part in no gap, on the resident path, is **at the noise**;
 the verdict, on the resident path, is **unattributed**;
@@ -3053,39 +3231,48 @@ the build side's own: both sides read the build side's file **warm** -- the camp
 times and every execution reads that file, so the published figure, the median of six, is over a warm
 file, and the standalone's measurement is over a warmer one still -- so the file's state **cannot**
 explain any of it. The file's state is published as the **bound** on what it could explain, and it is
-**0.520 ms** with a spread of **3.136 ms**; it is not subtracted from the gap, because a subtracted leaf
+**1.361 ms** with a spread of **1.241 ms**, where it was **0.520 ms** with a spread of **3.136 ms**; it
+is not subtracted from the gap, because a subtracted leaf
 would claim the gap is explained by a file state that both sides share. The **open's gap** is the
 **clock's**: the stage's clock carries the build side's file open and the standalone build side's does
 not. The **probe's gap** is the probe's own: on the **resident** path the query's probe reads a column
 the dataset has **held** since it was loaded, with the build side's read in between, while the standalone
-reads its column afresh -- that is the probe's **file state**, **−1.208 ms**, and it is the one leaf that
-*could* count; but its own spread of **1.354 ms** is wider than its yardstick of **1.324 ms**, so it is
-**inconclusive** and does not count. And on the **cold** path the standalone's probe carries the
+reads its column afresh -- that is the probe's **file state**, **−0.598 ms** where it was **−1.208 ms**,
+and it is the one leaf that
+*could* count; its yardstick is now **1.502 ms** where it was **1.324 ms**, and its own spread of
+**0.944 ms** is narrower than that, where it was **1.354 ms**, so it is
+**at the noise** and does not count, where it was **inconclusive**. And on the **cold** path the standalone's probe carries the
 **row-number offset** arithmetic that
 the engine's own probe clock leaves out -- `keep_matching_rows` applies it **outside** `filter.keep`'s
-clock -- and that is **−0.312 ms**.
+clock -- and that is **0.269 ms** where it was **−0.312 ms**, and its own spread of **0.718 ms** is
+wider than its yardstick of **0.495 ms**, so that leaf is **inconclusive** where it was **at the noise**.
 
 **And the conclusion is restated, because the sentence it rested on does not hold on this set.** The
 documents said that "the context is a real thing" on the resident path, and they said it on the strength
 of a band of **0.418 ms** that was narrower than the machine's own **0.936 ms**: the band could not tell,
 and the verdict said only that no leaf counted. **With a yardstick that can measure, the resident path's
-context was a real thing and the memory was the mechanism** -- the probe's **file state**, **−1.208 ms**
-against a yardstick of **1.324 ms**, and in the set the bump replaces **−1.238 ms** against **0.487 ms**
-with the leaf's own spread of **0.390 ms** inside it. **On this set the leaf's own spread of 1.354 ms is
-wider than its yardstick**: the leaf is **inconclusive**, no leaf counts, and **the resident path's
-verdict is unattributed**. **And the cold path's context does not separate either**: **1.382 ms**
-against a path yardstick of **2.236 ms**, with its own spread of **2.271 ms** over it. **The floor**,
-the instrument's own measure of what a memory-bound loop costs here, is **4.948 ms** with a drift of
-**0.225 ms**, and the **scan's stage** and the build side's file state are reported beside every set and
-are **never summed**.
+context was a real thing and the memory was the mechanism** -- the probe's **file state**, **−0.598 ms**
+against a yardstick of **1.502 ms** where it was **−1.208 ms** against **1.324 ms**, and in the code the
+bump replaces **−0.908 ms** against **0.367 ms**
+with the leaf's own spread of **0.207 ms** inside it, where it read **−1.238 ms** against **0.487 ms** with a
+spread of **0.390 ms**. **On this set the leaf's own spread of 0.944 ms is
+narrower than its yardstick**: the leaf is **at the noise** where it was **inconclusive**, no leaf counts,
+and **the resident path's verdict is unattributed**. **And the cold path's context does not separate
+either**: **0.152 ms** where it was **1.382 ms** against a path yardstick of **0.514 ms** where it was
+**2.236 ms**, with its own spread of **0.787 ms** over it. **The floor**,
+the instrument's own measure of what a memory-bound loop costs here, is **4.735 ms** where it was
+**4.948 ms**, with a drift of
+**0.240 ms** where it was **0.225 ms**, and the **scan's stage** and the build side's file state are
+reported beside every set and are **never summed**.
 
 **And the resolution is published, either way.** The cold path's parts do not separate, and the reason is
 measured rather than guessed: the yardstick is the machine's own drift, and on the cold path the drift is
 no longer the engine's own cold read — the build side's read of the build file moved **0.648 ms** across
-the set's three campaigns, the join stage moved **1.951 ms**, and the machine's own floor moved
-**0.225 ms**. **The resolution that would be needed is a cold-path drift below 1.417 ms** — narrower than
-the probe's own remainder, the widest leaf, and wider than that leaf's own spread of **1.235 ms** — and
-the set's own stage drift is **1.951 ms**. **The next question is the drift's own parts**, and it is
+the set's three campaigns, the join stage moved **0.566 ms** where it moved **1.951 ms**, and the
+machine's own floor moved **0.240 ms** where it moved **0.225 ms**. **The resolution that would be needed
+is a cold-path drift below 0.134 ms** — narrower than the probe's own remainder, and below that leaf's own
+spread of **0.394 ms**, which is wider than the leaf itself — and the set's own stage drift is
+**0.566 ms**. **The next question is the drift's own parts**, and it is
 written down in the README's Next row and in
 [`STATUS.md`](STATUS.md)'s last section.
 
@@ -3100,8 +3287,8 @@ yardsticks and the verdict that instrument's own numbers give:
 | the probe's row-number offset | 0.118 ms | 2.516 ms | 4.799 ms | — | — | — |
 | the probe's file state | — | — | — | −1.178 ms | 1.398 ms | 1.682 ms |
 | the probe's own remainder | 0.189 ms | 0.346 ms | 6.935 ms | −0.334 ms | 0.650 ms | 1.792 ms |
-| the part in no gap | −0.000 ms | 0.000 ms | 3.910 ms | −0.000 ms | 0.000 ms | 0.936 ms |
-| **the reconciliation** | −0.000 ms | 0.000 ms | — | −0.000 ms | 0.000 ms | — |
+| the part in no gap | 0.000 ms | 0.000 ms | 3.910 ms | 0.000 ms | 0.000 ms | 0.936 ms |
+| **the reconciliation** | 0.000 ms | 0.000 ms | — | 0.000 ms | 0.000 ms | — |
 | the three gaps together | 0.329 ms | 1.894 ms | — | −1.636 ms | 2.345 ms | — |
 | the reduction's own noise | −0.036 ms | 0.385 ms | — | 0.057 ms | 2.055 ms | — |
 | **the context** | 0.433 ms | 2.211 ms | — | −1.565 ms | 0.418 ms | — |
@@ -3259,27 +3446,32 @@ shape** is untouched: it is measured, and it is free. The **eager path's load** 
 the **plan**. And the **map** was not measured away: it is still there, for the keys that overflow their
 byte, and it is still counted exactly.
 
-**And the comparison campaigns were not taken again.** This increment's change does not touch the query's
-path — it reports the join stage's parts and adds two clock reads on the resident path, and the **added
-clock costs 0.000026 ms** — so **no query figure moves**, and the comparison set that
-[§2h](#2h-the-hot-paths-taken-apart) publishes is the one spec 028 measured, unchanged.
+**And the comparison campaigns were not taken again for this increment.** This increment's change does not
+touch the query's path — it reports the join stage's parts and adds two clock reads on the resident path,
+and the **added clock costs 0.000026 ms** — so **no query figure moves** in it, and the comparison set
+that [§2h](#2h-the-hot-paths-taken-apart) publishes was the one spec 028 measured, unchanged.
 
 **And the query's cost did not change.** The two sides of every difference are measured back to back in one
 iteration, so the query's own cost is measured against the order the instrument put it in: the cold path's
-query's cost, under the two orders, is **0.901 ms** apart and the resident path's query's cost, under the
-two orders, is **0.271 ms** apart, both **outside the floor's own spread** of **0.225 ms** and both
-**inside the stage's own drift** of **1.951 ms** and **0.528 ms**, which is the ruler the published stage
+query's cost, under the two orders, is **0.166 ms** apart, where it was **0.901 ms**, and the resident
+path's query's cost, under the two orders, is **0.412 ms** apart, where it was **0.271 ms** -- the cold one
+**inside the floor's own spread** of **0.240 ms** where it was **0.225 ms** and where it was **outside**
+it, and the resident one **outside** it, where it was **inside** -- and both
+**inside the stage's own drift** of **0.566 ms** and **0.773 ms** where they were **1.951 ms** and
+**0.528 ms**, which is the ruler the published stage
 is read against. **The published stage is not the order's.** The interleaving's added work is **0.000000
 ms** -- it adds no clock read -- and **the engine is not touched**, so no published query figure moves.
 
-All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **14.74–15.35** while
-this set's campaigns ran -- the reports carry it, and it is **higher** than the **3.66–4.34** of the set
-the bump replaces and the **6.80–7.36** of spec 030's campaigns, which is why the two sets' figures are
-not comparable one for one, and every figure that moved is published old-and-new with the reason. The
-reports carry the tree they were taken on as well: this set's is **`4eebf78`**, which they mark
-**dirty**, and the set the bump replaces' is **`6e3ff64`**, **clean**. The raw reports are
+All of these are ARM64 numbers, on an Apple M4 Max, and the host's load average was **lower** while
+this set's campaigns ran than the **14.74–15.35** of the set the bump replaces, and lower than the
+**3.66–4.34** of the set before that and the **6.80–7.36** of spec 030's campaigns, which is why the two
+sets' figures are not comparable one for one, and every figure that moved is published old-and-new with
+the reason. The
+reports carry the tree they were taken on as well: the set the bump replaces' is **`4eebf78`**, which
+they mark **dirty**, the set before that is **`6e3ff64`**, **clean**, and this set's they do not name. The raw reports are
 `bench-results/join-cost-run{1,2,3}.json`,
-`bench-results/join-cost-spec041-before-run{1,2,3}.json` and
+`bench-results/join-cost-spec051-before-run{1,2,3}.json`,
+`bench-results/join-cost-spec050-run{1,2,3}.json` and
 `bench-results/join-cost-spec030-run{1,2,3}.json`, and
 `python3 scripts/medians.py` derives the tables above from them. The sets spec 029, spec 028 and spec 026
 published are kept under their own names -- `bench-results/join-cost-spec029-run{1,2,3}.json`,
@@ -3295,6 +3487,7 @@ spec 028's comparisons are derived from the first four. See
 [ADR-0038](docs/adr/0038-the-context-taken-apart.md) and
 [ADR-0039](docs/adr/0039-the-drift-taken-apart.md).
 
+
 ### 3p. The join's stage, measured again
 
 **The join's stage is the engine's own work, and it is the instrument that says this increment
@@ -3304,24 +3497,30 @@ both trees **clean**, the two codes **interleaved**. The reports are
 `bench-results/join-cost-spec034-run{1,2,3}.json` and
 `bench-results/join-cost-spec034-before-run{1,2,3}.json`.
 
+**And the set this file publishes was taken again**, because the default moved: the reader's default
+was a **row limit of 131,072 rows** and is a **byte budget of 16 MiB** now, so the batch the reader holds
+moved with it, and every figure the batch size touches moved with it. **Every figure in the first
+column below is the new one, and the figure it replaces is beside it.** The old-and-new for every family
+the default moved is in [§3ah](#3ah-the-default-moved).
+
 | part | the published set | this increment's code | the code it replaces | the code's share |
 |---|---|---|---|---|
-| the stage, cold | 27.493 ms | 18.366 ms | 18.455 ms | −0.089 ms |
-| the stage, resident | 20.276 ms | 18.031 ms | 17.926 ms | 0.106 ms |
-| the build side, whole | 12.568 ms | 11.249 ms | 11.265 ms | −0.017 ms |
-| the probe, over the column | 9.100 ms | 7.793 ms | 7.851 ms | −0.058 ms |
-| the probe, in the batches | 14.296 ms | 6.999 ms | 7.129 ms | −0.130 ms |
-| the floor the probe cannot go under | 4.948 ms | 5.376 ms | 5.361 ms | 0.015 ms |
-| the candidate, written out | 8.754 ms | 7.968 ms | 7.940 ms | 0.028 ms |
-| the read, plain | 0.589 ms | 0.491 ms | 0.490 ms | 0.001 ms |
+| the stage, cold | **20.863 ms** *(was 27.493 ms)* | 18.366 ms | 18.455 ms | −0.089 ms |
+| the stage, resident | **19.350 ms** *(was 20.276 ms)* | 18.031 ms | 17.926 ms | 0.106 ms |
+| the build side, whole | **11.881 ms** *(was 12.568 ms)* | 11.249 ms | 11.265 ms | −0.017 ms |
+| the probe, over the column | **8.408 ms** *(was 9.100 ms)* | 7.793 ms | 7.851 ms | −0.058 ms |
+| the probe, in the batches | **8.684 ms** *(was 14.296 ms)* | 6.999 ms | 7.129 ms | −0.130 ms |
+| the floor the probe cannot go under | **4.735 ms** *(was 4.948 ms)* | 5.376 ms | 5.361 ms | 0.015 ms |
+| the candidate, written out | **8.576 ms** *(was 8.754 ms)* | 7.968 ms | 7.940 ms | 0.028 ms |
+| the read, plain | **0.522 ms** *(was 0.589 ms)* | 0.491 ms | 0.490 ms | 0.001 ms |
 
 **And the yardstick every one of those shares is read against — the stage's own drift over its three
 campaigns:**
 
 | the stage's own drift | the published set | this increment's code | the code it replaces |
 |---|---|---|---|
-| the stage, cold | 1.951 ms | 1.237 ms | 0.900 ms |
-| the stage, resident | 0.528 ms | 0.818 ms | 0.658 ms |
+| the stage, cold | **0.566 ms** *(was 1.951 ms)* | 1.237 ms | 0.900 ms |
+| the stage, resident | **0.773 ms** *(was 0.528 ms)* | 0.818 ms | 0.658 ms |
 
 **So the code's share is nil, part by part.** The stage's cold difference is **−0.089 ms** against a
 drift of **1.237 ms** and **0.900 ms**, the stage's resident **0.106 ms** against **0.818 ms** and
@@ -3339,19 +3538,20 @@ the verdict's state, on the resident path, is **sound**;
 
 **and on the code it replaces, measured back to back, they are the same two words.** The **yardsticks**
 are the host's, and they moved: the cold path's yardstick is **0.962 ms** on this increment's code and
-**0.526 ms** on the code it replaces, against the published set's **2.236 ms**; the resident path's
-yardstick is **0.859 ms** and **0.773 ms**, against the published set's **1.324 ms**. The **published
-set's cold yardstick is that wide** because the host it was taken on was the busy one: its stage's own
-drift was **1.951 ms**, where this host's is **1.237 ms**.
+**0.526 ms** on the code it replaces, against the published set's **0.514 ms**; the resident path's
+yardstick is **0.859 ms** and **0.773 ms**, against the published set's **1.502 ms**. **And the published
+set's drift is no longer the wide one**: its stage's own drift is **0.566 ms**, where it was **1.951 ms**,
+because the set was taken again on this host — the load average was **3.40**, **3.70** and **4.29** — and
+clean.
 
-**And the movement between the published set and this one is not the code's.** The stage's cold path was
-**27.493 ms** in the published set and is **18.366 ms** here, and the floor under it was **4.948 ms**
-and is **5.376 ms**: the published set's campaigns ran on a **busier** host — the load average was
-**14.74–15.35** against this session's **2.59–3.47** — on a tree the reports mark **dirty**, while this
-session's two trees were **clean** and interleaved, so the two sets' figures are not comparable one for
-one. The tree this increment replaces, measured on this host in this session, reads **18.455 ms** against
-this increment's **18.366 ms** — so **the code's share is nil**, and what moved between the two sets is
-the machine's and the tree's.
+**And the movement between the published set and this one is the default's.** The stage's cold path is
+**20.863 ms** in the published set, where the set this file replaces read **27.493 ms**, and this
+session's tree reads **18.366 ms**; the floor under it is **4.735 ms** in the published set, where it was
+**4.948 ms**, and **5.376 ms** here. **The published set's campaigns ran on this host too** — the load
+average was **3.40**, **3.70** and **4.29** against this session's **2.59–3.47** — and on a **clean**
+tree, so what moved between the two sets is no longer the machine's: it is the **default's** — the batch
+the reader holds — and the tree's. The tree this increment replaces, measured on this host in this
+session, reads **18.455 ms** against this increment's **18.366 ms** — so **the code's share is nil**.
 ### 3q. The drift's own parts
 
 **The drift is the yardstick every part is judged against, and this section takes it apart.** A
@@ -3375,18 +3575,20 @@ another block** — a reasonable proxy, and not the same-iteration pairing this 
 
 **And the ladder is taken over the pair of campaigns that make the context's own drift**, so the
 movement is the one the yardstick is about. **From the set this file publishes** —
-`bench-results/join-cost-run{1,2,3}.json`:
+`bench-results/join-cost-run{1,2,3}.json`, **taken again** because the default moved: the reader's
+default was a **row limit of 131,072 rows** and is a **byte budget of 16 MiB** now, so the batch the
+reader holds moved with it:
 
 | the ladder | the cold path | the resident path |
 |---|---|---|
-| **the context's drift** | **2.271 ms** | **0.184 ms** |
-| the build side's gap — drift, movement, paired | 0.767 ms, +0.050 ms, +0.114 ms | 0.222 ms, −0.552 ms, −0.332 ms |
-| the open's gap — drift, movement, paired | 0.029 ms, +0.005 ms, +0.069 ms | 0.015 ms, −0.009 ms, +0.212 ms |
-| the probe's file state, less its row-number offset | 1.515 ms, +0.792 ms, +0.856 ms | 1.354 ms, +0.591 ms, +0.812 ms |
-| the probe's own remainder | 1.235 ms, +1.642 ms, +1.706 ms | 0.035 ms, −0.049 ms, +0.172 ms |
-| the part in no gap | 0.000 ms, 0.000 ms, +0.064 ms | 0.000 ms, 0.000 ms, +0.221 ms |
-| **the movement, and the reconciliation** | **+2.488 ms**, **0.000000** | **−0.019 ms**, **0.000000** |
-| **the floor** — the machine's own movement | **0.225 ms**, −0.064 ms | **0.225 ms**, −0.221 ms |
+| **the context's drift** | **0.787 ms** *(was 2.271 ms)* | **0.664 ms** *(was 0.184 ms)* |
+| the build side's gap — drift, movement, paired | 0.274 ms, −0.179 ms, −0.201 ms *(was 0.767 ms, +0.050 ms, +0.114 ms)* | 0.186 ms, +0.023 ms, +0.134 ms *(was 0.222 ms, −0.552 ms, −0.332 ms)* |
+| the open's gap — drift, movement, paired | 0.016 ms, +0.010 ms, −0.013 ms *(was 0.029 ms, +0.005 ms, +0.069 ms)* | 0.017 ms, −0.009 ms, +0.103 ms *(was 0.015 ms, −0.009 ms, +0.212 ms)* |
+| the probe's file state, less its row-number offset | 0.718 ms, +0.330 ms, +0.308 ms *(was 1.515 ms, +0.792 ms, +0.856 ms)* | 0.944 ms, −0.560 ms, −0.448 ms *(was 1.354 ms, +0.591 ms, +0.812 ms)* |
+| the probe's own remainder | 0.394 ms, +0.180 ms, +0.158 ms *(was 1.235 ms, +1.642 ms, +1.706 ms)* | 0.852 ms, +0.879 ms, +0.991 ms *(was 0.035 ms, −0.049 ms, +0.172 ms)* |
+| the part in no gap | 0.000 ms, 0.000 ms, −0.022 ms *(was 0.000 ms, 0.000 ms, +0.064 ms)* | 0.000 ms, 0.000 ms, +0.111 ms *(was 0.000 ms, 0.000 ms, +0.221 ms)* |
+| **the movement, and the reconciliation** | **+0.341 ms**, **0.000000** *(was +2.488 ms)* | **+0.334 ms**, **0.000000** *(was −0.019 ms)* |
+| **the floor** — the machine's own movement | **0.240 ms**, +0.022 ms *(was 0.225 ms, −0.064 ms)* | **0.240 ms**, −0.111 ms *(was 0.225 ms, −0.221 ms)* |
 
 **And the set the bump replaces, for the same campaigns** — the same code, on `parquet` 54.3.1,
 measured before the dependency moved: `bench-results/join-cost-spec041-before-run{1,2,3}.json`:
@@ -3420,22 +3622,21 @@ the engine's own variance — and which of them is largest is a property of the 
 day, not of the code.**
 
 **And the floor is the machine's own.** It is the measurement of the host with no engine in it, and it
-is what separates the host's movement from the code's: **4.948 ms** in the set this file publishes,
-where it was **6.147 ms** in the set the bump replaces, and it drifts **0.225 ms** over the three
-campaigns, where it drifted **0.362 ms** there. **Its own movement on the cold path is −0.064 ms**
-against the path's **+2.488 ms**, and on the resident path **−0.221 ms** against that path's
-**−0.019 ms**.
+is what separates the host's movement from the code's: **4.735 ms** in the set this file publishes,
+where it was **4.948 ms**, and it drifts **0.240 ms** over the three campaigns, where the set the bump
+replaces' drifted **0.362 ms**. **Its own movement on the cold path is +0.022 ms** against the path's
+**+0.341 ms**, and on the resident path **−0.111 ms** against that path's **+0.334 ms**.
 
-**And on the busy host the published set was taken on — the load average 15.35, 15.24 and 14.74 — the
-cold path's movement is the probe's own remainder and the probe's file state**: **+1.642 ms** and
-**+0.792 ms** of the **+2.488 ms**, against the machine's own **−0.064 ms** — **and paired against the
-floor they are still +1.706 ms and +0.856 ms**, so the machine takes nothing out of this movement: it
+**And on the quiet host the published set was taken on — the load average 3.40, 3.70 and 4.29 — the
+cold path's movement is the probe's own remainder and the probe's file state**: **+0.180 ms** and
+**+0.330 ms** of the **+0.341 ms**, against the machine's own **+0.022 ms** — **and paired against the
+floor they are still +0.158 ms and +0.308 ms**, so the machine takes nothing out of this movement: it
 is the engine's own work and the file's state. **And the build side's read did not break away**: its own
-drift over the three campaigns is **0.648 ms**, where it was **10.330 ms** in the set the bump replaces:
-the read's medians are **11.898 ms**, **11.761 ms**, **12.409 ms** for the three campaigns, and inside the
-middle one the read's own six iterations are **12.132**, **11.832**, **11.497**, **11.619**, **11.761**,
-**11.648** — a spread of **0.635 ms** inside the campaign, and no excursion. **The largest single
-iteration of the read in the whole set is 13.355 ms.**
+drift over the three campaigns is **0.378 ms**, where it was **10.330 ms** in the set the bump replaces:
+the read's medians are **11.250 ms**, **11.383 ms**, **11.628 ms** for the three campaigns, and inside the
+middle one the read's own six iterations are **11.305**, **11.438**, **11.566**, **11.383**, **11.351**,
+**11.292** — a spread of **0.274 ms** inside the campaign, and no excursion. **The largest single
+iteration of the read in the whole set is 11.872 ms.**
 
 **And the excursions belong to the set the bump replaces.** There the read's medians were **11.763 ms**,
 **22.093 ms**, **11.898 ms**, and the middle campaign's six iterations were **11.713**, **11.403**,
@@ -3453,23 +3654,23 @@ instrument does not yet measure per iteration.
 **And on the quiet host spec 034's set was taken on, the machine's own movement is larger than the
 cold path's whole movement**: the floor's **+0.301 ms** against **+0.206 ms** — **and paired against
 the floor the cold path's leaves' movements are −0.154 ms and −0.161 ms**, so on that host they
-**are** the machine's movement and nothing else. **And the same is true of the published set's resident
-path**: the machine's own movement of **−0.221 ms** is larger in magnitude than that path's whole
-movement of **−0.019 ms**, and once it is taken out the leaves stand at **+0.812 ms** for the probe's
-file state and **+0.172 ms** for the probe's own remainder. So the machine's share is not a fixed number
-either — **which is why the sets are published beside each other and not one instead of the other**: the
-decomposition is a property of the code, and the shares are a property of the day.
+**are** the machine's movement and nothing else. **And the same is no longer true of the published
+set's resident path**: the machine's own movement of **−0.111 ms** is smaller in magnitude than that
+path's whole movement of **+0.334 ms**, and once it is taken out the leaves stand at **−0.448 ms** for
+the probe's file state and **+0.991 ms** for the probe's own remainder. So the machine's share is not a
+fixed number either — **which is why the sets are published beside each other and not one instead of
+the other**: the decomposition is a property of the code, and the shares are a property of the day.
 
 **And the yardstick's validity follows, leaf by leaf.** A leaf's yardstick is its own drift unless
 the floor's is wider. On the published set's cold path the **probe's file state less its row-number
-offset** drifts **1.515 ms** and the **probe's own remainder** **1.235 ms**, against the floor's
-**0.225 ms** — **their own drift is their yardstick, and the floor does not reach them** — and the
-**build side's gap** drifts **0.767 ms**, which the floor does not reach either. The **open's gap**
-drifts **0.029 ms** and the floor covers it. On the resident path only the **probe's file state less
-its row-number offset** stands on its own drift, at **1.354 ms**: the **build side's gap** drifts
-**0.222 ms**, the **open's gap** **0.015 ms**, the **probe's own remainder** **0.035 ms** and the
-**part in no gap** **0.000 ms**, and the floor's **0.225 ms** covers all four — **by 0.003 ms on the
-build side's gap**. **And that is a change, and it is the other way round**: in the set the bump
+offset** drifts **0.718 ms** and the **probe's own remainder** **0.394 ms**, against the floor's
+**0.240 ms** — **their own drift is their yardstick, and the floor does not reach them** — and the
+**build side's gap** drifts **0.274 ms**, which the floor does not reach either. The **open's gap**
+drifts **0.016 ms** and the floor covers it. On the resident path the **probe's file state less
+its row-number offset** stands on its own drift, at **0.944 ms**, and so does the **probe's own
+remainder** at **0.852 ms**: the **build side's gap** drifts **0.186 ms**, the **open's gap** **0.017 ms**
+and the **part in no gap** **0.000 ms**, and the floor's **0.240 ms** covers all three — **by 0.054 ms
+on the build side's gap**. **And that is a change, and it is the other way round**: in the set the bump
 replaces the cold path's **build side's gap** drifted **0.120 ms** and the floor's **0.362 ms** covered
 it, while on the resident path the same leaf drifted **0.564 ms**, above the floor's **0.362 ms**, and
 stood on its own drift. **On spec 034's set the answer flips**, on the other path: the cold path's
@@ -3478,7 +3679,7 @@ drifts **0.371 ms** — **not covered**.
 
 **And the resolution that would be needed** is a yardstick for the cold path that sees the file's
 state as well as the machine's, because the cold path's largest leaf **is** the file's state — it
-drifts **1.515 ms** against the floor's **0.225 ms** — and **no floor over a memory-bound loop can see
+drifts **0.718 ms** against the floor's **0.240 ms** — and **no floor over a memory-bound loop can see
 it**. The instrument measures the build side's file state **once per campaign**, the process's first
 read of the build side's data, and not per iteration, so an excursion inside the iterations cannot be
 attributed to it from the report. **A file-state floor — the file's own read, measured in the iteration,
@@ -3486,15 +3687,15 @@ paired with the parts — is what would settle it, and [§3r](#3r-the-file-state
 instrument was built and measured.**
 
 **And how much of the engine's own cost moves under the measurement.** In the published set the cold
-path's drift is **1.951 ms** — **7.02%** of its cost — and the resident path's is **0.528 ms**,
-**2.59%** of its own. In the set spec 034 measured the cold path's drift is **1.237 ms**, **6.76%** of
+path's drift is **0.566 ms** — **2.73%** of its cost — and the resident path's is **0.773 ms**,
+**4.00%** of its own. In the set spec 034 measured the cold path's drift is **1.237 ms**, **6.76%** of
 its cost, and the resident path's is **0.818 ms**, **4.52%**. **So in the published set the engine's
-cost moves by about two and a half per cent on the path that holds the data and by about seven per
+cost moves by about four per cent on the path that holds the data and by about two and a half per
 cent on the path that reads the file** — and the path that reads the file has the two leaves that
-drift widest: the **probe's file state less its row-number offset** at **1.515 ms** and the **probe's
-own remainder** at **1.235 ms**, against the floor's **0.225 ms**. **And the whole old-and-new is in
+drift widest: the **probe's file state less its row-number offset** at **0.718 ms** and the **probe's
+own remainder** at **0.394 ms**, against the floor's **0.240 ms**. **And the whole old-and-new is in
+[§3ah](#3ah-the-default-moved), and the bump's own in
 [§3x](#3x-the-bump-and-the-figures-it-moved).**
-
 ### 3r. The file-state floor
 
 **The resolution [§3q](#3q-the-drifts-own-parts) named is built here, and the sentence §3q published about
@@ -3631,45 +3832,49 @@ byte**. The write is timed without the read that fed it: the store's caller brin
 pays for bringing them.
 
 **And the same rows are written twice**, in two batch sizes: the one the published file was written in, and
-the engine's own. The batch size is the variable, and the reason is in the writer.
+the engine's own — **500,000 rows now**, where it was **125,000**, because the default moved: the reader's
+default was a **row limit of 131,072 rows** and is a **byte budget of 16 MiB** now, so the batch the reader
+holds moved with it. **And the campaigns behind the table below were taken again**, so every figure in it
+moved with the host's movement as well, and each one is published beside the figure it replaces. The
+batch size is the variable, and the reason is in the writer.
 
 | | **the batch the published file was written in** | **the engine's own batch size** |
 |---|---|---|
-| **the batch size the rows arrived in** | **65,536** | **125,000** |
+| **the batch size the rows arrived in** | **65,536** | **500,000** *(was 125,000)* |
 | | | |
-| the write of one row group | **282.134 ms** | 286.084 ms |
-| the write of the whole file | **1679.362 ms** | 1701.863 ms |
-| the write of the whole file, the dictionary off | 1843.395 ms | 1893.030 ms |
+| the write of one row group | **271.721 ms** *(was 282.134 ms)* | 268.269 ms *(was 286.084 ms)* |
+| the write of the whole file | **1641.539 ms** *(was 1679.362 ms)* | 1620.230 ms *(was 1701.863 ms)* |
+| the write of the whole file, the dictionary off | 1780.395 ms *(was 1843.395 ms)* | 1768.843 ms *(was 1893.030 ms)* |
 | | | |
-| writing the manifest | **0.206 ms** | 0.186 ms |
-| the `fsync` of the data file | **2.480 ms** | 2.399 ms |
-| the `fsync` of the manifest | **2.451 ms** | 2.420 ms |
-| the `rename` of the manifest | **0.213 ms** | 0.196 ms |
-| the `fsync` of the directory | **2.508 ms** | 2.409 ms |
-| **the commit, all five steps** | **8.493 ms** | 7.718 ms |
-| the commit's share of the write | **0.005** | 0.005 |
-| the `fsync`s' share of the commit | **0.899** | 0.947 |
+| writing the manifest | **0.140 ms** *(was 0.206 ms)* | 0.135 ms *(was 0.186 ms)* |
+| the `fsync` of the data file | **4.098 ms** *(was 2.480 ms)* | 4.038 ms *(was 2.399 ms)* |
+| the `fsync` of the manifest | **3.955 ms** *(was 2.451 ms)* | 3.977 ms *(was 2.420 ms)* |
+| the `rename` of the manifest | **0.191 ms** *(was 0.213 ms)* | 0.184 ms *(was 0.196 ms)* |
+| the `fsync` of the directory | **3.950 ms** *(was 2.508 ms)* | 4.705 ms *(was 2.409 ms)* |
+| **the commit, all five steps** | **12.147 ms** *(was 8.493 ms)* | 13.101 ms *(was 7.718 ms)* |
+| the commit's share of the write | **0.007** *(was 0.005)* | 0.008 *(was 0.005)* |
+| the `fsync`s' share of the commit | **0.983** *(was 0.899)* | 0.969 *(was 0.947)* |
 | | | |
-| the read of the original, two columns | **71.107 ms** | 73.868 ms |
-| the read of the file the probe wrote, two columns | **72.098 ms** | 74.582 ms |
-| the read of the plain file, two columns | **71.401 ms** | 71.737 ms |
-| the read of the original, all sixteen columns | **522.671 ms** | 527.702 ms |
-| the read of the file the probe wrote, all sixteen columns | **515.641 ms** | 526.108 ms |
-| the read of the plain file, all sixteen columns | **1291.967 ms** | 1323.790 ms |
+| the read of the original, two columns | **68.819 ms** *(was 71.107 ms)* | 69.433 ms *(was 73.868 ms)* |
+| the read of the file the probe wrote, two columns | **68.076 ms** *(was 72.098 ms)* | 68.910 ms *(was 74.582 ms)* |
+| the read of the plain file, two columns | **68.067 ms** *(was 71.401 ms)* | 68.479 ms *(was 71.737 ms)* |
+| the read of the original, all sixteen columns | **504.550 ms** *(was 522.671 ms)* | 505.172 ms *(was 527.702 ms)* |
+| the read of the file the probe wrote, all sixteen columns | **502.760 ms** *(was 515.641 ms)* | 498.262 ms *(was 526.108 ms)* |
+| the read of the plain file, all sixteen columns | **1274.810 ms** *(was 1291.967 ms)* | 1275.692 ms *(was 1323.790 ms)* |
 | | | |
-| the cost of one row group | **279.785 ms** | 283.156 ms |
-| the write over a full read | **3.22×** | 3.23× |
-| the write over a two-column read | **23.66×** | 23.22× |
+| the cost of one row group | **272.694 ms** *(was 279.785 ms)* | 270.460 ms *(was 283.156 ms)* |
+| the write over a full read | **3.23×** *(was 3.22×)* | 3.23× |
+| the write over a two-column read | 23.66× | 23.45× *(was 23.22×)* |
 | | | |
 | the bytes on disk, the original | **242,859,461** | 242,859,461 |
-| the bytes on disk, the file the probe wrote | **242,859,461** | 242,857,817 |
-| the bytes on disk, the plain file | **376,934,192** | 376,935,960 |
+| the bytes on disk, the file the probe wrote | **242,859,461** | 242,856,245 *(was 242,857,817)* |
+| the bytes on disk, the plain file | **376,934,192** | 376,935,552 *(was 376,935,960)* |
 | the bytes a row takes, the original | **40.48** | 40.48 |
 | the bytes a row takes, the file the probe wrote | **40.48** | 40.48 |
 | the bytes a row takes, the plain file | **62.82** | 62.82 |
 | the plain file's bytes over the dictionary file's | **1.55** | 1.55 |
-| the plain file's write over the dictionary file's | **1.10** | 1.11 |
-| the plain file's read over the dictionary file's | **2.47** | 2.51 |
+| the plain file's write over the dictionary file's | **1.08** *(was 1.10)* | 1.09 *(was 1.11)* |
+| the plain file's read over the dictionary file's | **2.53** *(was 2.47)* | 2.53 *(was 2.51)* |
 
 **And the set the bump replaces, for the same rows** — the same probe, the same rows, the same two batch
 sizes, against the tree the bump replaces:
@@ -3714,7 +3919,7 @@ sizes, against the tree the bump replaces:
 
 **And the batch size decides the bytes.** In the first column the file the probe wrote
 **is the published file, byte for byte** — **242,859,461** bytes, where the set the bump replaces had
-**242,857,841**, compared byte for byte and found equal. In the second column it is **242,857,817** bytes,
+**242,857,841**, compared byte for byte and found equal. In the second column it is **242,856,245** bytes,
 where that set had **242,856,197**, and the two differ **from byte 7** — which is the third byte of the
 first page header, the page's uncompressed size.
 
@@ -3722,62 +3927,62 @@ first page header, the page's uncompressed size.
 mini-batches of `DEFAULT_WRITE_BATCH_SIZE` — **1,024** values — and the dictionary's fallback to plain, the
 point where the dictionary page crosses its one-megabyte limit, is decided at one of those boundaries. **65,536
 is 64 × 1,024**, so the boundaries land on the same value indices every time and the file comes out the same.
-**125,000 is 122 × 1,024 + 192**, so they drift: the fallback lands later, and the file the probe wrote is
-**1,644 bytes** shorter — **242,857,817** bytes against the published file's **242,859,461**. **So the
+**500,000 is 488 × 1,024 + 288**, so they drift: the fallback lands later, and the file the probe wrote is
+**3,216 bytes** shorter — **242,856,245** bytes against the published file's **242,859,461**. **So the
 writer's output is a function of the caller's batch size**, and a store that promises reproducible files has
 to fix it.
 
 **And the encoding is the larger decision.** The same rows written with the dictionary off take **376,934,192**
 bytes against **242,859,461** — where the set the bump replaces had **376,933,328** against **242,857,841** —
-**1.55×** the bytes — and cost **1843.395 ms** to write against **1679.362 ms**, where that set had
-**1989.261 ms** against **1844.195 ms**, so **1.10×** the write time. **And they read back 2.47× slower**,
-where the set the bump replaces had **2.60×**: **1291.967 ms** against **522.671 ms** for the whole file, where
+**1.55×** the bytes — and cost **1780.395 ms** to write against **1641.539 ms**, where that set had
+**1989.261 ms** against **1844.195 ms**, so **1.08×** the write time. **And they read back 2.53× slower**,
+where the set the bump replaces had **2.60×**: **1274.810 ms** against **504.550 ms** for the whole file, where
 that set had **1427.515 ms** against **548.445 ms**. §3h measured the dictionary's trade on the **read** side and found it a measurement rather than a
 rule; here it is measured on **both** sides, and the dictionary wins on the read by more than it loses on the
 write.
 
 **And the commit is cheap.** The whole five-step sequence — the `fsync` of the data file, the manifest
-written and `fsync`ed, the `rename`, the `fsync` of the directory — is **8.493 ms**, where the set the bump
-replaces had **7.651 ms**, which is **0.005** of the write. **So the protocol's shape is not constrained by
+written and `fsync`ed, the `rename`, the `fsync` of the directory — is **12.147 ms**, where the set the bump
+replaces had **7.651 ms**, which is **0.007** of the write. **So the protocol's shape is not constrained by
 the flush on this host**, and the store's commit can be the simple one: the data durable first, then the
 manifest that names it, then the `rename`, then the directory.
 
 **And the `fsync` measured here is the platform's `fsync`, not a drive's flush.** On APFS the two are
 different: `fsync` makes the file's data durable with respect to the operating system, while `F_FULLFSYNC`
-additionally flushes the drive's write cache. Rust's `File::sync_all` is the former. The **2.480 ms** above is
+additionally flushes the drive's write cache. Rust's `File::sync_all` is the former. The **4.098 ms** above is
 therefore the **logical** flush's cost, and the durability it buys on this platform is weaker than the number
 suggests. **The commit protocol has to be checked on the platform it will ship on.**
 
 **And the four decisions the numbers make.** The **row groups** are a million rows — the file's own — and one
-of them costs **279.785 ms** to write, where the set the bump replaces had **306.230 ms**. The **commit** is a
-manifest commit of five steps at **8.493 ms**, where that set had **7.651 ms**, and nothing in its shape is
-forced by the flush here. The **encoding** keeps the dictionary on: **35.6%** fewer bytes and **2.47×** faster
-to read for **1.10×** the write time, where the set the bump replaces had **2.60×** faster to read for
+of them costs **272.694 ms** to write, where the set the bump replaces had **306.230 ms**. The **commit** is a
+manifest commit of five steps at **12.147 ms**, where that set had **7.651 ms**, and nothing in its shape is
+forced by the flush here. The **encoding** keeps the dictionary on: **35.6%** fewer bytes and **2.53×** faster
+to read for **1.08×** the write time, where the set the bump replaces had **2.60×** faster to read for
 **1.08×** the write time. And the **batch size** is fixed at **65,536**, because the bytes depend on it.
 
-**And the answer to the question the store's premise rests on.** The write costs **3.22×** a full read of the
+**And the answer to the question the store's premise rests on.** The write costs **3.23×** a full read of the
 file, where the set the bump replaces had **3.36×**, and **23.66×** a two-column read of it, where that set
 had **24.04×**. So *write once, read many* pays for itself after about **four** full reads, or about
 **twenty-four** scans. **For a bulk-loaded analytical table that is read many times, it does** — and the read
 side of this repository is the half that is measured to a tenth of a millisecond.
 
-**And why the write moved is the writer, not the host.** The write of one row group is **282.134 ms**, where
-the set the bump replaces had **313.043 ms**, and the write of the whole file is **1679.362 ms** against
-**1844.195 ms** — **faster**, on a host that was **busier**: the load averages were **12.74**, **10.86** and
-**9.31** for the first set and **10.52**, **10.90** and **10.84** for the second, where the set the bump
+**And why the write moved is the writer, not the host.** The write of one row group is **271.721 ms**, where
+the set the bump replaces had **313.043 ms**, and the write of the whole file is **1641.539 ms** against
+**1844.195 ms** — **faster**, on a host that was **quieter**: the load averages were **3.47**, **4.27** and
+**4.61** for the first set and **3.56**, **3.94** and **3.38** for the second, where the set the bump
 replaces' were **7.87**, **7.57** and **7.99** and **9.63**, **7.64** and **9.00**. **What changed between
 the two sets is the writer** — the `parquet` crate is at **58.4.1** now, and its output is different: the file
 it wrote is **242,859,461** bytes where the set the bump replaces' was **242,857,841**. **And the commit is
-the other way**: **8.493 ms** against **7.651 ms**, and it is the flushes that carry it — **2.480 ms**,
-**2.451 ms** and **2.508 ms** against **2.118 ms**, **2.382 ms** and **2.587 ms**. **The flush is the host's,
+the other way**: **12.147 ms** against **7.651 ms**, and it is the flushes that carry it — **4.098 ms**,
+**3.955 ms** and **3.950 ms** against **2.118 ms**, **2.382 ms** and **2.587 ms**. **The flush is the host's,
 and the write is the writer's.**
 
 The raw reports are committed under their own names — the set the bump replaces under
 `bench-results/write-cost-spec041-before-run{1,2,3}.json` and
 `bench-results/write-cost-engine-batch-spec041-before-run{1,2,3}.json` — and the figures above are derived
 from them by `python3 scripts/medians.py`; the guard checks every one of them **inside this section**. The
-whole old-and-new is in [§3x](#3x-the-bump-and-the-figures-it-moved).
-
+whole old-and-new is in [§3ah](#3ah-the-default-moved), and the bump's own in
+[§3x](#3x-the-bump-and-the-figures-it-moved).
 ### 3t. The store's own write
 
 **The write side is measured, and the store is built.** Spec 038 built the store's half — the **writer**,
@@ -3791,9 +3996,9 @@ the **manifest**, the **commit** and the **catalog** — and the acceptance is t
 | the grid the rows arrived in | 65,536 |
 | the row groups | 1,000,000 |
 | | |
-| the store's write | **1720.392 ms** |
-| the store's commit | **8.043 ms** |
-| the store's own API, end to end | **1721.022 ms** |
+| the store's write | **1637.407 ms** *(was 1720.392 ms)* |
+| the store's commit | **27.797 ms** *(was 8.043 ms)* |
+| the store's own API, end to end | **1645.148 ms** *(was 1721.022 ms)* |
 
 **And the set the bump replaces, for the same rows** — the same store, the same rows, against the tree the
 bump replaces:
@@ -3805,22 +4010,28 @@ bump replaces:
 | the grid the rows arrived in | 65,536 |
 | the row groups | 1,000,000 |
 | | |
-| the store's write | **1793.670 ms** |
-| the store's commit | **9.270 ms** |
-| the store's own API, end to end | **1798.356 ms** |
+| the store's write | 1793.670 ms |
+| the store's commit | 9.270 ms |
+| the store's own API, end to end | 1798.356 ms |
+
+**And the campaign behind the table above was taken again**, because the default moved: the reader's default
+was a **row limit of 131,072 rows** and is a **byte budget of 16 MiB** now, so the batch the reader holds
+moved with it, and every figure the batch size touches moved with it — each one is published beside the
+figure it replaces, and the old-and-new is in [§3ah](#3ah-the-default-moved).
 
 **And it is the same write that [§3s](#3s-the-write-side) measured.** The store's write of the published
-file is **1720.392 ms**, where the set the bump replaces had **1793.670 ms**, and the write-side probe's is
-**1679.362 ms**, where that set had **1844.195 ms**: the same writer over the same rows, on two days, within
+file is **1637.407 ms**, where the set the bump replaces had **1793.670 ms**, and the write-side probe's is
+**1641.539 ms**, where that set had **1844.195 ms**: the same writer over the same rows, on two days, within
 a few per cent of each other. **Which is why the load average travels with every figure in this file**: the
-store's campaigns ran at a load average of **10.77**, **10.31** and **9.75**, where the set the bump
-replaces' were **8.4**, **8.48** and **8.32**, and the probe's at **12.74**, **10.86** and **9.31**, where that
+store's campaigns ran at a load average of **4.26**, **3.03** and **3.40**, where the set the bump
+replaces' were **8.4**, **8.48** and **8.32**, and the probe's at **3.47**, **4.27** and **4.61**, where that
 set had **7.87**, **7.57** and **7.99**.
 
 **And the store's commit is the five steps, measured.** The data file is made durable first, then the
 manifest that names it is written, made durable, and `rename`d over the old one, and the directory is made
-durable last. **8.043 ms**, where the set the bump replaces had **9.270 ms**, against the probe's **8.493 ms**
-for the same protocol, where that set had **7.651 ms**. **There is no write-ahead log and no rollback**: a
+durable last. **27.797 ms**, where the set the bump replaces had **9.270 ms**, against the probe's **12.147 ms**
+for the same protocol, where that set had **7.651 ms** — **so the store's commit is the slower of the two on
+this campaign, where it was the faster of them.** **There is no write-ahead log and no rollback**: a
 commit is a rename, and the rename is the answer.
 
 **And the grid is a rule now, not a surprise.** The rows arrive in batches of **65,536** rows and the store
@@ -3841,8 +4052,8 @@ between them is a path** — and the engine's side of that glue, the source that
 The raw reports are committed under their own names — the set the bump replaces under
 `bench-results/store-write-spec041-before-run{1,2,3}.json` — the figures above are derived from them by
 `python3 scripts/medians.py`, and the guard checks every one of them **inside this section**. The whole
-old-and-new is in [§3x](#3x-the-bump-and-the-figures-it-moved).
-
+old-and-new is in [§3ah](#3ah-the-default-moved), and the bump's own in
+[§3x](#3x-the-bump-and-the-figures-it-moved).
 ### 3u. The file boundary's cost
 
 **The store writes a table as a set of files, and the engine's only source is one file.** So the question
@@ -3855,10 +4066,10 @@ between the two reads is the number of files.**
 
 | | |
 |---|---|
-| **the read of the one file** | **70.151 ms** |
-| **the read of the six files** | **68.267 ms** |
-| **the boundary's cost** | **−1.416 ms** |
-| the boundary's share of the one file's read | **−0.020** |
+| **the read of the one file** | **69.115 ms** *(was 70.151 ms)* |
+| **the read of the six files** | **66.377 ms** *(was 68.267 ms)* |
+| **the boundary's cost** | **−2.738 ms** *(was −1.416 ms)* |
+| the boundary's share of the one file's read | **−0.040** *(was −0.020)* |
 | the files | 6 |
 | the rows | 6,000,000 |
 
@@ -3867,25 +4078,30 @@ the bump replaces:
 
 | | |
 |---|---|
-| **the read of the one file** | **66.003 ms** |
-| **the read of the six files** | **64.114 ms** |
-| **the boundary's cost** | **−1.152 ms** |
-| the boundary's share of the one file's read | **−0.017** |
+| **the read of the one file** | 66.003 ms |
+| **the read of the six files** | 64.114 ms |
+| **the boundary's cost** | −1.152 ms |
+| the boundary's share of the one file's read | −0.017 |
 | the files | 6 |
 | the rows | 6,000,000 |
 
-**And the two are level.** The read of the one file is **70.151 ms**, where the set the bump replaces had
-**66.003 ms**, and the read of the six files is **68.267 ms**, where that set had **64.114 ms**; the
-boundary's cost is **−1.416 ms**, where that set had **−1.152 ms**, and its share of the one file's read is
-**−0.020**, where that set had **−0.017**. **The difference is negative, so the six files were not slower:
+**And the campaign behind the table above was taken again**, because the default moved: the reader's default
+was a **row limit of 131,072 rows** and is a **byte budget of 16 MiB** now, so the batch the reader holds
+moved with it, and every figure the batch size touches moved with it — each one is published beside the
+figure it replaces, and the old-and-new is in [§3ah](#3ah-the-default-moved).
+
+**And the two are level.** The read of the one file is **69.115 ms**, where the set the bump replaces had
+**66.003 ms**, and the read of the six files is **66.377 ms**, where that set had **64.114 ms**; the
+boundary's cost is **−2.738 ms**, where that set had **−1.152 ms**, and its share of the one file's read is
+**−0.040**, where that set had **−0.017**. **The difference is negative, so the six files were not slower:
 the file boundary costs nothing measurable.** And the two reads' own iterations overlap — the one file's
-span **68.768–72.085 ms** and the six files' **66.713–71.364 ms**. And the rows are the same: the probe
+span **66.394–72.995 ms** and the six files' **64.696–67.402 ms**. And the rows are the same: the probe
 compares them **row by row, in order**, on the key column, and they match.
 
-**And the host was busier.** The campaigns were taken at a load average of **13.84**, **13.84** and **12.97**,
-where the set the bump replaces' were **3.48**, **3.44** and **3.88** — and the absolute times moved with them.
-**The boundary's cost did not**: it is **−1.416 ms**, where that set had **−1.152 ms** — negative in both, and
-the claim does not depend on the absolute times.
+**And the host's movement does not carry the claim.** The campaigns were taken at a load average of **2.87**,
+**4.65** and **4.32**, where the set the bump replaces' were **3.48**, **3.44** and **3.88** — and the
+absolute times moved with them. **The boundary's cost did not**: it is **−2.738 ms**, where that set had
+**−1.152 ms** — negative in both, and the claim does not depend on the absolute times.
 
 **And so the source's case is correctness, not performance.** The naive way to read a store's table — open
 each file, run the query over each one — is **wrong three times over**: the rows of a filtered table are
@@ -3897,7 +4113,8 @@ above says what it has to achieve on the performance side: **nothing**. The boun
 The raw reports are committed under their own names — the set the bump replaces under
 `bench-results/many-files-spec041-before-run{1,2,3}.json` — the figures above are derived from them by
 `python3 scripts/medians.py`, and the guard checks every one of them **inside this section**. The whole
-old-and-new is in [§3x](#3x-the-bump-and-the-figures-it-moved).
+old-and-new is in [§3ah](#3ah-the-default-moved), and the bump's own in
+[§3x](#3x-the-bump-and-the-figures-it-moved).
 ### 3v. The source over a set of files
 
 **The boundary is free, so the engine gained a source that reads the set as one table** — `FileSetSource`,
@@ -3912,20 +4129,20 @@ file publishes is `bench-results/file-set-run{1,2,3}.json`; the set the bump rep
 
 | | |
 |---|---|
-| **the read of the one file** | **70.349 ms** |
-| **the read of the six files, one by one** | **67.332 ms** |
-| **the read of the six files, as one table** | **69.532 ms** |
-| **the source's cost over the one file's read** | **−0.991 ms** |
-| the source's cost, as a share of that read | **−0.014** |
-| the parallel read of the one file | **35.879 ms** |
-| the parallel read of the six, as one table | **35.920 ms** |
-| the source's cost, in parallel | **−0.019 ms** |
-| the source's cost, in parallel, as a share | **−0.001** |
-| the open of the one file | **0.052 ms** |
-| the open of the six files | **0.166 ms** |
-| the open of the six over the open of the one | **0.113 ms** |
-| the set over the six files read one by one | **1.886 ms** |
-| **the boundary's cost, as §3u measured it** | **−3.056 ms** |
+| **the read of the one file** | **68.264 ms** *(was 70.349 ms)* |
+| **the read of the six files, one by one** | **65.714 ms** *(was 67.332 ms)* |
+| **the read of the six files, as one table** | **68.657 ms** *(was 69.532 ms)* |
+| **the source's cost over the one file's read** | **0.393 ms** *(was −0.991 ms)* |
+| the source's cost, as a share of that read | **0.006** *(was −0.014)* |
+| the parallel read of the one file | **35.427 ms** *(was 35.879 ms)* |
+| the parallel read of the six, as one table | **34.932 ms** *(was 35.920 ms)* |
+| the source's cost, in parallel | **0.557 ms** *(was −0.019 ms)* |
+| the source's cost, in parallel, as a share | **0.016** *(was −0.001)* |
+| the open of the one file | **0.058 ms** *(was 0.052 ms)* |
+| the open of the six files | **0.194 ms** *(was 0.166 ms)* |
+| the open of the six over the open of the one | **0.136 ms** *(was 0.113 ms)* |
+| the set over the six files read one by one | **3.041 ms** *(was 1.886 ms)* |
+| **the boundary's cost, as §3u measured it** | **−2.643 ms** *(was −3.056 ms)* |
 | the files | 6 |
 | the rows | 6,000,000 |
 | the filtered count, over the file and over the set | 3,184,637 |
@@ -3953,27 +4170,31 @@ before the dependency moved:
 | the rows | 6,000,000 |
 | the filtered count, over the file and over the set | 3,184,637 |
 
-**And the source is free.** The source's cost over the one file's read is **−0.991 ms** — **negative**,
-where it was **−0.599 ms** in the set the bump replaces — and a share of **−0.014**: **the set's read
-was the faster of the two in all three campaigns**, by **1.170 ms**, **0.536 ms** and **0.991 ms**. In
-parallel it is **−0.019 ms** against **35.879 ms**, a share of **−0.001**, where it was **0.133 ms** and
-**0.004**, inside the parallel read's own spread of **35.813–36.074 ms**. **So the sign changed and the
-claim did not.**
+**And the campaign behind the table above was taken again**, because the default moved: the reader's default
+was a **row limit of 131,072 rows** and is a **byte budget of 16 MiB** now, so the batch the reader holds
+moved with it, and every figure the batch size touches moved with it — each one is published beside the
+figure it replaces, and the old-and-new is in [§3ah](#3ah-the-default-moved).
 
-**And one claim of the set the bump replaces does not hold here.** There the difference sat inside the
-one file's own spread of campaigns — **67.998–69.901 ms**; here the three campaigns' medians sit in
-**70.288–70.523 ms**, and the difference of **0.991 ms** is wider than that spread. **What carries the
-claim now is the sign**: the set's read was the faster one in every campaign, and a source that costs
-less than nothing costs nothing.
+**And the source is free.** The source's cost over the one file's read is **0.393 ms** — **0.6%** of the
+read — where it was **−0.991 ms** in the set this file replaces, and the set's read was the slower of the
+two in two campaigns and the faster in one, by **1.209 ms**, **0.123 ms** and **0.393 ms**. In parallel it
+is **0.557 ms** against **35.427 ms**, a share of **0.016**, where it was **−0.019 ms** and **−0.001**,
+inside the parallel read's own spread of **33.807–40.344 ms**. **So the sign changed and the claim did
+not.**
+
+**And what carries the claim now is the spread.** The difference of **0.393 ms** sits inside the one file's
+own spread of campaigns — **67.721–68.357 ms** — where in the set the bump replaces it sat inside
+**67.998–69.901 ms** as well. **A source that costs six tenths of a per cent of the read costs nothing
+measurable.**
 
 **So reading a table that is many files costs nothing measurable over reading the same rows in one file**,
 and the source's whole case — that it is *correct* — costs nothing.
 
-**And the open is nothing either.** Six files cost **0.166 ms** against one file's **0.052 ms**: the five
-extra footers are **0.113 ms**. In the set the bump replaces they were **0.187 ms**, **0.064 ms** and
+**And the open is nothing either.** Six files cost **0.194 ms** against one file's **0.058 ms**: the five
+extra footers are **0.136 ms**. In the set the bump replaces they were **0.187 ms**, **0.064 ms** and
 **0.120 ms**.
 
-**And the set costs 1.886 ms over the files read one by one** — where it cost **2.010 ms** in the set the
+**And the set costs 3.041 ms over the files read one by one** — where it cost **2.010 ms** in the set the
 bump replaces — and that is the price of **making one table out of six reads**. The naive way's read is
 not the same answer: it produces six answers, and the rows of a filtered table are split across them.
 **The yardstick is the one file's read**, and against it the source is free.
@@ -3982,20 +4203,19 @@ not the same answer: it produces six answers, and the rows of a filtered table a
 in order**, on the key column, and they match; and the same filtered plan over the file and over the set
 counts the same **3,184,637** rows.
 
-**And the one file's read moved, and the source's cost over it stayed negative.** The one file's own read
-is **70.349 ms** where it was **68.721 ms** in the set the bump replaces — the set this file publishes
-was taken on a busier host (the load average **14.06**, **14.06** and **13.66**, against **3.94**,
-**4.41** and **12.31**) and on the regenerated file. `execute_on` takes a `ParquetSource` exactly as it
-did, and the engine's internal source trait delegates to the file's own methods — **the engine's own
-code did not change** — and **what this section is about did not move with the read**: the source's cost
-over it is **−0.991 ms**, still negative, and in parallel **−0.019 ms**. The source is **additive**: a
-new name on the surface, not a change to the old one.
+**And the one file's read moved, and the source's cost over it is now positive.** The one file's own read
+is **68.264 ms** where it was **70.349 ms** in the set this file replaces — the set this file publishes was
+taken on a quieter host (the load average **3.36**, **4.65** and **4.70**, against the set the bump
+replaces' **3.94**, **4.41** and **12.31**) and on the same file. `execute_on` takes a `ParquetSource`
+exactly as it did, and the engine's internal source trait delegates to the file's own methods — **the
+engine's own code did not change** — and **what this section is about did not move with the read**: the
+source's cost over it is **0.393 ms**, **0.6%** of the read, and in parallel **0.557 ms**. The source is
+**additive**: a new name on the surface, not a change to the old one.
 
 The raw reports are committed under their own names, the figures above are derived from them by
 `python3 scripts/medians.py`, and the guard checks every one of them **inside this section**. **And the
-whole old-and-new is in [§3x](#3x-the-bump-and-the-figures-it-moved).**
-
----
+whole old-and-new is in [§3ah](#3ah-the-default-moved), and the bump's own in
+[§3x](#3x-the-bump-and-the-figures-it-moved).**
 ### 3w. The reader's four gigabytes
 
 **A library is read by people who did not write it, and it reads files its users provide** — so what a
@@ -4095,47 +4315,51 @@ wants to know *what the bump moved* does not have to read the whole file to find
 3. **The incumbents do not read the file through this repository's Arrow** — `DuckDB`, `Polars` and
    the `DataFusion` peer have their own readers — so **their** movement is the machine's, and they
    are the **yardstick** this file has always used for that.
-4. **The machine's own floor was measured in the same campaign**, so the host's movement can be
-   told apart from the code's: the floor the join probe measures with no engine in it went from
-   **6.147 ms** to **4.948 ms**, and every system moved with it.
+4. **And the set this file publishes was taken again**, because the reader's default was a **row limit
+   of 131,072 rows** and it is a **byte budget of 16 MiB** now, so the batch the reader holds moved
+   with it, and every figure the batch size touches moved with it — and **the machine's own floor was
+   measured in the same campaign**, so the host's movement can be told apart from the code's: the
+   floor the join probe measures with no engine in it is **4.735 ms**, where the set this file
+   replaces read **4.948 ms**.
 
 | the family | the figure | the set the bump replaces | this file publishes |
 |---|---|---|---|
-| the comparison | the engine's cold `q6`, lazy | 15.4 | **14.9** |
-| the comparison | the engine's cold `q6`, eager | 552.3 | **587.2** |
-| the comparison | `DuckDB`'s cold `q6` — **the yardstick** | 32.0 | **35.0** |
-| the comparison | the engine's resident `q6` | 9.4 | **10.1** |
-| the query probe | the whole query, resident (`join-orders`) | 21.324 | **21.802** |
-| the sort probe | the stage, cold | 1.10 | **1.68** |
-| the join probe | the stage, cold | 24.690 | **27.493** |
-| the join probe | the floor the probe — **the machine's own measure** | 6.147 | **4.948** |
-| the write probe | the write of the whole file | 1,844.195 | **1,679.362** |
-| the store's probe | the commit, all five steps | 9.270 | **8.043** |
-| the materialised column | Arrow's decode | 6.09 | **4.56** |
+| the comparison | the engine's cold `q6`, lazy | 15.4 | **16.6** *(was 14.9)* |
+| the comparison | the engine's cold `q6`, eager | 552.3 | **528.1** *(was 587.2)* |
+| the comparison | `DuckDB`'s cold `q6` — **the yardstick** | 32.0 | **32.0** *(was 35.0)* |
+| the comparison | the engine's resident `q6` | 9.4 | **9.3** *(was 10.1)* |
+| the query probe | the whole query, resident (`join-orders`) | 21.324 | **20.448** *(was 21.802)* |
+| the sort probe | the stage, cold | 1.10 | **2.34** *(was 1.68)* |
+| the join probe | the stage, cold | 24.690 | **20.863** *(was 27.493)* |
+| the join probe | the floor the probe — **the machine's own measure** | 6.147 | **4.735** *(was 4.948)* |
+| the write probe | the write of the whole file | 1,844.195 | **1,641.539** *(was 1,679.362)* |
+| the store's probe | the commit, all five steps | 9.270 | **27.797** *(was 8.043)* |
+| the materialised column | Arrow's decode | 6.09 | **4.26** *(was 4.56)* |
 | the RLE expansion | the expansion | 1.79 | **1.77** |
-| the dictionary probe | the crate's read, expanded, 6 groups | 15.46 | **14.30** |
-| the row-group probe | the derived batch, 6 groups | 15.32 | **14.73** |
-| the sweep | the engine at 1 thread, 6 groups | 15.4 | **14.6** |
-| the curve | the engine at 6M rows | 57.7 | **47.9** |
-| the curve | the engine at 24M rows | 232.2 | **193.6** |
+| the dictionary probe | the crate's read, expanded, 6 groups | 15.46 | **13.81** *(was 14.30)* |
+| the row-group probe | the derived batch, 6 groups | 15.32 | **14.20** *(was 14.73)* |
+| the sweep | the engine at 1 thread, 6 groups | 15.4 | **13.2** *(was 14.6)* |
+| the curve | the engine at 6M rows | 57.7 | **53.1** *(was 47.9)* |
+| the curve | the engine at 24M rows | 232.2 | **211.7** *(was 193.6)* |
 | the kernel | the Rust SIMD over the scalar | 2.44 | **2.46** |
 | the hostile file | the largest allocation, for a declared 4 GiB | 4,294,967,295 | **8,192** |
 
 **Read the table with the four sentences above, and not as nineteen verdicts.** The engine's cold
-`q6` is 15.4 ms in the set the bump replaces and 14.9 ms here, and **DuckDB's is 32.0 ms and
-35.0 ms** — the engine got faster and the yardstick got slower, on a machine whose own floor got
-19% faster. The eager path went the other way, 552.3 ms to 587.2 ms, and **that movement is the
-host's**: the eager path *is* the decode, and the decode moved with the host, with the incumbents
-beside it — [§2b-bis](#2b-bis-the-eager-path-got-faster-too-and-it-is-measured) has the argument.
+`q6` is 15.4 ms in the set the bump replaces and **16.6 ms** here, where the set this file replaces
+read **14.9 ms**, and **DuckDB's is 32.0 ms and 32.0 ms** — **the engine got slower and the yardstick
+got faster**, where the set the bump replaces had the engine ahead. The eager path went the other way,
+**587.2 ms** to **528.1 ms**, and **that movement is the default's**: the reader's default was a row
+limit of **131,072 rows** and it is a **byte budget of 16 MiB** now, so the batch the reader holds moved
+with it — [§2b-bis](#2b-bis-the-eager-path-got-faster-too-and-it-is-measured) has the argument.
 **The bump's own figure is the one the host's hand cannot move**: the lazy path's cold `q6`,
 which reads the file through the new Arrow. The **hostile file's** row is the only one that is not
 a timing at all: the reader's largest allocation at a declared four gigabytes fell from the
 declared length to **8,192** bytes, and that is the whole of this increment — see
 [§3w](#3w-the-readers-four-gigabytes).
 
-**The curve's two rows are the host's, and the incumbents say so.** The engine's 6M figure is 47.9 ms
-where the set the bump replaces has 57.7 ms, and its 24M figure is 193.6 ms against 232.2 ms — but
-**DuckDB's moved too**, 69.0 ms to 61.0 ms and 268.0 ms to 244.0 ms, and DuckDB does not read the
+**The curve's two rows are the host's, and the incumbents say so.** The engine's 6M figure is 53.1 ms
+where the set the bump replaces has 57.7 ms, and its 24M figure is 211.7 ms against 232.2 ms — but
+**DuckDB's moved too**, 69.0 ms to 68.0 ms and 268.0 ms to 265.0 ms, and DuckDB does not read the
 file through this repository's Arrow. That campaign ran on a quieter host — the load average is in
 the report — and what holds is the comparison: the engine is ahead of every incumbent at every
 size, in both sets. See [§3i](#3i-the-curve-over-the-size-of-the-data).
@@ -4144,27 +4368,24 @@ size, in both sets. See [§3i](#3i-the-curve-over-the-size-of-the-data).
 direction as the yardstick moved with the host; a figure that moved against it did not. That is why
 the yardstick is in the table, and why the machine's own floor is in it too.
 
-**There was no interleaved old-code A/B, and the reason is the yardstick.** An A/B would need both
-trees' binaries measured against each other on the same machine inside the same session, which this
-repository has not done for a dependency bump; **spec 034's precedent** is the one this increment
-follows — the incumbents, which do not read the file through this repository's Arrow, are the
-host's yardstick, and the machine's own floor is measured in the same campaign as the figures it is
-compared against. **The superseded sets are committed under their own names**
+**And now there is an interleaved old-code A/B, and the reason is the batch.** The default's
+campaign measured the old code **back to back** with the new one, on this host, three campaigns each,
+**interleaved** — [§3ah](#3ah-the-default-moved) publishes it, old and new — and **the superseded
+sets are committed under their own names**
 (`bench-results/<family>-spec041-before-run{1,2,3}.json`), so the column on the left of every pair
 above is derivable from a committed report and not from a memory.
 
 **And the store's acceptance holds again, measured.** The store writes the published file
 byte for byte — that is the store's acceptance test — and the bump changed the writer's bytes, so
 the published file was **regenerated** and the acceptance re-measured on the regenerated file. The
-write probe's own figure for writing the whole file is **1,679.362 ms** where it was 1,844.195 ms,
+write probe's own figure for writing the whole file is **1,641.539 ms** where it was 1,679.362 ms,
 and the store's commit — all five steps, fsync data, write manifest, fsync manifest, rename,
-fsync dir — is **8.043 ms** where it was 9.270 ms. See
+fsync dir — is **27.797 ms** where it was 8.043 ms. See
 [§3s](#3s-the-write-side) and [§3t](#3t-the-stores-own-write).
 
 Every figure in this table is derived from the committed reports by `scripts/medians.py` and
 checked by the guard **inside this section**, and every one of them is published in the section
 that owns it as well.
-
 ### 3y. The build side takes a set
 
 **What this section is**: the join's **build side** -- the right-hand table, the one the hash table is
@@ -4175,19 +4396,23 @@ question is what the set costs, and what it does not.
 experiment spec 039 already used -- and the build side is built twice in the same campaign: once from
 the **one file**, and once from the **six files**. The probe side is the same in both, so the only thing
 that moves is the build side. The build side is `data/lineitem.parquet` -- six million rows, six row
-groups -- and the probe side is `data/orders.parquet`.
+groups -- and the probe side is `data/orders.parquet`. **And the campaign was taken again for spec
+051**, because the reader's default was a row limit of **131,072 rows** and it is a **byte budget of
+16 MiB** now, so the batch the reader holds moved with it, and every figure the batch size touches
+moved with it.
 
 | | the one file | the six files | the difference |
 |---|---|---|---|
-| the table's construction | **60.956 ms** | **62.578 ms** | **+1.622 ms** |
-| the build side's open | **0.141 ms** | **0.317 ms** | **+0.176 ms** |
+| the table's construction | **59.113 ms** *(was 60.956 ms)* | **58.988 ms** *(was 62.578 ms)* | **−0.124 ms** *(was +1.622 ms)* |
+| the build side's open | **0.143 ms** *(was 0.141 ms)* | **0.298 ms** *(was 0.317 ms)* | **+0.155 ms** *(was +0.176 ms)* |
 
-**The set costs 1.622 ms to build, and 0.176 ms to open.** The open is six footers against one, and it
-is the only part that scales with the number of files; the construction reads the same six million keys
-either way. The medians are of three campaigns, and the spreads are 60.186-61.670 ms and 60.801-64.448
-ms for the construction and 0.139-0.170 ms and 0.303-0.353 ms for the open. **The host's load average
-in those campaigns was 8.33, 7.89 and 8.86** -- a busy host, and the pairs are measured **together**, so
-the host's own movement is in both sides of every pair above.
+**The set costs 0.155 ms to open, and the construction came out 0.124 ms cheaper — where the set cost
+1.622 ms to build and 0.176 ms to open.** The open is six footers against one, and it is the only part
+that scales with the number of files; the construction reads the same six million keys either way. The
+medians are of three campaigns, and the spreads are 58.077–59.397 ms and 58.939–59.330 ms for the
+construction and 0.134–0.146 ms and 0.297–0.327 ms for the open. **The host's load average in those
+campaigns was 3.54, 4.51 and 4.48** — a quieter host, and the pairs are measured **together**, so the
+host's own movement is in both sides of every pair above.
 
 **The identity is exact, and it was measured.** The same **1,501,215** rows come out of the join, and
 the same **79,530,106,032.52** comes out of the sum -- the one file and the six files, the same answer
@@ -4209,7 +4434,8 @@ records it.
 
 Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked
 by the guard **inside this section**. The reports are `bench-results/build-set-run1.json`,
-`bench-results/build-set-run2.json` and `bench-results/build-set-run3.json`, and the probe is
+`bench-results/build-set-run2.json` and `bench-results/build-set-run3.json`, the reports this section
+replaces are `bench-results/build-set-spec050-run1.json` and its two siblings, and the probe is
 `crates/columnar-engine/examples/build_set_probe.rs`.
 
 ---
@@ -4229,25 +4455,30 @@ so those rows are plain columns and their file is a different file by constructi
 
 **Spec 044 re-measured this section, and the bytes did not move.** The reason is in one line: **a plan's
 rows are still gathered**, because the Q6 plan's predicates remove rows in the engine, and the gather is
-the right thing to do when they do. **The timings moved inside the noise**, and **every figure that moved
-is published with the one it replaced**.
+the right thing to do when they do. **And the campaign was taken again for spec 051**, because the
+reader's default was a row limit of **131,072 rows** and it is a **byte budget of 16 MiB** now, so the
+batch the reader holds moved with it, and every figure the batch size touches moved with it. **The
+timings moved, and the host was quieter**: the campaigns behind the old figures ran at a load average
+of **6.89, 6.94 and 6.52**, and these at **3.75, 3.28 and 3.37**. **And every figure that moved is
+published with the one it replaced**.
 
 | | the cost | the bytes |
 |---|---|---|
-| the engine's eager read | **555.049 ms** *(was 547.734 ms)* | -- |
-| the conversion: the engine's vocabulary to Arrow's | **149.271 ms** *(was 149.809 ms)* | -- |
-| the store's own API, end to end | **1,825.182 ms** *(was 1,826.588 ms)* | **242,854,029** |
-| the store's own Arrow path, for comparison | **2,337.143 ms** *(was 2,266.358 ms)* | **242,859,461** |
-| a plan's rows: the read | **74.280 ms** *(was 76.748 ms)* | -- |
-| a plan's rows: the write | **15.784 ms** *(was 15.059 ms)* | **982,089** |
+| the engine's eager read | **530.457 ms** *(was 555.049 ms)* | -- |
+| the conversion: the engine's vocabulary to Arrow's | **140.172 ms** *(was 149.271 ms)* | -- |
+| the store's own API, end to end | **1,747.122 ms** *(was 1,825.182 ms)* | **242,854,029** |
+| the store's own Arrow path, for comparison | **2,211.765 ms** *(was 2,337.143 ms)* | **242,859,461** |
+| a plan's rows: the read | **71.223 ms** *(was 74.280 ms)* | -- |
+| a plan's rows: the write | **19.286 ms** *(was 15.784 ms)* | **982,089** |
 
-The published file is **242,859,461** bytes. **The conversion is 8.2% of the write it serves** -- 149.271
-ms against 1,825.182 ms -- and the engine's own rows cost **149.271 ms** to convert and the store's API
-**1,825.182 ms** to write and commit them. The medians are of three campaigns; the spreads are
-553.120-563.166 ms, 147.442-153.275 ms, 1,816.742-1,831.367 ms and 2,303.320-2,372.850 ms. **The host's
-load average in those campaigns was 6.89, 6.94 and 6.52** -- a busy host, and the two paths are measured
-**in the same campaign**, so the host's movement is in both. **The bytes did not move at all**: the eager
-read keeps the dictionary, the plan's rows are gathered, and both write what they wrote.
+The published file is **242,859,461** bytes. **The conversion is 8.0% of the write it serves**, where it
+was **8.2%** — 140.172 ms against 1,747.122 ms — and the engine's own rows cost **140.172 ms** to
+convert and the store's API **1,747.122 ms** to write and commit them. The medians are of three
+campaigns; the spreads are 522.614–531.333 ms, 135.812–141.902 ms, 1,738.505–1,787.574 ms and
+2,188.906–2,251.051 ms. **The host's load average in those campaigns was 3.75, 3.28 and 3.37** — a
+quieter host, and the two paths are measured **in the same campaign**, so the host's movement is in
+both. **The bytes did not move at all**: the eager read keeps the dictionary, the plan's rows are
+gathered, and both write what they wrote.
 
 **Three files, three questions.**
 
@@ -4290,8 +4521,9 @@ decision.
 
 Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked
 by the guard **inside this section**. The reports are `bench-results/engine-rows-run1.json`,
-`bench-results/engine-rows-run2.json` and `bench-results/engine-rows-run3.json`, and the probe is
-`crates/columnar-store/examples/engine_rows_probe.rs`.
+`bench-results/engine-rows-run2.json` and `bench-results/engine-rows-run3.json`, the reports this
+section replaces are `bench-results/engine-rows-spec050-run1.json` and its two siblings, and the probe
+is `crates/columnar-store/examples/engine_rows_probe.rs`.
 
 ---
 
@@ -4317,8 +4549,8 @@ the set.
 
 | | the one file | the six files | the difference |
 |---|---|---|---|
-| the rows out | **542.049 ms** *(was 549.167 ms)* | **572.204 ms** *(was 550.301 ms)* | **+30.155 ms** *(was +1.133 ms)* |
-| the write | **1,901.142 ms** *(was 1,860.799 ms)* | **1,958.860 ms** *(was 1,836.466 ms)* | **+57.718 ms** *(was −24.333 ms)* |
+| the rows out | **508.547 ms** *(was 542.049 ms)* | **505.514 ms** *(was 572.204 ms)* | **−3.033 ms** *(was +30.155 ms)* |
+| the write | **1,909.559 ms** *(was 1,901.142 ms)* | **1,799.145 ms** *(was 1,958.860 ms)* | **−110.414 ms** *(was +57.718 ms)* |
 
 **And the store's own change, for the record**: before it, the one file's rows cost **3,338.468 ms** and the six
 files' **3,344.893 ms**, the write **2,040.668 ms** and **2,075.327 ms**, and the differences were **+6.425 ms** and
@@ -4331,25 +4563,29 @@ in both sides of every pair -- and the difference between the arms, in every ite
 
 | | the differences, in every iteration | their median |
 |---|---|---|
-| the read | −0.129, +26.934, +242.115, +2.941, +56.827, +221.959, −20.098, +40.510, +240.976 | **+40.510 ms** |
-| the write | +222.110, +37.885, +123.378, +71.224, −52.968, −31.460, +61.348, +12.858, +68.329 | **+61.348 ms** |
+| the read | −4.903, −22.168, +264.937, −1.439, +1.862, +0.508, −6.518, +6.716, +4.650 | **+0.508 ms** |
+| the write | −32.833, −46.527, −27.773, +16.187, −158.769, −70.861, −31.544, +71.137, −83.135 | **−32.833 ms** |
 
 **The read's differences straddle zero, and their spread is wider than the difference of the medians.**
-The read's median (**+40.510 ms**) is **7.5% of the read** -- and their spread runs from −20.098 to
-+242.115 ms, so the spread is six times the median. **The host's load average in those campaigns
-was 6.95, 7.0 and 6.76.** **And the third iteration of every campaign is the outlier** -- +242.115,
-+221.959 and +240.976 on the read -- **and it is an outlier in every campaign, so it is a property of the
-measurement and not of the host.**
+The read's median (**+0.508 ms**) is **0.1% of the read**, where it was **+40.510 ms** and **7.5% of the
+read** — and their spread runs from −22.168 to +264.937 ms, so the spread is **565 times** the median,
+where it was **six times**. **The host's load average in those campaigns was 3.73, 3.33 and 4.03.**
+**And the first campaign's third iteration is the outlier** — **+264.937 ms** on the read — **and the
+other eight differences run from −22.168 ms to +6.716 ms, so it is a property of that iteration and not
+of the arm.**
 
-**And the campaign was taken again**, because the engine's estimate changed and the estimate is one of this
-section's figures. **The set's cost came out at +30.155 ms on the read where it was +1.133 ms, and at
-+57.718 ms on the write where it was −24.333 ms.** **The set's cost is still inside the spread, and the
-spread is the host's** -- which is what §3v and §3y found twice already and what this measurement
+**And the campaign was taken again for spec 051**, because the reader's default was a row limit of
+**131,072 rows** and it is a **byte budget of 16 MiB** now, so the batch the reader holds moved with it
+— and the engine's estimate, which charges the batch, moved with it too. **The set's cost came out at
+−3.033 ms on the read where it was +30.155 ms, and at −110.414 ms on the write where it was +57.718 ms.**
+**And the sign has changed: the set is not a cost any more, and what is left of it is inside the spread,
+and the spread is the host's** — which is what §3v and §3y found twice already and what this measurement
 confirms.
 
-**And the estimate does not move either**: **975,512,992 bytes** for both *(was 1,549,500,016)*. The rows
-are the sum of the files' rows and the columns are the same, so the budget is charged the same for a set as
-for one file. **And the figure moved because the engine's estimate now charges the batch** --
+**And the estimate does not move either**: **971,537,430 bytes** for both *(was 975,512,992, and
+1,549,500,016 before that)*. The rows are the sum of the files' rows and the columns are the same, so
+the budget is charged the same for a set as for one file. **And the figure moved because the engine's
+estimate charges the batch, and the batch moved with the default** —
 [§3ag](#3ag-the-width-statement-paid) has that, and it is the same number for both arms.
 
 **The read is not a copy any more.** The rows the engine hands out are **the rows that were read**: the
@@ -4359,15 +4595,15 @@ same rows out:
 
 | | the cost |
 |---|---|
-| the engine's eager read | **563.250 ms** *(was 551.325 ms)* |
-| the eager rows: the copy of the columns | **164.513 ms** *(was 154.858 ms)* |
-| the eager path's total | **732.427 ms** *(was 706.634 ms)* |
+| the engine's eager read | **525.688 ms** *(was 563.250 ms)* |
+| the eager rows: the copy of the columns | **146.685 ms** *(was 164.513 ms)* |
+| the eager path's total | **674.170 ms** *(was 732.427 ms)* |
 
-**The copy is 22.5% of the eager path's cost, and it was 84.2% before.** The copy is what the **eager**
-path pays, because the caller owns the dataset there: the rows are a copy of the columns rather than the
-columns themselves. **And the lazy path does not pay it at all**: the one file's rows cost **542.049 ms**,
-which is its scan and nothing else -- the columns are **moved** out of the reader, not copied. **§3ab has
-the before-and-after, and the reason the gather is gone.**
+**The copy is 21.8% of the eager path's cost, where it was 22.5%, and it was 84.2% before.** The copy
+is what the **eager** path pays, because the caller owns the dataset there: the rows are a copy of the
+columns rather than the columns themselves. **And the lazy path does not pay it at all**: the one file's
+rows cost **508.547 ms**, which is its scan and nothing else -- the columns are **moved** out of the
+reader, not copied. **§3ab has the before-and-after, and the reason the gather is gone.**
 
 **The correction: the gather was published wrong, and it is corrected here.** The published figure was
 **2,292.710 ms**, and it was the difference between the eager rows and the eager read. **But the eager
@@ -4426,7 +4662,8 @@ and the round trip is the embedder's three lines.
 Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked
 by the guard **inside this section**. The reports are `bench-results/set-rows-run1.json`,
 `bench-results/set-rows-run2.json` and `bench-results/set-rows-run3.json`, the reports this section
-replaces are `bench-results/set-rows-spec044-before-run1.json` and its two siblings, and the probe is
+replaces are `bench-results/set-rows-spec050-run1.json` and its two siblings, the reports behind the
+record above are `bench-results/set-rows-spec044-before-run1.json` and its two siblings, and the probe is
 `crates/columnar-store/examples/set_rows_probe.rs`.
 
 ---
@@ -4464,25 +4701,28 @@ the three plain ones ([ADR-0054](docs/adr/0054-the-engines-rows-reach-a-stores-t
 
 | | the cost | before |
 |---|---|---|
-| the one file's rows out | **542.049 ms** | 3,338.468 ms |
-| the eager rows: the copy of the columns | **164.513 ms** | 2,823.164 ms |
-| the eager path's total | **732.427 ms** | 3,353.618 ms |
+| the one file's rows out | **508.547 ms** *(was 542.049 ms)* | 3,338.468 ms |
+| the eager rows: the copy of the columns | **146.685 ms** *(was 164.513 ms)* | 2,823.164 ms |
+| the eager path's total | **674.170 ms** *(was 732.427 ms)* | 3,353.618 ms |
 
-**The rows out are six times faster** -- **542.049 ms** against **3,338.468 ms** -- **and the copy that is
-left is seventeen times smaller**: **164.513 ms** against **2,823.164 ms**. **The lazy path does not pay the
-copy at all**: it moves the columns out of the reader, so the one file's rows cost the scan and nothing
-else. **And the lazy path is now the cheaper of the two**, by 190.378 ms -- and that difference is the
-copy.
+**And the campaign was taken again for spec 051**, because the reader's default was a row limit of
+**131,072 rows** and it is a **byte budget of 16 MiB** now, so the batch the reader holds moved with it,
+and every figure the batch size touches moved with it. **The rows out are six times faster** --
+**508.547 ms** against **3,338.468 ms** -- **and the copy that is left is nineteen times smaller, where it
+was seventeen times**: **146.685 ms** against **2,823.164 ms**. **The lazy path does not pay the copy at
+all**: it moves the columns out of the reader, so the one file's rows cost the scan and nothing else.
+**And the lazy path is now the cheaper of the two**, by **165.623 ms** where it was **190.378 ms** — and
+that difference is the copy.
 
 **The round trip is the file, byte for byte.** [§3aa](#3aa-the-sets-rows) has the bytes: the round trip
 under the file's own schema is **242,859,461** bytes and **no differing byte**, and **the store's own rule
 still differs**, at byte **20,566,725**, because a column that holds no NULL is written REQUIRED. **That is
 the store's rule and not the engine's**, and it is the one difference the round trip has left.
 
-**And the estimate does not move**: **975,512,992 bytes**, for one file and for the set *(was
-1,549,500,016)*. **What the budget is charged is what it was**; **what the plan actually uses went down**, and
-both are published. **And the estimate moved because the engine now charges the batch** --
-[§3ag](#3ag-the-width-statement-paid) has that.
+**And the estimate does not move**: **971,537,430 bytes**, for one file and for the set *(was 975,512,992,
+and 1,549,500,016 before that)*. **What the budget is charged is what it was**; **what the plan actually
+uses went down**, and both are published. **And the estimate moved because the engine now charges the
+batch, and the batch moved with the default** — [§3ag](#3ag-the-width-statement-paid) has that.
 
 **The gather does not go away.** It is the **right** thing to do when a filter removed rows in the engine, a
 join or a sort made new rows: the survivors are scattered through the batch and have to be pulled out.
@@ -4496,23 +4736,43 @@ can be published with this increment in them.
 
 Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by
 the guard **inside this section**. The reports are `bench-results/set-rows-run1.json`,
-`bench-results/set-rows-run2.json` and `bench-results/set-rows-run3.json`, and the probe is
+`bench-results/set-rows-run2.json` and `bench-results/set-rows-run3.json`, the reports this section
+replaces are `bench-results/set-rows-spec050-run1.json` and its two siblings, and the probe is
 `crates/columnar-store/examples/set_rows_probe.rs`.
 
 ---
 
 ### 3ac. The join-orders query, on both sides, taken apart
 
-**What this section is**: the **6.0 ms** the engine is behind `DuckDB` by on the cold `join-orders`
-query, given a place to live.
+**What this section is**: the **1.2 ms** the engine is now **ahead** of `DuckDB` by on the cold
+`join-orders` query, given a place to live — where the set this file replaces had it **6.0 ms behind**.
 
-The engine's cold `join-orders` is **100.0 ms** against `DuckDB`'s **94.0 ms** — **6.0 ms** apart, while
-the peer's is **175.3 ms** and `Polars`' **225.7 ms**. The set the bump replaces read **97.6 ms**,
-**91.0 ms**, **168.8 ms** and **219.1 ms**, and the gap is **0.6 ms** smaller than it was, and the whole
-of that is `DuckDB`'s own movement. **And every part of the engine's own analysis was set against
-`DuckDB`'s _whole_**: [§3o](#3o-the-joins-stage-taken-apart) took the join's stage apart and found it
-was the build side's read and `Arrow`'s decode of `orders.parquet`, and it was right — **about the
-engine's own stage**.
+The engine's cold `join-orders` is **87.8 ms** (was **100.0 ms**) against `DuckDB`'s **89.0 ms** (was
+**94.0 ms**) — **1.2 ms ahead**, where it was **6.0 ms behind** — while the peer's is **163.1 ms** (was
+**175.3 ms**) and `Polars`' **216.6 ms** (was **225.7 ms**). The set the bump replaces read **97.6 ms**,
+**91.0 ms**, **168.8 ms** and **219.1 ms**, and the gap is **7.2 ms smaller** than it was, and **the whole
+of that is the machine's**: the old code, read by this section's own instrument in the same session, read
+**77.657 ms** against the same `DuckDB`'s **81.645 ms**, so the engine was already **3.988 ms ahead**
+there. **And the new code's own share of the gap is a fifth of a millisecond**: the new code reads
+**77.504 ms** against the same `DuckDB`'s **80.959 ms**, **3.455 ms ahead** — and `DuckDB` moved
+**0.686 ms** in the same two campaigns, which no change to this engine can have done. **And every part of
+the engine's own analysis was set against `DuckDB`'s _whole_**:
+[§3o](#3o-the-joins-stage-taken-apart) took the join's stage apart and found the build side's read and
+the scan's decode in it, and it was right — **about the engine's own stage**.
+
+**And the campaign was taken again, because the reader's default moved.** The default was a row limit of
+**131,072 rows** — a batch of **125,000 rows** whatever the read fetched — and it is **a byte budget of
+16 MiB** now, divided by what a row costs for the columns the read fetches and capped at one row group,
+so the batch this query's two columns are read in is **a whole row group, 1,000,000 rows**
+([§3ag](#3ag-the-width-statement-paid)). **The batch size touches the figure, so the whole campaign was
+taken again, and the old code was measured back to back with the new one, interleaved** — so the
+difference between the old and the new figure of the same part is **the code's** and not the machine's.
+On the join part the old code reads **6.772 ms** where the new code reads **7.092 ms**: **the code's own
+share of the movement is −0.320 ms** — the new default makes the join part a fifth of a millisecond
+*dearer* — and the machine's share is the **7.853 ms** that made the part fall from the set this file
+replaces' **14.625 ms**. **And on the whole the old code reads 77.657 ms where the new code reads
+77.504 ms** — the code's share is **0.153 ms** there, and the machine's share is the **18.584 ms** that
+made the whole fall from the set this file replaces' **96.241 ms**.
 
 **The rule.** **A part can be compared with a part. A total cannot be compared with a part.** So both
 sides have to come apart, and each side's parts have to be that system's **own account of itself**.
@@ -4536,23 +4796,24 @@ measures, and the difference from the profiled whole is the profiler's price.
 
 | the part | the engine | `DuckDB` | `DuckDB`, the filter off |
 |---|---|---|---|
-| **the whole** | **96.241** ms | **92.735** ms | **138.154** ms |
-| the probe side's read | 68.435 ms | 66.335 ms | 60.766 ms |
-| the build side's read | 12.012 ms | 11.213 ms | 11.237 ms |
-| the build side's open | 0.041 ms | *inside its scan* | *inside its scan* |
-| **the join** | **14.625** ms | **7.706** ms | **59.149** ms |
-| the projection | 0.533 ms | 0.081 ms | 0.087 ms |
-| the aggregate | 0.275 ms | 0.433 ms | 0.543 ms |
-| **outside the parts** | **0.019** ms | **6.879** ms | **6.597** ms |
+| **the whole** | **77.504** ms *(was 96.241 ms)* | **80.959** ms *(was 92.735 ms)* | **115.940** ms *(was 138.154 ms)* |
+| the probe side's read | 59.441 ms *(was 68.435 ms)* | 59.565 ms *(was 66.335 ms)* | 53.711 ms *(was 60.766 ms)* |
+| the build side's read | 10.306 ms *(was 12.012 ms)* | 9.730 ms *(was 11.213 ms)* | 9.714 ms *(was 11.237 ms)* |
+| the build side's open | 0.035 ms *(was 0.041 ms)* | *inside its scan* | *inside its scan* |
+| **the join** | **7.092** ms *(was 14.625 ms)* | **5.749** ms *(was 7.706 ms)* | **46.898** ms *(was 59.149 ms)* |
+| the projection | 0.477 ms *(was 0.533 ms)* | 0.068 ms *(was 0.081 ms)* | 0.061 ms *(was 0.087 ms)* |
+| the aggregate | 0.237 ms *(was 0.275 ms)* | 0.348 ms *(was 0.433 ms)* | 0.384 ms *(was 0.543 ms)* |
+| **outside the parts** | **0.016** ms *(was 0.019 ms)* | **5.600** ms *(was 6.879 ms)* | **5.330** ms *(was 6.597 ms)* |
 
-The whole, unprofiled — the way the comparison harness measures it — is **92.000** ms, against the
-profiled **92.735** ms: the profiler costs about **0.7 ms**.
+The whole, unprofiled — the way the comparison harness measures it — is **80.000** ms *(was 92.000 ms)*,
+against the profiled **80.959** ms *(was 92.735 ms)*: the profiler costs about **1.0 ms**, where it cost
+about **0.7 ms**.
 
 **And the engine's scan does not carry the probe's cost.** On the cold path the probe runs **inside**
 the scan and its time is taken out of the scan's, so the scan's figure and the join's figure are two
-different parts of the query. **And `DuckDB`'s whole carries 6.879 ms outside its operator tree** — its
-planning, its blocked threads and its I/O — where the engine's plan output names every stage and
-leaves **0.019** outside.
+different parts of the query. **And `DuckDB`'s whole carries 5.600 ms outside its operator tree**, where
+it carried **6.879 ms** — its planning, its blocked threads and its I/O — and the engine's plan output
+names every stage and leaves **0.016** outside, where it left **0.019**.
 
 #### The paired differences
 
@@ -4561,20 +4822,21 @@ side. **The difference is the paired one**, not the difference of two medians.
 
 | the difference, in the same iteration | the median | the least | the most |
 |---|---|---|---|
-| **the whole: the engine less `DuckDB`** | **+3.290** ms | −2.350 ms | +16.606 ms |
-| the probe side's read: the engine less `DuckDB` | +2.111 ms | −1.006 ms | +11.016 ms |
-| the build side's read: the engine less `DuckDB` | +0.862 ms | +0.060 ms | +1.316 ms |
-| **the join: the engine less `DuckDB`** | **+6.898** ms | +3.385 ms | +10.963 ms |
-| the projection: the engine less `DuckDB` | +0.452 ms | +0.434 ms | +0.527 ms |
-| the aggregate: the engine less `DuckDB` | −0.165 ms | −0.232 ms | −0.081 ms |
-| outside the parts: the engine less `DuckDB` | −6.860 ms | −7.876 ms | −6.505 ms |
+| **the whole: the engine less `DuckDB`** | **−3.002** ms *(was +3.290 ms)* | −10.233 ms *(was −2.350 ms)* | −0.845 ms *(was +16.606 ms)* |
+| the probe side's read: the engine less `DuckDB` | +0.025 ms *(was +2.111 ms)* | −4.980 ms *(was −1.006 ms)* | +2.316 ms *(was +11.016 ms)* |
+| the build side's read: the engine less `DuckDB` | +0.586 ms *(was +0.862 ms)* | +0.261 ms *(was +0.060 ms)* | +1.019 ms *(was +1.316 ms)* |
+| **the join: the engine less `DuckDB`** | **+1.352** ms *(was +6.898 ms)* | +0.215 ms *(was +3.385 ms)* | +1.827 ms *(was +10.963 ms)* |
+| the projection: the engine less `DuckDB` | +0.406 ms *(was +0.452 ms)* | +0.389 ms *(was +0.434 ms)* | +0.475 ms *(was +0.527 ms)* |
+| the aggregate: the engine less `DuckDB` | −0.113 ms *(was −0.165 ms)* | −0.159 ms *(was −0.232 ms)* | −0.065 ms *(was −0.081 ms)* |
+| outside the parts: the engine less `DuckDB` | −5.585 ms *(was −6.860 ms)* | −6.183 ms *(was −7.876 ms)* | −5.380 ms *(was −6.505 ms)* |
 
 **The sign is what carries the claim.** The engine's join is slower in **every one of the eighteen
-iterations**, by **+6.898 ms** at the median and by at least **+3.385 ms** in the quietest. The engine's
-build side's read is slower in every iteration; its projection is slower in every iteration; its
-aggregate is **faster** in every iteration. **The probe side's read is at the noise** — the engine's is
-ahead in **three** of the eighteen iterations and behind in fifteen — and **the whole is at the noise**
-too, for the reason the next paragraph gives.
+iterations**, by **+1.352 ms** at the median — it was **+6.898 ms** — and by at least **+0.215 ms** in
+the quietest, where it was **+3.385 ms**. The engine's build side's read is slower in every iteration;
+its projection is slower in every iteration; its aggregate is **faster** in every iteration. **The probe
+side's read is at the noise** — the engine's is ahead in **nine** of the eighteen iterations and behind in
+nine, where it was ahead in three and behind in fifteen — and **the whole is the engine's**: it is
+ahead in **every one** of the eighteen iterations, where it was ahead in three and behind in fifteen.
 
 #### The rows, and the counterfactual
 
@@ -4593,54 +4855,61 @@ side's keys, is **gone**:
 
 | the counterfactual | the median | the least | the most |
 |---|---|---|---|
-| **the join: `DuckDB` with the filter off less `DuckDB`** | **+51.422** ms | +48.013 ms | +56.615 ms |
-| **the join: `DuckDB` with the filter off less the engine** | **+44.190** ms | +38.000 ms | +48.548 ms |
-| the probe side's read: `DuckDB` with the filter off less `DuckDB` | −5.827 ms | −9.251 ms | −2.809 ms |
-| the whole: `DuckDB` with the filter off less `DuckDB` | +45.697 ms | +38.080 ms | +53.889 ms |
+| **the join: `DuckDB` with the filter off less `DuckDB`** | **+41.042** ms *(was +51.422 ms)* | +39.348 ms *(was +48.013 ms)* | +47.034 ms *(was +56.615 ms)* |
+| **the join: `DuckDB` with the filter off less the engine** | **+39.796** ms *(was +44.190 ms)* | +38.410 ms *(was +38.000 ms)* | +45.731 ms *(was +48.548 ms)* |
+| the probe side's read: `DuckDB` with the filter off less `DuckDB` | −5.859 ms *(was −5.827 ms)* | −10.942 ms *(was −9.251 ms)* | −0.204 ms *(was −2.809 ms)* |
+| the whole: `DuckDB` with the filter off less `DuckDB` | +35.148 ms *(was +45.697 ms)* | +27.642 ms *(was +38.080 ms)* | +46.470 ms *(was +53.889 ms)* |
 
-**So `DuckDB`'s own join, over the same six million rows, costs 44.190 ms more than the engine's.** The
-engine's lookup is the **faster** of the two — by a factor of four — and the engine is behind because it
-**looks up every row**.
+**So `DuckDB`'s own join, over the same six million rows, costs 39.796 ms more than the engine's**, where
+it cost 44.190 ms. The engine's lookup is the **faster** of the two — by a factor of six, where it was
+four — and the engine's join is behind because it **looks up every row**.
 
 #### The finding
 
 **The gap is not the lookup. The gap is that there is no lookup to do.**
 
-1. **The engine's join is the slower one — 14.625 ms against 7.706 ms — and it is slower for a reason
-   that is not the engine's lookup.** `DuckDB` joins **216,783** rows; the engine joins **6,000,000**.
+1. **The engine's join is the slower one — 7.092 ms against 5.749 ms, where it was 14.625 ms against
+   7.706 ms — and it is slower for a reason that is not the engine's lookup.** `DuckDB` joins **216,783**
+   rows; the engine joins **6,000,000**.
 2. **And the engine's lookup is the better one.** `DuckDB`'s hash join, over the same six million rows,
-   costs **+51.422 ms** more than its own filtered join and **+44.190 ms** more than the engine's. **The
-   engine's probe is four times cheaper than `DuckDB`'s hash join, row for row.**
-3. **The filter is what `DuckDB` has and the engine does not**, and it is worth **+45.697 ms** on the
-   whole: it costs the scan **5.827 ms** and saves the join **51.422 ms**.
-4. **And the rest of the engine's disadvantage is in the reads**: the build side's read is **+0.862 ms**
-   and the projection **+0.452 ms**, against a probe side's read that is at the noise.
-5. **And `DuckDB`'s planning gives back most of it**: **6.860 ms** outside its operator tree, where the
-   engine's whole leaves **0.019** outside its stages.
+   costs **+41.042 ms** more than its own filtered join — it cost **+51.422 ms** — and **+39.796 ms**
+   more than the engine's, where it cost **+44.190 ms**. **The engine's probe is six times cheaper than
+   `DuckDB`'s hash join, row for row**, where it was four times.
+3. **The filter is what `DuckDB` has and the engine does not**, and it is worth **+35.148 ms** on the
+   whole — it was worth **+45.697 ms** —: it costs the scan **5.859 ms** and saves the join **41.042 ms**.
+4. **And the rest of the engine's disadvantage is in the reads**: the build side's read is **+0.586 ms**
+   and the projection **+0.406 ms**, against a probe side's read that is at the noise.
+5. **And `DuckDB`'s planning gives back all of it, and more**: **5.585 ms** outside its operator tree,
+   where it carried **6.860 ms**, and the engine's whole leaves **0.016** outside its stages, where it
+   left **0.019**. **That is why the whole is the engine's.**
 
-**The arithmetic closes.** The engine's parts are **+10.668 ms** more than `DuckDB`'s; `DuckDB`'s whole
-carries **6.860 ms** outside its operator tree that the engine's does not; and the net is the whole's
-**+3.290 ms**. **The decomposition closes to 0.0000 ms on every one of the eighteen iterations.**
+**The arithmetic closes.** The engine's parts are **+2.533 ms** more than `DuckDB`'s, where they were
+**+10.668 ms**; `DuckDB`'s whole carries **5.585 ms** outside its operator tree that the engine's does
+not, where it carried **6.860 ms**; and the net is the whole's **−3.002 ms**, where it was **+3.290 ms**.
+**The decomposition closes to 0.0000 ms on every one of the eighteen iterations.**
 
-**And the whole is at the noise on this host.** The published gap is **6.0 ms**; this host's paired gap
-is **+3.290 ms**, and in one of the eighteen iterations the engine's whole was **ahead**. **The published
-figures stand** — they are the comparison harness's, taken by a different campaign — and **this section
-does not re-derive them**. What this section publishes is the **parts**, and they are the same on both
-sides whichever way the whole falls.
+**And the whole is the engine's on this host.** The published figure is **1.2 ms ahead**, where it was
+**6.0 ms behind**; this host's paired gap is **−3.002 ms**, and in **every one** of the eighteen
+iterations the engine's whole was **ahead**. **The published figures stand** — they are the comparison
+harness's, taken by a different campaign — and **this section does not re-derive them**. What this section
+publishes is the **parts**, and they are the same on both sides whichever way the whole falls.
 
 **And the join part's figure carries a spread on a shared host.** [§3ae](#3ae-the-probe-measured-twice)
-re-measured this part on this host with the reader's batch size named, and read it **larger** — **the same
-measurement, the host's state apart, and nothing in the engine changed.** **This section is not
+re-measured this part on this host with the reader's batch size named, and it publishes this section's own
+join part — **7.092 ms** — beside its own probe over the same rows, **8.670 ms**, and the **0.198 ms**
+between this section's join part and the engine's own probe over the same table, and it names the reason
+beside it: the reader's default was a row limit and it is a byte budget now. **This section is not
 corrected**: its campaigns made its figure, and §3ae publishes the spread and the reason beside it.
 
 #### The bytes
 
-`DuckDB` read **79,321,951** bytes in sixteen of the eighteen iterations, and **88,463,611** in two; with
-the filter off, **79,321,951** in seventeen and **97,606,309** in one. **The engine's bytes are not
-measured here** — its read is named by the **columns** it reports, `l_orderkey` and `l_extendedprice`,
-which are `DuckDB`'s columns too — and the file's own column sizes are the file's, not a measurement of
-the engine's read. **The two sides read the same columns**, and the two sides' answers are the same
-answer.
+`DuckDB` read **79,321,951** bytes in fifteen of the eighteen iterations and **88,463,611** in three; with
+the filter off, **79,321,951** in eleven, **88,463,611** in five and **88,464,649** in two — where the
+set this file replaces read **79,321,951** in sixteen and **88,463,611** in two, and with the filter off
+**79,321,951** in seventeen and **97,606,309** in one. **The engine's bytes are not measured here** — its
+read is named by the **columns** it reports, `l_orderkey` and `l_extendedprice`, which are `DuckDB`'s
+columns too — and the file's own column sizes are the file's, not a measurement of the engine's read.
+**The two sides read the same columns**, and the two sides' answers are the same answer.
 
 #### What this changes
 
@@ -4648,33 +4917,38 @@ answer.
 rule share it — **and made the estimate charge the batch**, so the budget can see the knob's price.
 [§3ag](#3ag-the-width-statement-paid) has that, and **publishes every figure that moves old-and-new, re-measured**.
 
-**And the default still does not move.** Moving it moves **every** published figure the reader's batch size touches
-— the headline table, the thread sweeps, the ladder, the join's parts — and re-measuring those is **spec 051's**
-work.
+**And the default has moved.** Moving it moved **every** published figure the reader's batch size touches
+— the headline table, the thread sweeps, the ladder, the join's parts — and re-measuring those was **spec 051's**
+work: [§3ah](#3ah-the-default-moved) publishes them **old and new**.
 
 **The open question** this leaves behind is the one spec 048 left: **why a shorter run of the probe costs more per
 row**, when the table is equally cold either way and the reader's work is the same — and now with **the batch's
 bytes** named as the thing a bigger batch buys and the wide shape pays for.
 
-**The next question is not "why is the engine behind". It is "what does a filter over the build side's
-keys cost, and what does it save".**
+**The next question is not "why is the engine behind" — it is ahead, on the whole, and the join part's gap
+is 1.352 ms where it was 6.898 ms. It is "what does a filter over the build side's keys cost, and what
+does it save".**
 
 The build side's keys are known **before** the probe side's scan runs, so they could be a filter on it:
-a bit test per row instead of a hash lookup per row. `DuckDB`'s own filter costs its scan **5.827 ms**
-over six million rows and saves its join **51.422 ms**. **The engine's prize, if its filter costs what
-`DuckDB`'s costs, is the whole of its own join — 14.625 ms — less what the filter would cost it.** That
+a bit test per row instead of a hash lookup per row. `DuckDB`'s own filter costs its scan **5.859 ms**
+over six million rows and saves its join **41.042 ms**. **The engine's prize, if its filter costs what
+`DuckDB`'s costs, is the whole of its own join — 7.092 ms — less what the filter would cost it.** That
 is the next increment, and **this section does not build it**: the measurement decides what is built, and
 the decision belongs to the increment that follows.
 
 Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by
 the guard **inside this section**. The reports are `bench-results/join-parts-run1.json`,
-`bench-results/join-parts-run2.json` and `bench-results/join-parts-run3.json`, and the probe is
-`crates/columnar-bench/src/join_parts.rs`, driven by `just probe-join-parts`. The decision is in
+`bench-results/join-parts-run2.json` and `bench-results/join-parts-run3.json`, the set the code this
+section replaces was measured in is `bench-results/join-parts-spec051-before-run1.json` … `-run3.json`,
+and the set the file published before is `bench-results/join-parts-spec050-run1.json` … `-run3.json`; the
+probe is `crates/columnar-bench/src/join_parts.rs`, driven by `just probe-join-parts`. The decision is in
 [ADR-0058](docs/adr/0058-the-join-orders-query-on-both-sides-taken-apart.md).
 
-**The conditions**: three campaigns of six iterations, on one host, with the load average between
-**8.54** and **8.77** — and the host's own drift is published with every difference, because a
-difference of two medians would let the drift land on both sides.
+**The conditions**: three campaigns of six iterations, on one host, with the load average between **1.87**
+and **2.03** — and the host's own drift is published with every difference, because a difference of two
+medians would let the drift land on both sides. **And the set the file replaces was taken on a busier
+host** — between **8.54** and **8.77** — which is why the movement this section publishes is mostly the
+machine's, and why the old code was measured back to back with the new one.
 
 
 ### 3ad. The build side's keys as a filter
@@ -4682,12 +4956,25 @@ difference of two medians would let the drift land on both sides.
 **What this section is**: what a filter over the build side's keys costs, and what it saves — the question
 [§3ac](#3ac-the-join-orders-query-on-both-sides-taken-apart) named and did not answer.
 
-**The question was this.** The engine's join is **+6.898 ms** behind `DuckDB`'s, and `DuckDB` joins
-**216,783** rows where the engine joins **6,000,000**, because `DuckDB` pushes the build side's keys into
-the probe side's scan as a filter and the engine has no such filter. `DuckDB`'s own filter costs its scan
-**5.827 ms** over six million rows and saves its join **51.422 ms**. **The engine's prize, if its filter
-costs what `DuckDB`'s costs, is the whole of its own join — 14.625 ms — less what the filter would cost
-it.**
+**The question was this.** The engine's join is **+1.508 ms** behind `DuckDB`'s, where it was **+6.898 ms**
+behind, and `DuckDB` joins **216,783** rows where the engine joins **6,000,000**, because `DuckDB` pushes
+the build side's keys into the probe side's scan as a filter and the engine has no such filter.
+`DuckDB`'s own filter costs its scan **5.948 ms** over six million rows and saves its join **46.999 ms**,
+where it cost **5.827 ms** and saved **51.422 ms**. **The engine's prize, if its filter costs what
+`DuckDB`'s costs, is the whole of its own join — 8.552 ms, where it was 14.625 ms — less what the filter
+would cost it.**
+
+**And the campaign was taken again, because the reader's default moved.** The default was a row limit of
+**131,072 rows** — a batch of **125,000 rows** whatever the read fetched — and it is **a byte budget of
+16 MiB** now, divided by what a row costs for the columns the read fetches and capped at one row group,
+so the batch the probe's two columns are read in is **a whole row group, 1,000,000 rows**
+([§3ag](#3ag-the-width-statement-paid)). **The batch size touches the figure, so the whole campaign was
+taken again, and the old code was measured back to back with the new one, interleaved** — so the
+difference between the old and the new figure of the same rung is **the code's** and not the machine's.
+On the engine's own probe — the control — the old code reads **7.257 ms** where the new code reads
+**7.290 ms**: the code's own share of that movement is **0.033 ms**, and the rest, **0.365 ms**, is the
+machine's. **And on the prize the old code reads 6.420 ms where the new code reads 6.401 ms**: the code's
+share is **0.019 ms** there too.
 
 **This section does not build the filter. It measures what the filter costs, and the measurement decides
 what is built.** A filter is not built because it is a good idea; it is built because it pays.
@@ -4711,8 +4998,9 @@ ladder, and every rung is measured **in the iteration**:
 
 **And the control is what makes the rest of the table a statement about the engine.** The candidates are
 the engine's `probe_direct`, **line for line**, and the engine's own probe is measured in the same
-iteration, over the same column: **7.622 ms** against the candidate's **7.967 ms**. A rung that is not the
-engine's probe would price a shape the engine does not have.
+iteration, over the same column: **7.290 ms** against the candidate's **7.340 ms**, where they were
+**7.622 ms** against **7.967 ms**. A rung that is not the engine's probe would price a shape the engine
+does not have.
 
 **The probe side's column is materialised afresh in every iteration**, and it is not copied. The engine's
 own query materialises the probe column and then probes it, so the column it probes is one the reader has
@@ -4730,15 +5018,15 @@ put one pair back to back four times and another twice.
 
 | the rung | the median | the least | the most |
 |---|---|---|---|
-| the table's own construction | 0.672 ms | 0.620 ms | 1.310 ms |
-| the filter's own construction | 0.201 ms | 0.179 ms | 0.307 ms |
-| **the table's own load** | **4.399** ms | 4.049 ms | 5.308 ms |
-| **the filter's own load** | **5.222** ms | 5.082 ms | 5.788 ms |
-| **the probe as it is** | **7.967** ms | 7.005 ms | 16.887 ms |
-| the filter in front of the table | 10.770 ms | 9.085 ms | 21.516 ms |
-| the filter compacting the rows | 8.141 ms | 7.837 ms | 8.799 ms |
-| the probe over the survivors alone | 0.906 ms | 0.858 ms | 1.227 ms |
-| the engine's own probe (the control) | 7.622 ms | 7.103 ms | 9.369 ms |
+| the table's own construction | 0.464 ms *(was 0.672 ms)* | 0.417 ms *(was 0.620 ms)* | 0.509 ms *(was 1.310 ms)* |
+| the filter's own construction | 0.205 ms *(was 0.201 ms)* | 0.186 ms *(was 0.179 ms)* | 0.330 ms *(was 0.307 ms)* |
+| **the table's own load** | **4.394** ms *(was 4.399 ms)* | 4.107 ms *(was 4.049 ms)* | 4.638 ms *(was 5.308 ms)* |
+| **the filter's own load** | **5.260** ms *(was 5.222 ms)* | 5.130 ms *(was 5.082 ms)* | 5.618 ms *(was 5.788 ms)* |
+| **the probe as it is** | **7.340** ms *(was 7.967 ms)* | 6.949 ms *(was 7.005 ms)* | 7.706 ms *(was 16.887 ms)* |
+| the filter in front of the table | 9.701 ms *(was 10.770 ms)* | 8.542 ms *(was 9.085 ms)* | 11.166 ms *(was 21.516 ms)* |
+| the filter compacting the rows | 8.225 ms *(was 8.141 ms)* | 7.783 ms *(was 7.837 ms)* | 8.445 ms *(was 8.799 ms)* |
+| the probe over the survivors alone | 0.915 ms *(was 0.906 ms)* | 0.851 ms *(was 0.858 ms)* | 1.086 ms *(was 1.227 ms)* |
+| the engine's own probe (the control) | 7.290 ms *(was 7.622 ms)* | 7.095 ms *(was 7.103 ms)* | 7.774 ms *(was 9.369 ms)* |
 
 #### The paired differences
 
@@ -4747,48 +5035,52 @@ drift cannot land on one side. **The difference is the paired one**, not the dif
 
 | the difference, in the same iteration | the median | the least | the most |
 |---|---|---|---|
-| **the filter in front of the table, less the probe as it is** | **+2.318** ms | −3.925 ms | +12.974 ms |
-| **the filter compacting the rows, less the probe as it is** | **+0.547** ms | −8.444 ms | +1.188 ms |
-| **the prize: the probe as it is, less the probe over the survivors** | **+6.981** ms | +6.110 ms | +16.029 ms |
+| **the filter in front of the table, less the probe as it is** | **+2.292** ms *(was +2.318 ms)* | +1.348 ms *(was −3.925 ms)* | +3.713 ms *(was +12.974 ms)* |
+| **the filter compacting the rows, less the probe as it is** | **+0.836** ms *(was +0.547 ms)* | +0.421 ms *(was −8.444 ms)* | +1.496 ms *(was +1.188 ms)* |
+| **the prize: the probe as it is, less the probe over the survivors** | **+6.401** ms *(was +6.981 ms)* | +6.034 ms *(was +6.110 ms)* | +6.800 ms *(was +16.029 ms)* |
 
-**The sign is what carries the claim, and the filter in front of the table has one.** Eleven of its
-twelve paired samples are positive, and the one that is not is an iteration this host stalled in: the
-stall landed on the probe's own measurement, which reads **16.887 ms** against a spread of about eight,
-and the difference moved with it. **The filter's own load is more than the table's own load — 5.222 ms
-against 4.399 ms** — and that is the whole of the claim.
+**The sign is what carries the claim, and the filter in front of the table has one.** **All twelve** of its
+paired samples are positive, where eleven of the twelve were and the one that was not is an iteration the
+host stalled in: the stall landed on the probe's own measurement, which read **16.887 ms** against a
+spread of about eight, and the difference moved with it. **And this campaign did not stall**: the probe
+as it is reads **7.340 ms** against a spread of **0.757 ms**. **The filter's own load is more than the
+table's own load — 5.260 ms against 4.394 ms**, where it was 5.222 ms against 4.399 ms — **and that is
+the whole of the claim.**
 
-**And the shape that replaces the whole probe is a wash.** The filter compacting the rows costs
-**+0.547 ms** at the median, and **five of its twelve paired samples are negative**: the sign is not
-established, and a wash is not a win.
+**And the shape that replaces the whole probe is not a win.** The filter compacting the rows costs
+**+0.836 ms** at the median, where it cost **+0.547 ms**, and **every one of its twelve paired samples is
+positive**, where five of the twelve were negative: the sign is established now, and it is established
+against the shape.
 
 #### The finding
 
 **The prize is real. The prize is unreachable. And the reason is that the engine's lookup is already the
 cheapest membership test there is.**
 
-1. **The prize is worth +6.981 ms.** The probe over the survivors alone costs **0.906 ms**, against the
-   probe as it is at **7.967 ms**: if the rows that cannot match never reached the probe, the engine's
-   join would be **6.981 ms** smaller. **That is the prize §3ac named**, and it is measured, not assumed.
+1. **The prize is worth +6.401 ms**, where it was worth +6.981 ms. The probe over the survivors alone costs
+   **0.915 ms**, against the probe as it is at **7.340 ms**: if the rows that cannot match never reached
+   the probe, the engine's join would be **6.401 ms** smaller. **That is the prize §3ac named**, and it is
+   measured, not assumed.
 2. **And a filter's test costs more than the lookup it would replace.** The filter's own load over the
-   same six million rows is **5.222 ms**; the table's own load — one random access into the table's own
-   bytes — is **4.399 ms**. **Both are one random access, and the bitmap's test carries a shift and a
+   same six million rows is **5.260 ms**; the table's own load — one random access into the table's own
+   bytes — is **4.394 ms**. **Both are one random access, and the bitmap's test carries a shift and a
    mask on top of the access the byte does not.** The direct-addressed table's byte **is** the membership
    test: the key's own range addresses it, and it consults nothing. **A filter can only be consulted in
    addition to it, and what it is consulted in addition to is cheaper than it is.**
-3. **And the probe is not much more than the test.** The probe as it is costs **7.967 ms** over six
+3. **And the probe is not much more than the test.** The probe as it is costs **7.340 ms** over six
    million rows, and the whole of it would have to go for the filter to pay: the filter's own test is
-   **5.222 ms** of that, before its construction (**0.201 ms**) and before the branch that skips the
+   **5.260 ms** of that, before its construction (**0.205 ms**) and before the branch that skips the
    table's byte. **The shape that replaces the whole probe — the filter compacting the rows, so that the
-   survivors alone are probed — is a wash at +0.547 ms.**
+   survivors alone are probed — is not a win at +0.836 ms**, where it was a wash at +0.547 ms.
 4. **So the filter is not built.** Not in front of the table, and not compacting the rows. The engine
    keeps no filter, the memory estimate does not move, and the increment changed **no engine work at all**.
 
 **And what survives the refusal is the mechanism, and it is a statement about `DuckDB` too.**
-`DuckDB`'s filter costs its scan **5.827 ms** over six million rows — the same order as this filter's
-**5.222 ms** — and it saves its join **51.422 ms**. **The same test, keeping the same rows out of the
-join, is worth seven times more there: the prize here is 6.981 ms.** The difference is not the test: it is
+`DuckDB`'s filter costs its scan **5.948 ms** over six million rows — the same order as this filter's
+**5.260 ms** — and it saves its join **46.999 ms**. **The same test, keeping the same rows out of the
+join, is worth seven times more there: the prize here is 6.401 ms.** The difference is not the test: it is
 what the test replaces. `DuckDB`'s filter replaces a **hash join**, and that join over the same six million
-rows costs **59.149 ms** against the engine's **7.967 ms** — **seven times a row** — while a filter here
+rows costs **54.115 ms** against the engine's **7.340 ms** — **seven times a row** — while a filter here
 would replace **a lookup that is already a single load with no hash**.
 **`DuckDB`'s filter is the price of `DuckDB`'s join, and the engine does not have that join to pay for.**
 
@@ -4797,11 +5089,12 @@ would replace **a lookup that is already a single load with no hash**.
 **The next question is not "how can a filter be made cheaper". It is "where does the engine's join spend
 the rest of its time".**
 
-The engine's join part is **14.625 ms**; its probe over six million rows is **7.967 ms** and its table's
-construction is **0.672 ms**, and the filter is not where the rest of it is — a filter cannot make the
-lookup cheaper, because the lookup **is** the membership test. **And the engine's advantage over
-`DuckDB` is already taken: `DuckDB`'s join over the same six million rows is seven times dearer a row,
-and that is why its filter is worth having.**
+The engine's join part is **8.552 ms**, where it was **14.625 ms**; its probe over six million rows is
+**7.340 ms**, where it was **7.967 ms**, and its table's construction is **0.464 ms**, where it was
+**0.672 ms**, and the filter is not where the rest of it is — a filter cannot make the lookup cheaper,
+because the lookup **is** the membership test. **And the engine's advantage over `DuckDB` is already
+taken: `DuckDB`'s join over the same six million rows is seven times dearer a row, and that is why its
+filter is worth having.**
 
 So the next increment has to find the join's other work — the part the probe does not account for — and
 ask what it is. **That is the next question, and this section does not answer it.**
@@ -4812,12 +5105,13 @@ the guard **inside this section**. The reports are `bench-results/key-filter-run
 `crates/columnar-engine/examples/key_filter_probe.rs`, driven by `just probe-key-filter`. The decision is
 in [ADR-0059](docs/adr/0059-the-build-side-s-keys-as-a-filter.md).
 
-**The conditions**: three campaigns of six iterations, on one host, with the load average between **5.85**
-and **6.37** — and the host's own drift is published with every difference, because a difference of two
-medians would let the drift land on both sides. **Three of the eighteen iterations carried a host stall
-of about eight milliseconds**, and they are in the spreads above: one landed on the probe as it is, one on
-the filter's own measurement, and one on the probe's again. **The medians are what the house publishes,
-and the medians do not move for a stall in three of eighteen.**
+**The conditions**: three campaigns of six iterations, on one host, with the load average between **3.09**
+and **4.46** — and the host's own drift is published with every difference, because a difference of two
+medians would let the drift land on both sides. **And no iteration stalled this time**, where the set this
+file replaces carried **three of the eighteen** stalling by about eight milliseconds — one on the probe as
+it is, one on the filter's own measurement, and one on the probe's again — so the widest spread here is
+**0.757 ms**. **The medians are what the house publishes, and the medians do not move for a stall in three
+of eighteen.**
 
 
 ### 3ae. The probe, measured twice
@@ -4825,18 +5119,25 @@ and the medians do not move for a stall in three of eighteen.**
 **What this section is**: the engine's own probe, in the two paths it runs in — and what the reader's batch
 size does to it.
 
-[§3ac](#3ac-the-join-orders-query-on-both-sides-taken-apart) published the engine's join part at **14.625
-ms**, and [§3ad](#3ad-the-build-side-s-keys-as-a-filter) measured the engine's own probe over the **same**
-six million rows, against the **same** table, at **7.622 ms**. **The same `probe_rows`, the same table, the
-same rows, and 7 ms apart** — and the two numbers came from two different campaigns, on a shared host, days
+[§3ac](#3ac-the-join-orders-query-on-both-sides-taken-apart) publishes the engine's join part at **7.092
+ms**, and [§3ad](#3ad-the-build-side-s-keys-as-a-filter) measures the engine's own probe over the **same**
+six million rows, against the **same** table, at **7.290 ms**. **The same `probe_rows`, the same table, the
+same rows, and 0.198 ms apart** — and the two numbers came from two different campaigns, on a shared host, days
 apart. **So the first question was not "what causes the gap": it was "is there a gap at all".**
 
-**And the first thing to turn was named.** The reader's batch size is a constant — `MAX_READER_BATCH_ROWS` is
-131,072, and the batch a row group is read in is the **largest divisor** of its row count under that limit,
-**125,000** rows for this file, so **48** batches over six million rows — and `BatchPlan::Fixed`, the house's
-"measurement seam", had nothing above it that could turn it. **So the batch size is a knob now**:
-`ParquetSource::with_reader_batch_rows`, named in rows, with the engine's own as the default. **The default
-does not move**, so every published figure stays reproducible by the command that made it.
+**And the first thing to turn was named — and the default has moved since.** The reader's batch size was a
+constant — `MAX_READER_BATCH_ROWS` was 131,072, the batch a row group was read in was the **largest divisor**
+of its row count under that limit, **125,000** rows for this file, **48** batches over six million rows, and
+`BatchPlan::Fixed`, the house's "measurement seam", had nothing above it that could turn it. **So the batch
+size is a knob now**: `ParquetSource::with_reader_batch_rows`, named in rows — **and spec 051 moved the
+default**. The knob is now **a byte budget of 16 MiB**, divided by what a row costs for the columns the read
+fetches ([§3ag](#3ag-the-width-statement-paid)), and **capped at one row group**. **For this file's two
+materialised columns the default is a whole row group — 1,000,000 rows, six batches over six million rows.**
+**And that is why the gap is 0.198 ms and not 7 ms**: the set this section replaces measured the same two
+figures at **14.625 ms** and **7.622 ms**, so the engine's own join part has moved **7.533 ms** since, and
+**the old code, measured back to back with the new one on this host, is the version that shows the gap** — its
+join part is **6.772 ms** against the new code's **7.092 ms**, and its whole is **77.657 ms** against
+**77.504 ms**.
 
 #### The instrument
 
@@ -4855,25 +5156,33 @@ agree in every campaign**, and they are the **216,783** rows the join produces.
 
 | the path | the median | the least | the most |
 |---|---|---|---|
-| **the ladder's path, the table cold** | **10.033** ms | 8.850 ms | 14.377 ms |
-| **the ladder's path again, the table resident** | **9.290** ms | 8.364 ms | 11.869 ms |
-| **the ladder's path once more, after the reader's work** | **9.642** ms | 8.626 ms | 14.051 ms |
-| **the query's path, inside the reader** | **14.675** ms | 12.044 ms | 19.003 ms |
+| **the ladder's path, the table cold** | **8.789** ms | 8.343 ms | 9.349 ms |
+| **the ladder's path again, the table resident** | **8.660** ms | 8.365 ms | 9.100 ms |
+| **the ladder's path once more, after the reader's work** | **8.649** ms | 8.408 ms | 11.260 ms |
+| **the query's path, inside the reader** | **8.670** ms | 8.137 ms | 9.666 ms |
 
 | the difference, in the same iteration | the median | the least | the most |
 |---|---|---|---|
-| **the query's path less the ladder's path** | **+4.273** ms | +1.884 ms | +9.006 ms |
-| the table's residency: cold less resident | +0.657 ms | −1.925 ms | +5.668 ms |
-| what the reader's work costs the table | +0.357 ms | −1.109 ms | +4.427 ms |
+| **the query's path less the ladder's path** | **−0.159** ms | −0.729 ms | +0.791 ms |
+| the table's residency: cold less resident | +0.170 ms | −0.495 ms | +0.945 ms |
+| what the reader's work costs the table | +0.009 ms | −0.334 ms | +2.633 ms |
 
-**The sign is what carries the claim.** The query's path is the dearer one in **24 of 24** paired samples,
-by **+4.273 ms** at the median, and **every one of the twenty-four samples is positive**. **So the gap is
-real, and it is the reader's context and not the probe.**
+**The sign does not carry the claim any more, and the reason is the default.** The query's path less the
+ladder's path is **−0.159 ms** at the median, with a spread of **1.520 ms** that covers zero: the query's
+path is **not** the dearer one. **And the old code, measured back to back with the new one in the same
+minutes, is the version that says it is**: the old code's same difference is **+0.740 ms** — the query's
+path **dearer** — and the set this file replaces measured it at **+4.273 ms**, in **24 of 24** paired
+samples. **So the verdict has flipped, and the reason is named**: the engine's own batch is **a whole row
+group** now, and this section's own sweep says a whole row group is the **cheapest** point of the curve: the
+smaller batches are **+0.816 ms** at 62,500 and **+0.629 ms** at 250,000 against it. **The reader's context is
+at the noise here, where it was not at the noise when the row limit was the default.**
 
-**And the value column's decode is more than half of it.** Read the key column alone and the query's path
-costs **12.306 ms** against the ladder's **10.002 ms** — a difference of **+1.834 ms**. Read the key and the
-value, as the query does, and the difference is **+4.273 ms**. **The decode of the value column — the
-reader's own work between two probes — is 2.439 ms of the charge.**
+**And the value column's decode is what is left of it.** Read the key column alone and the query's path
+less the ladder's path is **−0.806 ms**; read the key and the value, as the query does, and it is
+**−0.159 ms**. **So the value column's decode costs the query's path 0.647 ms more than it costs the
+ladder's**, and the whole of the difference is at the noise. **The old code paid 1.050 ms for the same
+decode** — **+0.740 ms** with the value and **−0.310 ms** without it — **and the default's move is what took
+0.403 ms of that back.**
 
 #### The batch size
 
@@ -4885,43 +5194,56 @@ the same iteration.
 
 | the batch size | the median | less the engine's own | the faster |
 |---|---|---|---|
-| 62,500 | 15.473 ms | +0.397 ms | 10 of 24 |
-| **125,000 — the engine's own** | 14.944 ms | *the reference* | — |
-| 250,000 | 13.252 ms | −1.438 ms | 19 of 24 |
-| **1,000,000** | **9.549 ms** | **−4.926 ms** | **24 of 24** |
+| 62,500 | 9.661 ms | +0.816 ms | 1 of 24 |
+| 125,000 | 9.243 ms | +0.652 ms | 4 of 24 |
+| 250,000 | 9.406 ms | +0.629 ms | 2 of 24 |
+| **1,000,000 — the engine's own** | **8.604 ms** | *the reference* | — |
 
-**The curve is monotone, and the end of it is sharp.** A batch of **1,000,000** rows — one row group — is
-**4.926 ms** cheaper than the engine's own, faster in **24 of 24** paired samples. **And the yardstick says
-how much of that is the instrument's own**: the engine's own reads **14.944 ms** in the sweep's slot and
-**14.675 ms** in the paired slot — the same measurement, two positions, **0.269 ms** apart.
+**The engine's own batch is now the end of the curve, and the lever is gone.** A whole row group is
+**8.604 ms** and every smaller batch is dearer — **+0.816 ms** at 62,500, **+0.652 ms** at 125,000 and
+**+0.629 ms** at 250,000 — and faster in **1 of 24**, **4 of 24** and **2 of 24** paired samples. **The set
+this file replaces measured the opposite**: its engine's own was 125,000, and a whole row group was
+**4.926 ms** cheaper, faster in **24 of 24**. **And the old code, measured back to back with the new one,
+agrees with it**: the old code's own 125,000 was **9.556 ms** and a whole row group **8.630 ms**, **0.665 ms**
+cheaper, faster in **19 of 24**.
+
+**And the yardstick says how much of that is the instrument's own.** The engine's own reads **8.604 ms** in
+the sweep and **8.670 ms** in the query's own path — the same measurement, two positions, **0.066 ms** apart.
+**The set this file replaces read the same two positions 0.269 ms apart.**
 
 **And the key column alone says the same thing, more weakly.** The sweep's difference against the engine's
-own is **+0.298 ms** at 62,500, **−0.190 ms** at 250,000 and **−2.054 ms** at 1,000,000 — faster in 20 of 24.
-**The value column's decode is 2.872 ms of the lever.**
+own is **+0.043 ms** at 62,500, **+0.088 ms** at 125,000 and **+0.043 ms** at 250,000 — faster in **11 of 24**
+at each of them, **which is a coin**. **And that is the whole of what is left of the lever: the value
+column's decode.** The key and the value differ by **0.773 ms** at 62,500, where the key alone is **+0.043 ms**
+and the pair is **+0.816 ms**. **The set this file replaces put 2.872 ms of its lever in the same place.**
 
 #### The query's own parts
 
 **And the query pays it.** The same join-orders query, taken apart at every batch size, the engine's arm
-and `DuckDB`'s arm measured back to back in the same iteration:
+and `DuckDB`'s arm measured back to back in the same iteration. **And this table did not move**: it is
+spec 048's set, taken when the engine's own batch was 125,000 rows, and the default is now a whole row group
+— so **the last row is the engine's own default now**.
 
 | the batch size | the engine's join | `DuckDB`'s join | the paired difference | the engine's scan |
 |---|---|---|---|---|
 | 62,500 | 14.759 ms | 7.777 ms | +6.913 ms | 68.549 ms |
-| **125,000 — the engine's own** | 15.823 ms | 7.782 ms | +8.083 ms | 69.915 ms |
+| **125,000 — the engine's own then** | 15.823 ms | 7.782 ms | +8.083 ms | 69.915 ms |
 | 250,000 | 12.370 ms | 7.621 ms | +4.691 ms | 68.380 ms |
 | **1,000,000** | **9.641 ms** | 7.646 ms | **+1.898 ms** | 68.600 ms |
 
 **The engine is slower in 18 of 18 iterations at every batch size, and the scan does not move** — it reads
 **68.380 ms** to **69.915 ms** across all four of them. **So the reader does the same work at every batch
 size, and what moves is the probe's own cost.** At a batch of a row group the engine's join part is
-**6.182 ms** cheaper than at the engine's own, and the paired difference against `DuckDB` falls from
+**6.182 ms** cheaper than at the engine's own then, and the paired difference against `DuckDB` falls from
 **+8.083 ms** to **+1.898 ms**.
 
 **And the two measurements are not the same probe.** The instrument's reader path carries **no pushdown**,
 so its probe walks the batch's own rows; the query's join part carries the engine's own predicate mask, so
 its probe walks the mask's survivors. **Both are the engine's own `probe_rows`** over the same six million
-lookups, and **both say the same thing**: the batch size moves the probe, and a row group's worth moves it
-by about five milliseconds.
+lookups, and **both say the same thing about the direction**: the batch size moves the probe, and a row
+group's worth moves it. **How far it moves it is the two sets' own**: **6.182 ms** in this table, taken
+before the default moved, and **0.816 ms** at 62,500 in the sweep above, taken after — **because the
+engine's own batch is a row group now, and the lever has nothing left to pull.**
 
 #### The mechanism, as far as it is measured
 
@@ -4931,57 +5253,64 @@ in the build table, and the table is **5,999,995** bytes: bigger than any cache 
 lookup is a memory access.
 
 **The probe's cost is the table's residency, and that is measured.** The same probe, back to back, costs
-**9.290 ms** with the table resident and **10.033 ms** with it cold.
+**8.660 ms** with the table resident and **8.789 ms** with it cold.
 
 **And the reader's own work does not measurably make the table colder.** The same probe, after the query's
-path and the sweep have run, costs **+0.357 ms** more than the resident price, against a spread of **−1.109
-ms** to **+4.427 ms** — at the noise. **And the reader's own work is the same at every batch size**,
+path and the sweep have run, costs **+0.009 ms** more than the resident price, against a spread of **−0.334
+ms** to **+2.633 ms** — at the noise. **And the reader's own work is the same at every batch size**,
 because the scan does not move.
 
-**What is left is the number of times the probe is run.** The engine's own batch size runs the probe **48**
-times over six million rows; a batch of a row group runs it **six**. **And the cost falls with the number
-of runs**, and the curve flattens at one row group, because **the number of batches cannot go below the
-number of row groups**. **What is not yet named** is what a run of the probe costs beyond the lookup itself.
-**That is the open question this section leaves behind.**
+**What is left is the number of times the probe is run — and the default has spent it.** The engine's own
+batch size runs the probe **six** times over six million rows; the row limit it replaced ran it **48**. **And
+the cost falls with the number of runs**, and the curve flattens at one row group, because **the number of
+batches cannot go below the number of row groups**. **So the lever is at its floor**, and what is not yet
+named is what a run of the probe costs beyond the lookup itself. **That is the open question this section
+leaves behind.**
 
 #### What this changes
 
-**The next question is not "why is the engine behind". It is "should the reader's default batch size
-move".**
+**The question this section asked is answered, and the answer moved the default.** The question was "should
+the reader's default batch size move": **a batch of a row group is 6.182 ms cheaper than the row limit it
+replaced**, and **spec 051 moved the default to it** — a byte budget of 16 MiB, which for this file's two
+materialised columns divides out at a whole row group.
 
-At the engine's own batch size the engine's join part is **15.823 ms** and its paired difference against
-`DuckDB` is **+8.083 ms**. **At a batch of a row group the join part is 9.641 ms and the difference is
-+1.898 ms** — **6.182 ms** of the engine's disadvantage gone, and the sign still the engine's in 18 of 18
-iterations. **And the knob is a knob: the default does not move**, so this section changes nothing in the
-engine's behaviour. **The next increment** measures what a batch of a million rows costs in memory — the
-reader holds a batch's key column and value column in memory at once — and decides whether the default
-moves.
+**And the lever it found is now spent.** At the row limit the engine's join part was **15.823 ms** and its
+paired difference against `DuckDB` was **+8.083 ms**; at a batch of a row group the join part is **9.641 ms**
+and the difference **+1.898 ms** — **6.182 ms** of the engine's disadvantage gone, and the sign still the
+engine's in 18 of 18 iterations. **And the engine's own batch is a row group now**, so the sweep's lever is
+**0.816 ms** at its largest and the query's path is **not** the dearer one: **−0.159 ms** against the
+ladder's, where the old code read **+0.740 ms**.
 
-**And the published figure stands, and its spread is published with it.** §3ac's join part reads **14.625
-ms** on campaigns taken at a load average of **8.54** to **8.77**; this section's re-measurement of the same
-part, at the engine's own batch size, reads **15.823 ms** at a load of **6.98** to **7.94** — **1.198 ms**
-apart. **The engine did not change** — the knob's default is the engine's own — **so the difference is the
-host's.** **And the load average does not order the two campaigns: the quieter host read slower.** The
-probe is **memory-bound** — its lookups are random and the build table is bigger than any cache — so what
-moves it is the host's **memory traffic**, and a load average does not measure that. The **sign** is
-reproducible: the engine's join is slower in **18 of 18** iterations here, as it is in §3ac's eighteen.
-**§3ac is not corrected, and this section says so where §3ac's figure is read.**
+**And the figure this section replaces is published beside the one that replaced it.** §3ac's join part read
+**14.625 ms** on campaigns taken at a load average of **8.54** to **8.77**; it now reads **8.552 ms** on
+campaigns taken at **3.98** to **4.26** — **6.073 ms** apart. **The engine did change this time**: the
+default is a byte budget now, and the batch is a row group. **And the host was quieter, which is the other
+half of it** — the old code, measured back to back with the new one in the same minutes, reads **9.167 ms**
+for the same part, so **0.615 ms** of the movement is the code's and the rest is the host's. The probe is
+**memory-bound** — its lookups are random and the build table is bigger than any cache — so what moves it is
+the host's **memory traffic**, and a load average does not measure that. **§3ac is corrected, and the
+correction is published here.**
 
 Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the
 guard **inside this section**. The reports are `bench-results/probe-paths-run1.json`,
 `bench-results/probe-paths-run2.json`, `bench-results/probe-paths-run3.json`,
 `bench-results/probe-paths-key-only-run1.json`, `bench-results/probe-paths-key-only-run2.json`,
-`bench-results/probe-paths-key-only-run3.json`, and the query's own parts are in
-`bench-results/join-parts-spec048-run1.json` and its two siblings, and in
+`bench-results/probe-paths-key-only-run3.json`; the old code's are in
+`bench-results/probe-paths-spec051-before-run1.json` and its two siblings, and in
+`bench-results/probe-paths-key-only-spec051-before-run1.json` and its two siblings. The query's own parts
+are in `bench-results/join-parts-spec048-run1.json` and its two siblings, and in
 `bench-results/join-parts-batch-62500-spec048-run1.json` and its eight siblings. The probe is
 `crates/columnar-engine/examples/probe_paths_probe.rs`, and the query's own parts are spec 046's probe,
 `crates/columnar-bench/src/join_parts.rs`. The decision is in
-[ADR-0060](docs/adr/0060-the-probe-measured-twice.md).
+[ADR-0060](docs/adr/0060-the-probe-measured-twice.md) and, for the default's move,
+[ADR-0063](docs/adr/0063-the-default-moves-to-the-byte-budget.md).
 
-**The conditions**: three campaigns of eight iterations, on one host, with the load average between **6.36**
-and **7.94** — and the host's own drift is published with every difference, because a difference of two
-medians would let the drift land on both sides. **The query's own parts are three campaigns of six
-iterations**, interleaved with the instrument's, so that the host's drift lands on every family equally.
+**The conditions**: three campaigns of eight iterations, on one host, with the load average between **3.00**
+and **4.46** — and the old code's sets, measured back to back with them, at **3.00** to **5.03**; the set
+this file replaces was taken at **6.36** to **7.94**. **And the host's own drift is published with every
+difference**, because a difference of two medians would let the drift land on both sides. **The query's own
+parts are three campaigns of six iterations**, interleaved with the instrument's, so that the host's drift
+lands on every family equally.
 
 ### 3af. The batch size's price
 
@@ -4990,7 +5319,9 @@ widths the engine reads at.
 
 [§3ae](#3ae-the-probe-measured-twice) made the reader's batch size a knob and measured what it **buys**: a batch
 of a row group — **1,000,000** rows — is **4.926 ms** cheaper than the engine's own **125,000**, faster in **24 of
-24** paired samples. **And it did not measure what it costs**, and the engine's own memory estimate did not model
+24** paired samples. **And the default has moved to it since** ([§3ah](#3ah-the-default-moved)), so the lever the
+knob found is spent: the sweep's own lever is now **0.816 ms**, and the engine's own batch is the cheapest point
+of the curve. **And it did not measure what it costs**, and the engine's own memory estimate did not model
 the batch at all. **It does now** — [§3ag](#3ag-the-width-statement-paid) has the statement the estimate and the
 batch's rule share, and the check of it against a measurement.
 
@@ -5004,15 +5335,15 @@ shape pays.
 | the shape | the batch size | the peak | the read leaves behind | the engine's estimate | the gap |
 |---|---|---|---|---|---|
 | **the two predicate columns** | 62,500 | **1,166,640** | **1,261** | **1,500,016** | −333,376 |
-| | **125,000 — the engine's own** | **2,169,504** | **1,261** | | +669,488 |
+| | **125,000 — the engine's own then** | **2,169,504** | **1,261** | | +669,488 |
 | | 250,000 | **4,099,388** | **1,261** | | +2,599,372 |
 | | **1,000,000** | **13,719,490** | **1,261** | | +12,219,474 |
 | **the two materialised columns** | 62,500 | **132,262,335** | **129,500,281** | **99,000,016** | +33,262,319 |
-| | **125,000 — the engine's own** | **133,241,835** | **129,500,281** | | +34,241,819 |
+| | **125,000 — the engine's own then** | **133,241,835** | **129,500,281** | | +34,241,819 |
 | | 250,000 | **135,405,811** | **129,500,281** | | +36,405,795 |
 | | **1,000,000** | **147,294,195** | **129,500,281** | | +48,294,179 |
 | **the file's sixteen columns** | 62,500 | **1,144,709,775** | **1,139,591,586** | **1,549,500,016** | −404,790,241 |
-| | **125,000 — the engine's own** | **1,157,291,375** | **1,139,591,586** | | −392,208,641 |
+| | **125,000 — the engine's own then** | **1,157,291,375** | **1,139,591,586** | | −392,208,641 |
 | | 250,000 | **1,183,960,327** | **1,139,591,586** | | −365,539,689 |
 | | **1,000,000** | **1,307,720,087** | **1,139,591,586** | | −241,779,929 |
 
@@ -5023,25 +5354,74 @@ the first shape and **165.8 MiB** on the last. **And the knob is named in rows, 
 
 #### The price, in time
 
+**And the campaign was taken again, so this table is the new set's.** The sweep's points grew to **five** — the wide
+read's own batch is **100,000** rows now, and no published set had measured it — and the rotation is of five, twice
+over, ten iterations a campaign. **And the table's figures are the new code's**; the set this file replaces is given
+below, with the reason it moved.
+
 | the shape | the batch size | the median | less the engine's own | the faster |
 |---|---|---|---|---|
-| **the join's part** | 62,500 | 25.320 ms | +0.345 ms | 10 of 24 |
-| | **125,000 — the engine's own** | **25.211 ms** | *the reference* | — |
-| | 250,000 | 24.450 ms | −0.899 ms | 16 of 24 |
-| | **1,000,000** | **21.459 ms** | **−3.717 ms** | **24 of 24** |
-| **the filter-range's scan** | 62,500 | 12.811 ms | −0.026 ms | 13 of 24 |
-| | **125,000 — the engine's own** | **12.801 ms** | *the reference* | — |
-| | 250,000 | 12.567 ms | −0.204 ms | 16 of 24 |
-| | 1,000,000 | 12.699 ms | −0.108 ms | 13 of 24 |
-| **the wide read** | 62,500 | 511.376 ms | −0.442 ms | 12 of 24 |
-| | **125,000 — the engine's own** | **512.751 ms** | *the reference* | — |
-| | 250,000 | 516.688 ms | +2.335 ms | 10 of 24 |
-| | **1,000,000** | 525.698 ms | +14.455 ms | 1 of 24 |
+| **the join's part** | 62,500 | 17.850 ms | +0.031 ms | 14 of 30 |
+| | 100,000 | 18.058 ms | −0.083 ms | 20 of 30 |
+| | 125,000 | 18.049 ms | −0.170 ms | 19 of 30 |
+| | 250,000 | 17.860 ms | −0.113 ms | 16 of 30 |
+| | **1,000,000 — the engine's own** | **17.906 ms** | *the reference* | — |
+| **the filter-range's scan** | 62,500 | 11.602 ms | +0.029 ms | 13 of 30 |
+| | 100,000 | 11.648 ms | +0.026 ms | 13 of 30 |
+| | 125,000 | 11.583 ms | +0.067 ms | 12 of 30 |
+| | 250,000 | 11.528 ms | −0.018 ms | 15 of 30 |
+| | **1,000,000 — the engine's own** | **11.562 ms** | *the reference* | — |
+| **the wide read** | 62,500 | 456.523 ms | +3.341 ms | 6 of 30 |
+| | **100,000 — the engine's own** | **453.601 ms** | *the reference* | — |
+| | 125,000 | 455.428 ms | +1.763 ms | 10 of 30 |
+| | 250,000 | 455.848 ms | +1.614 ms | 8 of 30 |
+| | 1,000,000 | 462.106 ms | +7.795 ms | 6 of 30 |
 
-**So the batch's optimum is width-dependent, and that is the whole of the answer.** The join's part is **3.717 ms**
-cheaper at a whole row group and faster in **24 of 24**; the filter-range's scan does not move; and the wide read is
-**14.455 ms** *dearer* at a whole row group, faster in **one** of twenty-four. **A rule that serves one of those
-cannot serve the other, and a rule named in rows cannot serve either** — because what separates them is the width.
+**So the batch's optimum is width-dependent, and that is the whole of the answer.** The join's part is **flat** — the
+five points read **17.850 ms** to **18.058 ms**, a spread of **0.208 ms** — and the filter-range's scan is flat too,
+**11.528 ms** to **11.648 ms**. **And the wide read is the one that still moves**: it is **7.795 ms** *dearer* at a
+whole row group than at its own **100,000**, and **3.341 ms** dearer at **62,500**. **A rule that serves one of
+those cannot serve the other, and a rule named in rows cannot serve either** — because what separates them is the
+width.
+
+**And the set this file replaces measured a different curve.** Its join's part was **3.717 ms** cheaper at a whole row
+group, faster in **24 of 24**, and its wide read **14.455 ms** *dearer* there. **And the two sets are not the same
+measurement**: the old instrument had four points and eight iterations and its own point was a constant, and the
+campaigns were taken at different loads. **So the difference is attributed by measurement, and the attribution is
+below.**
+
+#### And the code's share of it
+
+**The same instrument, the two codes, back to back on this host** — three campaigns each, **interleaved**, so the
+difference between the two columns is the **code's** and not the machine's. **The instrument is the one the old code
+carried** — four points, the reference a constant — because it is the one both codes run unchanged.
+
+| the shape | the batch size | the old code | the new code | the code's share |
+|---|---|---|---|---|
+| **the join's part** | 62,500 | 17.391 ms | 17.226 ms | −0.165 ms |
+| | 125,000 | 17.801 ms | 17.989 ms | +0.188 ms |
+| | 250,000 | 17.412 ms | 17.291 ms | −0.121 ms |
+| | 1,000,000 | 18.015 ms | 18.043 ms | +0.028 ms |
+| **the filter-range's scan** | 62,500 | 11.419 ms | 11.284 ms | −0.135 ms |
+| | 125,000 | 11.458 ms | 11.449 ms | −0.009 ms |
+| | 250,000 | 11.335 ms | 11.291 ms | −0.044 ms |
+| | 1,000,000 | 11.293 ms | 11.264 ms | −0.029 ms |
+| **the wide read** | 62,500 | 450.370 ms | 449.253 ms | −1.117 ms |
+| | 125,000 | 449.165 ms | 448.209 ms | −0.956 ms |
+| | 250,000 | 450.448 ms | 447.573 ms | −2.875 ms |
+| | 1,000,000 | 457.010 ms | 454.846 ms | −2.164 ms |
+
+**So the code's share of the sweep is under 0.2 ms on the join's part and under 3 ms on the wide read, whose own
+spread is 13 ms.** **And the set this file replaces reads 25.038 ms for the join's part at 125,000 — where the old
+code reads 17.801 ms on this host today.** **So the movement between the two published sets is the host's, and the
+default's move is worth less than 0.2 ms of it.**
+
+**And that is a defect in the set this file replaces, and it is published here.** The sweep is the **only** family
+whose "before" is that set: every other family has its old code measured **back to back with the new one**, in the
+same session, interleaved — so the difference there is the code's. **The sweep had no old-code set, and the set it
+was compared against was taken on a host in a state this host has not been in since.** The load average does not name
+that state: the set was taken at **6.22** to **6.78**, the campaigns above at **13.74** to **4.72**, and this
+attribution at **2.30** to **1.88** — and the set reads slowest of the three.
 
 #### The rule
 
@@ -5050,15 +5430,22 @@ sides**:
 
 - The narrow shapes' whole row group costs **12.8 MiB** and **15.3 MiB** — so the budget must be **above** that, or
   the shapes that win would lose.
-- The wide shape's own batch — **125,000** rows at **173.88** bytes a row — costs **20.7 MiB**, and the wide read is
-  **0.442 ms** cheaper at **62,500** rows than at the engine's own, so the budget must be **at or below** that, or
-  the shape that loses would lose more.
+- The wide shape's own batch — **100,000** rows at **173.88** bytes a row — costs **16.58 MiB**, and the next divisor
+  a row group admits, **125,000** rows, costs **20.7 MiB** and reads **1.763 ms** more slowly — so the budget must be
+  **at or below** that, or the shape that wins would lose.
 
-**So the budget is between 12.8 MiB and 20.7 MiB, and it is 16 MiB.** And the rule gives **every** shape at least
-what it has today: the two narrow shapes get the whole row group — **1,000,000** rows — and the wide shape gets
-**62,500**, the largest divisor of a row group's row count under **16 MiB** — **80,000 does not divide a million**,
-and the divisors are coarse — which is a **smaller** batch than today and, by the measurement, **not a loss**: the
-wide read is **0.442 ms** cheaper at **62,500** rows than at the engine's own.
+**So the budget is between 15.3 MiB and 20.7 MiB, and it is 16 MiB.** And the rule gives **every** shape at least
+what it has today: **at one worker** the two narrow shapes get the whole row group — **1,000,000** rows — and the wide
+shape gets **100,000**, the largest divisor of a row group's row count under **16 MiB** — **105,502 does not divide a
+million**, and the divisors are coarse — and **the wide read is cheapest there**, by the measurement above: **3.341 ms**
+dearer at **62,500** and **1.763 ms** dearer at **125,000**.
+
+**And the budget is the read's, and the workers share it.** A parallel read holds one batch per worker, and the
+engine's memory estimate charges it that way — so on *n* workers each of them holds an *n*-th of the budget, and a
+narrow shape gets **less** than the whole row group. **At one worker -- the setting every measurement in this section
+was taken in, and the setting the headline table is taken in -- the rule is exactly the one written above.** The
+shipped default's figures are in [§3ah](#3ah-the-default-moved), and the sharing is decided in
+[ADR-0063](docs/adr/0063-the-default-moves-to-the-byte-budget.md).
 
 **And the default does not move in this increment.** Moving it moves **every** published figure the reader's batch
 size touches — the headline table, the thread sweeps, the ladder, the join's parts — and re-measuring those is
@@ -5097,7 +5484,9 @@ anywhere in this repository** until this section.
 
 **The next increment** gives the engine **one** honest statement of what a row costs — the estimate and the batch's
 rule share it — makes the reader's batch size a **byte budget**, and **publishes every figure that moves old-and-new,
-re-measured**. The **open question** this leaves behind is the one spec 048 left: **why a shorter run of the probe
+re-measured**. **And it is done**: [§3ah](#3ah-the-default-moved) is the increment that moved the default, and every
+figure the move touched is published there **old and new**, **re-measured** against the old code **in the same
+session**. The **open question** this leaves behind is the one spec 048 left: **why a shorter run of the probe
 costs more per row**, when the table is equally cold either way and the reader's work is the same — and now with
 **the batch's bytes** named as the thing a bigger batch buys and the wide shape pays for.
 
@@ -5526,25 +5915,25 @@ The framing rule for this project is **"kernel X on query Y"**, never "this data
 DuckDB". A number here is a statement about *one operation on one query on one machine*, and it
 is only meaningful next to its conditions.
 
-So: the comparison kernel on the Q6 predicate set is 1.47× faster than the compiler's own
-vectorisation of the same loop, and 2.48× faster than a genuinely scalar reference, on an M4 Max
-with NEON, single-threaded, over 20 million rows. The engine's filter on the Q6 predicate set
-takes 6.7 ms. The engine's lazy scan of the same file, reading the two columns Q6 needs and
-pushing the predicates down into the scan, takes **15.4 ms** at one thread — against **33.0 ms**
-for DuckDB and **193.6 ms** for Polars — and at six workers it takes **4.0 ms** against DuckDB's
-10.0 ms. The lazy path is **2.1× faster than DuckDB** at one thread and 12.6× faster than
-Polars, and the reason it was not faster before is measured and named: the pushdown's mask was
+So: the comparison kernel on the Q6 predicate set is 1.48× faster than the compiler's own
+vectorisation of the same loop, and 2.44× faster than a genuinely scalar reference, on an M4 Max
+with NEON, single-threaded, over 20 million rows. The engine's pushdown on the Q6 predicate set
+costs 4.0 ms over twelve million rows. The engine's lazy scan of the same file, reading the two
+columns Q6 needs and pushing the predicates down into the scan, takes **16.6 ms** at one thread —
+against **32.0 ms** for DuckDB and **190.0 ms** for Polars — and at six workers it takes **3.9 ms**
+against DuckDB's **8.0 ms**. The lazy path is **1.9× faster than DuckDB** at one thread and 11.5×
+faster than Polars, and the reason it was not faster before is measured and named: the pushdown's mask was
 handed to the reader as a row filter, and a row filter is a list of 2,775,138 row ranges for
 2,178,861 surviving rows, applied one range at a time. The engine keeps the mask now, and the
 scan that uses it copies each surviving row **once**.
 
 **And the defect spec 016 found is the per-row-group cost.** The engine's reader used a
 fixed batch of 65,536 rows, and that number divides none of the three files' row-group sizes — so
-every row group ended on a **partial** batch, and a partial batch costs 0.78 ms. The engine paid
+every row group ended on a **partial** batch, and a partial batch costs 0.67 ms. The engine paid
 a per-row-group cost that DuckDB, Polars and the DataFusion peer did not pay, and the file with
 the most parallelism was the slowest one. The batch size is derived from the file now, and the
-engine's one-thread figure is flat across the three files — **15.4, 15.7 and 16.4 ms**, where it
-was 19.7, 24.8 and 34.6. See [§3j](#3j-the-row-group-count-and-what-it-costs).
+engine's one-thread figure is flat across the three files — **13.2, 13.0 and 13.7 ms**, where the
+set the bump replaces had **15.4, 15.7 and 16.4 ms**. See [§3j](#3j-the-row-group-count-and-what-it-costs).
 
 **And the defect spec 020 found is the join's hasher.** The join's probe hashed with `SipHash`,
 which is built to be resistant to collision attacks — a property a query engine's hash table has no
@@ -5557,11 +5946,11 @@ stage went from **219.9 ms** to **117.7 ms** and the whole lazy query from **318
 **And the defect spec 021 found is the shape of the code, not a missing optimisation.** The join's
 table was a `HashMap` over a 32-byte enum where an integer key wanted an array; the key reader
 consulted a validity bitmap that carried no information; the sort built an enum per row where a
-number would do. The engine's cold `join-orders` is **89.8 ms** — a hash join, with `orders` as the
-build side, read inside the clock — against DuckDB's **90.0 ms** on the same two files; the engine's
-cold `sort-topk` is **40.1 ms** against DuckDB's **37.0 ms**. The engine is **level** with DuckDB on
-the join and **1.08× behind** on the sort, and ahead of Polars on both — by **2.4×** on the join and
-by **33×** on the sort. The instrument that found it is committed, every candidate it measures is
+number would do. The engine's cold `join-orders` is **87.8 ms** — a hash join, with `orders` as the
+build side, read inside the clock — against DuckDB's **89.0 ms** on the same two files; the engine's
+cold `sort-topk` is **39.2 ms** against DuckDB's **37.0 ms**. The engine is **1.2 ms ahead** of
+DuckDB on the join and **1.06× behind** on the sort, and ahead of Polars on both — by **2.5×** on the
+join and by **33×** on the sort. The instrument that found it is committed, every candidate it measures is
 checked against the engine's own output row for row before it is timed, and the code's share of the
 numbers is measured against the old code on the same host. See
 [§2h](#2h-the-hot-paths-taken-apart) and
@@ -5578,7 +5967,7 @@ each answer against the published one before it times anything. See
 [ADR-0031](docs/adr/0031-the-time-the-plan-output-does-not-name.md).
 
 And the eager read — the file → queryable load, which was the largest number in the repository —
-is now **527.8 ms** against DuckDB's **1370.0 ms** on the same file at the same thread count. It is the one measurement in this file that is about the *file* rather
+is now **546.8 ms** against DuckDB's **1228.0 ms** on the same file at the same thread count. It is the one measurement in this file that is about the *file* rather
 than the *query*, and it is swept like the other two. See [§2g](#2g-the-load-sweep--where-the-engines-biggest-number-was).
 **Every absolute figure in this paragraph is this set's**, and this set was measured on a host
 that was busy at the start and quieter at the end — see
@@ -5652,17 +6041,20 @@ before.
 | the shape | the batch size | the read's peak | the estimate | the gap |
 |---|---|---|---|---|
 | **the two predicate columns** | 62,500 | **1,166,672** | **2,361,802** | −1,195,130 |
-| | **125,000 — the engine's own** | **2,169,536** | **3,223,586** | −1,054,050 |
+| | 100,000 | **1,723,920** | **2,878,872** | −1,154,952 |
+| | 125,000 | **2,169,536** | **3,223,586** | −1,054,050 |
 | | 250,000 | **4,099,420** | **4,947,156** | −847,736 |
-| | **1,000,000** | **13,719,522** | **15,288,577** | −1,569,055 |
+| | **1,000,000 — the engine's own** | **13,719,522** | **15,288,577** | −1,569,055 |
 | **the two materialised columns** | 62,500 | **132,262,351** | **100,015,642** | +32,246,709 |
-| | **125,000 — the engine's own** | **133,241,851** | **101,031,266** | +32,210,585 |
+| | 100,000 | **107,268,751** | **100,625,016** | +6,643,735 |
+| | 125,000 | **133,241,851** | **101,031,266** | +32,210,585 |
 | | 250,000 | **135,405,827** | **103,062,516** | +32,343,311 |
-| | **1,000,000** | **147,294,211** | **115,250,016** | +32,044,195 |
+| | **1,000,000 — the engine's own** | **147,294,211** | **115,250,016** | +32,044,195 |
 | **the file's sixteen columns** | 62,500 | **1,144,709,903** | **965,574,092** | +179,135,811 |
-| | **125,000 — the engine's own** | **1,157,291,503** | **975,512,992** | +181,778,511 |
+| | **100,000 — the engine's own** | **1,012,041,759** | **971,537,430** | +40,504,329 |
+| | 125,000 | **1,157,291,503** | **975,512,992** | +181,778,511 |
 | | 250,000 | **1,183,960,455** | **995,390,808** | +188,569,647 |
-| | **1,000,000** | **1,307,720,215** | **1,114,657,705** | +193,062,510 |
+| | 1,000,000 | **1,307,720,215** | **1,114,657,705** | +193,062,510 |
 
 **The gap is the read's peak less the estimate** — a negative gap is the estimate sitting above the read — and
 **the peak is the new campaign's**: the reports hold it, and the guard checks it inside this section.
@@ -5672,25 +6064,25 @@ on the two predicate columns, **99,000,016** on the two materialised ones, and *
 **and it did not depend on the batch size at all**, so the budget could not see the knob's price. **Now it does**:
 on the narrow shape the estimate says **15,288,577** bytes where the read holds **13,719,522** — **1.11× high** at a
 whole row group where it was **9.15× low** (**1,500,016** against **13,719,490**) — and on the wide one it says
-**975,512,992** where the read holds **1,157,291,503** — **16% low** where it was **25% high** (**1,549,500,016**
+**971,537,430** where the read holds **1,012,041,759** — **4% low** where it was **25% high** (**1,549,500,016**
 against **1,157,291,375**). **And the reads moved with the estimates**: the campaign was taken again after the
 engine changed, and the read's peak moved by **32** bytes on the narrow shape and **128** on the wide one — so the
 figures here are the new campaign's, and the old ones stand beside them.
 
 **And the wide shape is still refused by the default budget**, at every batch size, and now for a reason that is not
-an accident: **the plan does not fit**. The estimate says **975,512,992** bytes at the engine's own batch size and
-the read holds **1,157,291,503** there *(was 1,157,291,375)* — and the budget is **256 MiB**.
+an accident: **the plan does not fit**. The estimate says **971,537,430** bytes at the engine's own batch size and
+the read holds **1,012,041,759** there — and the budget is **256 MiB**.
 
 **And the estimate is close, and not an upper bound.** The **statement** is what a row costs in the engine's own
 storage, and the engine's own containers hold **spare capacity** and each string is **a separate allocation** — so
-the estimate runs **16% low** against the wide shape's read. **The measurement is published here so that the
+the estimate runs **4% low** against the wide shape's read. **The measurement is published here so that the
 difference is visible**, and the guard checks the figures in this section against the committed reports.
 
 #### What this changes
 
 **The estimate and the reader's batch rule now share one statement**, so the rule can divide a byte budget by what a
-row costs. **The default still does not move**: moving it moves **every** published figure the reader's batch size
-touches, and re-measuring those is **spec 051's** work.
+row costs. **And the default has moved**: [§3ah](#3ah-the-default-moved) publishes **every** figure the move touched
+**old and new**, re-measured against the old code in the same session.
 
 **And the open question this leaves behind** is the plain string's copy: **the conversion copies every string out of
 the Arrow batch, one allocation a row, and the dictionary path does not**. **That is the wide shape's gap, and it is
@@ -5706,5 +6098,119 @@ Every figure in this section is derived from the committed reports by `scripts/m
 **The conditions**: three campaigns of three repetitions, on one host, with the load average between **6.46** and
 **6.91**. **The memory is measured with a counting allocator**, and the time is not measured here — a time measured
 beside a counting allocator is not the engine's time.
+
+---
+
+### 3ah. The default moved
+
+**What this section is**: the headline figure of every family this increment touched, **old and new, side by side** --
+and **the rule that moved**, and the batch size it gives each width.
+
+**What moved, and why, in four sentences.**
+
+1. **The default was a row limit of 131,072 rows**, and the batch it gave was the largest divisor of a row group's
+   row count under it -- **125,000 rows**, whatever the read fetched.
+2. **It is a byte budget of 16 MiB now**, and the batch is the largest divisor of the row group's row count whose
+   bytes fit it -- so **the batch depends on the width the read fetches**.
+3. **And the budget is the read's, and the workers share it**, so a read on *n* workers gives each of them an
+   *n*-th of it.
+4. **And the rate the budget is divided by is in eighths of a byte**, because a column's rows carry a **validity
+   bit** and a bit is an eighth of a byte: a rate in whole bytes charges the bit a whole byte, which is **eight
+   times the truth**, and the rule then gives every shape less than the budget allows.
+
+**And the rule's own output**, from the width probe -- the rule's output is a figure, and a figure with no
+instrument behind it is a claim:
+
+| the width | the columns the reader fetches | at one worker | at two | at four | at six | at fourteen |
+|---|---|---|---|---|---|---|
+| the two predicate columns | 2 | **1,000,000** | 500,000 | 250,000 | 200,000 | 62,500 |
+| the two materialised columns | 2 | **1,000,000** | 500,000 | 250,000 | 125,000 | 62,500 |
+| the file's sixteen columns | 16 | **100,000** | 50,000 | 25,000 | 15,625 | 6,250 |
+
+**The two narrow shapes get the whole row group at one worker**, because a whole row group of either of them fits
+the budget: **13.79 MB** and **16.25 MB** against the budget's **16.78 MB**. **And the wide shape gets 100,000
+rows**, because its statement is **159.02 bytes a row** and a whole row group of it -- **159.02 MB** -- does not fit.
+
+**And every headline figure that moved**, old and new. **The left column is the old code**, measured **back to back
+with the new one** on this host, three campaigns each, **interleaved** -- so the difference between the two is the
+**code's** and not the machine's:
+
+| the family | the figure | the code the default replaces | this file publishes |
+|---|---|---|---|
+| the comparison | the engine's cold `q6`, lazy | 13.9 | **16.6** |
+| the comparison | `DuckDB`'s cold `q6` -- **the yardstick** | 32.0 | **32.0** |
+| the query probe | the whole query, cold | 88.101 | **87.843** |
+| the sort probe | the stage, cold | 1.52 | **2.34** |
+| the join probe | the stage, cold | 20.736 | **20.863** |
+| the join probe | the floor the probe -- **the machine's own measure** | 4.662 | **4.735** |
+| the write probe | the write of the whole file | 1,629.665 | **1,641.539** |
+| the store's probe | the commit, all five steps | 23.651 | **27.797** |
+| the materialised column | Arrow's decode | 4.21 | **4.26** |
+| the dictionary probe | the crate's read, expanded | 13.56 | **13.81** |
+| the row-group probe | the derived batch | 13.59 | **14.20** |
+| the sweep | the engine at 1 thread | 13.1 | **13.2** |
+| the curve | the engine at 6M rows | 53.9 | **53.1** |
+
+**And the engine's cold `q6` got slower, and the yardstick did not.** The lazy `q6` is **16.6 ms** where it was
+**13.9 ms** -- **2.7 ms slower, 19%** -- and `DuckDB`'s is **32.0 ms** in both sets, and the machine's own floor --
+the join probe's floor, which has no engine in it -- is **4.735 ms** against **4.662 ms**, **1.6%** apart. **So the
+movement is the code's and not the host's.** The whole query the file publishes is the other way: the join-orders
+query, cold, is **87.843 ms** where it was **88.101 ms**.
+
+**And the scan's curve says where the 2.7 ms is.** The `lazy_batch_size` probe walks the batch over the **real
+Q6's predicate set** -- `l_discount` and the dictionary `l_shipdate` -- and the scan's cost by batch is:
+
+| the batch | 62,500 | 125,000 | 250,000 | 1,000,000 |
+|---|---|---|---|---|
+| **the real Q6's predicate set** | 14.902 ms | 14.141 ms | **13.740 ms** | 14.878 ms |
+| one column, one predicate | 12.463 ms | 12.396 ms | 12.444 ms | 12.447 ms |
+
+**The predicate set's curve turns up at a whole row group**: the minimum is at **250,000 rows**, and the rule's
+output at one worker is **1,000,000**, which is **8.3%** above it. **And the one-column shape does not care** --
+its curve is flat to within **0.5%** over the same range, and the rule's output is within **0.4%** of its best
+point. **So the shape decides, and the rule cannot see the shape**: the two shapes have the same width, **16
+bytes a row**, and the same batch, and one of them wants a quarter of a row group and the other does not.
+
+**And the sweep's three shapes are flat**, over the whole range from 62,500 rows to a whole row group -- the filter's
+scan moves **0.120 ms**, the join's part **0.208 ms** and the wide read **8.505 ms**, and each is inside its own
+spread, which runs from **1.022 ms** to **24.070 ms**. **So the turn-up is the predicate set's, and not the batch
+size's price in general.**
+
+**And the budget's number is an open question, and it is published here rather than settled.** **16 MiB** was
+chosen by a measurement from both sides -- above the narrow shapes' whole row group (**15.3 MiB**) and at or below
+the wide shape's next batch (**20.7 MiB**, **125,000 rows**) -- and the rule's output is what that number produces,
+per width and per worker count, in the table above. **A smaller budget would move the narrow shapes to the predicate
+set's optimum and the wide shape below anything measured**: at **4 MiB** the wide shape's batch would be **25,000
+rows**, and the sweep's lowest rung is **62,500**. **And the scan's curve is about to change anyway**: the next
+increment makes the reader own the Parquet decode, and the decode is what the batch's optimum turns on. **So the
+number is not changed on a guess here.** It is named, measured, and left open: **the byte budget's number, once the
+reader owns the decode.**
+
+**And the set the file published before** -- measured on an earlier day, on the tree at spec 050's close -- is kept
+under its own name, `bench-results/<family>-spec050-run<n>.json`, so the figure the file published is still
+derivable from a committed report. **And the old code's figures are in their own sets**,
+`bench-results/<family>-spec051-before-run<n>.json`, measured in the same session and interleaved with the new
+code's, so the difference in the table above is the code's.
+
+**And one family is the exception, and it says so.** The sweep's own set is the only one whose "before" is the set
+this file replaces, because the sweep's instrument grew a fifth point and the campaigns were taken on different
+days. **So the sweep's difference is attributed by measurement rather than assumed**: the same instrument, the two
+codes, back to back on this host, three campaigns each, puts the code's share under **0.2 ms** on the join's part --
+and the set this file replaces reads **25.038 ms** for that part where the old code reads **17.801 ms** today. **So
+the movement between the two published sets is the host's.** The attribution's reports are
+`bench-results/batch-sweep-ab-oldcode-run<n>.json` and `bench-results/batch-sweep-ab-newcode-run<n>.json`, and it is
+published in [§3af](#3af-the-batch-sizes-price).
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/compare-run1.json` and its two siblings,
+`bench-results/batch-width-run1.json` and its two siblings, and `bench-results/batch-size-run1.json` and its two
+siblings. The instruments are `crates/columnar-engine/examples/batch_width_probe.rs`,
+`crates/columnar-engine/examples/lazy_batch_size.rs` and `crates/columnar-engine/examples/batch_sweep_probe.rs`.
+The decision is in [ADR-0063](docs/adr/0063-the-default-moves-to-the-byte-budget.md) and the rule's rate is in
+[§3ag](#3ag-the-width-statement-paid).
+
+**The conditions**: the old code and the new one were measured **back to back**, three campaigns each,
+**interleaved**, on one host, at a load average between **1.88** and **14.85** -- the width, sweep and memory
+campaigns were the busiest, and the load average is in every report.
 
 ---

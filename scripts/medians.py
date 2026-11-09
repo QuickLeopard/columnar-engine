@@ -3260,6 +3260,12 @@ def print_batch_width(runs: list[dict]) -> None:
             measured = (peaks[1][1] - peaks[0][1]) / (peaks[1][0] - peaks[0][0])
 
         print(f"\n-- the shape: {name} --")
+        print(f"  the default's batch: {int(shape.get('the_default_s_batch_rows', 0)):,} rows")
+        for worker in shape.get("the_default_s_batch_by_workers", []) or []:
+            print(
+                f"    at {int(worker.get('the_workers', 0)):>2} workers: "
+                f"{int(worker.get('the_batch_rows', 0)):>9,} rows"
+            )
         print(f"  the columns the reader fetches: {shape.get('the_columns_fetched', 0)}")
         print(f"  the columns the dataset holds:   {shape.get('the_columns_held', 0)}")
         print(f"  the statement:      {statement:>10.2f} bytes a row")
@@ -3290,6 +3296,29 @@ def _sweep_samples(runs: list[dict], family: str, batch: str, key: str) -> list[
     return values
 
 
+def _own_batches(run: dict) -> dict[str, str]:
+    """The engine's own batch, per family, as the report carries it.
+
+    **The default is a byte budget**, so the batch it gives depends on the width the read fetches -- and the
+    reports say which. **The old reports carried one number for every family**, because the old default was
+    a row limit and every width got the same batch.
+    """
+    own = run.get("the_engine_s_own_batch_rows")
+    if isinstance(own, dict):
+        return {
+            "the_join_part_ms": str(own.get("the_join_part")),
+            "the_filter_scan_ms": str(own.get("the_filter_scan")),
+            "the_wide_read_ms": str(own.get("the_wide_read")),
+        }
+    if own:
+        return {
+            "the_join_part_ms": str(own[0]),
+            "the_filter_scan_ms": str(own[0]),
+            "the_wide_read_ms": str(own[0]),
+        }
+    return {}
+
+
 def print_batch_sweep(runs: list[dict]) -> None:
     """Print the time: each shape's own part, at each batch size.
 
@@ -3306,8 +3335,7 @@ def print_batch_sweep(runs: list[dict]) -> None:
     campaigns = len(runs)
     probe = runs[0].get("probe", "batch-sweep")
     sizes = [str(size) for size in runs[0].get("the_batch_sizes", [])]
-    own = runs[0].get("the_engine_s_own_batch_rows") or ["125000"]
-    own = str(own[0]) if own else "125000"
+    own = _own_batches(runs[0])
 
     print(
         f"\n=== THE BATCH SIZE'S PRICE, IN TIME ({probe} probe, "
@@ -3325,7 +3353,7 @@ def print_batch_sweep(runs: list[dict]) -> None:
             if not values:
                 continue
             line = f"{int(size):>17,}{statistics.median(values):>12.3f}"
-            if size == own:
+            if size == own.get(family):
                 line += f"{'-':>24}{'-':>12}"
             else:
                 differences = _sweep_samples(
@@ -3355,7 +3383,166 @@ def print_batch_sweep(runs: list[dict]) -> None:
         print(f"the host load average: {min(loads):.2f} - {max(loads):.2f}")
 
 
+# Spec 051: the default moved to the byte budget, and every figure the
+# reader's batch size touches moved with it. The old code was measured **back
+# to back** with the new one, on this host, three campaigns each, interleaved,
+# and the set the default replaces is the same family with "-spec051-before"
+# inserted before "-run".
+#
+# The section this feeds publishes the headline figure of every family **old
+# and new, side by side** -- and this is where both halves come from.
+SPEC051_FAMILIES = (
+    ("the engine's cold `q6`, lazy", "compare", "engine_cold_q6_lazy", 1),
+    ("`DuckDB`'s cold `q6` -- **the yardstick**", "compare", "duckdb_cold_q6", 1),
+    ("the whole query, cold", "query-cost", "query_cold_join_orders", 3),
+    ("the stage, cold", "sort-cost", "stage_cold", 2),
+    ("the join's stage, cold", "join-cost", "stage_cold", 3),
+    ("the floor the probe -- **the machine's own measure**", "join-cost", "floor_probe", 3),
+    ("the write of the whole file", "write-cost", "write_file", 3),
+    ("the commit, all five steps", "store-write", "commit", 3),
+    ("Arrow's decode", "materialised", "arrow_decode", 2),
+    ("the crate's read, expanded", "dictionary-cost-6", "crate_expanded", 2),
+    ("the derived batch", "row-group-cost-6", "derived_batch", 2),
+    ("the engine at 1 thread", "scaling", "engine_1_thread", 1),
+    ("the engine at 6M rows", "curve", "engine_6m", 1),
+)
+
+
+def _spec051_figure(family: str, runs: list[dict], key: str) -> float | None:
+    """One family's headline figure, over every campaign.
+
+    The extraction is the one the guard uses, so that the table the section
+    publishes and the guard cannot disagree about a figure.
+    """
+    def median_of(values: list[float]) -> float | None:
+        clean = [value for value in values if value is not None]
+        return median(clean) if clean else None
+
+    if family == "compare":
+        # **The engine's figure and the yardstick's are two figures**: they are
+        # measured by different readers on the same rows, and a median over
+        # both of them would be a number about no system.
+        def engine(query: str) -> float | None:
+            values = [
+                entry.get("cold_ms")
+                for report in runs
+                for entry in report.get("engine_queries", [])
+                if entry.get("query") == query and entry.get("mode") == "lazy"
+            ]
+            return median_of(values)
+
+        def comparator(system: str, query: str) -> float | None:
+            values = [
+                entry.get("query_ms")
+                for report in runs
+                for entry in report.get("external", [])
+                if (
+                    entry.get("query") == query
+                    and entry.get("comparator") == system
+                    and entry.get("mode") == "cold"
+                )
+            ]
+            return median_of(values)
+
+        if key == "engine_cold_q6_lazy":
+            return engine("q6")
+        return comparator("duckdb", "q6")
+    if family == "query-cost":
+        values = [
+            report["queries"]["cold"]["join-orders"]["query_ms"] for report in runs
+        ]
+        return median_of(values)
+    if family == "sort-cost":
+        return median_of([report["parts_ms"]["stage_cold"] for report in runs])
+    if family == "join-cost":
+        parts, _ = _join_cost_figures([("runs", runs)])
+        if key == "stage_cold":
+            return median_of(parts.get("stage_cold", []))
+        return median_of(parts.get("floor_probe", []))
+    if family == "write-cost":
+        return median_of([report["measurements_ms"]["write_file"] for report in runs])
+    if family == "store-write":
+        return median_of([report["measurements_ms"]["commit"] for report in runs])
+    if family == "materialised":
+        values = [
+            entry["measurements_ms"]["arrow_decode"]
+            for report in runs
+            for entry in report.get("columns", [])
+            if entry.get("name") == "l_quantity"
+            and "arrow_decode" in entry.get("measurements_ms", {})
+        ]
+        return median_of(values)
+    if family == "dictionary-cost-6":
+        values = [
+            report["measurements_ms"]["crate_expanded"] for report in runs
+        ]
+        return median_of(values)
+    if family == "row-group-cost-6":
+        # The **derived batch**: the engine's own batch, which the probe adds to
+        # the ladder. It is the rung that is not one of the fixed ones -- and
+        # under the old row limit it was 125,000, which is one of them.
+        fixed = {12_500, 25_000, 31_250, 50_000, 62_500, 65_536, 125_000, 250_000}
+        derived = None
+        for report in runs:
+            for row in report.get("ladder", []):
+                if row.get("batch") not in fixed:
+                    derived = row.get("batch")
+                    break
+            if derived is not None:
+                break
+        if derived is None:
+            derived = 125_000
+        values = []
+        for report in runs:
+            for row in report.get("ladder", []):
+                if row.get("batch") == derived:
+                    values.append(row.get("scan_ms"))
+        return median_of(values)
+    if family == "scaling":
+        values = [
+            point.get("engine_ms")
+            for report in runs
+            for point in report.get("points", [])
+            if point.get("threads") == 1
+        ]
+        return median_of(values)
+    if family == "curve":
+        values = [
+            point.get("engine_ms")
+            for report in runs
+            for point in report.get("points", [])
+            if point.get("rows") == 6_000_000
+        ]
+        return median_of(values)
+    return None
+
+
+def print_spec051() -> None:
+    """The default's own table: the headline figure of every family, old and new."""
+    print("\n=== THE DEFAULT MOVED: every family's headline, old and new ===")
+    print(f"{'the family':<52}{'the set it replaces':>22}{'this file publishes':>22}")
+    for label, family, key, places in SPEC051_FAMILIES:
+        before_paths = sorted(
+            Path("bench-results").glob(f"{family}-spec051-before-run*.json")
+        )
+        after_paths = sorted(Path("bench-results").glob(f"{family}-run*.json"))
+        if not before_paths or not after_paths:
+            print(f"{label:<52}{'not measured':>22}{'not measured':>22}")
+            continue
+        before = _spec051_figure(
+            family, [load(path) for path in before_paths], key
+        )
+        after = _spec051_figure(family, [load(path) for path in after_paths], key)
+        if before is None or after is None:
+            print(f"{label:<52}{'no figure':>22}{'no figure':>22}")
+            continue
+        print(
+            f"{label:<52}{f'{before:,.{places}f}':>22}{f'{after:,.{places}f}':>22}"
+        )
+
+
 def main() -> int:
+    print_spec051()
     paths = [Path(p) for p in sys.argv[1:]]
     if not paths:
         paths = sorted(Path("bench-results").glob("compare-run*.json"))

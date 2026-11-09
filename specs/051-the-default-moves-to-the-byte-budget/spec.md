@@ -30,41 +30,43 @@ with the row limit's **125,000**-row batch, and **a default that moves moves eve
 
 ### R1 — The default is a **byte budget**, and the batch is the read's own
 
-- [ ] The default's rule is a **byte budget of 16 MiB**, and the batch size is **the largest divisor of the row
+- [x] The default's rule is a **byte budget of 16 MiB**, and the batch size is **the largest divisor of the row
       group's row count** whose bytes fit the budget -- the same rule [spec 050](
       ../050-the-batch-sizes-price-paid/spec.md) wrote down, and the same **width statement** that divides it.
-- [ ] **And the budget is divided by the columns the read fetches**, not by the file's width: a two-column read
+- [x] **And the budget is divided by the columns the read fetches**, not by the file's width: a two-column read
       and a sixteen-column read of the same file get different batches, because they hold different amounts.
-- [ ] **And the knob still overrides it.** `with_reader_batch_rows` names a size in rows, and it is the
+- [x] **And the knob still overrides it.** `with_reader_batch_rows` names a size in rows, and it is the
       measurement seam the probes sweep with. **It is not the default.**
-- [ ] **And the batch divides the row group's rows**, so that no row group ends with a partial batch.
+- [x] **And the batch divides the row group's rows**, so that no row group ends with a partial batch.
 
 ### R2 — The estimate charges **the batch the read will use**
 
-- [ ] The budget's verdict is made with the **same** batch the read holds, and the two are computed from the
+- [x] The budget's verdict is made with the **same** batch the read holds, and the two are computed from the
       **same** place -- the read's own fetched columns.
-- [ ] **And the estimate's figure moves with the default**, and is published old-and-new.
+- [x] **And the estimate's figure moves with the default**, and is published old-and-new.
 
 ### R3 — Every figure that moves is published **old-and-new**, and **re-measured**
 
-- [ ] Every campaign that was taken with the engine's own batch size is **taken again**, on this host, three
+- [x] Every campaign that was taken with the engine's own batch size is **taken again**, on this host, three
       campaigns each -- and the figures are **re-measured, not recomputed**.
-- [ ] **And each moved figure is published with the one it replaces**, and the reason: **the default moved**.
-- [ ] **And the figures that do not move are not re-taken**: the batch sweeps, the width statement and the
-      memory campaigns name their own batch sizes, and the eager path has its own.
+- [x] **And each moved figure is published with the one it replaces**, and the reason: **the default moved**.
+- [x] **And the figures that do not move are not re-taken**: the batch sweeps, the width statement and the
+      memory campaigns name their own batch sizes, and the eager path has its own. **Amended by A4**: the three
+      campaigns that name their own batch sizes were taken again as well, because the engine's own batch is one
+      of their points.
 
 ### R4 — The public surface: the **row limit is gone** and the **budget is published**
 
-- [ ] `MAX_READER_BATCH_ROWS` leaves the public surface -- **the row limit is not the rule any more** -- and
+- [x] `MAX_READER_BATCH_ROWS` leaves the public surface -- **the row limit is not the rule any more** -- and
       `DEFAULT_READER_BATCH_BYTES` takes its place, so that an embedder can see the rule the engine reads.
-- [ ] **The semver baseline moves**, and the move is recorded. **The crates are unpublished**, so a break costs
+- [x] **The semver baseline moves**, and the move is recorded. **The crates are unpublished**, so a break costs
       nothing -- and it is still recorded.
 
 ### R5 — The answer is published either way
 
-- [ ] A **new section** in `PERF.md`, the decision in an **ADR**, the status's next question rewritten, and the
+- [x] A **new section** in `PERF.md`, the decision in an **ADR**, the status's next question rewritten, and the
       raw reports **committed**.
-- [ ] The **guard** checks the published figures **inside the section that publishes them**, and the old ones
+- [x] The **guard** checks the published figures **inside the section that publishes them**, and the old ones
       are checked against the **before** reports.
 
 ## The scope
@@ -111,3 +113,52 @@ from the old reports would be a claim about a measurement that was never taken.
 read holds one batch per worker, and the estimate charges it that way -- so the **16 MiB** is what a worker
 holds, and the **256 MiB** budget is what the whole read may hold. **The two are different numbers and they do
 not contradict each other.**
+
+### A3 — The rule divides by the **statement**, and the rate is in **eighths of a byte**
+
+**Why**: the rule's per-row cost has to be an **integer** to divide the budget by, and a column's rows carry a
+**validity bit** -- **an eighth of a byte** a row. A whole-byte rate rounds that bit up to a whole byte, which is
+**eight times the truth**, and the rule then gives every shape **less** than the budget allows: the two
+materialised columns got **500,000** rows where the rule published **1,000,000**, and **§3af's own bound** -- that
+the narrow shapes get the whole row group -- did not hold.
+
+**So the rate is carried in eighths of a byte**, the rule divides the budget by it, and the estimate -- which
+works in totals and charges the bit -- reads **the same statement**. The two cannot disagree about what a row
+costs, because they are the same number.
+
+**And the consequence is published**: the **wide** shape's batch is **100,000** rows where the rule published
+**62,500**, because the rule divides by the **statement** and the statement is **9% low** on the wide shape
+([§3ag](../../PERF.md#3ag-the-width-statement-paid)). The narrow shapes get the whole row group, as published.
+
+### A4 — The three campaigns that name their own batch sizes were **taken again**, because the engine's own batch is one of their points
+
+**Why**: R3 says the figures that do not move are not re-taken, and the **width statement**, the **batch sweep**
+and the **memory** campaigns name their own batch sizes, so their **measurements** do not depend on the default.
+**But the engine's own batch is one of their points**, and it moved: the sweep publishes each shape's own batch
+beside the others, the width probe publishes the rule's output, and the memory probe publishes the estimate at the
+engine's own batch. **So their sets were taken again** -- three campaigns each, on this host -- and the old ones are
+kept under their own names, `bench-results/<family>-spec050-run<n>.json`.
+
+**And the increment found the stale binary while doing it**: the first landing of those three sets carried a
+report without the shape's own name, because the campaign had run a **release binary built before the probe
+changed**. **The three campaigns were taken again with the binary the tree builds**, and the reports carry the
+shape's name, the statement's bytes and the rule's output per worker count.
+
+### A5 — The campaign's own sets were **taken again** where it dropped a point or named the wrong commit
+
+**Why**: the campaign is the house's method, and it is **checked** by the guard and by the figures it publishes. Two
+of its sets were wrong in ways the guard caught, and both are fixed by **taking the set again**, not by editing the
+document:
+
+- **The thread sweeps lost their six-thread point.** The published table has a row for it, and the campaign's
+  instrument's default thread list does not name six, so the new set had five points where the published set had six.
+  **The four sweep families were taken again with the six points**, both codes, three campaigns each, interleaved.
+- **The old code's join-parts set named the wrong commit.** The campaign ran the old binary from the new tree's
+  directory, so the report recorded the *new* tree's revision beside the old code's measurement. **The set was
+  taken again** with the old tree as the working directory, so the report names the code it measured.
+
+**And the sweep's own "before" was attributed by measurement.** The sweep is the only family whose "before" is the
+set this file replaces, so **the same instrument was run against both codes**, three campaigns each, interleaved, on
+this host: the code's share of the sweep is under **0.2 ms**, and the set this file replaces reads **7 ms** more
+slowly than either. **So the movement between the two published sets is the host's**, and it is published in
+[§3af](../../PERF.md#3af-the-batch-sizes-price) with the reports that say so.

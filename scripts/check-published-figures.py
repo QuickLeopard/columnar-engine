@@ -71,7 +71,7 @@ RESIDENT_SCALING_REPORTS = sorted(
     (ROOT / "bench-results").glob("scaling-resident-run*.json")
 )
 LOAD_SCALING_REPORTS = sorted((ROOT / "bench-results").glob("scaling-load-run*.json"))
-DOCS = [ROOT / "PERF.md", ROOT / "README.md"]
+DOCS = [ROOT / "PERF.md", ROOT / "README.md", ROOT / "STATUS.md"]
 
 # The status file is a **summary**, and it is checked like one: its figures
 # are the same ones PERF.md publishes, checked against the same committed
@@ -215,16 +215,16 @@ QUERY_COST_SHAPE_CHECKS = [
 # stage table, and the time between them -- the part of the query the plan
 # output does not name -- for **every** published query, on **both** paths.
 QUERY_COST_CHECKS = [
-    ("PERF.md", "the old code's whole query, the join", "before", "resident", "join-orders", "query_ms", 2),
-    ("PERF.md", "the new code's whole query, the join", "after", "resident", "join-orders", "query_ms", 2),
-    ("PERF.md", "the old code's stage table, the join", "before", "resident", "join-orders", "stages_ms", 2),
-    ("PERF.md", "the new code's stage table, the join", "after", "resident", "join-orders", "stages_ms", 2),
+    ("PERF.md", "the old code's whole query, the join", "before", "resident", "join-orders", "query_ms", 3),
+    ("PERF.md", "the new code's whole query, the join", "after", "resident", "join-orders", "query_ms", 3),
+    ("PERF.md", "the old code's stage table, the join", "before", "resident", "join-orders", "stages_ms", 3),
+    ("PERF.md", "the new code's stage table, the join", "after", "resident", "join-orders", "stages_ms", 3),
     ("PERF.md", "the old code's unnamed time, the join", "before", "resident", "join-orders", "unnamed_ms", 3),
     ("PERF.md", "the new code's unnamed time, the join", "after", "resident", "join-orders", "unnamed_ms", 3),
-    ("PERF.md", "the old code's whole query, the sort", "before", "resident", "sort-topk", "query_ms", 2),
-    ("PERF.md", "the new code's whole query, the sort", "after", "resident", "sort-topk", "query_ms", 2),
-    ("PERF.md", "the old code's stage table, the sort", "before", "resident", "sort-topk", "stages_ms", 2),
-    ("PERF.md", "the new code's stage table, the sort", "after", "resident", "sort-topk", "stages_ms", 2),
+    ("PERF.md", "the old code's whole query, the sort", "before", "resident", "sort-topk", "query_ms", 3),
+    ("PERF.md", "the new code's whole query, the sort", "after", "resident", "sort-topk", "query_ms", 3),
+    ("PERF.md", "the old code's stage table, the sort", "before", "resident", "sort-topk", "stages_ms", 3),
+    ("PERF.md", "the new code's stage table, the sort", "after", "resident", "sort-topk", "stages_ms", 3),
     ("PERF.md", "the old code's unnamed time, the sort", "before", "resident", "sort-topk", "unnamed_ms", 3),
     ("PERF.md", "the new code's unnamed time, the sort", "after", "resident", "sort-topk", "unnamed_ms", 3),
     ("PERF.md", "the old code's unnamed time, the join, cold", "before", "cold", "join-orders", "unnamed_ms", 3),
@@ -664,6 +664,27 @@ JOIN_COST_DERIVED_CHECKS = [
 # The figures are looked for **inside** the section that publishes them, so a
 # figure that happens to equal an unrelated number elsewhere in the document
 # cannot satisfy the check by accident.
+# The section each family publishes its figures in. A figure that happens to
+# equal an unrelated number elsewhere in the document cannot satisfy a check by
+# accident: the check is made against the section that publishes it, and a
+# family with no section here is checked against the whole document, as it was.
+FAMILY_SECTIONS: dict[str, tuple[str, ...]] = {
+    "query-cost": ("### 3m",),
+    "operator-probe": ("### 2h",),
+    "scaling": ("### 2e",),
+    "scaling-resident": ("### 2f",),
+    "scaling-load": ("### 2g",),
+    "curve": ("### 3i",),
+    "materialised": ("### 3h",),
+    "row-group-sweeps": ("### 3j",),
+    "row-group-cost": ("### 3j",),
+    "batch-size": ("### 3e",),
+    "dictionary-cost": ("### 3k",),
+    "scan-cost": ("### 3l",),
+    "rle-expansion": ("### 3g",),
+}
+
+
 JOIN_PARTS_REPORTS = sorted((ROOT / "bench-results").glob("join-parts-run*.json"))
 JOIN_PARTS_SECTION = "### 3ac"
 
@@ -763,6 +784,46 @@ JOIN_PARTS_DIFFERENCES = (
 # cannot satisfy the check by accident.
 KEY_FILTER_REPORTS = sorted((ROOT / "bench-results").glob("key-filter-run*.json"))
 KEY_FILTER_SECTION = "### 3ad"
+
+# Spec 048's probe-paths: the engine's own probe, in the two paths it runs in.
+#
+# The section publishes the two paths, the same probe measured cold and
+# resident and after the reader's work, the paired differences between them,
+# and the sweep over the reader's batch sizes.
+PROBE_PATHS_REPORTS = sorted((ROOT / "bench-results").glob("probe-paths-run*.json"))
+PROBE_PATHS_KEY_ONLY_REPORTS = sorted(
+    (ROOT / "bench-results").glob("probe-paths-key-only-run*.json")
+)
+PROBE_PATHS_SECTION = "### 3ae"
+
+# The campaigns the method calls for.
+PROBE_PATHS_CAMPAIGNS = 3
+
+# The paths, and the label the section publishes each under:
+# (measurement, label, places).
+PROBE_PATHS_RUNGS = (
+    ("ladder_path_ms", "the ladder's path, the table cold", 3),
+    ("ladder_warm_ms", "the ladder's path again, the table resident", 3),
+    ("ladder_last_ms", "the ladder's path once more, after the reader's work", 3),
+    ("query_path_ms", "the query's path, inside the reader", 3),
+)
+
+# The paired verdicts, and the label the section publishes each under:
+# (measurement, label, places).
+PROBE_PATHS_VERDICTS = (
+    ("the_gap_ms", "the query's path less the ladder's path", 3),
+    ("the_residency_ms", "the table's residency: cold less resident", 3),
+    ("the_readers_cost_ms", "what the reader's work costs the table", 3),
+)
+
+# The query's own parts, at each of the reader's batch sizes: the set, the
+# label the section publishes it under, and the parts.
+PROBE_PATHS_BATCH_SETS = (
+    ("62,500", "join-parts-batch-62500-spec048-run*.json"),
+    ("125,000", "join-parts-spec048-run*.json"),
+    ("250,000", "join-parts-batch-250000-spec048-run*.json"),
+    ("1,000,000", "join-parts-batch-1000000-spec048-run*.json"),
+)
 
 # Spec 048's probe-paths: the engine's own probe, in the two paths it runs in.
 #
@@ -1517,6 +1578,15 @@ def _width_statement_checks() -> int:
     return points * 3 + len(old[0].get("the_shapes") or [])
 
 
+
+    values: list[float] = []
+    for run in runs:
+        entry = (run.get(key) or {}).get(str(batch)) or {}
+        series = entry.get(family) or {}
+        values.extend(float(value) for value in (series.get("samples") or []))
+    return values
+
+
 def _batch_sweep_samples(runs: list[dict], family: str, batch: str, key: str) -> list[float]:
     """One family's samples at one batch size, pooled over every campaign."""
     values: list[float] = []
@@ -1557,6 +1627,42 @@ def _probe_paths_sweep_values(runs: list[dict], point: int) -> list[float]:
             )
             if entry is not None:
                 values.append(float(entry["ms"]))
+    return values
+
+
+def _probe_paths_own_point(runs: list[dict]) -> int | None:
+    """The sweep's point that is the engine's own.
+
+    **Read from the report, not assumed**: the report says which batch size
+    the reader arrived in on the engine's own path, and the sweep's points are
+    named in rows.
+    """
+    for run in runs:
+        own = run.get("the_engine_s_own_batch_rows") or []
+        points = run.get("sweep_batch_rows") or []
+        if not own or not points:
+            continue
+        for index, rows in enumerate(points):
+            if int(rows) == int(own[0]):
+                return index
+    return None
+
+
+def _probe_paths_sweep_difference(runs: list[dict], point: int, own: int) -> list[float]:
+    """One sweep point's paired differences against the engine's own.
+
+    **Both sides are measured in the same iteration**, so the difference is the
+    paired one and not the difference of two medians.
+    """
+    values: list[float] = []
+    for run in runs:
+        for iteration in run.get("the_iterations", []):
+            sweep = iteration.get("sweep") or []
+            mine = next((e for e in sweep if e.get("point") == point), None)
+            theirs = next((e for e in sweep if e.get("point") == own), None)
+            if mine is None or theirs is None:
+                continue
+            values.append(float(mine["ms"]) - float(theirs["ms"]))
     return values
 
 
@@ -1895,6 +2001,35 @@ SPEC041X_ROWS = (
 )
 
 
+# Spec 051: the default moved to the byte budget, and **every figure the
+# reader's batch size touches moved with it**. The old code is measured **back
+# to back** with the new one, on this host, three campaigns each, interleaved,
+# so that the code's share of every difference is separated from the machine's.
+#
+# The set the default replaces is the same family with "-spec051-before"
+# inserted before "-run" -- the bump's pattern, and the same reason: the old
+# figure and the new one are both published, and both are derived from a
+# committed report.
+SPEC051X_SECTION = "### 3ah"
+
+# (label, the family, the figure, the decimal places)
+SPEC051X_ROWS = (
+    ("the engine's cold `q6`, lazy", "compare", "engine_cold_q6_lazy", 1),
+    ("`DuckDB`'s cold `q6` — **the yardstick**", "compare", "duckdb_cold_q6", 1),
+    ("the whole query, cold", "query-cost", "query_cold_join_orders", 3),
+    ("the stage, cold", "sort-cost", "stage_cold", 2),
+    ("the join's stage, cold", "join-cost", "stage_cold", 3),
+    ("the floor the probe — **the machine's own measure**", "join-cost", "floor_probe", 3),
+    ("the write of the whole file", "write-cost", "write_file", 3),
+    ("the commit, all five steps", "store-write", "commit", 3),
+    ("Arrow's decode", "materialised", "arrow_decode", 2),
+    ("the crate's read, expanded", "dictionary-cost-6", "crate_expanded", 2),
+    ("the derived batch", "row-group-cost-6", "derived_batch", 2),
+    ("the engine at 1 thread", "scaling", "engine_1_thread", 1),
+    ("the engine at 6M rows", "curve", "engine_6m", 1),
+)
+
+
 # Spec 042: the set on both sides. Two probes, two sections, and **both are
 # pairs measured in the same campaign** -- one file against six files, the
 # engine's rows against Arrow's -- so the host's own movement is in both
@@ -2017,8 +2152,16 @@ def spec041x_figures(family: str, suffix: str) -> dict[str, float] | None:
             "engine_resident_q6": compare("engine", "resident", "resident", "q6"),
         }
     if family == "query-cost":
-        values = [report["queries"]["resident"]["join-orders"]["query_ms"] for report in reports]
-        return {"query_resident_join_orders": median(values)}
+        resident = [
+            report["queries"]["resident"]["join-orders"]["query_ms"] for report in reports
+        ]
+        cold = [
+            report["queries"]["cold"]["join-orders"]["query_ms"] for report in reports
+        ]
+        return {
+            "query_resident_join_orders": median(resident),
+            "query_cold_join_orders": median(cold),
+        }
     if family == "sort-cost":
         values = [report["parts_ms"]["stage_cold"] for report in reports]
         return {"stage_cold": median(values)}
@@ -2039,7 +2182,27 @@ def spec041x_figures(family: str, suffix: str) -> dict[str, float] | None:
     if family == "dictionary-cost-6":
         return {"crate_expanded": dictionary_cost_figure({"A": reports}, "measurements", "crate_expanded", "A")}
     if family == "row-group-cost-6":
-        return {"derived_batch": row_group_cost_figure({"A": reports}, "ladder", 125000, "A")}
+        # The **derived batch**: the engine's own batch, which the probe adds to
+        # the ladder. It is the rung that is not one of the fixed ones -- and
+        # under the old row limit it was 125,000, which is one of them.
+        fixed = {12_500, 25_000, 31_250, 50_000, 62_500, 65_536, 125_000, 250_000}
+        derived = None
+        for report in reports:
+            for row in report.get("ladder", []):
+                if row.get("batch") not in fixed:
+                    derived = row.get("batch")
+                    break
+            if derived is not None:
+                break
+        if derived is None:
+            derived = 125_000
+        values = [
+            row.get("scan_ms")
+            for report in reports
+            for row in report.get("ladder", [])
+            if row.get("batch") == derived
+        ]
+        return {"derived_batch": median(values)}
     if family == "scaling":
         values = [
             point.get("engine_ms")
@@ -2537,6 +2700,26 @@ def section_of(text: str, heading: str) -> str | None:
     return "\n".join(lines[start:end])
 
 
+def scoped_text(texts: dict[str, str], doc: str, family: str) -> str:
+    """The text a family's figures are checked against.
+
+    A family that names its section is checked against that section and no
+    other, so a figure that happens to equal an unrelated number elsewhere in
+    the document cannot satisfy the check by accident. A family that names no
+    section is checked against the whole document, as it was.
+    """
+    sections = FAMILY_SECTIONS.get(family)
+    if sections is None:
+        return texts[doc]
+    parts: list[str] = []
+    for heading in sections:
+        found = section_of(texts[doc], heading)
+        if found is None:
+            return texts[doc]
+        parts.append(found)
+    return "\n".join(parts)
+
+
 def defect_count(text: str) -> int | None:
     """How many defect rows PERF.md's fourth section publishes.
 
@@ -2759,7 +2942,15 @@ def batch_size_figure(
                 for candidate in entry.get("candidates", []):
                     batch = candidate.get("batch")
                     if key is None:
-                        if batch == run.get("batch_in_the_tree"):
+                        # **The batch the tree derives now** is the shape's
+                        # own: the rule is the width's, so the shape says what
+                        # it gets. The tree's row limit is the old rule's, and
+                        # it is the shape's own batch that the A/B's second
+                        # row stands for.
+                        own = entry.get("the_engine_s_own_batch")
+                        if own is None:
+                            own = run.get("batch_in_the_tree")
+                        if batch == own:
                             values.append(candidate["scan_ms"])
                     elif batch == key:
                         values.append(candidate["scan_ms"])
@@ -2776,9 +2967,13 @@ ROW_GROUP_COST_CHECKS = [
     ("PERF.md", "the fixed batch, 6 groups", "ladder", 65536, "A", 2),
     ("PERF.md", "the fixed batch, 12 groups", "ladder", 65536, "B", 2),
     ("PERF.md", "the fixed batch, 24 groups", "ladder", 65536, "C", 2),
-    ("PERF.md", "the derived batch, 6 groups", "ladder", 125000, "A", 2),
-    ("PERF.md", "the derived batch, 12 groups", "ladder", 125000, "B", 2),
-    ("PERF.md", "the derived batch, 24 groups", "ladder", 125000, "C", 2),
+    # The **derived batch** is the rule's output, and the rule is the width's,
+    # so each file derives its own: a whole row group for the narrow shape on
+    # the six-group file, a quarter of one for the wide shape on the
+    # twenty-four-group file.
+    ("PERF.md", "the derived batch, 6 groups", "ladder", 1_000_000, "A", 2),
+    ("PERF.md", "the derived batch, 12 groups", "ladder", 500_000, "B", 2),
+    ("PERF.md", "the derived batch, 24 groups", "ladder", 250_000, "C", 2),
     ("PERF.md", "the crate's read of l_shipdate, 6 groups", "measurements",
      "crate_shipdate", "A", 2),
     ("PERF.md", "the crate's read of l_shipdate, 24 groups", "measurements",
@@ -2793,7 +2988,7 @@ ROW_GROUP_COST_CHECKS = [
 # 6-group one, over the eighteen row groups between them.
 ROW_GROUP_COST_SLOPE_CHECKS = [
     ("PERF.md", "the fixed batch's cost a row group", "ladder", 65536, 2),
-    ("PERF.md", "the derived batch's cost a row group", "ladder", 125000, 2),
+    ("PERF.md", "the derived batch's cost a row group", "ladder", {"A": 1000000, "C": 250000}, 2),
     ("PERF.md", "the crate's read of l_shipdate's cost a row group",
      "measurements", "crate_shipdate", 3),
 ]
@@ -2819,7 +3014,19 @@ def row_group_cost_figure(
 def row_group_cost_slope(
     files: dict[str, list[dict]], kind: str, key: str | int
 ) -> float | None:
-    """The cost of one more row group, in milliseconds."""
+    """The cost of one more row group, in milliseconds.
+
+    The key may be a **pair**, one per file: the derived batch is the rule's
+    output, and the rule is the width's, so the 6-group file and the 24-group
+    file derive different batches. The slope is then the cost of one more row
+    group **at each file's own batch**, which is what the files measure.
+    """
+    if isinstance(key, dict):
+        first = row_group_cost_figure(files, kind, key["A"], "A")
+        last = row_group_cost_figure(files, kind, key["C"], "C")
+        if first is None or last is None:
+            return None
+        return (last - first) / 18
     first = row_group_cost_figure(files, kind, key, "A")
     last = row_group_cost_figure(files, kind, key, "C")
     if first is None or last is None:
@@ -3154,7 +3361,7 @@ def main() -> int:
                 continue
             figure = statistics.median(values)
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "query-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -3168,7 +3375,7 @@ def main() -> int:
                 continue
             figure = statistics.median(values)
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "query-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -3687,6 +3894,115 @@ def main() -> int:
                         f"{sorted(states)}"
                     )
 
+    if PROBE_PATHS_KEY_ONLY_REPORTS:
+        key_only_runs = [
+            json.loads(path.read_text()) for path in PROBE_PATHS_KEY_ONLY_REPORTS
+        ]
+        published = section_of(texts["PERF.md"], PROBE_PATHS_SECTION)
+        if published is not None:
+            for key, label, places in (
+                ("the_gap_ms", "the gap with the key alone", 3),
+            ):
+                values = _probe_paths_samples(key_only_runs, key)
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+
+    # Spec 048's probe-paths: the engine's own probe, in the two paths it runs
+    # in. The same rule as the key-filter probe's family: a set that is not
+    # there is not a set of zero figures, it is the absence of the evidence.
+    for label, paths in (
+        ("the probe-paths probe", PROBE_PATHS_REPORTS),
+        ("the probe-paths probe, the key alone", PROBE_PATHS_KEY_ONLY_REPORTS),
+    ):
+        if not paths:
+            failures.append(f"{label}'s set is missing")
+        elif len(paths) < PROBE_PATHS_CAMPAIGNS:
+            failures.append(
+                f"{label}'s set has {len(paths)} campaigns, "
+                f"and the method says {PROBE_PATHS_CAMPAIGNS}"
+            )
+
+    for label, pattern in PROBE_PATHS_BATCH_SETS:
+        paths = sorted((ROOT / "bench-results").glob(pattern))
+        if not paths:
+            failures.append(f"the query's parts at {label} rows are missing")
+        elif len(paths) < PROBE_PATHS_CAMPAIGNS:
+            failures.append(
+                f"the query's parts at {label} rows have {len(paths)} campaigns, "
+                f"and the method says {PROBE_PATHS_CAMPAIGNS}"
+            )
+
+    if PROBE_PATHS_REPORTS:
+        probe_paths_runs = [json.loads(path.read_text()) for path in PROBE_PATHS_REPORTS]
+        published = section_of(texts["PERF.md"], PROBE_PATHS_SECTION)
+        if published is None:
+            failures.append(
+                f"PERF.md: the section that publishes the probe-paths figures "
+                f"({PROBE_PATHS_SECTION}) is not in the document"
+            )
+        else:
+            for key, label, places in PROBE_PATHS_RUNGS + PROBE_PATHS_VERDICTS:
+                values = _probe_paths_samples(probe_paths_runs, key)
+                if not values:
+                    failures.append(
+                        f"PERF.md: no figure for {label} in the probe-paths reports"
+                    )
+                    continue
+                rendered = rendered_figure(statistics.median(values), places)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+
+            # The sweep: each point's own median, and its paired difference
+            # against the engine's own.
+            for point, rows in enumerate(probe_paths_runs[0].get("sweep_batch_rows", [])):
+                values = _probe_paths_sweep_values(probe_paths_runs, point)
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), 3)
+                if not figure_in(published, rendered):
+                    failures.append(
+                        f"PERF.md: the reader's path at {rows} rows is {rendered} in the "
+                        f"reports but that figure does not appear in the document"
+                    )
+                else:
+                    print(
+                        f"ok  {'PERF.md':<10} "
+                        f"{'the reader\'s path at ' + format(rows, ',') + ' rows':<44} "
+                        f"{rendered}"
+                    )
+
+        # The correctness: a path that returned different rows would be a
+        # different query, and its time would not be the engine's.
+        for key, label in (("the_rows_agree", "the rows agree"),):
+            for name, paths in (
+                ("the probe-paths probe", PROBE_PATHS_REPORTS),
+                ("the probe-paths probe, the key alone", PROBE_PATHS_KEY_ONLY_REPORTS),
+            ):
+                if not paths:
+                    continue
+                runs_for_name = [json.loads(path.read_text()) for path in paths]
+                states = {bool(run.get(key)) for run in runs_for_name}
+                if states == {True}:
+                    print(f"ok  {'PERF.md':<10} {label + ', in every campaign':<44} true")
+                else:
+                    failures.append(
+                        f"PERF.md: {label} is not true in every {name} report: "
+                        f"{sorted(states)}"
+                    )
+
     if BATCH_MEMORY_SPEC049_REPORTS:
         # Spec 049's own reports: the section that published the batch price is
         # a record of that measurement, and it is checked against the reports
@@ -3794,6 +4110,32 @@ def main() -> int:
                     else:
                         print(f"ok  {'PERF.md':<10} {peak_label:<44} {rendered_peak}")
 
+                    # The read's own peak: the section publishes it beside the
+                    # estimate, so it is checked against the campaign that
+                    # measured it -- and not against an older one.
+                    rendered_peak = rendered_bytes(statistics.median(peaks))
+                    peak_label = f"{name} at {int(batch):,} rows, the read's peak"
+                    if not figure_in(published, rendered_peak):
+                        failures.append(
+                            f"PERF.md: {peak_label} is {rendered_peak} in the reports but "
+                            f"that figure does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {peak_label:<44} {rendered_peak}")
+
+                    # The read's own peak: the section publishes it beside the
+                    # estimate, so it is checked against the campaign that
+                    # measured it -- and not against an older one.
+                    rendered_peak = rendered_bytes(statistics.median(peaks))
+                    peak_label = f"{name} at {int(batch):,} rows, the read's peak"
+                    if not figure_in(published, rendered_peak):
+                        failures.append(
+                            f"PERF.md: {peak_label} is {rendered_peak} in the reports but "
+                            f"that figure does not appear in the document"
+                        )
+                    else:
+                        print(f"ok  {'PERF.md':<10} {peak_label:<44} {rendered_peak}")
+
         # The estimate before: the section that publishes the price published
         # one number a shape, and the section that publishes the width statement
         # publishes it old-and-new.
@@ -3876,13 +4218,13 @@ def main() -> int:
         sweep_runs = [json.loads(path.read_text()) for path in BATCH_SWEEP_REPORTS]
         if len(sweep_runs) < BATCH_PRICE_CAMPAIGNS:
             failures.append(
-                f"PERF.md: the batch-sweep probe has {len(runs)} campaigns, and the "
+                f"PERF.md: the batch-sweep probe has {len(sweep_runs)} campaigns, and the "
                 f"method says {BATCH_PRICE_CAMPAIGNS}"
             )
         published = section_of(texts["PERF.md"], BATCH_PRICE_SECTION)
         if published is not None:
             for family, label in BATCH_PRICE_FAMILIES:
-                for size in runs[0].get("the_batch_sizes", []):
+                for size in sweep_runs[0].get("the_batch_sizes", []):
                     values = _batch_sweep_samples(sweep_runs, family, str(size), "the_sweep_ms")
                     if not values:
                         continue
@@ -3966,6 +4308,66 @@ def main() -> int:
                 )
             else:
                 print(f"ok  {'PERF.md':<10} {label:<44} {rendered}")
+
+    # The status's own figures for spec 048, checked against the same reports.
+    for label, pattern, key, places in STATUS_PROBE_PATHS:
+        paths = sorted((ROOT / "bench-results").glob(pattern))
+        if not paths:
+            continue
+        status_runs = [json.loads(path.read_text()) for path in paths]
+        values = _probe_paths_samples(status_runs, key)
+        if not values:
+            continue
+        rendered = rendered_figure(statistics.median(values), places)
+        if not figure_in(texts["STATUS.md"], rendered):
+            failures.append(
+                f"STATUS.md: {label} is {rendered} in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {'STATUS.md':<10} {label:<44} {rendered}")
+
+    # The sweep's lever, as the status publishes it: a row group's worth
+    # against the engine's own.
+    paths = sorted((ROOT / "bench-results").glob("probe-paths-run*.json"))
+    if paths:
+        status_runs = [json.loads(path.read_text()) for path in paths]
+        own = _probe_paths_own_point(status_runs)
+        if own is not None:
+            for index, rows in enumerate(status_runs[0].get("sweep_batch_rows", [])):
+                if index == own:
+                    continue
+                values = _probe_paths_sweep_difference(status_runs, index, own)
+                if not values:
+                    continue
+                rendered = rendered_figure(statistics.median(values), 3)
+                label = f"the reader's path at {rows} rows, against the engine's own"
+                if not figure_in(texts["STATUS.md"], rendered):
+                    failures.append(
+                        f"STATUS.md: {label} is {rendered} in the reports but that figure "
+                        f"does not appear in the document"
+                    )
+                else:
+                    print(f"ok  {'STATUS.md':<10} {label:<44} {rendered}")
+
+    for label, pattern, key in STATUS_PROBE_PATHS_BATCH:
+        paths = sorted((ROOT / "bench-results").glob(pattern))
+        if not paths:
+            continue
+        parts, differences = _join_parts_figures(paths)
+        values = parts.get(key) or []
+        if not values:
+            values = differences.get(key) or []
+        if not values:
+            continue
+        rendered = rendered_figure(statistics.median(values), 3)
+        if not figure_in(texts["STATUS.md"], rendered):
+            failures.append(
+                f"STATUS.md: {label} is {rendered} in the reports but that figure "
+                f"does not appear in the document"
+            )
+        else:
+            print(f"ok  {'STATUS.md':<10} {label:<44} {rendered}")
 
     # The status's own figures for spec 048, checked against the same reports.
     #
@@ -5037,6 +5439,45 @@ def main() -> int:
                         f"{f'{label}, {which}':<60} {rendered}"
                     )
 
+    # Spec 051: the default moved, and the section publishes the figures it
+    # moved **old and new, side by side**. **Both halves of every pair are
+    # checked**, and both are checked inside the section, so the table cannot
+    # drift from the reports it is derived from.
+    spec051x_section = section_of(texts["PERF.md"], SPEC051X_SECTION)
+    if spec051x_section is None:
+        failures.append(
+            f"PERF.md: the default's figures ({SPEC051X_SECTION}) is not in the document"
+        )
+    else:
+        for label, family, figure_key, places in SPEC051X_ROWS:
+            for suffix, which in (
+                ("-spec051-before", "the set the default replaces"),
+                ("", "this file publishes"),
+            ):
+                figures = spec041x_figures(family, suffix)
+                if figures is None:
+                    failures.append(
+                        f"PERF.md: no figures for {label} in the {which} reports"
+                    )
+                    continue
+                value = figures.get(figure_key)
+                if value is None:
+                    failures.append(
+                        f"PERF.md: no figure for {label} in the {which} reports"
+                    )
+                    continue
+                rendered = f"{value:,.{places}f}"
+                if rendered not in spec051x_section:
+                    failures.append(
+                        f"PERF.md: {label} is {rendered} in the {which} reports but "
+                        f"that figure does not appear in the section that publishes it"
+                    )
+                else:
+                    print(
+                        f"ok  {'PERF.md':<10} "
+                        f"{f'{label}, {which}':<60} {rendered}"
+                    )
+
     stage_sets: dict[str, dict[tuple[str, str, str], list[float]]] = {}
     if REPORTS:
         stage_sets["new"] = collect_stages(runs)
@@ -5082,7 +5523,7 @@ def main() -> int:
                 continue
             figure = values[0]
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "operator-probe"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5104,7 +5545,7 @@ def main() -> int:
                 continue
             figure = statistics.median(values)
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "scaling"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5126,7 +5567,7 @@ def main() -> int:
                 continue
             figure = statistics.median(values)
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "scaling-resident"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5148,7 +5589,7 @@ def main() -> int:
                 continue
             figure = statistics.median(values)
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "scaling-load"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5170,7 +5611,11 @@ def main() -> int:
             )
         else:
             count = counts.pop()
-            for doc in DOCS:
+            # The documents that **publish** the browser's numbers. The status
+            # is not one of them: it does not publish the browser's match
+            # count, and a figure it does not publish is not a figure it can be
+            # checked for.
+            for doc in [d for d in DOCS if d.name != "STATUS.md"]:
                 rendered = f"{count:,}"
                 if rendered not in texts[doc.name]:
                     failures.append(
@@ -5193,7 +5638,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the curve reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "curve"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5229,7 +5674,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the materialised reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "materialised"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5280,7 +5725,7 @@ def main() -> int:
             continue
         figure = statistics.median(values)
         rendered = f"{figure:.{places}f}"
-        if rendered not in texts[doc]:
+        if rendered not in scoped_text(texts, doc, "row-group-sweeps"):
             failures.append(
                 f"{doc}: {label} is {rendered} in the reports but that figure "
                 f"does not appear in the document"
@@ -5301,7 +5746,7 @@ def main() -> int:
             continue
         figure = statistics.median(values)
         rendered = f"{figure:.{places}f}"
-        if rendered not in texts[doc]:
+        if rendered not in scoped_text(texts, doc, "row-group-sweeps"):
             failures.append(
                 f"{doc}: {label} is {rendered} in the reports but that figure "
                 f"does not appear in the document"
@@ -5325,7 +5770,7 @@ def main() -> int:
         # The documents write the multiplier sign; the plain one is accepted
         # too, because it is the same figure and a stranger may type either.
         rendered = f"{figure:.{places}f}"
-        if not any(f"{rendered}{sign}" in texts[doc] for sign in ("x", "×")):
+        if not any(f"{rendered}{sign}" in scoped_text(texts, doc, "row-group-sweeps") for sign in ("x", "×")):
             failures.append(
                 f"{doc}: {label} is {rendered}x in the reports but that figure "
                 f"does not appear in the document"
@@ -5346,7 +5791,7 @@ def main() -> int:
             failures.append(f"{doc}: no figure for {label} in the row-group probes")
             continue
         rendered = f"{figure:.{places}f}"
-        if rendered not in texts[doc]:
+        if rendered not in scoped_text(texts, doc, "row-group-sweeps"):
             failures.append(
                 f"{doc}: {label} is {rendered} in the reports but that figure "
                 f"does not appear in the document"
@@ -5380,7 +5825,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the batch-size reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "batch-size"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5444,7 +5889,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the cost reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "row-group-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5458,7 +5903,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the cost reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "row-group-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5485,7 +5930,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the dictionary reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "dictionary-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5499,7 +5944,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the before reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "dictionary-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5514,7 +5959,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the dictionary reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "dictionary-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5528,7 +5973,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the dictionary reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "dictionary-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5545,7 +5990,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the scan reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "scan-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5559,7 +6004,7 @@ def main() -> int:
                 failures.append(f"{doc}: no figure for {label} in the scan reports")
                 continue
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "scan-cost"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
@@ -5580,7 +6025,7 @@ def main() -> int:
                 continue
             figure = statistics.median(values)
             rendered = f"{figure:.{places}f}"
-            if rendered not in texts[doc]:
+            if rendered not in scoped_text(texts, doc, "rle-expansion"):
                 failures.append(
                     f"{doc}: {label} is {rendered} in the reports but that figure "
                     f"does not appear in the document"
