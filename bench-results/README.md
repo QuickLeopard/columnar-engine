@@ -59,6 +59,7 @@ python3 scripts/medians.py
 | `batch-sweep-ab-newcode-run1.json` … `batch-sweep-ab-newcode-run3.json` | the same instrument against the **code this file publishes**, taken in the same minutes and in the same rotation -- so the difference between the two sets is the **code's** and not the machine's. |
 | `<family>-spec051-before-run1.json` … `<family>-spec051-before-run3.json` | the **set the default replaces**: every published family, measured against the **code spec 051 replaces** -- a worktree at `c002fd0` -- **back to back with the campaigns above**, on this host, three campaigns each, **interleaved**, and **both trees clean**. The difference between the two sets is therefore the **code's** and not the machine's. The families are `compare`, `query-cost`, `sort-cost`, `join-cost`, `scan-cost`, `dictionary-cost-{6,12,24}`, `row-group-cost-{6,12,24}`, `row-groups-{6,12,24}`, `materialised`, `key-filter`, `probe-paths`, `probe-paths-key-only`, `batch-size`, `many-files`, `file-set`, `build-set`, `write-cost`, `write-cost-engine-batch`, `store-write`, `engine-rows`, `set-rows`, `join-parts`, `scaling`, `scaling-rg12`, `scaling-rg24`, `scaling-revenue` and `curve`. |
 | `<family>-spec050-run1.json` … `<family>-spec050-run3.json` | the set **the file published before** the default moved: every published family, measured on the tree at **spec 050's close**, on an earlier day. Kept under its own name, like every other superseded set, so that the figure the file published is still derivable from a committed report -- and **§3ah** names it beside the set it replaces. |
+| `own-decode-run1.json` … `own-decode-run3.json` | the **reader that owns the decode**: the shape ADR-0018 refused, measured again on the code that is here now. The report carries **six shapes** on the same file, in the same process, warm -- the parquet crate's own decode, Arrow's decode, the old shape (the decode, the predicate and the compaction), the engine's own scan, **the engine's own reader** in two forms (the whole file's and the row group's, each with and without the expansion of the predicate's column) -- and **the survivors are compared, value by value, with the engine's own scan's**, so the instrument is checked against the reference it measures against. |
 | `join-cost-spec029-run1.json` … `join-cost-spec029-run3.json` | the probe as it stood at spec 029's close -- against the code spec 029 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
 | `join-cost-spec029-before-run1.json` … `join-cost-spec029-before-run3.json` | the set spec 029 measured against the code it replaced, with the instrument of that day. Kept under its own name, for the same reason. |
 | `join-cost-spec028-run1.json` … `join-cost-spec028-run3.json` | the probe as it stood at spec 028's close -- against the code spec 028 shipped, with the instrument of that day. Kept under its own name so that every figure published old-against-new stays derivable from a committed report. |
@@ -444,6 +445,13 @@ The RLE expansion's reports are written by the probe itself:
 ```bash
 cargo run --release -p columnar-engine --example rle_expansion_probe -- \
     data/lineitem.parquet --out bench-results/rle-expansion-run1.json
+```
+
+The reader that owns the decode is written the same way, and it is **three campaigns**:
+
+```bash
+cargo run --release -p columnar-engine --example own_decode_probe -- \
+    data/lineitem.parquet --out bench-results/own-decode-run1.json
 ```
 
 The row-group campaigns are written the same way, on the three files:
