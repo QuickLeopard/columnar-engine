@@ -610,10 +610,14 @@ impl EngineStages {
 /// back to back in the same iteration. The two are the yardsticks every part is
 /// judged against: one sees the machine, the other sees the file.
 struct Sides {
-    /// The build side's whole.
-    build_whole: Vec<Sample>,
-    /// The build side's open.
-    build_open: Vec<Sample>,
+    /// The build side's whole, taken in the cold account.
+    build_whole_in_cold: Vec<Sample>,
+    /// The build side's whole, taken in the resident account.
+    build_whole_in_resident: Vec<Sample>,
+    /// The build side's open, taken in the cold account.
+    build_open_in_cold: Vec<Sample>,
+    /// The build side's open, taken in the resident account.
+    build_open_in_resident: Vec<Sample>,
     /// The probe over a fresh column: the resident path's side.
     probe_column: Vec<Sample>,
     /// The probe over the held column: the file state's other side.
@@ -638,8 +642,10 @@ impl Sides {
     /// The sides, with nothing measured yet.
     fn new() -> Self {
         Self {
-            build_whole: Vec::with_capacity(ITERATIONS),
-            build_open: Vec::with_capacity(ITERATIONS),
+            build_whole_in_cold: Vec::with_capacity(ITERATIONS),
+            build_whole_in_resident: Vec::with_capacity(ITERATIONS),
+            build_open_in_cold: Vec::with_capacity(ITERATIONS),
+            build_open_in_resident: Vec::with_capacity(ITERATIONS),
             probe_column: Vec::with_capacity(ITERATIONS),
             probe_held: Vec::with_capacity(ITERATIONS),
             probe_batches: Vec::with_capacity(ITERATIONS),
@@ -654,17 +660,7 @@ impl Sides {
 
     /// The sides' samples, as the report carries them.
     fn samples(&self, which: &str) -> Vec<Duration> {
-        let series = match which {
-            "build_whole" => &self.build_whole,
-            "build_open" => &self.build_open,
-            "probe_column" => &self.probe_column,
-            "probe_held" => &self.probe_held,
-            "probe_batches" => &self.probe_batches,
-            "floor" => &self.floor,
-            "file_state" => &self.file_state,
-            _ => &self.probe_batches_no_offset,
-        };
-        series.iter().map(|sample| sample.duration()).collect()
+        self.series(which).iter().map(|sample| sample.duration()).collect()
     }
 
     /// The sides' values, as the ladder needs them: milliseconds, per iteration.
@@ -674,17 +670,46 @@ impl Sides {
 
     /// The instants the sides' measurements were taken at.
     fn instants(&self, which: &str) -> Vec<Instant> {
-        let series = match which {
-            "build_whole" => &self.build_whole,
-            "build_open" => &self.build_open,
+        self.series(which).iter().map(|sample| sample.at).collect()
+    }
+
+    /// The series a side belongs to.
+    fn series(&self, which: &str) -> &Vec<Sample> {
+        match which {
+            "build_whole_in_cold" => &self.build_whole_in_cold,
+            "build_whole_in_resident" => &self.build_whole_in_resident,
+            "build_open_in_cold" => &self.build_open_in_cold,
+            "build_open_in_resident" => &self.build_open_in_resident,
             "probe_column" => &self.probe_column,
             "probe_held" => &self.probe_held,
             "probe_batches" => &self.probe_batches,
             "floor" => &self.floor,
             "file_state" => &self.file_state,
             _ => &self.probe_batches_no_offset,
-        };
-        series.iter().map(|sample| sample.at).collect()
+        }
+    }
+
+    /// The build side's whole, over **both** accounts.
+    ///
+    /// It is the build side's own cost, and the two accounts measure it twice:
+    /// the one the cold query is paired with and the one the resident query is
+    /// paired with. The report carries the pair as well, and this is the pair
+    /// taken together.
+    fn build_whole_both(&self) -> Vec<Duration> {
+        self.build_whole_in_cold
+            .iter()
+            .chain(self.build_whole_in_resident.iter())
+            .map(|sample| sample.duration())
+            .collect()
+    }
+
+    /// The build side's open, over **both** accounts.
+    fn build_open_both(&self) -> Vec<Duration> {
+        self.build_open_in_cold
+            .iter()
+            .chain(self.build_open_in_resident.iter())
+            .map(|sample| sample.duration())
+            .collect()
     }
 }
 
@@ -692,10 +717,10 @@ impl Sides {
 struct Blocks {
     /// The build side's file state, taken before the iterations.
     file_state: Duration,
-    /// The query's own block, one per iteration.
-    query: Vec<Duration>,
-    /// The standalone's own block, one per iteration.
-    standalone: Vec<Duration>,
+    /// The cold account's own block, one per iteration.
+    cold: Vec<Duration>,
+    /// The resident account's own block, one per iteration.
+    resident: Vec<Duration>,
     /// The build side's own block.
     build: Duration,
     /// The probe's own block.
@@ -704,6 +729,30 @@ struct Blocks {
     controls: Duration,
     /// The whole campaign.
     campaign: Duration,
+}
+
+impl Blocks {
+    /// The blocks, with nothing measured yet.
+    fn new() -> Self {
+        Self {
+            file_state: Duration::ZERO,
+            cold: Vec::with_capacity(ITERATIONS),
+            resident: Vec::with_capacity(ITERATIONS),
+            build: Duration::ZERO,
+            probe: Duration::ZERO,
+            controls: Duration::ZERO,
+            campaign: Duration::ZERO,
+        }
+    }
+
+    /// One account's own block, on the account's own series.
+    fn push(&mut self, account: Account, query: Duration, standalone: Duration) {
+        let series = match account {
+            Account::Cold => &mut self.cold,
+            Account::Resident => &mut self.resident,
+        };
+        series.push(query + standalone);
+    }
 }
 
 /// What the interleaved loop measures, gathered so that the loop's own
@@ -749,127 +798,168 @@ struct Interleaved<'a> {
 
 /// The two sides, measured in the same iteration, back to back.
 ///
-/// **Even iterations take the query first and odd iterations take it last.** The
-/// order is not neutral: a machine that drifts while an iteration runs gives
-/// the first measurement a different price from the second, so the two orders'
-/// difference is published as its own figure and the reader can see whether the
-/// order could have made any of the parts.
+/// **Even iterations take the cold account first and the query before the
+/// standalone; odd ones take the resident account first and the standalone
+/// before the query.** The order is not neutral: a machine that drifts while
+/// an iteration runs gives the first measurement a different price from the
+/// second, so the two orders' difference is published as its own figure and
+/// the reader can see whether the order could have made any of the parts.
+///
+/// **And each account carries its own build side's work.** The two sides of a
+/// difference are then inside one account, and the file's state and the
+/// machine's movement over the distance between them are common to both sides
+/// and cancel in the difference.
 fn interleaved(
     input: &Interleaved<'_>,
 ) -> Result<(EngineStages, Sides, Blocks), Box<dyn std::error::Error>> {
     let mut stages = EngineStages::new();
     let mut sides = Sides::new();
-    let mut blocks = Blocks {
-        file_state: Duration::ZERO,
-        query: Vec::with_capacity(ITERATIONS),
-        standalone: Vec::with_capacity(ITERATIONS),
-        build: Duration::ZERO,
-        probe: Duration::ZERO,
-        controls: Duration::ZERO,
-        campaign: Duration::ZERO,
-    };
+    let mut blocks = Blocks::new();
     for iteration in 0..ITERATIONS {
-        if iteration % 2 == 0 {
-            let query = query_side(input, &mut stages);
-            let standalone = standalone_side(input, &mut sides)?;
-            blocks.query.push(query);
-            blocks.standalone.push(standalone);
+        // The two orders: the cold account first with the query before the
+        // standalone, and the resident account first with the standalone before
+        // the query. **The whole iteration is reversed**, so that every
+        // position effect lands on the other side in the next iteration.
+        let accounts = if iteration % 2 == 0 {
+            [(Account::Cold, true), (Account::Resident, true)]
         } else {
-            let standalone = standalone_side(input, &mut sides)?;
-            let query = query_side(input, &mut stages);
-            blocks.standalone.push(standalone);
-            blocks.query.push(query);
+            [(Account::Resident, false), (Account::Cold, false)]
+        };
+        for (account, query_first) in accounts {
+            if query_first {
+                let query = query_side(input, account, &mut stages);
+                let standalone = standalone_side(input, account, &mut sides)?;
+                blocks.push(account, query, standalone);
+            } else {
+                let standalone = standalone_side(input, account, &mut sides)?;
+                let query = query_side(input, account, &mut stages);
+                blocks.push(account, query, standalone);
+            }
         }
     }
     Ok((stages, sides, blocks))
 }
 
+/// Which path's account a block belongs to.
+#[derive(Clone, Copy)]
+enum Account {
+    /// The cold path: the scan feeds the join.
+    Cold,
+    /// The resident path: the join probes the dataset itself.
+    Resident,
+}
+
 /// One iteration's worth of the engine's own measurements.
 ///
 /// The cold path is the one where the scan feeds the join, and the resident
-/// path is the one where the join probes the dataset itself.
+/// path is the one where the join probes the dataset itself. **One account
+/// carries one path**, so that the query's own account of the path and the
+/// standalone's account of the same path are back to back.
 ///
 /// The engine's own parts are the engine's account of its stage, so the instant
 /// the execution was taken at stands for all of them: they were measured inside
 /// one execution, and the instrument cannot see inside it.
-fn query_side(input: &Interleaved<'_>, stages: &mut EngineStages) -> Duration {
+fn query_side(input: &Interleaved<'_>, account: Account, stages: &mut EngineStages) -> Duration {
     let block = Instant::now();
-    let started = Instant::now();
-    let over_file = columnar_engine::execute_on(input.plan, input.source, input.options)
-        .expect("the query runs");
-    let elapsed = started.elapsed();
-    check(&over_file);
-    stages.push_cold(&over_file, Sample::of(started, elapsed).at);
-
-    let started = Instant::now();
-    let over_memory =
-        columnar_engine::execute(input.plan, input.dataset, input.options).expect("the query runs");
-    let elapsed = started.elapsed();
-    check(&over_memory);
-    stages.push_resident(&over_memory, Sample::of(started, elapsed).at);
+    match account {
+        Account::Cold => {
+            let started = Instant::now();
+            let over_file = columnar_engine::execute_on(input.plan, input.source, input.options)
+                .expect("the query runs");
+            let elapsed = started.elapsed();
+            check(&over_file);
+            stages.push_cold(&over_file, Sample::of(started, elapsed).at);
+        }
+        Account::Resident => {
+            let started = Instant::now();
+            let over_memory = columnar_engine::execute(input.plan, input.dataset, input.options)
+                .expect("the query runs");
+            let elapsed = started.elapsed();
+            check(&over_memory);
+            stages.push_resident(&over_memory, Sample::of(started, elapsed).at);
+        }
+    }
     block.elapsed()
 }
 
-/// One iteration's worth of the standalone's own measurements.
+/// One account's worth of the standalone's own measurements.
 ///
-/// These are the **other sides** of the ladder's differences, and they are the
-/// ones the query's own measurements are compared against: the build side's
-/// whole, the build side's open, the probe over a fresh column, the probe over
-/// the held column, the probe inside the reader's batches, and the same probe
-/// without the row-number offset.
+/// These are the **other sides** of that path's differences: the build side's
+/// whole, the build side's open, and the path's own probe.
 ///
-/// **And the two floors are taken with them**: the machine's own movement, over
-/// the probe's own fresh column, and the file's own read, at the end.
+/// **And the build side's work is in the account, not beside it.** The query
+/// builds its own table and the standalone builds another one, and the two are
+/// the two sides of the build side's gap, so the standalone's is taken inside
+/// the account the query is in.
 ///
-/// They are taken in this order, so that the report says which of them stood
-/// closest to the query's own execution and which stood furthest from it.
+/// **And the two floors are taken with the resident account**: the machine's own
+/// movement, over the probe's own fresh column, and the file's own read, right
+/// after it. They are back to back in the same iteration, so the pairing that
+/// takes the machine's movement out of the file's read takes it out of a
+/// movement measured beside it.
 fn standalone_side(
     input: &Interleaved<'_>,
+    account: Account,
     sides: &mut Sides,
 ) -> Result<Duration, Box<dyn std::error::Error>> {
     let block = Instant::now();
-    sides.build_whole.push(build_whole_sample(input.build_source, input.spec, input.flavor)?);
-    sides.build_open.push(build_open_sample(input.spec));
-    let (sample, floor, rows) = probe_over_column_sample(
-        input.table,
-        input.source,
-        input.probe_index,
-        input.flavor,
-        input.counts,
-        input.base,
-    )?;
-    sides.probe_column.push(sample);
-    sides.floor.push(floor);
-    sides.rows = rows;
-    // The file's own read, **right after** the machine's own measure: the two
-    // floors are back to back, in the same iteration, so the pairing that takes
-    // the machine's movement out of the file's read takes it out of a movement
-    // measured beside it.
-    sides.file_state.push(file_state_sample(
-        input.build_source,
-        input.build_key_index,
-        input.pushdown,
-        input.flavor,
-    )?);
-    let (sample, held) = probe_over_held_sample(
-        input.table,
-        &input.held_keys,
-        input.held_rows.clone(),
-        input.build_source,
-        input.build_key_index,
-        input.pushdown,
-        input.flavor,
-    )?;
-    sides.probe_held.push(sample);
-    sides.held_rows = held;
-    let columns = [input.probe_index, input.value_index];
-    let (sample, batched) =
-        probe_in_batches_sample(input.path, &columns, input.batch_rows, input.table, true)?;
-    sides.probe_batches.push(sample);
-    sides.batched_rows = batched;
-    let (sample, _) =
-        probe_in_batches_sample(input.path, &columns, input.batch_rows, input.table, false)?;
-    sides.probe_batches_no_offset.push(sample);
+    let whole = build_whole_sample(input.build_source, input.spec, input.flavor)?;
+    let open = build_open_sample(input.spec);
+    match account {
+        Account::Cold => {
+            sides.build_whole_in_cold.push(whole);
+            sides.build_open_in_cold.push(open);
+            let columns = [input.probe_index, input.value_index];
+            let (sample, batched) =
+                probe_in_batches_sample(input.path, &columns, input.batch_rows, input.table, true)?;
+            sides.probe_batches.push(sample);
+            sides.batched_rows = batched;
+            let (sample, _) = probe_in_batches_sample(
+                input.path,
+                &columns,
+                input.batch_rows,
+                input.table,
+                false,
+            )?;
+            sides.probe_batches_no_offset.push(sample);
+        }
+        Account::Resident => {
+            sides.build_whole_in_resident.push(whole);
+            sides.build_open_in_resident.push(open);
+            let (sample, floor, rows) = probe_over_column_sample(
+                input.table,
+                input.source,
+                input.probe_index,
+                input.flavor,
+                input.counts,
+                input.base,
+            )?;
+            sides.probe_column.push(sample);
+            sides.floor.push(floor);
+            sides.rows = rows;
+            // The file's own read, **right after** the machine's own measure: the
+            // two floors are back to back, in the same iteration, so the pairing
+            // that takes the machine's movement out of the file's read takes it
+            // out of a movement measured beside it.
+            sides.file_state.push(file_state_sample(
+                input.build_source,
+                input.build_key_index,
+                input.pushdown,
+                input.flavor,
+            )?);
+            let (sample, held) = probe_over_held_sample(
+                input.table,
+                &input.held_keys,
+                input.held_rows.clone(),
+                input.build_source,
+                input.build_key_index,
+                input.pushdown,
+                input.flavor,
+            )?;
+            sides.probe_held.push(sample);
+            sides.held_rows = held;
+        }
+    }
     Ok(block.elapsed())
 }
 
@@ -1910,11 +2000,15 @@ fn timings(
     let mut parts = vec![
         ("stage_cold", stages.cold.stage_timing()),
         ("stage_resident", stages.resident.stage_timing()),
-        ("build_open", Timing::of(&sides.samples("build_open"))),
+        ("build_open", Timing::of(&sides.build_open_both())),
         ("build_read", Timing::of(&sides.samples("file_state"))),
         ("build_keys", build.keys),
-        ("build_whole", Timing::of(&sides.samples("build_whole"))),
+        ("build_whole", Timing::of(&sides.build_whole_both())),
         ("build_whole_cold", Timing::of(&[build_cold])),
+        ("build_whole_in_cold", Timing::of(&sides.samples("build_whole_in_cold"))),
+        ("build_whole_in_resident", Timing::of(&sides.samples("build_whole_in_resident"))),
+        ("build_open_in_cold", Timing::of(&sides.samples("build_open_in_cold"))),
+        ("build_open_in_resident", Timing::of(&sides.samples("build_open_in_resident"))),
         ("table_own", build.table),
         ("probe_column", Timing::of(&sides.samples("probe_column"))),
         ("probe_batches", Timing::of(&sides.samples("probe_batches"))),
@@ -2299,8 +2393,10 @@ fn part_of(measured: &Measured, name: &str) -> f64 {
 /// mechanism can explain each of them.
 fn contexts(measured: &Measured) -> (Context, Context) {
     let sides = &measured.sides;
-    let build_whole = sides.milliseconds("build_whole");
-    let build_open = sides.milliseconds("build_open");
+    let build_whole_cold = sides.milliseconds("build_whole_in_cold");
+    let build_whole_resident = sides.milliseconds("build_whole_in_resident");
+    let build_open_cold = sides.milliseconds("build_open_in_cold");
+    let build_open_resident = sides.milliseconds("build_open_in_resident");
     let probe_column = sides.milliseconds("probe_column");
     let probe_batches = sides.milliseconds("probe_batches");
     let held = sides.milliseconds("probe_held");
@@ -2324,8 +2420,8 @@ fn contexts(measured: &Measured) -> (Context, Context) {
 
     let cold = context_ladder(&ContextInput {
         path: &measured.cold,
-        build_whole: &build_whole,
-        build_open: &build_open,
+        build_whole: &build_whole_cold,
+        build_open: &build_open_cold,
         standalone_probe: &probe_batches,
         // The cold path's probe reads the file inside the reader on **both**
         // sides, so the file's state is the same by construction and there is
@@ -2338,8 +2434,8 @@ fn contexts(measured: &Measured) -> (Context, Context) {
     });
     let resident = context_ladder(&ContextInput {
         path: &measured.resident,
-        build_whole: &build_whole,
-        build_open: &build_open,
+        build_whole: &build_whole_resident,
+        build_open: &build_open_resident,
         standalone_probe: &probe_column,
         // The resident path's probe carries no row-number offset: it probes
         // the dataset's own rows.
@@ -2384,14 +2480,14 @@ fn order_cost(leaves: &Leaves) -> f64 {
     .fold(0.0_f64, f64::max)
 }
 
+/// The distance between two series of instants, in milliseconds, per iteration.
+fn distances(one: &[Instant], other: &[Instant]) -> Vec<f64> {
+    one.iter().zip(other).map(|(a, b)| ms(a.duration_since(*b).max(b.duration_since(*a)))).collect()
+}
+
 /// The median distance between two series of instants, in milliseconds.
 fn distance(one: &[Instant], other: &[Instant]) -> f64 {
-    let distances: Vec<f64> = one
-        .iter()
-        .zip(other)
-        .map(|(a, b)| ms(a.duration_since(*b).max(b.duration_since(*a))))
-        .collect();
-    median_ms(&distances)
+    median_ms(&distances(one, other))
 }
 
 /// How far apart the machine's own two measurements of one difference were
@@ -2403,24 +2499,29 @@ fn distance(one: &[Instant], other: &[Instant]) -> f64 {
 fn separations(
     path: &PathMeasurements,
     sides: &Sides,
+    account: Account,
     file_state: bool,
     offset: bool,
-) -> Vec<(&'static str, f64)> {
+) -> Vec<(&'static str, Vec<f64>)> {
+    let (whole, open, probe) = match account {
+        Account::Cold => ("build_whole_in_cold", "build_open_in_cold", "probe_batches_no_offset"),
+        Account::Resident => ("build_whole_in_resident", "build_open_in_resident", "probe_held"),
+    };
     let mut rows = vec![
-        ("the build side's gap", distance(&path.at, &sides.instants("build_whole"))),
-        ("the open's gap", distance(&path.at, &sides.instants("build_open"))),
-        ("the probe's own remainder", distance(&path.at, &sides.instants("probe_held"))),
+        ("the build side's gap", distances(&path.at, &sides.instants(whole))),
+        ("the open's gap", distances(&path.at, &sides.instants(open))),
+        ("the probe's own remainder", distances(&path.at, &sides.instants(probe))),
     ];
     if file_state {
         rows.push((
             "the probe's file state",
-            distance(&sides.instants("probe_column"), &sides.instants("probe_held")),
+            distances(&sides.instants("probe_column"), &sides.instants("probe_held")),
         ));
     }
     if offset {
         rows.push((
             "the probe's row-number offset",
-            distance(&sides.instants("probe_batches"), &sides.instants("probe_batches_no_offset")),
+            distances(&sides.instants("probe_batches"), &sides.instants("probe_batches_no_offset")),
         ));
     }
     rows
@@ -2431,8 +2532,8 @@ fn derived_ms(
     measured: &Measured,
     cold: &Context,
     resident: &Context,
-    cold_separations: &[(&'static str, f64)],
-    resident_separations: &[(&'static str, f64)],
+    cold_separations: &[(&'static str, Vec<f64>)],
+    resident_separations: &[(&'static str, Vec<f64>)],
 ) -> Figures {
     let part = |name: &str| part_of(measured, name);
     // The build side's file state: the first read of the build side's data
@@ -2546,8 +2647,8 @@ fn derived_ms(
 }
 
 /// The largest of a set of separations.
-fn largest(rows: &[(&'static str, f64)]) -> f64 {
-    rows.iter().map(|(_, value)| *value).fold(0.0_f64, f64::max)
+fn largest(rows: &[(&'static str, Vec<f64>)]) -> f64 {
+    rows.iter().map(|(_, series)| median_ms(series)).fold(0.0_f64, f64::max)
 }
 
 /// What each clock brackets, and what it does not include.
@@ -2559,8 +2660,12 @@ fn brackets() -> Figures {
     let rows = [
         ("stage_cold", "two disjoint intervals -- the build table's construction, and then the probe inside the reader -- and the build side's file open. Not the reader's decode, and not the gap between the two intervals."),
         ("stage_resident", "one interval -- the build table's construction, the probe key column's borrow, and the probe -- and the build side's file open. Not the dataset's own read, which happened before the query."),
-        ("build_whole", "the build table's construction alone. Not the build side's file open, which the stage's own clock carries."),
+        ("build_whole", "the build table's construction alone, over both accounts. Not the build side's file open, which the stage's own clock carries."),
         ("build_whole_cold", "the build table's construction over a file the process has not read yet: one read, and the process's first."),
+        ("build_whole_in_cold", "the build table's construction alone, in the cold account, beside the cold query. The two sides of the cold path's build side's gap."),
+        ("build_whole_in_resident", "the build table's construction alone, in the resident account, beside the resident query. The two sides of the resident path's build side's gap."),
+        ("build_open_in_cold", "the build side's file open, on its own, in the cold account."),
+        ("build_open_in_resident", "the build side's file open, on its own, in the resident account."),
         ("build_open", "the build side's file open, on its own."),
         ("build_read", "the build side's read, in the iteration: the engine's own reader, the engine's own predicates, the engine's own columns. The **file-state floor** -- the file's state, as the engine pays it. It is taken right after the machine's own measure, so that the two floors are back to back in the same iteration."),
         ("floor_probe", "the floor the probe cannot go below: the table's own load, one a probe row, over the probe's own fresh column, in the iteration, right after the probe that used it. The **machine's own measure**: it reads nothing of its own."),
@@ -2588,10 +2693,10 @@ fn blocks_ms(blocks: &Blocks) -> serde_json::Value {
     let series = |durations: &[Duration]| durations.iter().map(|d| ms(*d)).collect::<Vec<f64>>();
     serde_json::json!({
         "the file state": { "total_ms": ms(blocks.file_state), "iterations_ms": Vec::<f64>::new() },
-        "the query's block": { "total_ms": total(&blocks.query), "iterations_ms": series(&blocks.query) },
-        "the standalone's block": {
-            "total_ms": total(&blocks.standalone),
-            "iterations_ms": series(&blocks.standalone)
+        "the cold account": { "total_ms": total(&blocks.cold), "iterations_ms": series(&blocks.cold) },
+        "the resident account": {
+            "total_ms": total(&blocks.resident),
+            "iterations_ms": series(&blocks.resident)
         },
         "the build block": { "total_ms": ms(blocks.build), "iterations_ms": Vec::<f64>::new() },
         "the probe block": { "total_ms": ms(blocks.probe), "iterations_ms": Vec::<f64>::new() },
@@ -2626,13 +2731,34 @@ fn orders_ms(cold: &Leaves, resident: &Leaves) -> serde_json::Value {
 
 /// How far apart the two sides of each difference were taken.
 fn separation_ms(
-    cold: &[(&'static str, f64)],
-    resident: &[(&'static str, f64)],
+    cold: &[(&'static str, Vec<f64>)],
+    resident: &[(&'static str, Vec<f64>)],
 ) -> serde_json::Value {
-    let path = |rows: &[(&'static str, f64)]| {
+    let path = |rows: &[(&'static str, Vec<f64>)]| {
         let mut map = serde_json::Map::new();
-        for (name, value) in rows {
-            map.insert((*name).to_owned(), serde_json::json!(value));
+        for (name, series) in rows {
+            map.insert((*name).to_owned(), serde_json::json!(median_ms(series)));
+        }
+        serde_json::Value::Object(map)
+    };
+    serde_json::json!({ "cold": path(cold), "resident": path(resident) })
+}
+
+/// How far apart the two sides of each difference were taken, iteration by
+/// iteration.
+///
+/// **And the two orders are told apart.** The **even** iterations take the
+/// query first and the **odd** ones take it last, so the series shows the two
+/// geometries side by side: the distance a difference was taken over, when the
+/// query came first and when it came last.
+fn separation_series_ms(
+    cold: &[(&'static str, Vec<f64>)],
+    resident: &[(&'static str, Vec<f64>)],
+) -> serde_json::Value {
+    let path = |rows: &[(&'static str, Vec<f64>)]| {
+        let mut map = serde_json::Map::new();
+        for (name, series) in rows {
+            map.insert((*name).to_owned(), serde_json::json!(series));
         }
         serde_json::Value::Object(map)
     };
@@ -2671,8 +2797,9 @@ fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn st
         series_ms.insert((*name).to_owned(), serde_json::json!(timing.series()));
     }
     let (cold, resident) = contexts(measured);
-    let cold_separations = separations(&measured.cold, &measured.sides, false, true);
-    let resident_separations = separations(&measured.resident, &measured.sides, true, false);
+    let cold_separations = separations(&measured.cold, &measured.sides, Account::Cold, false, true);
+    let resident_separations =
+        separations(&measured.resident, &measured.sides, Account::Resident, true, false);
     let report = serde_json::json!({
         "probe": "join-cost",
         "file": path.display().to_string(),
@@ -2697,6 +2824,7 @@ fn report(out: &Path, path: &Path, measured: &Measured) -> Result<(), Box<dyn st
         "blocks_ms": blocks_ms(&measured.blocks),
         "orders_ms": orders_ms(&cold.series, &resident.series),
         "separation_ms": separation_ms(&cold_separations, &resident_separations),
+        "separation_series_ms": separation_series_ms(&cold_separations, &resident_separations),
         "ladder_series_ms": ladder_series_ms(&cold.series, &resident.series),
         "brackets": brackets(),
         "derived_ms": derived_ms(
