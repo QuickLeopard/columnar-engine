@@ -22,7 +22,9 @@
 //! filters on `deleted = 0` -- which drops the tombstones themselves -- and on
 //! `row_id != <retired id>` for each retired id -- which drops the versions
 //! the tombstones name. **The second filter is the tombstone tax**: one
-//! predicate per retired version, and the compaction is what pays it back.
+//! predicate per retired version, and each predicate is one pass over the id
+//! column -- so the tax is the retired versions and not the table's size, and
+//! the compaction is what pays it back.
 //!
 //! **And the ids are a function of what is on disk.** The id a new version
 //! gets is the number of versions the table has ever had, and that number is
