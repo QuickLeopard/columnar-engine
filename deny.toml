@@ -139,7 +139,25 @@ ignore = true
 # exemption that names nothing is a silence, so it is removed, and the
 # advisory is watched rather than muted.
 #
-# **And the weakness that exemption stood next to is closed, and the
+# **And a second exception, for the same reason and for the same shape.**
+# RUSTSEC-2026-0543 -- `chrono` is no longer maintained. It is an
+# **unconditional** dependency of `arrow-arith` **58.4.1** -- the manifest
+# names it with no feature to turn it off -- and `arrow-arith` is a dependency
+# of `arrow`, which the engine and the store both read Parquet through. **So
+# it cannot be removed without dropping the Arrow/Parquet stack**, which is not
+# on the table, and the advisory says so itself: *all versions are affected*,
+# and there is no safe upgrade. The alternatives it names -- `jiff` and `time`
+# -- are not reachable from here, because the manifest that pulls `chrono` in
+# is not ours.
+#
+# **And nothing in this repository uses it.** The engine's vocabulary is three
+# types wide -- `Int64`, `Float64` and `Utf8` -- and has no date and no time,
+# so the crate is compiled in as part of `arrow`'s temporal kernels and never
+# called on this repository's path. **The advisory is about maintenance, not
+# about a vulnerability**: there is nothing to exploit, and the exposure is
+# the possibility that a future `arrow` drops it.
+#
+# **And the weakness the first exception stood next to is closed, and the
 # measurement is in [ADR-0049](docs/adr/0049-the-readers-four-gigabytes.md).**
 # The hole was **not** in the file's metadata -- the footer is read through the
 # reader's own *slice* protocol, which refuses a declared length larger than
@@ -154,7 +172,7 @@ ignore = true
 # statistics by default -- so the declared length is never parsed at all, and
 # the reader asks for **8 KiB**, the honest file's own figure, at every declared
 # length.
-ignore = ["RUSTSEC-2024-0436"]
+ignore = ["RUSTSEC-2024-0436", "RUSTSEC-2026-0543"]
 
 # ---------------------------------------------------------------------------
 # Dependency sources.
