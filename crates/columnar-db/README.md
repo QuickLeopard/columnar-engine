@@ -76,6 +76,41 @@ let rows = table.rows(&plan, &ExecOptions::default())?;
 
 **And the rows come back in the engine's own values** — a `ScalarValue` per column, a NULL being the absence of one.
 
+## The rows that change
+
+**Every row carries a hidden `row_id` and a hidden `deleted` flag**, and the application names neither: a schema may not use
+either name, and a plan that names one is refused. The row's identity is the database's bookkeeping, and the application's
+rows are the values and not the bookkeeping.
+
+**And a row that changes does not change in place.** The files are append-only, so an update cannot rewrite the version it
+replaces. **So the replacement is a tombstone** — a row that names the version it retires — and the new version is a new row
+with a new id. **The tombstone is in the same file as the new version**, so the two land together: one file, one manifest, one
+rename, and a reader sees the old version and the new one or neither.
+
+```rust
+table.update(col("id").eq(2), Row::filled(vec![
+    ScalarValue::Int64(99),
+    ScalarValue::Utf8("new".to_owned()),
+]))?;
+table.delete(col("id").eq(3))?;
+```
+
+**And the ids are read from what is on disk, never written down.** The id a new version gets is the number of versions the
+table has ever had, and that number is the manifest's rows less the retired ones — so there is no counter to lose, and no
+window in which two rows could share an id.
+
+**And the compaction pays the tombstone tax back.** The tax is one predicate per retired version — the read filters on
+`deleted = 0` and on `row_id != <retired id>` for each retired id — and the compaction is the rewriting that makes the retired
+versions stop existing: the live rows are read, written into a new file, and the manifest is replaced by one that names it and
+nothing else.
+
+**And the old files go when no reader holds them.** A reader that pinned them still has to read them, so they stay until it is
+gone. The database owns the file naming — the highest index in the table's directory plus one — so a compaction does not reset
+the numbering and land the next write on a file that is still there.
+
+**And a database written by an earlier build of this crate has to be recreated**: the files carry the hidden columns now, and
+a file that does not carry them is not a file of the table.
+
 ## The vocabulary
 
 **The engine's, and only the engine's.** A column's type is one of `Int64`, `Float64` or `Utf8`, and the values are the
@@ -97,6 +132,7 @@ writer is alone.
 
 ## The increments
 
-**What is here now** is the database, the persistent catalog, the schema and the table handle. **What comes next** is
-the typed write path, the snapshot read, the hidden row id, and the compaction that pays for the append-only model.
-The whole of it is spec 055, and the gap's prices are measured before the parts that depend on them are built.
+**What is here now** is the database, the persistent catalog, the schema, the typed write path, the snapshot read, the hidden
+row id, and the compaction that pays for the append-only model. **What comes next** is the probe: the catalog's open, the write
+on the grid, the snapshot over one file and over many, the scan of a point lookup, the compaction, and the space amplification
+— measured, so that the index's shape is decided by a figure and not by an opinion. The whole of it is spec 055.

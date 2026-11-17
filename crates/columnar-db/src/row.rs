@@ -56,7 +56,18 @@ impl Row {
     pub fn values(&self) -> &[Option<ScalarValue>] {
         &self.values
     }
+
+    /// The row's values, and the row is spent.
+    pub(crate) fn into_values(self) -> Vec<Option<ScalarValue>> {
+        self.values
+    }
 }
+
+/// A column's values, in the database's own shape.
+///
+/// **A NULL is the absence of a value**, so a column's values are a vector of
+/// options and not a vector of values with a sentinel in it.
+pub(crate) type ColumnValues = Vec<Option<ScalarValue>>;
 
 /// The rows a plan produced, and the columns they hold.
 ///
@@ -80,15 +91,7 @@ impl Rows {
     /// Returns [`Error::Corrupt`] when the dataset does not hold a column it
     /// names, or when a column's rows are not readable.
     pub(crate) fn of(dataset: &Dataset) -> Result<Self> {
-        let columns = dataset.column_names();
-        let mut per_column = Vec::with_capacity(columns.len());
-        for name in &columns {
-            let chunk = dataset.chunk(name).ok_or_else(|| Error::Corrupt {
-                column: name.clone(),
-                reason: "the dataset does not hold the column it names".to_owned(),
-            })?;
-            per_column.push(values_of(chunk)?);
-        }
+        let (columns, per_column) = columns_of(dataset)?;
         let mut rows = Vec::with_capacity(dataset.len());
         for row in 0..dataset.len() {
             let values =
@@ -135,10 +138,29 @@ impl Rows {
     }
 }
 
+/// A dataset's columns, and the values in them.
+///
+/// **The columns come first and the values are beside them**, because the
+/// database's own work is columnar: the compaction reads the live rows and
+/// writes them back, and a row-major shape would make that a transpose at
+/// every file.
+pub(crate) fn columns_of(dataset: &Dataset) -> Result<(Vec<String>, Vec<ColumnValues>)> {
+    let columns = dataset.column_names();
+    let mut per_column = Vec::with_capacity(columns.len());
+    for name in &columns {
+        let chunk = dataset.chunk(name).ok_or_else(|| Error::Corrupt {
+            column: name.clone(),
+            reason: "the dataset does not hold the column it names".to_owned(),
+        })?;
+        per_column.push(values_of(chunk)?);
+    }
+    Ok((columns, per_column))
+}
+
 /// The values of a column chunk, in the database's own shape.
-fn values_of(chunk: &ColumnChunk) -> Result<Vec<Option<ScalarValue>>> {
+fn values_of(chunk: &ColumnChunk) -> Result<ColumnValues> {
     let column = &chunk.name;
-    let values: Vec<Option<ScalarValue>> = match &chunk.encoding {
+    let values: ColumnValues = match &chunk.encoding {
         Encoding::Int64 { values } => {
             values.iter().map(|value| Some(ScalarValue::Int64(*value))).collect()
         }

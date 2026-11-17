@@ -12,7 +12,7 @@
 //! outright.
 
 pub use crate::catalog::Catalog;
-pub use crate::database::Database;
+pub use crate::database::{Compaction, Database};
 pub use crate::row::{Row, Rows};
 pub use crate::schema::{Column, Schema};
 pub use crate::snapshot::{Snapshot, SnapshotTable};

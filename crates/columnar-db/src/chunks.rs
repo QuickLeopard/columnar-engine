@@ -11,14 +11,25 @@
 //! mask is what the filter and the writer see, and the Parquet writer writes
 //! the definition levels and not the value. The placeholder is `0`, `0.0` and
 //! the empty string.
+//!
+//! **And the file carries the database's own columns beside the
+//! application's.** The hidden `row_id` and `deleted` columns are written
+//! with every row, so a version's identity and a tombstone travel with the
+//! values they belong to -- **and a tombstone is a row like any other**, with
+//! no value in the application's columns and the id of the version it retires
+//! in its `row_id`.
+//!
+//! **The hidden columns are always plain and never NULL**, so every file of a
+//! table agrees about them: the engine reads a set of files as one table, and
+//! a set of files has to agree about its columns.
 
 use columnar_engine::{ColumnChunk, DataType, Encoding, NullBitmap, ScalarValue};
 
 use crate::error::{Error, Result};
-use crate::row::Row;
-use crate::schema::Schema;
+use crate::schema::{Column, Schema};
+use crate::versions::{Stored, DELETED, LIVE, ROW_ID, TOMBSTONE};
 
-/// Checks a row against the schema, and returns its values.
+/// Checks a row's values against the schema, and returns them.
 ///
 /// **Three things are checked, and all three are the schema's promise:** the
 /// row holds one value per column; the value's type is the column's type;
@@ -29,13 +40,16 @@ use crate::schema::Schema;
 /// Returns [`Error::RowLength`] when the row does not have one value per
 /// column, [`Error::ValueType`] when a value's type is not the column's, and
 /// [`Error::Null`] when a column that may not hold a NULL holds one.
-pub(crate) fn checked_values(schema: &Schema, row: &Row) -> Result<Vec<Option<ScalarValue>>> {
-    if row.len() != schema.len() {
-        return Err(Error::RowLength { expected: schema.len(), got: row.len() });
+pub(crate) fn checked_values(
+    schema: &Schema,
+    values: &[Option<ScalarValue>],
+) -> Result<Vec<Option<ScalarValue>>> {
+    if values.len() != schema.len() {
+        return Err(Error::RowLength { expected: schema.len(), got: values.len() });
     }
-    let mut values = Vec::with_capacity(schema.len());
+    let mut checked = Vec::with_capacity(schema.len());
     for (index, column) in schema.columns().iter().enumerate() {
-        let value = row.get(index).and_then(|value| value.as_ref());
+        let value = values.get(index).and_then(|value| value.as_ref());
         match value {
             None => {
                 if !column.is_nullable() {
@@ -52,9 +66,9 @@ pub(crate) fn checked_values(schema: &Schema, row: &Row) -> Result<Vec<Option<Sc
                 }
             }
         }
-        values.push(value.cloned());
+        checked.push(value.cloned());
     }
-    Ok(values)
+    Ok(checked)
 }
 
 /// The engine's chunks for the rows: one chunk per column.
@@ -65,49 +79,77 @@ pub(crate) fn checked_values(schema: &Schema, row: &Row) -> Result<Vec<Option<Sc
 /// checked again here: **a row is checked when it is offered and checked
 /// again when it is written**, and a check that only happened once would be a
 /// check that could be forgotten.
-pub(crate) fn chunks_of(schema: &Schema, rows: &[Row]) -> Result<Vec<ColumnChunk>> {
+pub(crate) fn chunks_of(schema: &Schema, rows: &[Stored]) -> Result<Vec<ColumnChunk>> {
     let mut columns: Vec<Vec<Option<ScalarValue>>> = Vec::with_capacity(schema.len());
     for _ in schema.columns() {
         columns.push(Vec::with_capacity(rows.len()));
     }
     for row in rows {
-        let values = checked_values(schema, row)?;
-        for (column, value) in columns.iter_mut().zip(values) {
-            column.push(value);
+        if row.deleted {
+            // **A tombstone holds no value of the application's.** It is the
+            // database's own row, and the application's columns are empty in
+            // it -- which is what makes it a tombstone and not a version.
+            for column in &mut columns {
+                column.push(None);
+            }
+        } else {
+            let values = checked_values(schema, &row.values)?;
+            for (column, value) in columns.iter_mut().zip(values) {
+                column.push(value);
+            }
         }
     }
 
-    let mut chunks = Vec::with_capacity(schema.len());
+    let mut chunks = Vec::with_capacity(schema.len() + 2);
     for (column, values) in schema.columns().iter().zip(&columns) {
-        let nulls: Vec<usize> = values
-            .iter()
-            .enumerate()
-            .filter_map(|(row, value)| value.is_none().then_some(row))
-            .collect();
-        let validity = NullBitmap::with_nulls(rows.len(), &nulls);
-        let encoding = match column.data_type() {
-            DataType::Int64 => Encoding::Int64 {
-                values: values
-                    .iter()
-                    .map(|value| int64_of(column.name(), value.as_ref()))
-                    .collect::<Result<Vec<i64>>>()?,
-            },
-            DataType::Float64 => Encoding::Float64 {
-                values: values
-                    .iter()
-                    .map(|value| float64_of(column.name(), value.as_ref()))
-                    .collect::<Result<Vec<f64>>>()?,
-            },
-            DataType::Utf8 => Encoding::Utf8 {
-                values: values
-                    .iter()
-                    .map(|value| utf8_of(column.name(), value.as_ref()))
-                    .collect::<Result<Vec<String>>>()?,
-            },
-        };
-        chunks.push(ColumnChunk::new(column.name(), encoding, validity));
+        chunks.push(chunk_of(column, values)?);
     }
+
+    // **The hidden columns.** The id is the version's own, and the flag says
+    // whether the row is a tombstone.
+    let ids: Vec<Option<ScalarValue>> =
+        rows.iter().map(|row| Some(ScalarValue::Int64(row.row_id))).collect();
+    let flags: Vec<Option<ScalarValue>> = rows
+        .iter()
+        .map(|row| {
+            let flag = if row.deleted { TOMBSTONE } else { LIVE };
+            Some(ScalarValue::Int64(flag))
+        })
+        .collect();
+    chunks.push(chunk_of(&Column::new(ROW_ID, DataType::Int64, false), &ids)?);
+    chunks.push(chunk_of(&Column::new(DELETED, DataType::Int64, false), &flags)?);
     Ok(chunks)
+}
+
+/// The chunk for one column's values.
+fn chunk_of(column: &Column, values: &[Option<ScalarValue>]) -> Result<ColumnChunk> {
+    let nulls: Vec<usize> = values
+        .iter()
+        .enumerate()
+        .filter_map(|(row, value)| value.is_none().then_some(row))
+        .collect();
+    let validity = NullBitmap::with_nulls(values.len(), &nulls);
+    let encoding = match column.data_type() {
+        DataType::Int64 => Encoding::Int64 {
+            values: values
+                .iter()
+                .map(|value| int64_of(column.name(), value.as_ref()))
+                .collect::<Result<Vec<i64>>>()?,
+        },
+        DataType::Float64 => Encoding::Float64 {
+            values: values
+                .iter()
+                .map(|value| float64_of(column.name(), value.as_ref()))
+                .collect::<Result<Vec<f64>>>()?,
+        },
+        DataType::Utf8 => Encoding::Utf8 {
+            values: values
+                .iter()
+                .map(|value| utf8_of(column.name(), value.as_ref()))
+                .collect::<Result<Vec<String>>>()?,
+        },
+    };
+    Ok(ColumnChunk::new(column.name(), encoding, validity))
 }
 
 /// The integer a value holds, or the placeholder for a NULL.

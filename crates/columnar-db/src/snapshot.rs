@@ -1,19 +1,25 @@
 //! A snapshot: the database's tables as they were at one moment.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use columnar_engine::{
-    AggregateResult, Catalog, Dataset, ExecOptions, FileSetSource, PlanBuilder, QueryPlan,
+    Aggregate, AggregateResult, Catalog, Dataset, ExecOptions, FileSetSource, PlanBuilder,
+    QueryPlan,
 };
 
 use crate::error::{Error, Result};
+use crate::readers::Readers;
 use crate::row::Rows;
 use crate::schema::Schema;
+use crate::versions::live_filter;
 
 /// A table as the snapshot pinned it.
 #[derive(Debug, Clone)]
 pub(crate) struct PinnedTable {
+    pub(crate) name: String,
     pub(crate) schema: Schema,
     pub(crate) files: Vec<PathBuf>,
 }
@@ -35,6 +41,12 @@ pub(crate) struct PinnedTable {
 /// process.** The writer holds the database mutably; the reader holds a
 /// snapshot, which owns everything it needs. So the reader's view is fixed
 /// while the writer writes, and the borrow checker says so.
+///
+/// **And the snapshot's view is the application's.** The hidden columns are
+/// filtered out of every read, the rows that a tombstone retired are
+/// filtered out of every read, and a plan that names a hidden column is
+/// refused — so the reader sees the application's rows and not the
+/// database's bookkeeping.
 #[derive(Debug)]
 pub struct Snapshot {
     tables: BTreeMap<String, PinnedTable>,
@@ -42,6 +54,12 @@ pub struct Snapshot {
     catalog: Catalog,
     /// Which table each pinned path belongs to.
     by_path: BTreeMap<PathBuf, String>,
+    /// The retired versions of each table, and when they were found.
+    dead: RefCell<BTreeMap<String, BTreeSet<i64>>>,
+    /// The readers that are alive.
+    readers: Arc<Readers>,
+    /// This snapshot's own registration.
+    id: u64,
 }
 
 impl Snapshot {
@@ -50,8 +68,10 @@ impl Snapshot {
         tables: BTreeMap<String, PinnedTable>,
         catalog: Catalog,
         by_path: BTreeMap<PathBuf, String>,
+        readers: Arc<Readers>,
+        id: u64,
     ) -> Self {
-        Self { tables, catalog, by_path }
+        Self { tables, catalog, by_path, dead: RefCell::new(BTreeMap::new()), readers, id }
     }
 
     /// The table with that name, as the snapshot pinned it.
@@ -67,7 +87,8 @@ impl Snapshot {
         self.tables.keys().cloned().collect()
     }
 
-    /// The plan, with its join's build side resolved to the **whole table**.
+    /// The plan, with the table's live rows, and with its join's build side
+    /// resolved to the **whole table**.
     ///
     /// **A table is a set of files, and the engine's builder resolves a name
     /// to one path.** The plan the builder makes is right for a file and half
@@ -80,25 +101,124 @@ impl Snapshot {
     /// **And the engine's own join takes a list**: `JoinSpec`'s `build_paths`
     /// is a `Vec`, and several paths are read as one table. So this is the
     /// engine's shape, filled in by the one thing that knows what a table is.
-    fn resolved(&self, plan: &QueryPlan) -> QueryPlan {
-        let mut resolved = plan.clone();
-        let Some(join) = &plan.join else {
-            return resolved;
-        };
-        let Some(first) = join.build_paths.first() else {
-            return resolved;
-        };
-        let Some(name) = self.by_path.get(first) else {
-            return resolved;
-        };
-        let Some(table) = self.tables.get(name) else {
-            return resolved;
-        };
-        let mut join = join.clone();
-        join.build_paths.clone_from(&table.files);
-        resolved.join = Some(join);
-        resolved
+    #[must_use]
+    pub fn plan(&self) -> PlanBuilder<'_> {
+        PlanBuilder::new(&self.catalog)
     }
+
+    /// The plan the database runs: the application's plan, and the live rows.
+    ///
+    /// **Three things are added to the plan.** The live filter — `deleted = 0`
+    /// and one `row_id != <retired id>` per retired version — so the plan
+    /// answers with the rows that are live. The projection — the
+    /// application's columns, when the plan named none — so the hidden
+    /// columns are never materialised. **And the build side's own live
+    /// filter**, so a join's build side holds the live rows and not the
+    /// tombstones.
+    fn effective(&self, name: &str, plan: &QueryPlan) -> Result<QueryPlan> {
+        let Some(table) = self.tables.get(name) else {
+            return Err(Error::UnknownTable { name: name.to_owned() });
+        };
+        check_plan(plan)?;
+        let dead = self.dead_of(table)?;
+        let mut resolved = plan.clone();
+        resolved.filter.extend(live_filter(&dead));
+        if resolved.projection.is_empty() {
+            resolved.projection = table.schema.names().map(str::to_owned).collect();
+        }
+        if let Some(join) = &plan.join {
+            let mut join = join.clone();
+            if let Some(build) = self.build_table(&join.build_paths) {
+                join.build_paths.clone_from(&build.files);
+                let build_dead = self.dead_of(build)?;
+                join.build_filter.extend(live_filter(&build_dead));
+            }
+            resolved.join = Some(join);
+        }
+        Ok(resolved)
+    }
+
+    /// The table a join's build side names.
+    fn build_table(&self, paths: &[PathBuf]) -> Option<&PinnedTable> {
+        let first = paths.first()?;
+        let name = self.by_path.get(first)?;
+        self.tables.get(name)
+    }
+
+    /// The retired versions of a table, and when they were found.
+    ///
+    /// **The set is found once and kept**, because the answer cannot change:
+    /// the files are pinned, and a tombstone in a pinned file is a tombstone
+    /// for the life of the snapshot.
+    fn dead_of(&self, table: &PinnedTable) -> Result<BTreeSet<i64>> {
+        if let Some(dead) = self.dead.borrow().get(&table.name) {
+            return Ok(dead.clone());
+        }
+        let dead = crate::versions::retired(&table.files)?;
+        self.dead.borrow_mut().insert(table.name.clone(), dead.clone());
+        Ok(dead)
+    }
+}
+
+impl Drop for Snapshot {
+    /// **The snapshot gives the files it pinned back**, so a compaction that
+    /// was waiting for it can go on.
+    fn drop(&mut self) {
+        self.readers.release(self.id);
+    }
+}
+
+/// Refuses a plan that names one of the database's hidden columns.
+///
+/// **The hidden columns are the database's own**, and a plan that names one
+/// is asking the database's bookkeeping a question the application has no
+/// business asking. **So it is refused rather than answered.**
+fn check_plan(plan: &QueryPlan) -> Result<()> {
+    for predicate in &plan.filter {
+        check_column(&predicate.column)?;
+    }
+    for name in &plan.projection {
+        check_column(name)?;
+    }
+    if let Some(aggregate) = &plan.aggregate {
+        for name in &aggregate.group_by {
+            check_column(name)?;
+        }
+        for aggregate in &aggregate.aggregates {
+            match aggregate {
+                Aggregate::Sum { expr } => {
+                    for name in expr.columns() {
+                        check_column(name)?;
+                    }
+                }
+                Aggregate::Count { column }
+                | Aggregate::Min { column }
+                | Aggregate::Max { column } => {
+                    check_column(column)?;
+                }
+                Aggregate::CountStar => {}
+            }
+        }
+    }
+    if let Some(sort) = &plan.sort {
+        check_column(&sort.column)?;
+    }
+    if let Some(join) = &plan.join {
+        check_column(&join.probe_key)?;
+        check_column(&join.build_key)?;
+        for predicate in &join.build_filter {
+            check_column(&predicate.column)?;
+        }
+    }
+    Ok(())
+}
+
+/// Refuses a column name that is one of the hidden ones.
+fn check_column(name: &str) -> Result<()> {
+    if crate::versions::is_hidden(name) {
+        return Err(Error::HiddenColumn { column: name.to_owned() });
+    }
+    Ok(())
 }
 
 /// A table, as a snapshot pinned it.
@@ -137,21 +257,24 @@ impl SnapshotTable<'_> {
     /// resolves that name to the whole table when the plan runs.
     #[must_use]
     pub fn plan(&self) -> PlanBuilder<'_> {
-        PlanBuilder::new(&self.snapshot.catalog)
+        self.snapshot.plan()
     }
 
     /// Runs a plan over the table, and answers with the aggregate.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::EmptyTable`] when the table has no rows, and
-    /// [`Error::Engine`] when the engine refuses the plan.
+    /// Returns [`Error::EmptyTable`] when the table has no rows,
+    /// [`Error::HiddenColumn`] when the plan names one of the database's
+    /// hidden columns, and [`Error::Engine`] when the engine refuses the
+    /// plan.
     pub fn execute(&self, plan: &QueryPlan, options: &ExecOptions) -> Result<AggregateResult> {
         if self.table.files.is_empty() {
             return Err(Error::EmptyTable { name: self.name.clone() });
         }
         let source = self.source()?;
-        Ok(source.execute(&self.snapshot.resolved(plan), options)?)
+        let plan = self.snapshot.effective(&self.name, plan)?;
+        Ok(source.execute(&plan, options)?)
     }
 
     /// Runs a plan over the table, and hands the rows out.
@@ -162,13 +285,16 @@ impl SnapshotTable<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Engine`] when the engine refuses the plan.
+    /// Returns [`Error::HiddenColumn`] when the plan names one of the
+    /// database's hidden columns, and [`Error::Engine`] when the engine
+    /// refuses the plan.
     pub fn execute_rows(&self, plan: &QueryPlan, options: &ExecOptions) -> Result<Dataset> {
         if self.table.files.is_empty() {
             return Ok(Dataset::from_chunks(Vec::new()));
         }
         let source = self.source()?;
-        Ok(source.execute_rows(&self.snapshot.resolved(plan), options)?)
+        let plan = self.snapshot.effective(&self.name, plan)?;
+        Ok(source.execute_rows(&plan, options)?)
     }
 
     /// Runs a plan over the table, and hands the rows out as [`Row`]s.
@@ -180,8 +306,9 @@ impl SnapshotTable<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Engine`] when the engine refuses the plan, and
-    /// [`Error::Corrupt`] when a file's rows are not readable.
+    /// Returns [`Error::HiddenColumn`] when the plan names one of the
+    /// database's hidden columns, [`Error::Engine`] when the engine refuses
+    /// the plan, and [`Error::Corrupt`] when a file's rows are not readable.
     pub fn rows(&self, plan: &QueryPlan, options: &ExecOptions) -> Result<Rows> {
         if self.table.files.is_empty() {
             return Ok(Rows::empty(self.schema()));

@@ -6,6 +6,12 @@
 //! two files are compared **byte for byte**. So the database's claim is not
 //! "it wrote something" but "**it wrote the file the store writes**".
 //!
+//! **And the reference holds the two hidden columns**, because every file the
+//! database writes holds them: the row's own id, and the flag that says the
+//! row is not a tombstone. **The bytes are the store's writer's bytes** — the
+//! database only decides the rows and the name, and the name is the store's
+//! own for the first file of a table.
+//!
 //! **And the reference's NULL placeholder is different on purpose.** The
 //! reference says `-1` and `<null>` where the database says `0` and the empty
 //! string. **So if the placeholder ever reached the file, the two files would
@@ -43,6 +49,10 @@ fn schema() -> Schema {
 ///
 /// **The placeholder for the NULL is different on purpose**: the reference
 /// says `-1` and `<null>` where the database says `0` and the empty string.
+///
+/// **And the two hidden columns are here too**, because they are in every
+/// file the database writes: the row's own id, and the flag that says the
+/// row is not a tombstone.
 fn reference_chunks() -> Vec<ColumnChunk> {
     vec![
         ColumnChunk::new("id", Encoding::Int64 { values: vec![1, 2, 3] }, NullBitmap::all_valid(3)),
@@ -52,6 +62,16 @@ fn reference_chunks() -> Vec<ColumnChunk> {
                 values: vec!["one".to_owned(), "<null>".to_owned(), "three".to_owned()],
             },
             NullBitmap::with_nulls(3, &[1]),
+        ),
+        ColumnChunk::new(
+            "row_id",
+            Encoding::Int64 { values: vec![0, 1, 2] },
+            NullBitmap::all_valid(3),
+        ),
+        ColumnChunk::new(
+            "deleted",
+            Encoding::Int64 { values: vec![0, 0, 0] },
+            NullBitmap::all_valid(3),
         ),
     ]
 }
@@ -110,7 +130,7 @@ fn the_database_writes_the_file_the_store_writes() {
         let store =
             columnar_store::Store::open(reference.path().join("tables")).expect("the store opens");
         store
-            .append_rows("t", &reference_chunks(), writer_properties(&[]))
+            .append_rows("t", &reference_chunks(), writer_properties(&["row_id"]))
             .expect("the rows are written");
     }
 
@@ -137,7 +157,7 @@ fn the_engine_reads_the_database_s_rows() {
         let store =
             columnar_store::Store::open(reference.path().join("tables")).expect("the store opens");
         store
-            .append_rows("t", &reference_chunks(), writer_properties(&[]))
+            .append_rows("t", &reference_chunks(), writer_properties(&["row_id"]))
             .expect("the rows are written");
     }
     {

@@ -74,7 +74,10 @@ So the database is **a new crate above the four**.
 
 ### R5 — A row has an **id**, and a row can **change**
 
-- [ ] Every table carries a hidden **`row_id`** column — a `u64` the database assigns and the application never sees.
+- [ ] Every table carries a hidden **`row_id`** column — an **`Int64`** the database assigns and the application never sees.
+      **And the type is the engine's, not a `u64`:** the engine's vocabulary is `Int64`, `Float64` and `Utf8`, and an
+      unsigned type would be a second vocabulary for one column — the very thing the vocabulary's rule refuses. **This
+      corrects the `u64` this requirement first named**, and the correction is recorded in the ADR.
 - [ ] **An update is an append** of the new version and a **tombstone** of the old; **a delete is a tombstone**. Neither
       rewrites a file that exists.
 - [ ] **And compaction** rewrites the live rows into a new file and drops the dead ones — **and its cost per row is

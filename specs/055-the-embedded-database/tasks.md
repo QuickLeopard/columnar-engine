@@ -41,9 +41,9 @@ measures nothing.
 
 ## The rows that change
 
-- [ ] Every table carries a hidden **`row_id`** column.
-- [ ] **An update is an append** of the new version and a **tombstone** of the old; **a delete is a tombstone**.
-- [ ] **And compaction** rewrites the live rows into a new file and drops the dead ones.
+- [x] Every table carries a hidden **`row_id`** column.
+- [x] **An update is an append** of the new version and a **tombstone** of the old; **a delete is a tombstone**.
+- [x] **And compaction** rewrites the live rows into a new file and drops the dead ones.
 
 ## The prices
 
@@ -58,6 +58,8 @@ measures nothing.
 - [ ] A **new section** in `PERF.md`, the decisions in an **ADR** — the storage model, the query language, the index's
       shape — and **STATUS.md**'s bullet moves.
 - [ ] **And the guard checks the published figures inside the section that publishes them.**
+- [ ] **And the ADR records the correction of the spec's `u64` row id** — the engine's vocabulary is `Int64`, `Float64` and
+      `Utf8`, and a `u64` would be a second vocabulary for one column.
 
 ## The closure
 

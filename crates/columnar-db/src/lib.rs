@@ -58,17 +58,23 @@
 //! # The increments
 //!
 //! **What is here now** is the database, the persistent catalog, the schema,
-//! the typed rows and the write path: the rows are checked against the
-//! schema, buffered, and written in the store's grid, and a commit is the
-//! store's five steps. **What comes next** is the snapshot read, the hidden
-//! row id, and the compaction that pays for the append-only model. The whole
-//! of it is spec 055, and the gap's prices are measured before the parts that
-//! depend on them are built.
+//! the typed rows, the write path, the snapshot read, the hidden row id and
+//! the compaction: the rows are checked against the schema, buffered, and
+//! written in the store's grid; a commit is the store's five steps; a read
+//! sees one version of a table; a row that changes leaves a tombstone behind
+//! it rather than being rewritten; and the compaction rewrites the live rows
+//! into one file. **What comes next** is the probe: the catalog's open, the
+//! write on the grid, the snapshot over one file and over many, the scan of a
+//! point lookup, the compaction, and the space amplification. The whole of it
+//! is spec 055, and the index's shape is decided by the scan's figure and not
+//! by an opinion.
 
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
 mod chunks;
+mod readers;
+mod versions;
 
 pub mod catalog;
 pub mod database;
@@ -81,7 +87,7 @@ pub mod table;
 pub mod prelude;
 
 pub use catalog::{Catalog, TableEntry, FORMAT};
-pub use database::{Database, CATALOG_FILE, CATALOG_TMP, TABLES_DIR};
+pub use database::{Compaction, Database, CATALOG_FILE, CATALOG_TMP, TABLES_DIR};
 pub use error::{Error, Result};
 pub use row::{Row, Rows};
 pub use schema::{Column, Schema};

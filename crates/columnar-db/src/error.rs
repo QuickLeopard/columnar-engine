@@ -104,4 +104,25 @@ pub enum Error {
         /// Why the rows are not readable.
         reason: String,
     },
+
+    /// The plan names one of the database's hidden columns.
+    #[error("the column {column} is the database's own, and a plan may not name it")]
+    HiddenColumn {
+        /// The column's name.
+        column: String,
+    },
+
+    /// The schema uses one of the database's hidden column names.
+    #[error("the column {column} is the database's own, and a schema may not use it")]
+    ReservedColumn {
+        /// The column's name.
+        column: String,
+    },
+
+    /// The table has more rows than an id can name.
+    #[error("the table has {rows} rows, and an id cannot name them all")]
+    Rows {
+        /// How many rows the table has.
+        rows: usize,
+    },
 }
