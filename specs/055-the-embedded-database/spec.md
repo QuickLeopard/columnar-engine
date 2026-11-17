@@ -182,3 +182,30 @@ spelling.**
 **So the database's query language is the typed plan**, and the decision is recorded here so that the next increment does
 not ask again. **And the decision is not a refusal of SQL** — it is a refusal of SQL *now*: a front end is a separate
 increment over the same plan, and nothing this increment builds has to be redone when the audience demands one.
+
+### A4 — The hidden columns are **two**, and the tombstone is a **row**
+
+**Why**: an update cannot rewrite the version it replaces — the files are append-only, and a file that is rewritten is a file
+a pinned reader can no longer read. **So the replacement is a tombstone, and the tombstone has to be a row**: a row in the
+data file, beside the new version, so that the two land together — one file, one manifest, one rename. **And a row that says
+"this version is gone" needs a flag to say it**, which is the second hidden column: the `deleted` flag. **And the retired
+version's exclusion is necessarily external** — a file cannot un-live a row by changing its own bytes — so the read filters
+on the flag, which drops the tombstones, and on the retired ids, which drops the versions the tombstones name. **That second
+filter is the tombstone tax**: one predicate per retired version, and the compaction is what pays it back.
+
+**And the ids are read from what is on disk, never written down.** The id a new version gets is the number of versions the
+table has ever had, and that number is the manifest's rows less the retired ones. **A counter kept in the catalog would be a
+second thing to keep consistent with the data**, and a crash between the write and the counter's write would make two rows
+share an id — so the counter is a function of the durable state and there is no window in which it can be wrong.
+
+### A5 — The database owns the **file naming**, and a file is removed only when **no reader holds it**
+
+**Why**: the store names a file after the number of files the manifest holds, and a compaction replaces the manifest with one
+file that names nothing else — **so the store's numbering would start again and the next write would land on a name an old
+file still has**. The database names its files by the highest index in the table's directory plus one, and the bytes are
+still the store's writer's bytes.
+
+**And a compaction removes the files the old manifest named**, because the new file holds every live row and the old ones hold
+nothing an application can see. **But a reader that pinned them still has to read them**, so a snapshot registers the files it
+pinned and gives them back when it is dropped, and a file that is not removed is not lost: it stays outside the manifest, and
+no reader will ever open it.
