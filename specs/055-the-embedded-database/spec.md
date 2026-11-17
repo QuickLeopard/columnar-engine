@@ -56,7 +56,8 @@ So the database is **a new crate above the four**.
 
 ### R3 — The **write path** is typed, and on the grid
 
-- [ ] A row is **typed values** — the engine's own types (`Int64`, `Float64`, `Utf8`, `Bool`) and a nullability per column —
+- [ ] A row is **typed values** — the engine's own types (`Int64`, `Float64`, `Utf8` — **the three the vocabulary
+      actually has**, and a boolean is an `Int64`) and a nullability per column —
       **not** Arrow's, and not a third vocabulary.
 - [ ] **And the rows land on the store's grid**: every batch but the last is **65,536** rows, because **the file's bytes
       depend on it**, and a write that cannot be on the grid is **refused** rather than written.
