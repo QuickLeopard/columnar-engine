@@ -41,18 +41,23 @@
 //!
 //! # The increments
 //!
-//! **What is here now** is the database, the persistent catalog, the schema
-//! and the table handle. **What comes next** is the typed write path, the
-//! snapshot read, the hidden row id, and the compaction that pays for the
-//! append-only model. The whole of it is spec 055, and the gap's prices are
-//! measured before the parts that depend on them are built.
+//! **What is here now** is the database, the persistent catalog, the schema,
+//! the typed rows and the write path: the rows are checked against the
+//! schema, buffered, and written in the store's grid, and a commit is the
+//! store's five steps. **What comes next** is the snapshot read, the hidden
+//! row id, and the compaction that pays for the append-only model. The whole
+//! of it is spec 055, and the gap's prices are measured before the parts that
+//! depend on them are built.
 
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
+mod chunks;
+
 pub mod catalog;
 pub mod database;
 pub mod error;
+pub mod row;
 pub mod schema;
 pub mod table;
 
@@ -61,5 +66,6 @@ pub mod prelude;
 pub use catalog::{Catalog, TableEntry, FORMAT};
 pub use database::{Database, CATALOG_FILE, CATALOG_TMP, TABLES_DIR};
 pub use error::{Error, Result};
+pub use row::Row;
 pub use schema::{Column, Schema};
-pub use table::Table;
+pub use table::{Table, TableMut};

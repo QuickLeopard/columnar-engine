@@ -816,16 +816,20 @@ the decode in place — **not** a smaller number chosen on a guess now.
   corrected where they were published**, in [§3ah](PERF.md#3ah-the-default-moved) and here.
   [§3ai](PERF.md#3ai-the-reader-owns-the-decode) has the tables, and
   [ADR-0064](docs/adr/0064-the-reader-does-not-own-the-decode.md) records it.
-- **The database layer is not built, and its price is not known.** The engine reads Parquet and the store writes it, and
-  between them there is no database: the store says what it is not — *"No SQL. No transactions with rollback. No MVCC, no
+- **The database is being built, and its price is not known yet.** The engine reads Parquet and the store writes it, and
+  between them there was no database: the store says what it is not — *"No SQL. No transactions with rollback. No MVCC, no
   snapshot isolation. No concurrent writers. No row-level updates. No compaction. One writer."* — and the engine's catalog
-  is **in memory**, so it does not survive a restart. **What stands between them is five things** — a catalog that
-  survives a restart, a row that has an identity so that it can change, a read that sees one version of a table and not a
-  mixture of two, an index (or the measurement that says a scan is cheaper than one), and a query language an application
-  can be written against — **and none of them has been measured.** **And the query language is decided: it is the
-  engine's typed plan**, the `QueryPlan` the `PlanBuilder` builds, **and SQL is out of scope with the reason named** — SQL
-  promises subqueries, CTEs, window functions and arbitrary join graphs, and this engine refuses all four. Spec 055 is the
-  increment that prices the gap and builds the database as a **new crate above the four**.
+  is **in memory**, so it did not survive a restart. **Spec 055 builds it, as a new crate above the four**, and
+  `columnar-db` is there with a **persistent catalog** — written by a rename, so a reader sees the old one or the new one
+  and never a half-written one — a **schema in the engine's own vocabulary** (three types wide: `Int64`, `Float64` and
+  `Utf8`), and a **typed write path** whose rows are checked against the schema, buffered, and written in the store's
+  grid, so that the file count grows with the data rather than with the number of inserts. **And the acceptance is the
+  store's own, applied to the database: the rows the database writes are the file the store writes, byte for byte** — with
+  the NULL placeholder deliberately different on the two sides, so the test says so if it ever reaches the file. **What is
+  not built yet**: the snapshot read, the hidden row id, the update, the delete, the compaction and the index — **and none
+  of the gap's prices has been measured.** **And the query language is decided: it is the engine's typed plan**, the
+  `QueryPlan` the `PlanBuilder` builds, **and SQL is out of scope with the reason named** — SQL promises subqueries, CTEs,
+  window functions and arbitrary join graphs, and this engine refuses all four.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a

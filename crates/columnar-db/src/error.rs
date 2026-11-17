@@ -50,4 +50,38 @@ pub enum Error {
         /// Why the schema was refused.
         reason: String,
     },
+
+    /// The row does not have one value per column.
+    #[error("the row has {got} values, and the table has {expected} columns")]
+    RowLength {
+        /// How many columns the table has.
+        expected: usize,
+        /// How many values the row has.
+        got: usize,
+    },
+
+    /// The value's type is not the column's type.
+    #[error("the value for the column {column} is a {got}, and the column is an {expected}")]
+    ValueType {
+        /// The column's name.
+        column: String,
+        /// The column's type.
+        expected: String,
+        /// The value's type.
+        got: String,
+    },
+
+    /// A column that may not hold a NULL holds one.
+    #[error("the column {column} may not hold a NULL")]
+    Null {
+        /// The column's name.
+        column: String,
+    },
+
+    /// The database does not hold a table with that name.
+    #[error("the database does not hold a table named {name}")]
+    UnknownTable {
+        /// The name that was asked for.
+        name: String,
+    },
 }

@@ -38,3 +38,13 @@ columnar-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# The engine and the store, for the tests.
+#
+# The dependency is **path-only**, and that is not a style choice: a
+# path-only dependency is **dropped** from the published manifest, and a
+# dependency with a version is not. The crate is not published yet, and when
+# it is, its dev-dependencies must not hold the publish up.
+columnar-engine = { path = "../columnar-engine" }
+columnar-store = { path = "../columnar-store" }

@@ -10,25 +10,25 @@ measures nothing.
 
 ## The crate
 
-- [ ] `columnar-db` is a workspace member, and it depends on `columnar-engine` and `columnar-store` — **and on nothing
+- [x] `columnar-db` is a workspace member, and it depends on `columnar-engine` and `columnar-store` — **and on nothing
       else in this workspace**.
-- [ ] **And the four crates are not changed to make it work.** A change to any of them is a change to a published
+- [x] **And the four crates are not changed to make it work.** A change to any of them is a change to a published
       surface: it is made only if a defect is found, and then it is published.
-- [ ] **And its public surface is small and it is named** — the crate's front page lists the names, the way the engine's
+- [x] **And its public surface is small and it is named** — the crate's front page lists the names, the way the engine's
       does.
 
 ## The catalog
 
-- [ ] A table's **name**, **schema** and **path** live on disk, and the catalog is replaced **atomically** — written to a
+- [x] A table's **name**, **schema** and **path** live on disk, and the catalog is replaced **atomically** — written to a
       temporary file and renamed over the old one.
-- [ ] **And a reopened database sees the same tables**, with the same schemas.
+- [x] **And a reopened database sees the same tables**, with the same schemas.
 
 ## The write path
 
-- [ ] A row is **typed values** — the engine's own types, and a nullability per column.
-- [ ] **And the rows land on the store's grid** — every batch but the last is **65,536** rows — and a write that cannot be
+- [x] A row is **typed values** — the engine's own types, and a nullability per column.
+- [x] **And the rows land on the store's grid** — every batch but the last is **65,536** rows — and a write that cannot be
       on the grid is **refused**.
-- [ ] **And the commit is the store's five steps**: no write-ahead log, no rollback, no second recovery path.
+- [x] **And the commit is the store's five steps**: no write-ahead log, no rollback, no second recovery path.
 
 ## The read path
 

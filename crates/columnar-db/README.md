@@ -18,13 +18,20 @@ which table, it gives a row an identity, and it hands a read a snapshot.
 
 ```rust
 use columnar_db::prelude::*;
+use columnar_engine::ScalarValue;
 
 let mut database = Database::open("/tmp/warehouse")?;
 let schema = Schema::new(vec![
     Column::new("id", DataType::Int64, false),
     Column::new("name", DataType::Utf8, true),
 ])?;
-let table = database.create_table("lineitem", schema)?;
+
+let mut table = database.create_table("lineitem", schema)?;
+table.insert(&[Row::filled(vec![
+    ScalarValue::Int64(1),
+    ScalarValue::Utf8("first".to_owned()),
+])])?;
+table.commit()?;
 
 assert_eq!(table.name(), "lineitem");
 assert_eq!(table.schema().len(), 2);
@@ -33,6 +40,19 @@ assert_eq!(table.schema().len(), 2);
 
 The catalog is **written when the table is created**, and it is JSON: small, readable, and diffable by a human when
 something has gone wrong.
+
+## The write path
+
+**The rows are checked against the schema before they are buffered**: a row with the wrong number of values, a value of
+the wrong type, or a `NULL` in a column that may not hold one, is refused and never reaches the buffer.
+
+**And the rows are grouped.** The store's `append` writes one file per call, so a database that committed every insert
+would grow one file per insert, and every read would open every one of them. **So the buffer is written when it reaches
+the grid** — 65,536 rows, the store's own grid — and the file count then grows with the data rather than with the number
+of inserts.
+
+**And a commit is the store's five steps**: the file made durable, the manifest written, made durable and renamed over
+the old one, the directory made durable. There is no write-ahead log, and the database adds none.
 
 ## The vocabulary
 
