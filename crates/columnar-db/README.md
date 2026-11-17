@@ -54,6 +54,28 @@ of inserts.
 **And a commit is the store's five steps**: the file made durable, the manifest written, made durable and renamed over
 the old one, the directory made durable. There is no write-ahead log, and the database adds none.
 
+## The read path
+
+**A snapshot pins the manifests it read**, so the file list each manifest named is that table for the life of the
+snapshot — and a write that lands afterwards is a write the snapshot does not see. **A reader sees the old file set or
+the new one, never a mixture.**
+
+**And the query language is the engine's.** The plan is built with the engine's own `PlanBuilder`, over the engine's own
+expressions, and the engine's surface is not widened to serve the database.
+
+**And a table is a set of files, so the database resolves a join's build side to the whole table.** The engine's builder
+resolves a name to one path; the engine's join takes a list of paths; so the database fills the list in — with the
+snapshot's pinned files.
+
+```rust
+let snapshot = database.snapshot()?;
+let table = snapshot.table("lineitem").expect("the table is there");
+let plan = table.plan().filter(col("id").gt(1)).projection(["id"]).build()?;
+let rows = table.rows(&plan, &ExecOptions::default())?;
+```
+
+**And the rows come back in the engine's own values** — a `ScalarValue` per column, a NULL being the absence of one.
+
 ## The vocabulary
 
 **The engine's, and only the engine's.** A column's type is one of `Int64`, `Float64` or `Utf8`, and the values are the

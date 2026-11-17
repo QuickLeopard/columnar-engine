@@ -825,9 +825,12 @@ the decode in place — **not** a smaller number chosen on a guess now.
   `Utf8`), and a **typed write path** whose rows are checked against the schema, buffered, and written in the store's
   grid, so that the file count grows with the data rather than with the number of inserts. **And the acceptance is the
   store's own, applied to the database: the rows the database writes are the file the store writes, byte for byte** — with
-  the NULL placeholder deliberately different on the two sides, so the test says so if it ever reaches the file. **What is
-  not built yet**: the snapshot read, the hidden row id, the update, the delete, the compaction and the index — **and none
-  of the gap's prices has been measured.** **And the query language is decided: it is the engine's typed plan**, the
+  the NULL placeholder deliberately different on the two sides, so the test says so if it ever reaches the file. **And the
+  snapshot read is there too**: a snapshot pins every table's manifest, so **a reader sees the old file set or the new
+  one and never a mixture**, and the read path is the engine's own plan — **with the database resolving a join's build
+  side to the whole table**, because a table is a set of files and the engine's builder resolves a name to one path.
+  **What is not built yet**: the hidden row id, the update, the delete, the compaction and the index — **and none of the
+  gap's prices has been measured.** **And the query language is decided: it is the engine's typed plan**, the
   `QueryPlan` the `PlanBuilder` builds, **and SQL is out of scope with the reason named** — SQL promises subqueries, CTEs,
   window functions and arbitrary join graphs, and this engine refuses all four.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.

@@ -34,6 +34,22 @@
 //! supported" honestly. **A front end is a separate increment over the same
 //! plan**, and nothing here has to be redone when one is wanted.
 //!
+//! ```
+//! use columnar_db::prelude::*;
+//! use columnar_engine::Catalog as EngineCatalog;
+//!
+//! // The plan is the engine's plan: the engine's own builder, over the
+//! // engine's own catalog, and the engine's own expressions.
+//! let catalog = EngineCatalog::new();
+//! let plan = PlanBuilder::new(&catalog)
+//!     .filter(col("id").gt(1))
+//!     .projection(["id"])
+//!     .build()?;
+//!
+//! assert!(!plan.filter.is_empty());
+//! # Ok::<(), columnar_db::Error>(())
+//! ```
+//!
 //! # What it is not
 //!
 //! **No SQL. No rollback. No second writer.** One writer and many readers: a
@@ -59,6 +75,7 @@ pub mod database;
 pub mod error;
 pub mod row;
 pub mod schema;
+pub mod snapshot;
 pub mod table;
 
 pub mod prelude;
@@ -66,6 +83,7 @@ pub mod prelude;
 pub use catalog::{Catalog, TableEntry, FORMAT};
 pub use database::{Database, CATALOG_FILE, CATALOG_TMP, TABLES_DIR};
 pub use error::{Error, Result};
-pub use row::Row;
+pub use row::{Row, Rows};
 pub use schema::{Column, Schema};
+pub use snapshot::{Snapshot, SnapshotTable};
 pub use table::{Table, TableMut};

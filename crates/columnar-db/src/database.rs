@@ -12,6 +12,7 @@ use crate::catalog::Catalog;
 use crate::error::{Error, Result};
 use crate::row::Row;
 use crate::schema::Schema;
+use crate::snapshot::{PinnedTable, Snapshot};
 use crate::table::{Table, TableMut};
 
 /// The catalog's name, inside the database's directory.
@@ -143,6 +144,40 @@ impl Database {
     #[must_use]
     pub fn tables(&self) -> Vec<String> {
         self.catalog.names().map(str::to_owned).collect()
+    }
+
+    /// Takes a snapshot of the database.
+    ///
+    /// **The snapshot pins every table's manifest**, so the file list each
+    /// manifest named is that table for the life of the snapshot. **A write
+    /// that lands afterwards is a write the snapshot does not see**, and a
+    /// reader sees the old file set or the new one, never a mixture.
+    ///
+    /// **And the snapshot owns what it needs**, so the reader does not hold
+    /// the database: the writer can write while the reader reads, and the
+    /// reader's view does not move.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Store`] when a manifest cannot be read.
+    pub fn snapshot(&self) -> Result<Snapshot> {
+        let mut tables = BTreeMap::new();
+        let mut catalog = columnar_engine::Catalog::new();
+        let mut by_path = BTreeMap::new();
+        for name in self.catalog.names() {
+            let entry = self.catalog.get(name).expect("the catalog holds the name");
+            let schema = entry.schema().clone();
+            let files = self.store.table(name)?.map_or_else(Vec::new, |table| table.paths());
+            // **The engine's catalog resolves a name to one path**, and the
+            // database resolves it to the whole table. The first file is the
+            // name's anchor, and the pinned list is the table.
+            if let Some(first) = files.first() {
+                catalog.insert(name, first.clone());
+                by_path.insert(first.clone(), name.to_owned());
+            }
+            tables.insert(name.to_owned(), PinnedTable { schema, files });
+        }
+        Ok(Snapshot::new(tables, catalog, by_path))
     }
 
     /// Writes the rows waiting for a table, and commits them.

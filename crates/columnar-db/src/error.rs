@@ -84,4 +84,24 @@ pub enum Error {
         /// The name that was asked for.
         name: String,
     },
+
+    /// The engine refused.
+    #[error("the engine refused: {0}")]
+    Engine(#[from] columnar_engine::EngineError),
+
+    /// The table has no rows, so there is nothing to aggregate.
+    #[error("the table {name} has no rows")]
+    EmptyTable {
+        /// The table's name.
+        name: String,
+    },
+
+    /// The file's rows are not readable.
+    #[error("the column {column} is not readable: {reason}")]
+    Corrupt {
+        /// The column's name.
+        column: String,
+        /// Why the rows are not readable.
+        reason: String,
+    },
 }

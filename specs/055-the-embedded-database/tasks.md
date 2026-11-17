@@ -32,12 +32,12 @@ measures nothing.
 
 ## The read path
 
-- [ ] A **snapshot** pins the manifest it read, and the file list that manifest names is the table for the life of the
+- [x] A **snapshot** pins the manifest it read, and the file list that manifest names is the table for the life of the
       snapshot.
-- [ ] **And a reader sees the old file set or the new one, never a mixture.**
-- [ ] **And the query language is the typed plan** — the engine's `QueryPlan`, `PlanBuilder` and `ColumnExpr`, with the
+- [x] **And a reader sees the old file set or the new one, never a mixture.**
+- [x] **And the query language is the typed plan** — the engine's `QueryPlan`, `PlanBuilder` and `ColumnExpr`, with the
       engine's surface **not widened**.
-- [ ] **And the database's values are the engine's `ScalarValue`.**
+- [x] **And the database's values are the engine's `ScalarValue`.**
 
 ## The rows that change
 
