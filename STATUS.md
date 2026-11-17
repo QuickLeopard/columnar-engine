@@ -829,8 +829,13 @@ the decode in place — **not** a smaller number chosen on a guess now.
   snapshot read is there too**: a snapshot pins every table's manifest, so **a reader sees the old file set or the new
   one and never a mixture**, and the read path is the engine's own plan — **with the database resolving a join's build
   side to the whole table**, because a table is a set of files and the engine's builder resolves a name to one path.
-  **What is not built yet**: the hidden row id, the update, the delete, the compaction and the index — **and none of the
-  gap's prices has been measured.** **And the query language is decided: it is the engine's typed plan**, the
+  **And the rows that change are there now**: every row carries a hidden `row_id` and a hidden `deleted` flag, and the
+  application names neither — a schema may not use either name and a plan that names one is refused. **A row that changes
+  does not change in place**: an update leaves a tombstone behind the version it replaces and a delete is a tombstone, and
+  the compaction rewrites the live rows into one file, which is what pays the tombstone tax back. **And the ids are read
+  from what is on disk and never written down** — the manifest's rows less the retired ones — so there is no counter to
+  lose. **What is not built yet**: the index — **and none of the gap's prices has been measured.** **And the query language
+  is decided: it is the engine's typed plan**, the
   `QueryPlan` the `PlanBuilder` builds, **and SQL is out of scope with the reason named** — SQL promises subqueries, CTEs,
   window functions and arbitrary join graphs, and this engine refuses all four.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
