@@ -1,0 +1,40 @@
+[package]
+name = "columnar-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "An embedded database for the columnar engine: a persistent catalog, a typed write path, and a snapshot read"
+# The crate's own README, not the repository's. A reader on crates.io opens
+# the crate's front page, and the portfolio's front page is not the crate's.
+readme = "README.md"
+keywords = ["columnar", "embedded", "database", "parquet"]
+categories = ["database-implementations", "data-structures"]
+# The crate is **not** published yet, and the reason is its own shape rather
+# than a plan: its surface is still moving -- the write path, the snapshot and
+# the compaction are the next increments -- and the four crates it sits above
+# are not on crates.io either. Spec 054 publishes those four; this crate
+# publishes when its own surface has stopped moving.
+publish = false
+# The database's probe is this project's evidence harness, not an embedder's
+# example, so the package does not carry it.
+exclude = ["examples/**"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The database sits **above** the engine and the store: it reads through the
+# engine's plan and it writes through the store's commit. It depends on
+# **nothing else in this workspace** -- not on the core, whose vocabulary the
+# engine already re-exports, and not on the harness crates.
+columnar-engine = { workspace = true }
+columnar-store = { workspace = true }
+# The catalog is JSON, the way the store's manifest is JSON: small, readable,
+# and diffable by a human when something has gone wrong.
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

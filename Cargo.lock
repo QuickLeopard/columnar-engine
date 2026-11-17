@@ -593,6 +593,17 @@ name = "columnar-core"
 version = "0.1.0"
 
 [[package]]
+name = "columnar-db"
+version = "0.1.0"
+dependencies = [
+ "columnar-engine",
+ "columnar-store",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "columnar-engine"
 version = "0.1.0"
 dependencies = [

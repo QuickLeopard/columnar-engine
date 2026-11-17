@@ -33,6 +33,15 @@
 #          v
 #   (the engine reads what the store writes -- the glue is a path)
 #
+#   columnar-db         the database: it sits **above** the engine and the
+#          |            store, and it depends on both and on nothing else in
+#          |            this workspace. The engine's vocabulary is its own, so
+#          |            it names the core's types through the engine.
+#          |
+#          v
+#   (the database reads through the engine's plan and writes through the
+#    store's commit)
+#
 # `columnar-core` is the vocabulary. Everything else is an implementation of it.
 
 [workspace]
@@ -42,6 +51,7 @@ members = [
     "crates/columnar-kernels",
     "crates/columnar-engine",
     "crates/columnar-store",
+    "crates/columnar-db",
     "crates/columnar-testdata",
     "crates/columnar-bench",
     "crates/columnar-cli",
@@ -118,6 +128,7 @@ columnar-kernels = { path = "crates/columnar-kernels", version = "0.1.0" }
 columnar-engine = { path = "crates/columnar-engine", version = "0.1.0" }
 columnar-testdata = { path = "crates/columnar-testdata", version = "0.1.0" }
 columnar-store = { path = "crates/columnar-store", version = "0.1.0" }
+columnar-db = { path = "crates/columnar-db", version = "0.1.0" }
 columnar-bench = { path = "crates/columnar-bench", version = "0.1.0" }
 columnar-web = { path = "crates/columnar-web", version = "0.1.0" }
 

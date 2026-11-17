@@ -488,6 +488,8 @@ crates/
                      materialisation
   columnar-store     the write side: a writer, a manifest, a commit and a catalog --
                      the files the engine reads, and the truth about which ones
+  columnar-db        the embedded database: a persistent catalog, a typed write
+                     path and a snapshot read, on the engine's own plan
   columnar-bench     the kernel A/B, the machine spec, the external comparison driver,
                      the performance gate, the thread-count sweep
   columnar-cli       dataset / query / bench / compare / gate / sweep
