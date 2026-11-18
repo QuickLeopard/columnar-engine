@@ -378,6 +378,13 @@ impl Database {
     ///
     /// **And the old files go when no reader holds them.** A reader that
     /// pinned them still has to read them, so they stay until it is gone.
+    ///
+    /// **And the read is a file at a time.** The compaction is the one thing in the database that
+    /// reads the whole table, and one plan over the whole table is a plan the engine's budget
+    /// refuses above a few million rows — so the compaction reads **one file at a time**, writes
+    /// the rows it finds as it goes, and lets the file go. **So the table's size is not the
+    /// compaction's ceiling any more**: the rows in flight are a file's rows, and the file the
+    /// compaction writes is one file whatever the table's size.
     pub(crate) fn compact(&mut self, name: &str) -> Result<Compaction> {
         let Some(entry) = self.catalog.get(name) else {
             return Err(Error::UnknownTable { name: name.to_owned() });
@@ -396,13 +403,40 @@ impl Database {
         }
         let dead = self.dead_set(name)?;
         let names: Vec<String> = schema.names().map(str::to_owned).collect();
-        let live = crate::versions::live(&files, &dead, schema.len(), &names)?;
-        let rows = renumbered(&live)?;
-        let chunks = crate::chunks::chunks_of(&schema, &rows)?;
         let nullable = crate::chunks::optionality_of(&schema);
         let dir = self.store.table_dir(name);
         fs::create_dir_all(&dir)?;
-        let file = write_new_file(&dir, &chunks, &nullable)?;
+        let file_name = next_file_name(&dir)?;
+        // **The file's schema is the rows' own, and it is written down before
+        // the first row**: the writer's schema is fixed when it is created, and
+        // the rows' encodings come from the table's schema and not from the
+        // data — so the schema of an empty batch is the schema of every batch.
+        let empty = crate::chunks::chunks_of(&schema, &[])?;
+        let file_schema = columnar_store::rows::schema(&empty, &nullable)?;
+        let mut writer =
+            Writer::create_with(&dir, &file_name, file_schema, writer_properties(&[ROW_ID]))?;
+
+        // **The rows waiting to be written**, a grid's worth at a time: the
+        // compaction's own memory is the rows it has read and not yet written.
+        let mut waiting: Vec<Stored> = Vec::with_capacity(columnar_store::BATCH_ROWS);
+        let mut next_id: i64 = 0;
+        let mut written: u64 = 0;
+        for file in &files {
+            // **One file, one plan**: the live rows of this file, and the
+            // retired versions that are not in it.
+            let live =
+                crate::versions::live(std::slice::from_ref(file), &dead, schema.len(), &names)?;
+            waiting.extend(renumbered(&live, &mut next_id)?);
+            written = written.saturating_add(live.ids.len() as u64);
+            if waiting.len() >= columnar_store::BATCH_ROWS {
+                let rows: Vec<Stored> = waiting.drain(..columnar_store::BATCH_ROWS).collect();
+                write_compacted(&mut writer, &schema, &nullable, &rows)?;
+            }
+        }
+        // **And the rows that did not fill a grid.**
+        let rows = std::mem::take(&mut waiting);
+        write_compacted(&mut writer, &schema, &nullable, &rows)?;
+        let file = writer.close()?;
         let mut manifest = Manifest::new(name);
         manifest.add(file);
         columnar_store::commit(&dir, &manifest)?;
@@ -411,8 +445,7 @@ impl Database {
         // **And the table has no retired versions left.**
         self.dead.insert(name.to_owned(), BTreeSet::new());
         let (reclaimed, pending) = self.reclaim();
-        let rows = u64::try_from(live.ids.len()).unwrap_or(u64::MAX);
-        Ok(Compaction { rows, reclaimed, pending })
+        Ok(Compaction { rows: written, reclaimed, pending })
     }
 
     /// The retired versions of a table.
@@ -536,15 +569,47 @@ fn stored_rows(rows: &[Pending], base: i64) -> Vec<Stored> {
 
 /// The live rows, renumbered: a compacted table's versions are `0, 1, 2, ...`
 /// in the order they are written.
-fn renumbered(live: &Live) -> Result<Vec<Stored>> {
+///
+/// **And the numbering runs on across the files**, because the compaction reads
+/// them one at a time and the table's ids are the order they are written in —
+/// and not the order one file's rows happen to be in.
+fn renumbered(live: &Live, next_id: &mut i64) -> Result<Vec<Stored>> {
     let rows = live.ids.len();
     let mut stored = Vec::with_capacity(rows);
     for row in 0..rows {
         let values = live.values.iter().map(|column| column.get(row).cloned().flatten()).collect();
-        let row_id = i64::try_from(row).map_err(|_| Error::Rows { rows })?;
+        if *next_id < 0 {
+            return Err(Error::Rows { rows });
+        }
+        let row_id = *next_id;
+        *next_id = next_id.saturating_add(1);
         stored.push(Stored { values, row_id, deleted: false });
     }
     Ok(stored)
+}
+
+/// Writes the compaction's rows into the file it is building.
+///
+/// **And the file is written as the rows arrive.** The batches go out on the
+/// store's grid, and the schema is the first batch's — which is the same in
+/// every batch, because the rows' encodings come from the table's schema and
+/// not from the data.
+///
+/// **And the rows are the grid's worth**: the compaction hands over a grid's
+/// rows at a time, so the file's batches are on the grid and the file's bytes
+/// are a function of the rows and the grid, and not of the files the rows came
+/// from.
+fn write_compacted(
+    writer: &mut Writer,
+    schema: &Schema,
+    nullable: &[bool],
+    rows: &[Stored],
+) -> Result<()> {
+    let chunks = crate::chunks::chunks_of(schema, rows)?;
+    for batch in &columnar_store::rows::batches(&chunks, nullable)? {
+        writer.write(batch)?;
+    }
+    Ok(())
 }
 
 /// The name of the next file in a table's directory.

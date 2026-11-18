@@ -346,6 +346,55 @@ fn the_compaction_rewrites_the_live_rows_into_one_file() {
 }
 
 #[test]
+fn a_compaction_crosses_the_grid() {
+    // **A table of more than a grid's worth of rows**, so the compaction's
+    // output holds a grid's worth of rows in one batch and the rest in
+    // another -- and the rows come from more than one file.
+    let scratch = Scratch::new("grid");
+    let grid = columnar_store::BATCH_ROWS;
+
+    let mut database = Database::open(scratch.path()).expect("the database opens");
+    {
+        let mut table = database.create_table("t", schema()).expect("the table is created");
+        let ids = 1..=i64::try_from(grid + 1_000).expect("the rows fit");
+        table.insert(&rows(ids)).expect("the rows are accepted");
+        table.commit().expect("the rows are written");
+        // **And a row is retired**, so the compaction has something to leave
+        // behind.
+        table.delete(col("id").eq(1)).expect("the delete lands");
+    }
+
+    // **The table holds more than one file**, so the compaction reads more
+    // than one.
+    let before = files_of(scratch.path(), "t");
+    assert!(before.len() > 1, "the table holds more than one file");
+
+    {
+        let mut table = database.table_mut("t").expect("the table is there");
+        let compaction = table.compact().expect("the table is compacted");
+        assert_eq!(compaction.rows as usize, grid + 1_000 - 1, "the live rows are the ones that are left");
+    }
+
+    // **And the table holds one file now**, and it holds every live row.
+    let files = files_of(scratch.path(), "t");
+    assert_eq!(files.len(), 1, "the compaction leaves one file");
+    let written = rows_of(&file_at(&files, 0));
+    assert_eq!(written.len(), grid + 1_000 - 1, "the file holds every live row");
+
+    // **And the versions are numbered again**, across the files the rows came
+    // from: 0, 1, 2, ... in the order they are written.
+    let ids = column_of(&written, "row_id");
+    assert_eq!(ids.len(), grid + 1_000 - 1);
+    assert_eq!(ids.first().copied(), Some(0), "the first version is 0");
+    let last = i64::try_from(grid + 1_000 - 2).expect("the rows fit");
+    assert_eq!(ids.last().copied(), Some(last), "and the last is the row before it");
+    assert!(
+        ids.windows(2).all(|pair| pair[1] == pair[0] + 1),
+        "the versions are consecutive"
+    );
+}
+
+#[test]
 fn a_compacted_table_numbers_its_versions_again() {
     let scratch = Scratch::new("renumber");
 

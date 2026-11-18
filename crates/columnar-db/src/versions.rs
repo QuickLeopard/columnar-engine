@@ -115,21 +115,29 @@ pub(crate) struct Live {
 /// The retired versions of a table: the ids its tombstones name.
 ///
 /// **The query is the tombstones' own rows**: the rows whose `deleted` flag is
-/// set, and their `row_id`. One scan of the table's files, and the answer is
+/// set, and their `row_id`. A scan of the table's files, and the answer is
 /// the whole of what a read has to exclude.
+///
+/// **And the files are read one at a time.** The answer is the same either way — the union of the
+/// tombstones' ids — and one plan over the whole table would make the table's size the read's
+/// ceiling: the plan's estimate is the rows it materialises, and a table of six million rows is a
+/// plan the engine's budget refuses. **So the read is a plan a file**, and the set that comes back
+/// is the union of the files' answers.
 pub(crate) fn retired(files: &[PathBuf]) -> Result<BTreeSet<i64>> {
     let plan = QueryPlan::new(
         vec![Predicate::new(DELETED, ComparisonOp::Eq, ScalarValue::Int64(TOMBSTONE))],
         vec![ROW_ID.to_owned()],
         None,
     );
-    let dataset = read(files, &plan)?;
-    let (_, columns) = columns_of(&dataset)?;
     let mut ids = BTreeSet::new();
-    if let Some(column) = columns.first() {
-        for value in column {
-            if let Some(ScalarValue::Int64(id)) = value {
-                ids.insert(*id);
+    for file in files {
+        let dataset = read(std::slice::from_ref(file), &plan)?;
+        let (_, columns) = columns_of(&dataset)?;
+        if let Some(column) = columns.first() {
+            for value in column {
+                if let Some(ScalarValue::Int64(id)) = value {
+                    ids.insert(*id);
+                }
             }
         }
     }
