@@ -167,23 +167,27 @@ impl Store {
     /// engine does not learn the grid -- its own reader's batch is its own
     /// business -- and a batch that cannot be on the grid is still an error.
     ///
-    /// The **schema** is the store's own: a column that holds no NULL is
-    /// written REQUIRED, and a column that holds one is written OPTIONAL. The
-    /// engine's rows say which rows are NULL and not whether a column may
-    /// be, and the Parquet writer makes that difference visible in the bytes.
+    /// **The optionality is the caller's**, one flag a column, in the columns'
+    /// own order: a column that may hold a NULL is written OPTIONAL, and one
+    /// that may not is written REQUIRED. **The engine's rows say which rows are
+    /// NULL and not whether a column may be**, and the Parquet writer makes
+    /// that difference visible in the bytes. A caller that has only the rows
+    /// can take [`crate::rows::nullability`], which is the rows' own optionality.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Name`] if the table's name is not one a store can hold,
-    /// [`Error::NoRows`] if there are no rows, and [`Error::Io`] if the file
-    /// system refuses.
+    /// [`Error::Optionality`] if the rows and the optionality do not have the
+    /// same number of columns, [`Error::NoRows`] if there are no rows, and
+    /// [`Error::Io`] if the file system refuses.
     pub fn append_rows(
         &self,
         name: &str,
         rows: &[columnar_core::ColumnChunk],
+        nullable: &[bool],
         properties: WriterProperties,
     ) -> Result<Manifest> {
-        let batches = crate::rows::batches(rows)?;
+        let batches = crate::rows::batches(rows, nullable)?;
         self.append_with(name, &batches, properties)
     }
 }

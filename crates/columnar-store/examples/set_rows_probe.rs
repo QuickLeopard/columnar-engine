@@ -347,7 +347,12 @@ fn file_bytes(path: &Path) -> u64 {
 /// NULL is written REQUIRED.
 fn write_rows(store: &Store, name: &str, rows: &[columnar_core::ColumnChunk]) -> PathBuf {
     let manifest = store
-        .append_rows(name, rows, writer_properties(&[COMMENT_COLUMN]))
+        .append_rows(
+            name,
+            rows,
+            &columnar_store::rows::nullability(rows),
+            writer_properties(&[COMMENT_COLUMN]),
+        )
         .expect("the rows are written");
     let file = manifest.files.last().expect("the manifest names a file").name.clone();
     store.file_path(name, &file)

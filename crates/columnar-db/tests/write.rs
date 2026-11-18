@@ -76,6 +76,53 @@ fn reference_chunks() -> Vec<ColumnChunk> {
     ]
 }
 
+/// The optionality the database writes its files with.
+///
+/// **The application's columns are optional and the hidden ones are required, and the tombstone is
+/// the reason**: a tombstone holds no value of the application's, so the application's columns carry
+/// an absent value in every file that holds one — and the `id` and `name` are optional in the file
+/// whether this batch holds a NULL in them or not.
+fn optionality() -> Vec<bool> {
+    vec![true, true, false, false]
+}
+
+/// The rows of a table whose columns hold no NULL.
+///
+/// **The rows are the same rows and not the same rows**: the `name` holds a
+/// value in every row, so a file written under the rows' own optionality would
+/// say the column may not hold a NULL — and the database's own rule says the
+/// application's columns are optional, because a tombstone holds no value in
+/// them.
+fn rows_without_nulls() -> Vec<Row> {
+    vec![
+        Row::filled(vec![ScalarValue::Int64(1), ScalarValue::Utf8("one".to_owned())]),
+        Row::filled(vec![ScalarValue::Int64(2), ScalarValue::Utf8("two".to_owned())]),
+        Row::filled(vec![ScalarValue::Int64(3), ScalarValue::Utf8("three".to_owned())]),
+    ]
+}
+
+/// The same rows, as the engine's chunks, with no NULL in the `name`.
+fn chunks_without_nulls() -> Vec<ColumnChunk> {
+    vec![
+        ColumnChunk::new("id", Encoding::Int64 { values: vec![1, 2, 3] }, NullBitmap::all_valid(3)),
+        ColumnChunk::new(
+            "name",
+            Encoding::Utf8 { values: vec!["one".to_owned(), "two".to_owned(), "three".to_owned()] },
+            NullBitmap::all_valid(3),
+        ),
+        ColumnChunk::new(
+            "row_id",
+            Encoding::Int64 { values: vec![0, 1, 2] },
+            NullBitmap::all_valid(3),
+        ),
+        ColumnChunk::new(
+            "deleted",
+            Encoding::Int64 { values: vec![0, 0, 0] },
+            NullBitmap::all_valid(3),
+        ),
+    ]
+}
+
 /// A scratch directory for one test, which removes itself when it is dropped.
 struct Scratch {
     path: PathBuf,
@@ -130,7 +177,7 @@ fn the_database_writes_the_file_the_store_writes() {
         let store =
             columnar_store::Store::open(reference.path().join("tables")).expect("the store opens");
         store
-            .append_rows("t", &reference_chunks(), writer_properties(&["row_id"]))
+            .append_rows("t", &reference_chunks(), &optionality(), writer_properties(&["row_id"]))
             .expect("the rows are written");
     }
 
@@ -149,6 +196,63 @@ fn the_database_writes_the_file_the_store_writes() {
 }
 
 #[test]
+fn the_file_says_the_database_s_own_rule_and_not_the_rows_own() {
+    let promised = Scratch::new("promised");
+    let derived = Scratch::new("derived");
+    let written = Scratch::new("written");
+
+    // **The reference the database writes**: the rows, straight to the store,
+    // with the database's own optionality.
+    {
+        let store =
+            columnar_store::Store::open(promised.path().join("tables")).expect("the store opens");
+        store
+            .append_rows(
+                "t",
+                &chunks_without_nulls(),
+                &optionality(),
+                writer_properties(&["row_id"]),
+            )
+            .expect("the rows are written");
+    }
+
+    // **The reference the store used to write**: the same rows, with the
+    // rows' own optionality — which says the `name` may not hold a NULL,
+    // because this batch happens to hold none.
+    {
+        let store =
+            columnar_store::Store::open(derived.path().join("tables")).expect("the store opens");
+        let chunks = chunks_without_nulls();
+        store
+            .append_rows(
+                "t",
+                &chunks,
+                &columnar_store::rows::nullability(&chunks),
+                writer_properties(&["row_id"]),
+            )
+            .expect("the rows are written");
+    }
+
+    // **The database**: the same rows, as typed values.
+    {
+        let mut database = Database::open(written.path()).expect("the database opens");
+        let mut table = database.create_table("t", schema()).expect("the table is created");
+        table.insert(&rows_without_nulls()).expect("the rows are accepted");
+        table.commit().expect("the rows are written");
+    }
+
+    // **And the database's file is the database's file, and not the rows' file.**
+    let promised_bytes = fs::read(the_file(promised.path())).expect("the promised file reads");
+    let derived_bytes = fs::read(the_file(derived.path())).expect("the derived file reads");
+    let written_bytes = fs::read(the_file(written.path())).expect("the file reads");
+    assert_eq!(
+        promised_bytes, written_bytes,
+        "the database writes the file its own row model says"
+    );
+    assert_ne!(derived_bytes, written_bytes, "and not the file the rows' happenstance says");
+}
+
+#[test]
 fn the_engine_reads_the_database_s_rows() {
     let reference = Scratch::new("engine-reference");
     let written = Scratch::new("engine-written");
@@ -157,7 +261,7 @@ fn the_engine_reads_the_database_s_rows() {
         let store =
             columnar_store::Store::open(reference.path().join("tables")).expect("the store opens");
         store
-            .append_rows("t", &reference_chunks(), writer_properties(&["row_id"]))
+            .append_rows("t", &reference_chunks(), &optionality(), writer_properties(&["row_id"]))
             .expect("the rows are written");
     }
     {

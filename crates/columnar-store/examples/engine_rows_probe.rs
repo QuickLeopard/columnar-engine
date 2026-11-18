@@ -234,7 +234,12 @@ fn engine_pass(path: &Path, store: &Store, table: &str) -> (Pass, Duration, Dura
 
     let append_started = Instant::now();
     let manifest = store
-        .append_rows(table, &dataset.chunks, writer_properties(&[COMMENT_COLUMN]))
+        .append_rows(
+            table,
+            &dataset.chunks,
+            &columnar_store::rows::nullability(&dataset.chunks),
+            writer_properties(&[COMMENT_COLUMN]),
+        )
         .expect("the rows are written");
     let append = append_started.elapsed();
 
@@ -386,7 +391,12 @@ fn main() {
     let plan_store = Store::open(work_dir.join("plan")).expect("the store opens");
     let plan_started = Instant::now();
     let plan_manifest = plan_store
-        .append_rows("survivors", &rows.chunks, writer_properties(&[]))
+        .append_rows(
+            "survivors",
+            &rows.chunks,
+            &columnar_store::rows::nullability(&rows.chunks),
+            writer_properties(&[]),
+        )
         .expect("the rows are written");
     let plan_append = plan_started.elapsed();
     let plan_path =

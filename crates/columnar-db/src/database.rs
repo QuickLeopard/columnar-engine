@@ -296,7 +296,8 @@ impl Database {
         let base = self.next_id(name, &dead)?;
         let stored = stored_rows(rows, base);
         let chunks = crate::chunks::chunks_of(&schema, &stored)?;
-        self.write_file(name, &chunks)?;
+        let nullable = crate::chunks::optionality_of(&schema);
+        self.write_file(name, &chunks, &nullable)?;
         for row in &stored {
             if row.deleted {
                 dead.insert(row.row_id);
@@ -398,9 +399,10 @@ impl Database {
         let live = crate::versions::live(&files, &dead, schema.len(), &names)?;
         let rows = renumbered(&live)?;
         let chunks = crate::chunks::chunks_of(&schema, &rows)?;
+        let nullable = crate::chunks::optionality_of(&schema);
         let dir = self.store.table_dir(name);
         fs::create_dir_all(&dir)?;
-        let file = write_new_file(&dir, &chunks)?;
+        let file = write_new_file(&dir, &chunks, &nullable)?;
         let mut manifest = Manifest::new(name);
         manifest.add(file);
         columnar_store::commit(&dir, &manifest)?;
@@ -451,11 +453,11 @@ impl Database {
     /// start again and the next write would land on a name an old file still
     /// has. **So the name is the highest index in the table's directory plus
     /// one**, and the bytes are still the store's writer's bytes.
-    fn write_file(&self, name: &str, chunks: &[ColumnChunk]) -> Result<()> {
+    fn write_file(&self, name: &str, chunks: &[ColumnChunk], nullable: &[bool]) -> Result<()> {
         let dir = self.store.table_dir(name);
         fs::create_dir_all(&dir)?;
         let mut manifest = self.store.manifest(name)?.unwrap_or_else(|| Manifest::new(name));
-        let entry = write_new_file(&dir, chunks)?;
+        let entry = write_new_file(&dir, chunks, nullable)?;
         manifest.add(entry);
         columnar_store::commit(&dir, &manifest)?;
         Ok(())
@@ -502,10 +504,10 @@ impl Database {
 /// a dictionary of them would be a page of entries that are looked up once
 /// each -- and the row id is the one column every file of a table has to
 /// agree about.
-fn write_new_file(dir: &Path, chunks: &[ColumnChunk]) -> Result<FileEntry> {
-    let batches = columnar_store::rows::batches(chunks)?;
+fn write_new_file(dir: &Path, chunks: &[ColumnChunk], nullable: &[bool]) -> Result<FileEntry> {
+    let batches = columnar_store::rows::batches(chunks, nullable)?;
     let name = next_file_name(dir)?;
-    let schema = columnar_store::rows::schema(chunks);
+    let schema = columnar_store::rows::schema(chunks, nullable)?;
     let mut writer = Writer::create_with(dir, &name, schema, writer_properties(&[ROW_ID]))?;
     for batch in &batches {
         writer.write(batch)?;

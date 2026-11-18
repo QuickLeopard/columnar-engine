@@ -31,6 +31,15 @@ pub enum Error {
         got: usize,
     },
 
+    /// The rows and the optionality do not agree about the columns.
+    #[error("the rows hold {columns} columns and the optionality names {optionality}")]
+    Optionality {
+        /// The number of columns the rows hold.
+        columns: usize,
+        /// The number of columns the optionality names.
+        optionality: usize,
+    },
+
     /// The table's name is not one a store can hold.
     #[error("the table's name is not one a store can hold: {name}")]
     Name {

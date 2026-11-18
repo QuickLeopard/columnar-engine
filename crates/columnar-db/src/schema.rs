@@ -25,16 +25,26 @@ const UTF8: &str = "utf8";
 /// database that needs more has to widen the engine's vocabulary first, where
 /// the cost is measured.
 ///
-/// # The nullability is the schema's, and the file's is the store's
+/// # The nullability is the schema's, and the file's is the database's
 ///
 /// A column's `nullable` is the **schema's promise**: the column may hold a
-/// `NULL`. The **file's** own optionality is the store's rule, and it is
-/// decided by the data rather than by the schema — a column that holds no
-/// `NULL` in a batch is written REQUIRED, and one that holds one is written
-/// OPTIONAL. **So a table's declared nullability and its files' optionality
-/// are two different things**, and they are two different things on purpose:
-/// the schema is what the application promised, and the file is what the
-/// rows in it happened to be.
+/// `NULL`, and the database refuses a `NULL` in a column the schema says may
+/// not hold one.
+///
+/// **And the file's own optionality is the database's row model, and not the
+/// rows' happenstance.** The application's columns are **optional** in every
+/// file the database writes, and the hidden columns are **required**, and
+/// **the tombstone is the reason for both**: a tombstone holds no value of the
+/// application's, so the application's columns carry an absent value in every
+/// file that holds one — and a column that may hold an absent value is
+/// written optional. **So the two are different things on purpose**: the
+/// schema is what the application promised, and the file says what the
+/// **database's** rows need.
+///
+/// **And the files of a table agree about it**, which is the point: the
+/// optionality is decided before the first row is written and not derived from
+/// the rows, so a file does not say something different because this batch
+/// happened to hold a `NULL` and the last one did not.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Schema {
     columns: Vec<Column>,

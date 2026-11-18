@@ -71,6 +71,32 @@ pub(crate) fn checked_values(
     Ok(checked)
 }
 
+/// The optionality of the file a table's rows are written into.
+///
+/// **The application's columns are optional, and the hidden ones are required — and the tombstone
+/// is the reason for both.** A tombstone holds no value of the application's, so the application's
+/// columns carry an absent value in every file that holds one, and a column that may hold an
+/// absent value is written optional. **So the optionality is the database's row model's and not the
+/// rows' happenstance**: it is the same in every file of every table, it is decided before the first
+/// row is written, and the files of a table agree about it.
+///
+/// **And the hidden columns are required**, because they never hold an absent value: the id is the
+/// version's own and the flag says whether the row is a tombstone.
+///
+/// **And the table's schema's nullability is the application's promise, and it is kept at the
+/// boundary**: the database refuses a NULL in a column the schema says may not hold one, and the
+/// catalog says which columns may. **The file says what the database's rows need, and not what the
+/// application promised** — and the two are different things on purpose.
+///
+/// **And the order is the chunks' order**: the application's columns in the schema's order, and
+/// then the two hidden columns.
+pub(crate) fn optionality_of(schema: &Schema) -> Vec<bool> {
+    let mut flags = vec![true; schema.len()];
+    flags.push(false);
+    flags.push(false);
+    flags
+}
+
 /// The engine's chunks for the rows: one chunk per column.
 ///
 /// # Errors

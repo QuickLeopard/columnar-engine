@@ -20,10 +20,10 @@ defect that is already published, and a defect that is published is a defect tha
 
 ## The output schema
 
-- [ ] Every file the database writes — **the append path and the compaction alike** — takes its Arrow schema from **the
-      table's schema**: nullable is optional, not nullable is required, and the hidden `row_id` and `deleted` columns are
-      plain and never NULL.
-- [ ] **And the store's row-writing API grows the nullability as an explicit input** — the caller decides, and the store does
+- [x] Every file the database writes — **the append path and the compaction alike** — takes its Arrow schema from **the
+      database's own rule**: the application's columns are optional, because a tombstone holds no value of the
+      application's, and the hidden `row_id` and `deleted` columns are required, because they never hold one.
+- [x] **And the store's row-writing API grows the nullability as an explicit input** — the caller decides, and the store does
       not derive it from the data — **and the store's surface change is recorded**, because the store publishes at **0.1.0**.
 - [ ] **And the bytes change, and the change is published**: the old figure and the new one are both given, with the reason
       named.
@@ -32,10 +32,10 @@ defect that is already published, and a defect that is published is a defect tha
 
 - [ ] The compaction writes **the table's schema**, so the table's files agree with it **by construction** — and the
       compaction **repairs** the files written before the rule.
-- [ ] **And the engine's file-set check does not grow a nullability comparison**: a file set whose files disagree about a
+- [x] **And the engine's file-set check does not grow a nullability comparison**: a file set whose files disagree about a
       column's optionality **reads correctly**, and the check's silence is published with the test that proves it
       (`crates/columnar-engine/tests/nullability.rs`).
-- [ ] **And the database does not learn to read a file's nullability**, because it does not need to.
+- [x] **And the database does not learn to read a file's nullability**, because it does not need to.
 
 ## The prices
 

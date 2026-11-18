@@ -108,7 +108,12 @@ fn the_engines_rows_are_written_and_committed() {
     let dataset = Dataset::read_parquet(generated).expect("the engine reads the file");
     let store = Store::open(scratch("engine-append")).expect("the store opens");
     let manifest = store
-        .append_rows("lineitem", &dataset.chunks, writer_properties(&[COMMENT_COLUMN]))
+        .append_rows(
+            "lineitem",
+            &dataset.chunks,
+            &rows::nullability(&dataset.chunks),
+            writer_properties(&[COMMENT_COLUMN]),
+        )
         .expect("the rows are written");
     assert_eq!(manifest.rows, dataset.rows as u64, "the manifest counts the rows");
     let table = store.table("lineitem").expect("the table is there").expect("the table is there");
@@ -120,7 +125,8 @@ fn the_engines_rows_are_written_and_committed() {
 fn the_grid_is_the_stores() {
     let generated = generated();
     let dataset = Dataset::read_parquet(generated).expect("the engine reads the file");
-    let batches = rows::batches(&dataset.chunks).expect("the rows are batched");
+    let batches = rows::batches(&dataset.chunks, &rows::nullability(&dataset.chunks))
+        .expect("the rows are batched");
     assert!(batches.len() > 1, "the rows are re-batched, not written as one");
     let (last, rest) = batches.split_last().expect("there is a last batch");
     for batch in rest {
@@ -135,7 +141,7 @@ fn the_grid_is_the_stores() {
 }
 
 #[test]
-fn a_column_with_no_null_is_required_and_one_with_a_null_is_optional() {
+fn the_callers_optionality_is_the_schema() {
     let plain = ColumnChunk {
         name: "k".to_owned(),
         encoding: Encoding::Int64 { values: vec![1, 2, 3] },
@@ -148,9 +154,44 @@ fn a_column_with_no_null_is_required_and_one_with_a_null_is_optional() {
         validity: NullBitmap::with_nulls(3, &[1]),
         len: 3,
     };
-    let schema = rows::schema(&[plain.clone(), with_null.clone()]);
-    assert!(!schema.field(0).is_nullable(), "a column with no NULL is required");
-    assert!(schema.field(1).is_nullable(), "a column with a NULL is optional");
+
+    // **The rows' own optionality is the rule the store used to apply**: a
+    // column that holds no NULL is required, and a column that holds one is
+    // optional. **It is a choice the caller takes now.**
+    let own = rows::nullability(&[plain.clone(), with_null.clone()]);
+    assert_eq!(own, vec![false, true], "the rows say which of them hold a NULL");
+
+    // **And the caller's own statement is the schema's**, whatever the rows
+    // hold: a column the caller says may hold a NULL is optional even when
+    // this batch holds none.
+    let schema = rows::schema(&[plain.clone(), with_null.clone()], &[true, true])
+        .expect("the schema is built");
+    assert!(schema.field(0).is_nullable(), "the caller said optional, and it is");
+    assert!(schema.field(1).is_nullable(), "the caller said optional, and it is");
+
+    // **And a column the caller says may not hold a NULL is required**, even
+    // when the rows hold one — which is a file the writer refuses, and not a
+    // file the store silently writes.
+    let schema = rows::schema(&[plain.clone(), with_null.clone()], &[false, false])
+        .expect("the schema is built");
+    assert!(!schema.field(0).is_nullable(), "the caller said required, and it is");
+    assert!(!schema.field(1).is_nullable(), "the caller said required, and it is");
+}
+
+#[test]
+fn the_optionality_and_the_rows_must_agree() {
+    let chunk = ColumnChunk {
+        name: "k".to_owned(),
+        encoding: Encoding::Int64 { values: vec![1, 2, 3] },
+        validity: NullBitmap::all_valid(3),
+        len: 3,
+    };
+    let error =
+        rows::schema(std::slice::from_ref(&chunk), &[true, false]).expect_err("the two disagree");
+    assert!(
+        matches!(error, columnar_store::Error::Optionality { columns: 1, optionality: 2 }),
+        "the error names the two counts: {error:?}"
+    );
 }
 
 #[test]
@@ -164,7 +205,9 @@ fn a_dictionary_column_is_written_as_a_dictionary() {
         validity: NullBitmap::all_valid(3),
         len: 3,
     };
-    let schema = rows::schema(&[chunk]);
+    let nullable = rows::nullability(std::slice::from_ref(&chunk));
+    let schema =
+        rows::schema(std::slice::from_ref(&chunk), &nullable).expect("the schema is built");
     let field = schema.field(0);
     assert!(
         matches!(field.data_type(), arrow::datatypes::DataType::Dictionary(_, _)),

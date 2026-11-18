@@ -29,18 +29,31 @@
 //! order is the rows' own order -- so a file-wide dictionary and a page's
 //! dictionary write the same bytes. The measurement is in spec 042.
 //!
-//! # The schema is the store's own
+//! # The schema is the caller's
 //!
 //! The engine's rows say which rows are NULL. They do **not** say whether a
 //! column may be NULL, and the Parquet writer makes that difference visible
 //! in the bytes: an optional column carries definition levels and a required
 //! one does not.
 //!
-//! So the store's rule is: **a column that holds no NULL is written
-//! REQUIRED**, and a column that holds one is written OPTIONAL. The rule is
-//! the store's, it is the same rule for every write, and it is stated here
-//! because it is the one thing about the engine's rows that the engine's
-//! vocabulary cannot carry.
+//! **So the optionality is the caller's, and the store does not derive it.**
+//! The caller says which columns may hold a NULL, and the store writes the
+//! file that says so. **The rule the store used to apply — a column that
+//! holds no NULL is written REQUIRED, and a column that holds one is written
+//! OPTIONAL — is still available, and it is named**: it is
+//! [`nullability`], and it is a choice the caller takes rather than a rule
+//! the store applies.
+//!
+//! **And the reason the store stopped deciding is the streaming write.** A
+//! writer's schema is fixed before the first row, and the rows' own shape is
+//! known only after the last one, so a schema derived from the data cannot
+//! be used by a write that streams. **And the reason it matters beyond the
+//! streaming write is that the rows' happenstance is not a promise**: two
+//! files of one table can hold different optionality for the same column,
+//! because one of them held a NULL and the other did not. **So the caller
+//! decides, and the files of a table agree** — which is the property the
+//! derivation could not promise, and the reason the decision moved out of the
+//! store.
 
 use std::sync::Arc;
 
@@ -54,6 +67,21 @@ use columnar_core::{ColumnChunk, Encoding, NullBitmap};
 
 use crate::error::{Error, Result};
 use crate::writer::BATCH_ROWS;
+
+/// The rows' own optionality: a column that holds a NULL is optional.
+///
+/// **This is the rule the store used to apply, and it is a choice the caller
+/// takes now.** A caller that has a schema of its own — a table's schema, say
+/// — states the optionality itself, and the file agrees with the promise. A
+/// caller that has only the rows takes this one, and the file says what the
+/// rows happened to be.
+///
+/// **And it is one flag a column**, in the columns' own order, so it lines up
+/// with the rows it is about.
+#[must_use]
+pub fn nullability(rows: &[ColumnChunk]) -> Vec<bool> {
+    rows.iter().map(|row| row.validity.null_count() > 0).collect()
+}
 
 /// The engine's rows, as Arrow's arrays.
 ///
@@ -71,18 +99,40 @@ pub fn arrays(rows: &[ColumnChunk]) -> Result<Vec<ArrayRef>> {
 
 /// The Arrow schema of the engine's rows.
 ///
-/// A column that holds no NULL is **required**, and a column that holds one
-/// is **optional**. The dictionary columns are `Dictionary(Int32, …)`, because
-/// that is what the Parquet writer writes them as.
-#[must_use]
-pub fn schema(rows: &[ColumnChunk]) -> SchemaRef {
+/// **The optionality is the caller's**, one flag a column, in the columns'
+/// own order: a column that may hold a NULL is written OPTIONAL, and one that
+/// may not is written REQUIRED. **The dictionary columns are
+/// `Dictionary(Int32, …)`, because that is what the Parquet writer writes
+/// them as.**
+///
+/// # Errors
+///
+/// Returns [`Error::Optionality`] when the rows and the optionality do not
+/// have the same number of columns, because a schema built from one and a
+/// flag list built from the other would be a file whose columns and fields
+/// disagree.
+pub fn schema(rows: &[ColumnChunk], nullable: &[bool]) -> Result<SchemaRef> {
+    check_optionality(rows.len(), nullable.len())?;
     let fields: Vec<Field> = rows
         .iter()
-        .map(|chunk| {
-            Field::new(&chunk.name, data_type(&chunk.encoding), chunk.validity.null_count() > 0)
+        .zip(nullable)
+        .map(|(chunk, may_hold_null)| {
+            Field::new(&chunk.name, data_type(&chunk.encoding), *may_hold_null)
         })
         .collect();
-    Arc::new(Schema::new(Fields::from(fields)))
+    Ok(Arc::new(Schema::new(Fields::from(fields))))
+}
+
+/// Checks that the rows and the optionality agree about the columns.
+///
+/// **The two are one thing said twice** — the rows name the columns and the
+/// flags say which of them may hold a NULL — and a caller that says them
+/// differently has said nothing.
+fn check_optionality(columns: usize, optionality: usize) -> Result<()> {
+    if columns == optionality {
+        return Ok(());
+    }
+    Err(Error::Optionality { columns, optionality })
 }
 
 /// The engine's rows, in the store's grid.
@@ -90,8 +140,12 @@ pub fn schema(rows: &[ColumnChunk]) -> SchemaRef {
 /// The grid is the store's rule and the store keeps it: the rows are
 /// re-batched here, inside the store, and a batch that cannot be on the grid
 /// is still an error.
-pub fn batches(rows: &[ColumnChunk]) -> Result<Vec<RecordBatch>> {
-    let schema = schema(rows);
+///
+/// **And the optionality is the caller's**, one flag a column: every batch
+/// carries the schema the caller stated, so a batch that holds no NULL in an
+/// optional column is still written under an optional field.
+pub fn batches(rows: &[ColumnChunk], nullable: &[bool]) -> Result<Vec<RecordBatch>> {
+    let schema = schema(rows, nullable)?;
     let arrays = arrays(rows)?;
     let count = rows.first().map_or(0, |chunk| chunk.len);
     let mut batches = Vec::with_capacity(count.div_ceil(BATCH_ROWS));

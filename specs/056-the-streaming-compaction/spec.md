@@ -30,7 +30,8 @@ cannot be reclaimed.**
 schema is fixed before the first row, and the data's shape is known only after the last one — and the store derives it:
 `rows::schema` writes a column **required** when the rows hold no NULL and **optional** when they hold one
 ([`crates/columnar-store/src/rows.rs`](../../crates/columnar-store/src/rows.rs)). **So the file's optionality is the rows'
-happenstance and not the table's schema**, and two files of one table can carry different optionality for the same column.
+happenstance**, and two files of one table can carry different optionality for the same column — **and the file's
+optionality cannot be the table's nullability either, because a tombstone holds no value of the application's** (R2).
 
 **And that disagreement is harmless to the read, and the test says so.** The engine's file-set check compares the column
 count, the names, the types and the storage, and not the nullability
@@ -40,7 +41,7 @@ says which of them are real, the mask is the file's own, and **a file set whose 
 reads correctly**
 ([`crates/columnar-engine/tests/nullability.rs`](../../crates/columnar-engine/tests/nullability.rs)). **So the check's
 silence is the engine's vocabulary saying that a column's optionality is not the engine's business — and the database's
-business is different: the database's files have to agree with the table's schema.**
+business is different: the database's files have to agree with each other.**
 
 **And the store's surface is about to be published.** The crates go to the registry at **0.1.0** and the surface is frozen
 there ([spec 054](../054-the-crates-are-published/spec.md)), so **the nullability has to be settled before the publish and
@@ -59,27 +60,28 @@ not after it** — a change to a published surface is a break in every embedder'
 - [ ] **And the engine's surface is not widened**: a file set of one is a file set, and the store's writer takes batches as
       they come. **And the budget is not raised** — the streaming compaction fits inside it by reading less at a time.
 
-### R2 — The **output schema is decided**, and it is the table's schema
+### R2 — The **output schema is decided**, and the decision is the database's row model
 
-- [ ] Every file the database writes — **the append path and the compaction alike** — takes its Arrow schema from **the
-      table's schema**: a column the table declares nullable is written **optional**, one it declares not nullable is
-      written **required**, and the hidden `row_id` and `deleted` columns are plain and never NULL.
+- [ ] Every file the database writes — **the append path and the compaction alike** — takes its Arrow schema from
+      **the database's own rule**: the application's columns are **optional**, because a tombstone holds no value of the
+      application's and so the application's columns carry an absent value in every file that holds one; and the hidden
+      `row_id` and `deleted` columns are **required**, because they never hold one.
 - [ ] **And the store's row-writing API grows the nullability as an explicit input** — the caller decides and the store does
       not derive it from the data — because a streaming write's schema is fixed before the first row and the data's shape is
       known only after the last one. **And the store's surface change is deliberate and recorded**, because the store
       publishes at 0.1.0.
 - [ ] **And the bytes change, and the change is published**: the old figure and the new one are both given, with the reason
-      named, because an optional column that holds no NULL still writes its definition levels.
+      named, because a file whose application columns were required carries no definition levels and an optional one does.
 
-### R3 — The **output agrees with the table's schema**, whatever the files said
+### R3 — The **output agrees with the database's rule**, whatever the files said
 
-- [ ] The compaction writes **the table's schema**, so the table's files agree with it **by construction** — and the
-      compaction **repairs** the files that were written before the rule, because the output is decided and not derived.
+- [ ] The compaction writes **the database's own rule**, so the table's files agree **by construction** — and the compaction
+      **repairs** the files that were written before the rule, because the output is decided and not derived.
 - [ ] **And the engine's file-set check does not grow a nullability comparison**, because the engine's vocabulary has no
       nullability: **a file set whose files disagree about a column's optionality reads correctly**, and the check's silence
       is published with the test that proves it.
 - [ ] **And the database does not learn to read a file's nullability**, because it does not need to: the output is decided by
-      the table's schema, and the input's optionality is the input's own business.
+      the database's row model, and the input's optionality is the input's own business.
 
 ### R4 — The **price** is measured and published, and the ceiling is measured again
 
@@ -167,20 +169,34 @@ versions are renumbered from zero, and that promise is kept by the **manifest**,
 from the files one at a time and written into one file. **A streaming read that wrote several files would be a compaction
 that does not compact**, and the table would stay fragmented at the space amplification the grid costs today.
 
-### A2 — The output schema is **decided by the table's schema**, and the store's row API grows the nullability
+### A2 — The output schema is **decided by the database's row model**, and the store's row API grows the nullability
 
 **Why**: the writer's schema is fixed before the first row, and the data's shape is known only after the last one — so
 **a schema derived from the data cannot be used by a streaming write**. **And the derivation is itself the defect**: a column
 is written required when the rows happen to hold no NULL and optional when they do, so **the same table's files can disagree
-about a column's nullability**, and the engine's own check does not compare it.
+about a column's optionality**, and the engine's own check does not compare it.
 
-**So the schema comes from the table's schema instead** — the database knows it, it is persistent, and it is the same for
-every file the table will ever hold. **And the nullability becomes an explicit input to the store's row-writing API**,
-because a caller that decides the schema must be able to say so, and the store does not infer it from the data any more.
-**And the bytes change** — an optional column that holds no NULL still writes its definition levels — so **the change is
+**And this amendment first said that the schema comes from the table's schema — a column the table declares nullable is
+written optional, and one it declares not nullable is written required — and that was wrong, and the tombstone is the
+reason.** A tombstone holds no value of the application's, so the application's columns carry an absent value in every file
+that holds one, and **a column that may hold an absent value cannot be written required**: the writer refuses it, and the
+refusal is *"Invalid argument error: Column 'id' is declared as non-nullable but contains null values"*. **So the file's
+optionality cannot be the table's nullability, and the schema's promise cannot reach the file.**
+
+**And the rule that holds is the database's row model's**: the application's columns are **optional** in every file the
+database writes — the tombstone needs the absence — and the hidden columns are **required**, because they never hold one.
+**And the schema's nullability is kept where it belongs**: it is the application's promise, the database refuses a NULL in a
+column the schema says may not hold one, and the catalog says which columns may. **The file says what the database's rows
+need, and not what the application promised** — and the two are different things on purpose.
+
+**And the files of a table agree about it**, which is the property the derivation could not promise: the optionality is
+decided before the first row is written, and it does not change because this batch happened to hold a NULL and the last one
+did not. **And the store's row-writing API grows the nullability as an explicit input**, because a caller that decides the
+schema must be able to say so, and the store does not infer it from the data any more. **And the bytes change** — a file
+whose application columns were required carries no definition levels and an optional one does — so **the change is
 published**, old and new, with the reason named.
 
-### A3 — The output agrees with **the table's schema**, and the disagreement is **repaired**, not refused
+### A3 — The disagreement is **repaired**, not refused
 
 **Why**: this requirement first said that a file whose schema disagrees with the table's would be **refused, with the file
 and the column named**, and **that was wrong on two counts, and the experiment says so.**
@@ -197,9 +213,9 @@ column, one required and one optional, and the read is correct.** The engine's c
 that says which of them are real, the mask is the file's own, and the first file's schema is the table's schema — so the
 optionality never reaches the answer. **So the engine's check's silence is not an oversight, and there is nothing to refuse.**
 
-**So the compaction's output is decided by the table's schema, and the disagreement is repaired by the compaction** — the
-output agrees with the table's schema whatever the files said, and a file written before the rule is fixed the next time the
-table is compacted. **And the database does not learn to read a file's nullability**, because it does not need to.
+**So the compaction's output is decided, and the disagreement is repaired by the compaction** — the output says what the
+database's row model says whatever the files said, and a file written before the rule is fixed the next time the table is
+compacted. **And the database does not learn to read a file's nullability**, because it does not need to.
 
 **And the engine's file-set check stays as it is**, with the reason named here rather than left in a reader's head: **the
 engine's vocabulary has no nullability, and a column's optionality is not the engine's business.**
