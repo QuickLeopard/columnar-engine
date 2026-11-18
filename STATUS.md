@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **54 specs**, **67 ADRs** and **32 defects** so far, and every one
-of the specs but the one in flight is closed. **And the status has a page**:
+[`constitution.md`](constitution.md). **55 specs**, **67 ADRs** and **32 defects** so far, and every one
+of the specs but the two in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
 cannot go stale.
@@ -879,14 +879,18 @@ ranges overlap — **and the space amplification did not move at all**, at **1.3
   time now**, so the budget's verdict is about a file's rows and not about the table's: **6,000,000** rows compacted and
   **0** refused, where **5,375,000** compacted and **6,000,000** were refused. **What is not built yet**: the index
   itself — **and the tombstone tax's shape, which the streaming compaction does not change**: a read still pays one
-  predicate a retired version.
+  predicate a retired version. **And [spec 057](specs/057-the-index/spec.md) takes the index on**: the lookup becomes the
+  database's own, and the three maps that could serve it are measured before any of them is built.
   [§3ak](PERF.md#3ak-the-databases-own-price) and [§3al](PERF.md#3al-the-compaction-reads-a-file-at-a-time) have the tables, and
   [ADR-0066](docs/adr/0066-the-databases-own-price.md) and
   [ADR-0067](docs/adr/0067-the-compaction-reads-a-file-at-a-time.md) record them.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The index itself.** The shape is decided by the scan's figure — **a map from the key to the files that hold
   it**, over the grid — and the index is not built: **its write cost is not measured, because there is no index
-  to measure.** The next increment that builds one measures it.
+  to measure.** **And [spec 057](specs/057-the-index/spec.md) takes it on**: the shape's **granularity** is decided — the
+  file, because that is where the floor was measured — **and the encoding is not**, so the increment measures the three
+  maps that could serve the lookup — **the file's own statistics, the per-file key range, and the per-key map** — **before
+  any of them is built**, and an arm that cannot narrow the files on this data saves nothing and is not built.
 - **The tombstone tax's shape.** A read still pays one predicate a retired version — **0.119 ns** a retired version
   a row, where it was **0.115 ns** when spec 055 measured it, and every read pays it and not only the compaction —
   **and the streaming compaction does not change that**: it makes the compaction able to run, and not the read cheaper.
