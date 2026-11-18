@@ -1193,6 +1193,101 @@ def print_scan_cost(files: list[tuple[str, list[dict]]]) -> None:
     print(line)
 
 
+def print_db_cost(runs: list[dict]) -> None:
+    """Print the database's own price: what the layer between the engine and
+    the store costs.
+
+    This is spec 055: the store measured the **write** and the engine measured
+    the **read**, and nobody had measured what a **database** costs on top of
+    them. The probe measures the catalog's open, the write on the grid, the
+    snapshot's read over one file and over many, the point lookup's scan
+    against the floor an index would reach, the compaction's own cost, the
+    tombstone tax on top of it, and the space amplification.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE DATABASE'S OWN PRICE ({len(runs)} campaigns) ===")
+    for name, heading in (
+        ("open_catalog", "the catalog's open"),
+        ("write", "the write on the grid"),
+        ("read_one_file", "the snapshot's read, one file"),
+        ("read_many_files", "the snapshot's read, many files"),
+        ("read_many_files_engine", "the engine's own read, the same files"),
+        ("point_lookup_scan", "the point lookup's scan, through the database"),
+        ("point_lookup_engine", "the point lookup's scan, the engine's own"),
+        ("point_lookup_one_file", "the point lookup, one file: the floor"),
+        ("open_many_files", "the open of the table's files"),
+        ("compaction_clean", "the compaction, no retired versions"),
+        ("compaction_taxed", "the compaction, with its retired versions"),
+        ("read_taxed_changed", "the database's read, the changed table"),
+        ("tax_full_filter", "the read, the full live filter"),
+        ("tax_plain_filter", "the read, the live filter alone"),
+        ("tax_full_filter_small", "the read, the full filter, the small table"),
+        ("tax_plain_filter_small", "the read, the live filter, the small table"),
+    ):
+        values = [
+            run["measurements_ms"][name]
+            for run in runs
+            if name in run.get("measurements_ms", {})
+        ]
+        if values:
+            print(
+                f"   {heading:<44} {median(values):10.3f} ms"
+                f"   ({min(values):.3f}-{max(values):.3f})"
+            )
+    for key, heading in (
+        ("write_rows_per_second", "the write's throughput, rows/s"),
+        ("compaction_ns_per_row", "the compaction, per row, ns"),
+        ("compaction_taxed_ns_per_row", "the compaction, taxed, per row, ns"),
+        ("compaction_tax_ms", "the tax the compaction pays, ms"),
+        ("read_tax_ms", "the tax the read pays, ms"),
+        ("read_tax_small_ms", "the tax the read pays, the small table, ms"),
+        ("read_tax_ns_per_row_per_version", "the tax, per row per version, ns"),
+        ("read_tax_small_ns_per_row_per_version", "the tax, the small table, per row per version, ns"),
+        ("database_read_overhead_ms", "the database's read overhead, ms"),
+        ("database_lookup_overhead_ms", "the database's lookup overhead, ms"),
+        ("index_saving_ms", "the most an index could save, ms"),
+        ("lookup_ratio", "the lookup, over the floor"),
+        ("space_amplification", "the space amplification"),
+        ("space_amplification_clean", "the space amplification, no changes"),
+    ):
+        values = [run["derived"][key] for run in runs if key in run.get("derived", {})]
+        if values:
+            print(
+                f"   {heading:<44} {median(values):10.3f}"
+                f"   ({min(values):.3f}-{max(values):.3f})"
+            )
+    for key, heading in (
+        ("rows", "the rows"),
+        ("files", "the files"),
+        ("live_rows", "the live rows"),
+        ("retired_rows", "the retired versions"),
+        ("updated_rows", "the updated rows"),
+        ("deleted_rows", "the deleted rows"),
+        ("rows_changed", "the rows the changed table holds"),
+        ("rows_small", "the rows the small table holds"),
+        ("retired_rows_small", "the retired versions, the small table"),
+        ("deleted_rows_small", "the deleted rows, the small table"),
+        ("updated_rows_small", "the updated rows, the small table"),
+        ("bytes_before_compaction", "the bytes before the compaction"),
+        ("bytes_after_compaction", "the bytes after the compaction"),
+        ("clean_bytes_before_compaction", "the clean table's bytes before"),
+        ("clean_bytes_after_compaction", "the clean table's bytes after"),
+        ("compaction_ceiling_ok_rows", "the ceiling: the rows that compacted"),
+        ("compaction_ceiling_refused_rows", "the ceiling: the rows refused"),
+        ("compaction_ceiling_steps", "the ceiling: the steps"),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {int(median(values)):>12}")
+    reasons = sorted({run.get("compaction_ceiling_reason", "") for run in runs if run.get("compaction_ceiling_reason")})
+    if reasons:
+        print(f"   the ceiling's reason: {reasons[0]}")
+    loads = [run.get("host_load_average") for run in runs if run.get("host_load_average")]
+    if loads:
+        print(f"   the host's load average: {', '.join(f'{value:.2f}' for value in loads)}")
+
+
 def print_own_decode(files: list[tuple[str, list[dict]]]) -> None:
     """Print the reader that owns the decode.
 
@@ -4209,6 +4304,11 @@ def main() -> int:
         load(p) for p in sorted(Path("bench-results").glob("own-decode-run*.json"))
     ]
     print_own_decode([("own-decode", own_decode_runs)])
+
+    # Spec 055: the database's own price -- the layer between the engine and
+    # the store, measured on this host for the first time.
+    db_cost_runs = [load(p) for p in sorted(Path("bench-results").glob("db-cost-run*.json"))]
+    print_db_cost(db_cost_runs)
 
     return 0
 

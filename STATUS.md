@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **53 specs**, **65 ADRs** and **29 defects** so far, and every one
+[`constitution.md`](constitution.md). **53 specs**, **66 ADRs** and **30 defects** so far, and every one
 of the specs but the two in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
@@ -193,7 +193,7 @@ and the old code measures the same as the new one.
 
 ## What the increments found
 
-**29 defects**, all found by measurement, each recorded with its before-and-after numbers in the
+**30 defects**, all found by measurement, each recorded with its before-and-after numbers in the
 ADRs and in the commit history. The list is
 [`PERF.md` §4](PERF.md#4-the-defects-the-increments-found).
 
@@ -479,6 +479,23 @@ decode is what the batch's optimum turns on. **And it does not**: the reader was
 slower** than the engine's own scan, so the decode is not going to move and **the budget's number is settled**,
 at **16 MiB**. **What would answer the rest of it:** the budget's number, measured with
 the decode in place — **not** a smaller number chosen on a guess now.
+
+**7. The tombstone tax's shape — one predicate a retired version is a price no application can pay.** The tax
+is **0.115 ns** a retired version a row, and it is paid by **every** read and not only by the compaction: a
+table of a million rows with a fifth of its key range changed reads in **13,515.470 ms** where it read in
+**44.446 ms** before. **And the ways out are named, and none of them is built:** the database could filter the
+retired versions itself, in one pass over the ids it has already read, and not through the engine's
+predicates; the engine could grow one predicate that means *"not one of these"*, which widens a frozen
+surface and is its own increment; or the compaction could run by itself, so the tax is bounded by the change
+rate and not by the history. **What would answer it:** the tax measured against a filter that is not one
+predicate a version.
+
+**8. The compaction's ceiling — the compaction reads the live rows in one piece.** The engine's memory
+budget is **256 MiB**, and the compaction is refused above **6,000,000** rows while **5,375,000** rows
+compact. **So the compaction must be streaming** — file by file, one output file — **and the files' Arrow
+schemas must agree**, which the engine's own file-set check does not settle: it compares the count, the
+names, the types and the storage, and not the nullability, while the store's writer derives the schema from
+the data. **What would answer it:** the compaction of a table whose files do not share a nullability.
 
 ### The work the project has not done
 
@@ -816,7 +833,7 @@ the decode in place — **not** a smaller number chosen on a guess now.
   corrected where they were published**, in [§3ah](PERF.md#3ah-the-default-moved) and here.
   [§3ai](PERF.md#3ai-the-reader-owns-the-decode) has the tables, and
   [ADR-0064](docs/adr/0064-the-reader-does-not-own-the-decode.md) records it.
-- **The database is being built, and its price is not known yet.** The engine reads Parquet and the store writes it, and
+- **The database is being built, and its price is now known.** The engine reads Parquet and the store writes it, and
   between them there was no database: the store says what it is not — *"No SQL. No transactions with rollback. No MVCC, no
   snapshot isolation. No concurrent writers. No row-level updates. No compaction. One writer."* — and the engine's catalog
   is **in memory**, so it did not survive a restart. **Spec 055 builds it, as a new crate above the four**, and
@@ -834,11 +851,29 @@ the decode in place — **not** a smaller number chosen on a guess now.
   does not change in place**: an update leaves a tombstone behind the version it replaces and a delete is a tombstone, and
   the compaction rewrites the live rows into one file, which is what pays the tombstone tax back. **And the ids are read
   from what is on disk and never written down** — the manifest's rows less the retired ones — so there is no counter to
-  lose. **What is not built yet**: the index — **and none of the gap's prices has been measured.** **And the query language
-  is decided: it is the engine's typed plan**, the
+  lose. **And the gap's prices are measured at last**, on a million rows of the published lineitem file: **the catalog's
+  open is 0.242 ms**, **the write on the grid is 389.590 ms** — **2,566,802** rows a second — **the snapshot's read of
+  sixteen files is 44.446 ms** against the engine's own **37.145 ms** on the same files, **and the compaction of a table
+  with no retired versions costs 293 ns a row**. **And the tombstone tax is not what the prose said it was**: it is
+  **0.115 ns** a retired version a row — **0.120 ns** in a table fifteen times smaller, **the same price at two sizes** —
+  **so the tax is the retired versions and the table's size together, and every read pays it**: the table read in
+  **44.446 ms** before a fifth of its key range changed, and in **13,515.470 ms** after. **And the sentence that said
+  otherwise is corrected where it was published.** **And the index is given, and its shape is a map from the key to the
+  files that hold it**: the point lookup costs **43.319 ms** as a scan and **2.657 ms** over the one file an index would
+  name — **17.20×** — and the open of the sixteen files is **0.461 ms** of it, so **the gap is the data and not the
+  files**. **And the query language is decided: it is the engine's typed plan**, the
   `QueryPlan` the `PlanBuilder` builds, **and SQL is out of scope with the reason named** — SQL promises subqueries, CTEs,
-  window functions and arbitrary join graphs, and this engine refuses all four.
+  window functions and arbitrary join graphs, and this engine refuses all four. **What is not built yet**: the index
+  itself — **and the compaction is refused above 6,000,000 rows**, by the engine's own 256 MiB budget.
+  [§3ak](PERF.md#3ak-the-databases-own-price) has the tables, and
+  [ADR-0066](docs/adr/0066-the-databases-own-price.md) records it.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
+- **The index itself.** The shape is decided by the scan's figure — **a map from the key to the files that hold
+  it**, over the grid — and the index is not built: **its write cost is not measured, because there is no index
+  to measure.** The next increment that builds one measures it.
+- **The streaming compaction.** The compaction is refused above **6,000,000** rows by the engine's **256 MiB**
+  budget, so it has to read file by file and write one file — and the files' Arrow schemas have to agree, which
+  the engine's own file-set check does not settle.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a
   billing message rather than a test failure. The published figures are therefore taken on this

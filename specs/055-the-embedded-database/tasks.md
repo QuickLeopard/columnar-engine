@@ -1,6 +1,7 @@
 # Spec 055 — The embedded database — tasks
 
-**Status**: planned
+**Status**: done
+**Finished**: 2026-11-18
 **Started**: 2026-11-17
 **Spec**: [spec.md](spec.md)
 
@@ -47,23 +48,27 @@ measures nothing.
 
 ## The prices
 
-- [ ] `crates/columnar-db/examples/db_cost_probe.rs` — the probe: the catalog's open, the write on the grid, the snapshot
+- [x] `crates/columnar-db/examples/db_cost_probe.rs` — the probe: the catalog's open, the write on the grid, the snapshot
       over one file and over many, the scan of a point lookup, the compaction, and the space amplification.
-- [ ] **Three campaigns**, interleaved, with the raw reports **committed** to `bench-results/`.
-- [ ] **And the figures are derived** by `scripts/medians.py`, and the **index's shape is decided by the scan's figure**.
-- [ ] **And a point lookup that a scan already answers more cheaply is not given an index**, and the database says so.
+- [x] **Three campaigns**, interleaved, with the raw reports **committed** to `bench-results/`.
+- [x] **And the figures are derived** by `scripts/medians.py`, and the **index's shape is decided by the scan's figure**.
+- [x] **And a point lookup that a scan already answers more cheaply is not given an index**, and the database says so —
+      **and the point lookup is not one of those**, so the index is given, and its shape is a map from the key to the files
+      that hold it.
 
 ## The record
 
-- [ ] A **new section** in `PERF.md`, the decisions in an **ADR** — the storage model, the query language, the index's
+- [x] A **new section** in `PERF.md`, the decisions in an **ADR** — the storage model, the query language, the index's
       shape — and **STATUS.md**'s bullet moves.
-- [ ] **And the guard checks the published figures inside the section that publishes them.**
-- [ ] **And the ADR records the correction of the spec's `u64` row id** — the engine's vocabulary is `Int64`, `Float64` and
+- [x] **And the guard checks the published figures inside the section that publishes them.**
+- [x] **And the ADR records the correction of the spec's `u64` row id** — the engine's vocabulary is `Int64`, `Float64` and
       `Utf8`, and a `u64` would be a second vocabulary for one column.
+- [x] **And the ADR records the correction of the tombstone tax's own sentence** — the tax is the retired versions **and**
+      the table's size together, measured at two sizes, and every read pays it.
 
 ## The closure
 
-- [ ] The spec's status is `done` with the date it finished, and CI is green.
+- [x] The spec's status is `done` with the date it finished, and CI is green.
 
 ## What is not done
 
@@ -75,3 +80,9 @@ measures nothing.
 - **Blobs** — a blob is a file and a pointer, and it is its own increment.
 - **Encryption, a general optimizer, and a second writer** — each is named in the spec's scope, and each would change the
   store's shape.
+- **The index itself** — its shape is decided by the scan's figure, and its write cost is not measured, because there is
+  no index to measure.
+- **The streaming compaction** — the compaction reads the live rows in one piece, so the engine's memory budget is its
+  ceiling and it is refused above **6,000,000** rows.
+- **A filter that is not one predicate a retired version** — the tax is **0.115 ns** a retired version a row and every read
+  pays it, and the ways out are named in the ADR and in the open questions.

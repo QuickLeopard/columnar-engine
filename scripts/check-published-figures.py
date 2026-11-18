@@ -1950,6 +1950,112 @@ FILE_SET_COUNTS = (
 
 FILE_SET_CLAIM = "reading a table that is many files costs nothing measurable"
 
+# ---------------------------------------------------------------------------
+# Spec 055: the database's own price.
+#
+# The store measured the write and the engine measured the read, and nobody
+# had measured what a **database** costs on top of them. The probe measures
+# the catalog's open, the write on the grid, the snapshot's read over one file
+# and over many, the point lookup's scan against the floor an index would
+# reach, the compaction's own cost, the tombstone tax on top of it, and the
+# space amplification.
+#
+# The figures are looked for **inside** the section that publishes them, so a
+# figure that happens to equal an unrelated number elsewhere in the document
+# cannot satisfy the check by accident.
+DB_COST_REPORTS = sorted((ROOT / "bench-results").glob("db-cost-run*.json"))
+DB_COST_SECTION = "### 3ak"
+
+# The timings, the label each one is published under, and the places.
+#
+# **The figures are rendered with the thousands separator**, and so are the
+# derived ones: the compaction's own cost is five figures long, and a
+# document that writes it without the separator is a document that has to be
+# searched for a number the reader cannot read.
+DB_COST_TIMINGS = (
+    ("open_catalog", "the catalog's open", 3),
+    ("write", "the write on the grid", 3),
+    ("read_one_file", "the snapshot's read, one file", 3),
+    ("read_many_files", "the snapshot's read, many files", 3),
+    ("read_many_files_engine", "the engine's own read, the same files", 3),
+    ("point_lookup_scan", "the point lookup's scan, through the database", 3),
+    ("point_lookup_engine", "the point lookup's scan, the engine's own", 3),
+    ("point_lookup_one_file", "the point lookup over one file, the floor", 3),
+    ("open_many_files", "the open of the table's files", 3),
+    ("compaction_clean", "the compaction, no retired versions", 3),
+    ("compaction_taxed", "the compaction, with its retired versions", 3),
+    ("read_taxed_changed", "the database's read, the changed table", 3),
+    ("tax_full_filter", "the read, the full live filter", 3),
+    ("tax_plain_filter", "the read, the live filter alone", 3),
+    ("tax_full_filter_small", "the read, the full filter, the small table", 3),
+    ("tax_plain_filter_small", "the read, the live filter, the small table", 3),
+)
+
+# The derived figures, the label each one is published under, and the places.
+DB_COST_DERIVED = (
+    ("write_rows_per_second", "the write's throughput", 0),
+    ("compaction_ns_per_row", "the compaction, per row", 0),
+    ("compaction_taxed_ns_per_row", "the compaction, taxed, per row", 0),
+    ("compaction_tax_ms", "the tax the compaction pays", 3),
+    ("read_tax_ms", "the tax the read pays", 3),
+    ("read_tax_small_ms", "the tax the read pays, the small table", 3),
+    ("read_tax_ns_per_row_per_version", "the tax, per row per version", 3),
+    ("read_tax_small_ns_per_row_per_version", "the tax, the small table, per row per version", 3),
+    ("database_read_overhead_ms", "the database's read overhead", 3),
+    ("database_lookup_overhead_ms", "the database's lookup overhead", 3),
+    ("index_saving_ms", "the most an index could save", 3),
+    ("lookup_ratio", "the lookup, over the floor", 2),
+    ("space_amplification", "the space amplification", 3),
+    ("space_amplification_clean", "the space amplification, no changes", 3),
+)
+
+# The counts, and the label each one is published under.
+DB_COST_COUNTS = (
+    ("rows", "the rows"),
+    ("files", "the files"),
+    ("live_rows", "the live rows"),
+    ("retired_rows", "the retired versions"),
+    ("updated_rows", "the updated rows"),
+    ("deleted_rows", "the deleted rows"),
+    ("rows_changed", "the rows the changed table holds"),
+    ("rows_small", "the rows the small table holds"),
+    ("live_rows", "the live rows"),
+    ("retired_rows_small", "the retired versions, the small table"),
+    ("deleted_rows_small", "the deleted rows, the small table"),
+    ("updated_rows_small", "the updated rows, the small table"),
+    ("bytes_before_compaction", "the bytes before the compaction"),
+    ("bytes_after_compaction", "the bytes after the compaction"),
+    ("clean_bytes_before_compaction", "the clean table's bytes before"),
+    ("clean_bytes_after_compaction", "the clean table's bytes after"),
+    ("compaction_ceiling_ok_rows", "the ceiling: the rows that compacted"),
+    ("compaction_ceiling_refused_rows", "the ceiling: the rows refused"),
+)
+
+
+def _db_cost_figures(
+    paths: list[Path],
+) -> tuple[dict[str, list[float]], dict[str, list[float]], dict[str, list[float]]]:
+    """The database's own prices, from the committed reports.
+
+    The timings are the probe's own medians, the derived figures are the ones
+    the probe derives from them, and the counts are what the run published
+    beside them. Each is collected across the campaigns, so that the published
+    figure is the median over the campaigns.
+    """
+    timings: dict[str, list[float]] = {}
+    derived: dict[str, list[float]] = {}
+    counts: dict[str, list[float]] = {}
+    for path in paths:
+        run = json.loads(path.read_text())
+        for key, value in run.get("measurements_ms", {}).items():
+            timings.setdefault(key, []).append(value)
+        for key, value in run.get("derived", {}).items():
+            derived.setdefault(key, []).append(value)
+        for key, value in run.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                counts.setdefault(key, []).append(float(value))
+    return timings, derived, counts
+
 # Spec 041: the reader's four gigabytes. A real Parquet file with one
 # hostile page header -- the statistics field declares a length -- read
 # through the engine's own reader, with a counting global allocator around
@@ -7005,6 +7111,57 @@ def main() -> int:
                 else:
                     print(f"ok  {'PERF.md':<10} {'the gather, as it was published':<60} {rendered}")
 
+    # Spec 055: the database's own price -- the catalog's open, the write on
+    # the grid, the snapshot's read over one file and over many, the point
+    # lookup's scan against the floor an index would reach, the compaction's
+    # own cost, the tombstone tax on top of it, and the space amplification.
+    # Every figure is looked for **inside** the section that publishes it.
+    db_cost_section = section_of(texts["PERF.md"], DB_COST_SECTION)
+    if db_cost_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the database's own price "
+            f"({DB_COST_SECTION}) is not in the document"
+        )
+    elif len(DB_COST_REPORTS) < MIN_CAMPAIGNS:
+        failures.append(
+            f"the database's probe has {len(DB_COST_REPORTS)} campaigns, "
+            f"and the method says {MIN_CAMPAIGNS}"
+        )
+    else:
+        db_cost_timings, db_cost_derived, db_cost_counts = _db_cost_figures(DB_COST_REPORTS)
+
+        def db_cost_wanted(label: str, figure: float, places: int) -> None:
+            """One figure of the section, looked for inside it."""
+            rendered = f"{figure:,.{places}f}"
+            if not figure_in(db_cost_section, rendered):
+                failures.append(
+                    f"PERF.md: the database's {label} is {rendered} by the reports "
+                    f"but that figure does not appear in the section that publishes it"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+
+        for key, label, places in DB_COST_TIMINGS:
+            values = db_cost_timings.get(key, [])
+            if values:
+                db_cost_wanted(label, statistics.median(values), places)
+        for key, label, places in DB_COST_DERIVED:
+            values = db_cost_derived.get(key, [])
+            if values:
+                db_cost_wanted(label, statistics.median(values), places)
+        for key, label in DB_COST_COUNTS:
+            values = db_cost_counts.get(key, [])
+            if not values:
+                continue
+            rendered = f"{statistics.median(values):,.0f}"
+            if not figure_in(db_cost_section, rendered):
+                failures.append(
+                    f"PERF.md: the database's {label} is {rendered} by the reports "
+                    f"but that figure does not appear in the section that publishes it"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+
     if failures:
         print()
         for failure in failures:
@@ -7044,7 +7201,8 @@ def main() -> int:
         f"{len(BUILD_SET_COSTS) + len(BUILD_SET_FACTS) + 3} of the build side, "
         f"{len(ENGINE_ROWS_COSTS) + len(ENGINE_ROWS_BYTES) + 3} of the engine's rows, "
         f"{len(SET_ROWS_COSTS) + len(SET_ROWS_FACTS) + 6 + 2} of the set's rows, "
-        f"{len(SET_ROWS_BEFORE_REPORTS) and 7} of the set's rows before"
+        f"{len(SET_ROWS_BEFORE_REPORTS) and 7} of the set's rows before, "
+        f"{len(DB_COST_TIMINGS) + len(DB_COST_DERIVED) + len(DB_COST_COUNTS)} of the database's own price"
     )
     return 0
 

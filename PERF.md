@@ -5521,9 +5521,146 @@ engine's time.
 
 ---
 
+### 3ak. The database's own price
+
+**The open question was the gap's price.** The engine read Parquet and the store wrote it, and between them there was no
+database: the store says what it is not — *"No SQL. No transactions with rollback. No MVCC, no snapshot isolation. No
+concurrent writers. No row-level updates. No compaction. One writer."* — and the engine's catalog is **in memory**, so
+it did not survive a restart. **Spec 055 builds the layer between them**, and **that layer had never been priced**: the
+store measured the **write** and the engine measured the **read**, and nobody had measured what a **database** costs on
+top of them.
+
+**And the instrument is the database's own.** `crates/columnar-db/examples/db_cost_probe.rs` builds a real database — the
+persistent catalog, the typed write path, the snapshot, the hidden row id, the update, the delete and the compaction —
+and measures it over a table of **1,000,000** rows of the published lineitem file: three columns, read once through the
+engine and written in the store's grid, so **16** files of **65,536** rows.
+
+**And every difference below is a difference of two measurements taken back to back**, so the machine's movement over the
+hundreds of milliseconds between them cannot land on one side of the difference and not on the other. **The database's
+overhead** is the database's read beside the engine's read of the same files; **the tombstone tax** is the read with the
+full live filter beside the read without the retired ids, over the same table and at the same moment.
+
+**Three campaigns**, on one host, at a load average of **10.63**, **11.73** and **15.47**.
+
+| the database's own price | |
+|---|---|
+| the catalog's open | **0.242 ms** |
+| the write on the grid | **389.590 ms** — **2,566,802** rows/s |
+| the snapshot's read, one file | **2.732 ms** |
+| the snapshot's read, many files | **44.446 ms** |
+| the engine's own read, the same files | **37.145 ms** |
+| **the database's overhead on the read** | **6.777 ms** |
+| the point lookup's scan, through the database | **52.168 ms** |
+| the point lookup's scan, the engine's own | **43.319 ms** |
+| **the point lookup over one file: the floor** | **2.657 ms** |
+| the open of the table's files | **0.461 ms** |
+
+**And the tombstone tax is the retired versions and the table's size together.** A read filters on `deleted = 0` and on
+`row_id != <retired id>` for **every** retired version, and the engine's pushdown runs each comparison on the column as
+one pass and ANDs the masks — so the tax is one pass over the id column for every retired version. **And the tax is
+measured as a pair**: the same table, the same rows, the same moment, with the retired ids and without them.
+
+| the tombstone tax | |
+|---|---|
+| the database's read of the changed table | **13,515.470 ms** |
+| the read with the full live filter | **13,320.452 ms** |
+| the read with the live filter alone | **44.637 ms** |
+| **the tax the read pays** | **13,282.677 ms** |
+| the same pair over the small table, with the full filter | **62.395 ms** |
+| the same pair over the small table, with the filter alone | **2.649 ms** |
+| **the tax the small table's read pays** | **59.746 ms** |
+| **the tax, a retired version over a row, in the large table** | **0.115 ns** |
+| **the tax, a retired version over a row, in the small table** | **0.120 ns** |
+
+**And the two prices are the same.** The large table holds **1,150,112** rows and **100,136** retired
+versions — **49,976** updated and **50,160** deleted — and the small one holds **75,402** rows and
+**6,592** retired versions — **3,274** updated and **3,318** deleted — so the two taxes
+are two numbers of predicates over two different numbers of rows, and **the price of one retired version over one row
+is the same in both: 0.115 ns and 0.120 ns**. **So the tax is the retired versions and the table's
+size together, and not the retired versions alone** — and the sentence that said otherwise is corrected where it was
+published.
+
+**And the read that pays it is the database's own.** The table reads in **44.446 ms** before anything changed and
+in **13,515.470 ms** after a fifth of its key range did — **a 304.1× cliff**, for a change that
+touched **100,136** of the table's **1,000,000** rows: **49,976** updated and **50,160** deleted.
+
+**And the index is given, and its shape is a map from the key to the files that hold it.** The spec's rule is *a point
+lookup that a scan already answers more cheaply is not given an index, and the database says so*, and the figure decides
+which side of the rule this falls on.
+
+| the point lookup | |
+|---|---|
+| the scan, through the database | **52.168 ms** |
+| the scan, the engine's own | **43.319 ms** |
+| **the database's overhead on the lookup** | **7.610 ms** |
+| **the floor: the same lookup over one file** | **2.657 ms** |
+| the open of the table's files, with nothing read | **0.461 ms** |
+| **the most an index could save** | **40.828 ms** |
+| **the lookup, over the floor** | **17.20×** |
+
+**And the scan does not answer the lookup more cheaply.** The lookup over the whole table costs **43.319 ms**
+and the same lookup over **one file** — the floor an index would reach — costs **2.657 ms**, so **the lookup
+is 17.20× more expensive as a scan**. **And the gap is the data and not the files**: the open of the table's
+**16** files, with nothing read, costs **0.461 ms** of the **43.319 ms**, so an index does not
+win by avoiding the files' open — **it wins by not reading the data of the 15 files it does not need**.
+
+**And the granularity the figure decides is the file, because that is where the floor was measured.** The database
+writes on the grid, and the grid is **65,536** rows, so a file is one grid. **And the map is many-to-one**: an update
+writes a new file whose keys are the changed ones, so a key's versions live in more than one file until a compaction
+rewrites them into one. **And the floor is the engine's own read granularity, measured**: the engine reads whole files and
+has no row-group skipping, so **2.657 ms** is not a number a cleverer index goes below.
+
+**And the compaction's own cost is small, and the tax is not.** The compaction rewrites the live rows into one file, and
+the live rows are read with the application's columns and the row id and not with the `deleted` flag — the flag is a
+filter and not an output.
+
+| the compaction | |
+|---|---|
+| the compaction of a table with no retired versions | **293.293 ms** — **293** ns a row |
+| the compaction of the same table with its retired versions | **12,431.089 ms** — **13,088** ns a row |
+| **the tax the compaction pays** | **12,091.424 ms** |
+| the live rows the compaction wrote | **949,840** |
+| the compaction's ceiling: the rows that compacted | **5,375,000** |
+| the compaction's ceiling: the rows refused | **6,000,000** |
+
+**And the compaction's ceiling is measured, not asserted.** The compaction reads the table's live rows in one piece, so
+the engine's memory budget is the compaction's ceiling, and the budget is **256 MiB** by default: **5,375,000 rows
+compacted**, and **6,000,000 rows refused** with *"the engine refused: the estimated working set exceeds the
+query memory budget"*. **So the compaction must be streaming** — file by file, one output file, and the files' Arrow
+schemas must agree — and that is a later increment, and it is named in [STATUS.md](STATUS.md)'s open questions.
+
+**And the bytes.** The append-only model holds the retired versions and the new ones beside the live ones, and a
+compaction is what takes them away.
+
+| the bytes | |
+|---|---|
+| the changed table before its compaction | **14,027,470** bytes |
+| the changed table after its compaction | **10,477,372** bytes |
+| **the space amplification** | **1.339** |
+| the clean table before its compaction | **13,411,709** bytes |
+| the clean table after its compaction | **11,388,633** bytes |
+| **the space amplification, with nothing changed** | **1.178** |
+
+**And the clean table's own amplification is the file count's price**: **13,411,709** bytes in
+**16** files against **11,388,633** bytes in one, so **1.178** of the
+**1.339** is the grid's own overhead and not the tombstones'.
+
+**And the sentence the price corrects is corrected where it was published.** The crate's documentation said the tax was
+*"the retired versions and not the table's size"*. **It is the retired versions and the table's size together**, and the
+correction is recorded in [ADR-0066](docs/adr/0066-the-databases-own-price.md).
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/db-cost-run1.json` and its two siblings, and the instrument is
+`crates/columnar-db/examples/db_cost_probe.rs`, and the decision is in
+[ADR-0066](docs/adr/0066-the-databases-own-price.md).
+
+**The conditions**: three campaigns, on one host, at a load average of **10.63**, **11.73** and **15.47**, and
+the load average is in every report.
+
+
 ## 4. The defects the increments found
 
-Twenty-nine, all found by measurement, all recorded with their before-and-after numbers in the ADRs
+Thirty, all found by measurement, all recorded with their before-and-after numbers in the ADRs
 and in the commit history.
 
 | | before | after | where |
@@ -5558,6 +5695,7 @@ and in the commit history.
 | The join's lookup consulted the **overflow map** once a probe row, for a case that does not happen: the map holds **nothing** for this data, because every key's count fits in its byte, and the lookup paid for it on every one of six million rows. The map's share was measured for the first time in spec 028, and it is **at or below the noise** | the map's share: **0.183 ms** of a **4.417 ms** remainder | no map to consult — **the map is not allocated at all** when nothing overflows | `columnar-engine/src/operators/join.rs` |
 | **The instrument measured two things that are not differences of the code.** The engine's lookup is a **private** method and the instrument is another crate, so across the boundary it was not inlined and the instrument paid a **call a probe row** that the engine's own query does not pay; and the candidate read a **warm** buffer while the engine's probe read one the reader had **just written**. Both were inside the remainder spec 028 published as the engine's cost | the remainder: **3.337 ms**, of which the crate boundary is **+1.332 ms** and the buffer **1.158 ms** | the remainder: **0.109 ms** — the engine's probe **8.395 ms** against the hand-written candidate's **8.315 ms** | `crates/columnar-engine/examples/join_cost_probe.rs` |
 | **The sort compared every key a row at a time, in Rust.** The comparison — one per key, six million of them — was a scalar loop, and it was **2.2 ms** of the operator's **3.2 ms**: the read was never the cost, the counting was. The same column, compared in blocks against the heap's own worst key, costs **0.96 ms** | the engine's bounded sort **3.23 ms** · the sort's stage **4.18 ms** | the engine's bounded sort **1.02 ms** · the sort's stage **1.10 ms** | `columnar-engine/src/operators/sort.rs` |
+| **The tombstone tax was published as the retired versions alone.** A read filters on `row_id != <retired id>` for every retired version, and the engine's pushdown runs each comparison on the column as one pass — so the tax is the retired versions **and** the table's size together, and every read pays it and not only the compaction | the tax was published as *"the retired versions and not the table's size"* | **0.115 ns** a retired version a row — **0.120 ns** in the small table, the same price at two sizes | `crates/columnar-db/src/versions.rs` |
 
 The global aggregate is the one worth calling out from the first increment: the module
 documentation promised that `COUNT(*)` was an in-place fast path that reads no column, and it did

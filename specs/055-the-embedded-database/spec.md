@@ -1,6 +1,7 @@
 # Spec 055 — The embedded database
 
-**Status**: planned
+**Status**: done
+**Finished**: 2026-11-18
 **Started**: 2026-11-17
 **Predecessor**: [spec 054 — the crates are published](../054-the-crates-are-published/spec.md)
 
@@ -209,3 +210,30 @@ still the store's writer's bytes.
 nothing an application can see. **But a reader that pinned them still has to read them**, so a snapshot registers the files it
 pinned and gives them back when it is dropped, and a file that is not removed is not lost: it stays outside the manifest, and
 no reader will ever open it.
+
+### A6 — The tombstone tax is the retired versions **and** the table's size, and **every read pays it**
+
+**Why**: the prose said the tax was one predicate per retired version and not the table's size, and that sentence was
+published. **The engine's pushdown runs each comparison on a column as one pass**, so a read that filters on
+`row_id != <retired id>` for every retired version pays one pass over the id column for every retired version —
+**0.115 ns** a retired version a row, measured on a million rows and again on a table fifteen times smaller, where it
+is **0.120 ns**. **So the tax is the retired versions and the table's size together, and every read pays it**: the
+table read in **44.446 ms** before a fifth of its key range changed, and in **13,515.470 ms** after.
+
+**And the compaction is the only thing that pays it back**, so the ways out are named in the ADR and in the open
+questions — the database filters the retired versions itself, or the engine grows one predicate that means *"not one
+of these"*, or the compaction runs by itself — **and none of them is built here**. **And the correction is recorded
+in the ADR**, and the sentence is corrected where it was published.
+
+### A7 — The index is **given**, and its shape is a **map from the key to the files that hold it**
+
+**Why**: the point lookup costs **43.319 ms** as a scan and **2.657 ms** over the one file an index would name —
+**17.20×** — and the open of the sixteen files is **0.461 ms** of it, so **the gap is the data and not the files**.
+**So the scan does not answer the lookup more cheaply, and the index is given**; **and the granularity is the file**,
+because that is where the floor was measured, and the database writes on the grid — so a file is one grid.
+
+**And the map is many-to-one**, because an update writes a new file whose keys are the changed ones, so a key's
+versions live in more than one file until a compaction rewrites them into one. **And the index cannot name a row**,
+because the engine reads whole files and has no row-group skipping, so **the floor is the engine's own granularity,
+measured**. **And the index is not built here**, and its write cost is not measured, because there is no index to
+measure.

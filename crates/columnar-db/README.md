@@ -104,6 +104,14 @@ window in which two rows could share an id.
 versions stop existing: the live rows are read, written into a new file, and the manifest is replaced by one that names it and
 nothing else.
 
+**And the tax has a price, and the price is the retired versions and the table's size together.** The engine's pushdown
+runs each comparison on a column as one pass, so the tax is one pass over the id column for every retired version:
+**0.115 ns** a retired version a row, measured on a million rows and again on a table fifteen times smaller, where it is
+**0.120 ns**. **And every read pays it, and not only the compaction**: a table of a million rows read in **44.446 ms**
+before a fifth of its key range changed, and in **13,515.470 ms** after. The prices are in
+[`PERF.md` §3ak](../../PERF.md#3ak-the-databases-own-price), and the decision is in
+[ADR-0066](../../docs/adr/0066-the-databases-own-price.md).
+
 **And the old files go when no reader holds them.** A reader that pinned them still has to read them, so they stay until it is
 gone. The database owns the file naming — the highest index in the table's directory plus one — so a compaction does not reset
 the numbering and land the next write on a file that is still there.
