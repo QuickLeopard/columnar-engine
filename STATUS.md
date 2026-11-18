@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **53 specs**, **66 ADRs** and **30 defects** so far, and every one
+[`constitution.md`](constitution.md). **54 specs**, **66 ADRs** and **30 defects** so far, and every one
 of the specs but the two in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
@@ -495,7 +495,10 @@ budget is **256 MiB**, and the compaction is refused above **6,000,000** rows wh
 compact. **So the compaction must be streaming** — file by file, one output file — **and the files' Arrow
 schemas must agree**, which the engine's own file-set check does not settle: it compares the count, the
 names, the types and the storage, and not the nullability, while the store's writer derives the schema from
-the data. **What would answer it:** the compaction of a table whose files do not share a nullability.
+the data. **And [spec 056](specs/056-the-streaming-compaction/spec.md) takes it on**: the compaction reads
+one file at a time, the output schema is **decided by the table's schema** and not derived from the data,
+and a file that disagrees is **refused with the file and the column named**. **What would answer it:** the
+compaction of a table whose files do not share a nullability — refused, named, and priced.
 
 ### The work the project has not done
 
@@ -873,7 +876,9 @@ the data. **What would answer it:** the compaction of a table whose files do not
   to measure.** The next increment that builds one measures it.
 - **The streaming compaction.** The compaction is refused above **6,000,000** rows by the engine's **256 MiB**
   budget, so it has to read file by file and write one file — and the files' Arrow schemas have to agree, which
-  the engine's own file-set check does not settle.
+  the engine's own file-set check does not settle. **[Spec 056](specs/056-the-streaming-compaction/spec.md)
+  takes it on**: the read is one file at a time, the output schema is decided by the table's schema, and the
+  file that disagrees is refused with the file and the column named.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a
   billing message rather than a test failure. The published figures are therefore taken on this
