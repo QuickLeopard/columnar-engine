@@ -18,11 +18,20 @@ comes before the index, and an arm the experiment refuses is never built.
 
 ## The experiment — the shape measured before it is built
 
-- [ ] The experiment measures, over **the table the database writes**: **the key's order**, **each file's key range**, **the
-      number of distinct keys**, and **the number of files each of the three maps would name** for a lookup.
-- [ ] **And the three maps are measured**: the **file's own statistics**, the **per-file key range the database keeps**, and
-      **the per-key map** the figure decided.
-- [ ] **And an arm the experiment refuses is not built**, and the refusal is published with the figures that said so.
+- [x] The experiment measures, over **the table the database writes**: **the key's order**, **each file's key range**, **the
+      number of distinct keys**, and **the number of files each of the maps would name** for a lookup.
+- [x] **And the maps are measured**: the **file's own statistics**, the **per-file key range the database keeps**, and
+      **the per-key map** the figure decided. **And the two range maps name the same files, because the file's own
+      statistics are that range.**
+- [x] **And an arm the experiment refuses is not built**, and the refusal is published with the figures that said so:
+      **the range map is refused** — it names **all sixteen files**, for **every one** of the sixty-four sampled keys —
+      **and the per-key map is the index**: **1.156** files on average, **1** at the smallest and **2** at the largest.
+- [x] **And the reason is the data's order**: **499,701** descents over a million rows, so **every one of the sixteen
+      files holds a range that spans nearly the whole key space** — and the smallest of the sixteen minimums is **13** and
+      the largest of the sixteen maximums is **5,999,999**. **And that is published as a condition, because it is one**:
+      on ordered data the range map would narrow, and it would be free.
+- [x] **And the map's own size is measured**: **921,129** distinct keys over a million rows, and **78,871** rows that
+      repeat a key — so the index holds **an entry a key**, and a key's entry can name **two** files.
 
 ## The index — the price, on every axis
 

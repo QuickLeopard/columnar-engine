@@ -60,12 +60,18 @@ with the correction recorded in the ADR.
 
 ### R2 — The shape is **measured before it is built**
 
-- [ ] An experiment over **the table the database writes**: **the key's order**, **each file's key range**, **the number
-      of distinct keys**, and **the number of files each of the three maps would name** for a lookup.
-- [ ] **And the three maps are the ones the question has**: the **file's own statistics**, the **per-file key range the
-      database keeps**, and **the per-key map** the figure decided.
-- [ ] **And an arm the experiment refuses is not built**, and the refusal is published: **a map that cannot narrow the
-      files on this data saves nothing, and a map that saves nothing is not built.**
+- [x] An experiment over **the table the database writes**: **the key's order**, **each file's key range**, **the number of
+      distinct keys**, and **the number of files each of the maps would name** for a lookup.
+      **The instrument is `crates/columnar-db/examples/index_probe.rs`**, and the facts are in
+      [§3am](../../PERF.md#3am-the-index).
+- [x] **And the maps are the ones the question has**: the **file's own statistics** — the range map, at the home the store
+      already pays for — the **per-file key range the database keeps** — the range map, at the home a write pays for — and
+      **the per-key map** the figure decided. **And the two range maps name the same files, because the file's own
+      statistics are that range**: the experiment asks the shape's question once.
+- [x] **And an arm the experiment refuses is not built**, and the refusal is published: **a map that cannot narrow the
+      files on this data saves nothing, and a map that saves nothing is not built.** **And the range map is refused**: it
+      names **all sixteen files**, for **every one** of the sixty-four sampled keys. **And the per-key map is the index**:
+      **1.156** files on average, **1** at the smallest and **2** at the largest.
 
 ### R3 — The index's price is measured, **on every axis**
 
@@ -176,6 +182,25 @@ not the index**. ADR-0066 decided the granularity — the file — and left the 
 missing is the price that decides the encoding**. **So the experiment comes first**: the key's order, each file's range,
 the distinct keys, and **the number of files each map would name**. **And a map that cannot narrow the files on this
 data saves nothing, and a map that saves nothing is not built** — and that is published, with the figures that said so.
+
+**And the experiment says the range map is refused, and the per-key map is the index.** The key does not rise in the
+table's rows — **499,701** descents over a million rows — **and so every one of the table's sixteen files holds a range
+that spans nearly the whole key space**: the file that holds the smallest key of all holds a range from **13** to
+**5,999,999**, and the one that holds the largest holds a range from **434** to **5,999,206**. **And a range that spans
+the key space excludes nothing**: the range map names **all sixteen files**, for **every one** of the sixty-four sampled
+keys — the mean is **16.000** and the smallest and the largest are **16** — **so the range map saves nothing, and it is
+refused, in both of its homes.**
+
+**And the per-key map narrows**: **1.156** files on average, **1** at the smallest and **2** at the largest — a key whose
+rows fall in two files. **And the map holds an entry a key**: **921,129** distinct keys over a million rows, and
+**78,871** rows that repeat a key. **So ADR-0066's shape is confirmed by a measurement and not by an assumption** — and
+the shape that is built is the one that narrows.
+
+**And the reason the range map fails is the data's order, and not the map**, **and that is published as a condition,
+because it is one**: the published lineitem file's rows are in the file's order and not in the key's order, so **a range
+cannot exclude a file on this data**. **On ordered data the range map would narrow, and it would be free** — the file's own
+statistics are already written — **so the range map is not refused as a shape, and it is refused on this data, and the
+figure that says so is published with it.**
 
 ### A3 — The index is **derived from the files**: the write maintains it, and an open rebuilds it
 
