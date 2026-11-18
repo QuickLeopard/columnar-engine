@@ -394,7 +394,8 @@ impl Database {
             return Ok(Compaction { rows: 0, reclaimed, pending });
         }
         let dead = self.dead_set(name)?;
-        let live = crate::versions::live(&files, &dead, schema.len())?;
+        let names: Vec<String> = schema.names().map(str::to_owned).collect();
+        let live = crate::versions::live(&files, &dead, schema.len(), &names)?;
         let rows = renumbered(&live)?;
         let chunks = crate::chunks::chunks_of(&schema, &rows)?;
         let dir = self.store.table_dir(name);

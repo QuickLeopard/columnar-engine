@@ -23,8 +23,10 @@
 //! `row_id != <retired id>` for each retired id -- which drops the versions
 //! the tombstones name. **The second filter is the tombstone tax**: one
 //! predicate per retired version, and each predicate is one pass over the id
-//! column -- so the tax is the retired versions and not the table's size, and
-//! the compaction is what pays it back.
+//! column -- **so the tax is the retired versions and the table's size
+//! together, and it is the retired versions times the rows, and not the
+//! retired versions alone.** **And every read pays it, and not only the
+//! compaction.** The compaction is what pays it back, and nothing else does.
 //!
 //! **And the ids are a function of what is on disk.** The id a new version
 //! gets is the number of versions the table has ever had, and that number is
@@ -139,8 +141,19 @@ pub(crate) fn retired(files: &[PathBuf]) -> Result<BTreeSet<i64>> {
 /// **The read is the live filter**, so the rows that come back are the rows an
 /// application would see, and the ids that come with them are the versions'
 /// own.
-pub(crate) fn live(files: &[PathBuf], dead: &BTreeSet<i64>, app_columns: usize) -> Result<Live> {
-    let plan = QueryPlan::new(live_filter(dead), Vec::new(), None);
+pub(crate) fn live(
+    files: &[PathBuf],
+    dead: &BTreeSet<i64>,
+    app_columns: usize,
+    names: &[String],
+) -> Result<Live> {
+    // **The projection names the application's columns and the row id, and not
+    // the `deleted` flag.** The flag is a filter and not an output, so the
+    // compaction does not carry it -- and the engine's estimate is made of
+    // what the plan materialises.
+    let mut projection = names.to_vec();
+    projection.push(ROW_ID.to_owned());
+    let plan = QueryPlan::new(live_filter(dead), projection, None);
     let dataset = read(files, &plan)?;
     let (names, columns) = columns_of(&dataset)?;
     let Some(index) = names.iter().position(|name| name == ROW_ID) else {
