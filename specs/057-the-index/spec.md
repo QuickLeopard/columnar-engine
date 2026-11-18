@@ -80,8 +80,12 @@ with the correction recorded in the ADR.
 
 ### R3 — The index's price is measured, **on every axis**
 
-- [ ] The **write cost** — the time and the bytes a write pays to keep the index — **the storage** the index holds, **the
-      peak memory** it takes, and **the lookup's own time**.
+- [x] The map that survives the experiment is built, and **it is the snapshot's**: the write path maintains nothing, and
+      the **reader** pays — once, at the snapshot's first lookup — because **a snapshot pins an older file set, and an
+      index the writer maintained would name a file the snapshot does not have**.
+- [ ] **And its price is measured whole**: the **build's cost**, the **storage** it holds, its **peak memory**, and **the
+      lookup's own time** — back to back, on the same table, at the same moment. **And the write's cost is measured too**,
+      and it is **nothing**: the index is derived and the write path does not touch it.
 - [ ] **And the index's memory grows with the table's keys**, which is **the same shape of defect as the compaction's
       ceiling** — where the database's own memory was the table's size and the budget's verdict was the table's size
       ([spec 056](../056-the-streaming-compaction/spec.md)). **So the row count at which the index's own memory exceeds
@@ -207,16 +211,22 @@ cannot exclude a file on this data**. **On ordered data the range map would narr
 statistics are already written — **so the range map is not refused as a shape, and it is refused on this data, and the
 figure that says so is published with it.**
 
-### A3 — The index is **derived from the files**: the write maintains it, and an open rebuilds it
+### A3 — The index is **the snapshot's**, and the write path pays nothing for it
 
-**Why**: the files are the database's truth — the manifest's truth about the files, the catalog's truth about the tables
-— and **the index is derivable from them**, so **an index that is written is a second thing to keep consistent with the
-files**, and that is exactly the kind of consistency that breaks silently. **So the index is derived**: the write path
-maintains it as it writes, and an open rebuilds it from the files the snapshot names.
+**Why**: this amendment first said that the index is **derived from the files** — the write path maintains it and an open
+rebuilds it — **and the ownership is wrong, and the snapshot's own isolation says so.**
 
-**And both prices are measured**, because both are paid: the write's cost to maintain it, and the open's cost to rebuild
-it. **And the break-even counts both** — a map that costs more to build than it saves is not a map, and the number of
-reads that says so is the number the record publishes.
+**A snapshot pins the file list it saw**, and a write that lands afterwards is a write the snapshot does not see. **So an
+index the writer maintained would name files the snapshot does not have** — the file a write appended — **and a lookup
+would answer with rows the snapshot must not see.** **So the index cannot be the database's.**
+
+**And so the index is the snapshot's**: it is built from **the files the snapshot pinned**, and it is built **when the
+snapshot is first asked for one** — **and a snapshot that is never asked for a row pays nothing for it.**
+
+**And the write path pays nothing for the index at all.** The index is derived, and the price of deriving it is paid by
+the **reader**, once, at the first lookup — **and the total work is the same either way**, because the keys have to be read
+once whichever side reads them. **And that is the shape the break-even turns on**: the number of lookups a snapshot has to
+serve for the index to pay for itself.
 
 ### A4 — The granularity is the file, and **the bound is published**
 

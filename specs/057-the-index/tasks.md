@@ -41,10 +41,11 @@ comes before the index, and an arm the experiment refuses is never built.
 
 ## The index — the price, on every axis
 
-- [ ] The map that survives the experiment is built, **maintained by the write path** and **rebuilt at an open**, because it
-      is derived from the files.
-- [ ] **And its price is measured whole**: the write's cost to maintain it, the storage it holds, its peak memory, the
-      rebuild's cost at an open, and the lookup's own time — back to back, on the same table, at the same moment.
+- [x] The map that survives the experiment is built, and **it is the snapshot's**: the write path maintains nothing, and
+      the reader pays — once, at the snapshot's first lookup — because **a snapshot pins an older file set, and an index
+      the writer maintained would name a file the snapshot does not have**.
+- [ ] **And its price is measured whole**: the build's cost, the storage it holds, its peak memory, and the lookup's own
+      time — back to back, on the same table, at the same moment — **and the write's cost, which is nothing**.
 - [ ] **And the row count at which the index's own memory exceeds the engine's 256 MiB budget is measured**, if it does:
       the index's memory grows with the table's keys, and that is the same shape of defect as the compaction's ceiling.
 - [ ] **And the compaction is measured with the index and without it**, because the compaction rewrites the files and the

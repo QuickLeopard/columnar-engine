@@ -158,7 +158,7 @@ pub(crate) fn columns_of(dataset: &Dataset) -> Result<(Vec<String>, Vec<ColumnVa
 }
 
 /// The values of a column chunk, in the database's own shape.
-fn values_of(chunk: &ColumnChunk) -> Result<ColumnValues> {
+pub(crate) fn values_of(chunk: &ColumnChunk) -> Result<ColumnValues> {
     let column = &chunk.name;
     let values: ColumnValues = match &chunk.encoding {
         Encoding::Int64 { values } => {

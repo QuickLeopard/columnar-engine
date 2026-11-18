@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use columnar_engine::{
@@ -11,6 +12,7 @@ use columnar_engine::{
 };
 
 use crate::error::{Error, Result};
+use crate::index::{Index, Key};
 use crate::readers::Readers;
 use crate::row::Rows;
 use crate::schema::Schema;
@@ -56,6 +58,12 @@ pub struct Snapshot {
     by_path: BTreeMap<PathBuf, String>,
     /// The retired versions of each table, and when they were found.
     dead: RefCell<BTreeMap<String, BTreeSet<i64>>>,
+    /// The index of each table, and when it was built.
+    ///
+    /// **And the index is built when the table is first looked up**, and not
+    /// when the snapshot is taken: a snapshot that is never asked for a row
+    /// pays nothing for it.
+    indexes: RefCell<BTreeMap<String, Rc<Index>>>,
     /// The readers that are alive.
     readers: Arc<Readers>,
     /// This snapshot's own registration.
@@ -71,7 +79,15 @@ impl Snapshot {
         readers: Arc<Readers>,
         id: u64,
     ) -> Self {
-        Self { tables, catalog, by_path, dead: RefCell::new(BTreeMap::new()), readers, id }
+        Self {
+            tables,
+            catalog,
+            by_path,
+            dead: RefCell::new(BTreeMap::new()),
+            indexes: RefCell::new(BTreeMap::new()),
+            readers,
+            id,
+        }
     }
 
     /// The table with that name, as the snapshot pinned it.
@@ -157,6 +173,27 @@ impl Snapshot {
         let dead = crate::versions::retired(&table.files)?;
         self.dead.borrow_mut().insert(table.name.clone(), dead.clone());
         Ok(dead)
+    }
+
+    /// The index of a table, and when it was built.
+    ///
+    /// **And it is built from the files the snapshot pinned**, because the
+    /// index is the snapshot's and not the database's: a write that lands
+    /// afterwards is a write the snapshot does not see, and an index the
+    /// writer maintained would name a file the snapshot does not have.
+    ///
+    /// **And it is built once**, because the files are pinned and the answer
+    /// cannot change.
+    fn index_of(&self, table: &PinnedTable) -> Result<Rc<Index>> {
+        if let Some(index) = self.indexes.borrow().get(&table.name) {
+            return Ok(Rc::clone(index));
+        }
+        let Some(key_column) = table.schema.key() else {
+            return Err(Error::NoKey { name: table.name.clone() });
+        };
+        let index = Rc::new(Index::build(&table.files, key_column.name())?);
+        self.indexes.borrow_mut().insert(table.name.clone(), Rc::clone(&index));
+        Ok(index)
     }
 }
 
@@ -328,10 +365,10 @@ impl SnapshotTable<'_> {
     /// by, and a table whose schema names no key has no point lookup, and the
     /// lookup says so rather than guessing a column.
     ///
-    /// **And the lookup is a scan today.** The rows are found by filtering the
-    /// table, and the map that will make the lookup cheap is measured before
-    /// it is built
-    /// ([PERF.md §3am](../../PERF.md#3am-the-indexs-shape-measured-before-it-is-built)).
+    /// **And the lookup reads the files that hold the key, and not the
+    /// table.** The index names them, and the plan is run over those files
+    /// alone — so the answer is the rows the scan would answer, and the files
+    /// read are a fraction of the table's.
     ///
     /// # Errors
     ///
@@ -350,8 +387,21 @@ impl SnapshotTable<'_> {
                 got: key.data_type().name().to_owned(),
             });
         }
+        let index = self.snapshot.index_of(self.table)?;
+        let index_key = Key::of(&key, key_column.name())?;
+        let files: Vec<PathBuf> = index
+            .files_of(&index_key)
+            .iter()
+            .filter_map(|position| self.table.files.get(*position).cloned())
+            .collect();
+        if files.is_empty() {
+            return Ok(Rows::empty(self.schema()));
+        }
         let plan = self.plan().filter(col(key_column.name()).eq(key)).build()?;
-        self.rows(&plan, &ExecOptions::default())
+        let plan = self.snapshot.effective(&self.name, &plan)?;
+        let source = FileSetSource::open(&files)?;
+        let dataset = source.execute_rows(&plan, &ExecOptions::default())?;
+        Rows::of(&dataset)
     }
 
     /// The source the table's files are read through.

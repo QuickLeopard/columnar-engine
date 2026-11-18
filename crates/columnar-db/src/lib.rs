@@ -73,6 +73,7 @@
 #![deny(unsafe_code)]
 
 mod chunks;
+mod index;
 mod readers;
 mod versions;
 

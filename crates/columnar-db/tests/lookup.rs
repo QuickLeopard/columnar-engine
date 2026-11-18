@@ -283,6 +283,32 @@ fn a_catalog_written_before_the_key_existed_is_read() {
 }
 
 #[test]
+fn a_snapshot_does_not_see_the_rows_written_after_it() {
+    let scratch = Scratch::new("isolation");
+    let mut database = database_with_rows(&scratch);
+
+    // **The snapshot is taken, and then the row is written.**
+    let snapshot = database.snapshot().expect("the snapshot is taken");
+    {
+        let mut table = database.table_mut("items").expect("the table is there");
+        table.insert(&rows(6..=6)).expect("the rows are accepted");
+        table.commit().expect("the rows are written");
+    }
+
+    // **And the index is the snapshot's**, so the pinned table does not hold
+    // the new row -- and the lookup says so rather than answering with it.
+    let pinned = snapshot.table("items").expect("the table is there");
+    let found = pinned.lookup(6i64).expect("the lookup answers");
+    assert!(found.rows().is_empty(), "the snapshot does not see the new row");
+
+    // **And a snapshot taken after the write does.**
+    let fresh = database.snapshot().expect("the snapshot is taken");
+    let table = fresh.table("items").expect("the table is there");
+    let found = table.lookup(6i64).expect("the lookup answers");
+    assert_eq!(ids_of(&found), vec![6]);
+}
+
+#[test]
 fn the_lookup_reads_the_files_the_table_has() {
     let scratch = Scratch::new("files");
     let database = database_with_rows(&scratch);
