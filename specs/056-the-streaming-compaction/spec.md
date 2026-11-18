@@ -29,11 +29,18 @@ cannot be reclaimed.**
 **And the output file's schema is derived from the data, which a streaming compaction cannot do.** The Parquet writer's
 schema is fixed before the first row, and the data's shape is known only after the last one — and the store derives it:
 `rows::schema` writes a column **required** when the rows hold no NULL and **optional** when they hold one
-([`crates/columnar-store/src/rows.rs`](../../crates/columnar-store/src/rows.rs)). **So two files of one table can disagree
-about a column's nullability**, and **the engine's own file-set check does not compare nullability**: it compares the
-column count, the names, the types and the storage, and not that
-([`crates/columnar-engine/src/file_set.rs`](../../crates/columnar-engine/src/file_set.rs), `check_schemas`). **So the
-streaming compaction cannot be written until the output schema is decided by something other than the data.**
+([`crates/columnar-store/src/rows.rs`](../../crates/columnar-store/src/rows.rs)). **So the file's optionality is the rows'
+happenstance and not the table's schema**, and two files of one table can carry different optionality for the same column.
+
+**And that disagreement is harmless to the read, and the test says so.** The engine's file-set check compares the column
+count, the names, the types and the storage, and not the nullability
+([`crates/columnar-engine/src/file_set.rs`](../../crates/columnar-engine/src/file_set.rs), `check_schemas`) — and **it does
+not have to**: the engine's own vocabulary has no nullability in it. A chunk is a dense array of values and a mask that
+says which of them are real, the mask is the file's own, and **a file set whose files disagree about a column's optionality
+reads correctly**
+([`crates/columnar-engine/tests/nullability.rs`](../../crates/columnar-engine/tests/nullability.rs)). **So the check's
+silence is the engine's vocabulary saying that a column's optionality is not the engine's business — and the database's
+business is different: the database's files have to agree with the table's schema.**
 
 **And the store's surface is about to be published.** The crates go to the registry at **0.1.0** and the surface is frozen
 there ([spec 054](../054-the-crates-are-published/spec.md)), so **the nullability has to be settled before the publish and
@@ -64,13 +71,15 @@ not after it** — a change to a published surface is a break in every embedder'
 - [ ] **And the bytes change, and the change is published**: the old figure and the new one are both given, with the reason
       named, because an optional column that holds no NULL still writes its definition levels.
 
-### R3 — A file whose schema disagrees with the table's is **refused**, and the refusal **names the file and the column**
+### R3 — The **output agrees with the table's schema**, whatever the files said
 
-- [ ] The compaction checks each file's schema against **the table's schema** — including the nullability the engine's own
-      check does not compare — because the compaction is the moment a disagreement would be inherited, and so the moment to
-      catch it.
-- [ ] **And the refusal names the file and the column**, because a refusal that does not say which file is not a refusal an
-      application can act on.
+- [ ] The compaction writes **the table's schema**, so the table's files agree with it **by construction** — and the
+      compaction **repairs** the files that were written before the rule, because the output is decided and not derived.
+- [ ] **And the engine's file-set check does not grow a nullability comparison**, because the engine's vocabulary has no
+      nullability: **a file set whose files disagree about a column's optionality reads correctly**, and the check's silence
+      is published with the test that proves it.
+- [ ] **And the database does not learn to read a file's nullability**, because it does not need to: the output is decided by
+      the table's schema, and the input's optionality is the input's own business.
 
 ### R4 — The **price** is measured and published, and the ceiling is measured again
 
@@ -95,8 +104,8 @@ not after it** — a change to a published surface is a break in every embedder'
 
 ## The scope
 
-- **In**: the streaming compaction, the decided output schema, the store's nullability as an input, the refusal of a file
-  that disagrees, the prices, and the record.
+- **In**: the streaming compaction, the decided output schema, the store's nullability as an input, the compaction's repair
+  of the files written before the rule, the prices, and the record.
 - **Out**: **the tombstone tax's shape** — named out with the reason (R4): streaming does not change the tax a read pays, it
   only makes the compaction able to run at all. **The tax's three ways out are three architectures** — the database filters
   the retired versions itself, the engine grows a *"not one of these"* predicate, or the compaction runs by itself — and the
@@ -106,9 +115,9 @@ not after it** — a change to a published surface is a break in every embedder'
   measured before it exists**, and a price that is not measured is not a number.
 - **Out**: **an automatic compaction** — nothing here triggers a compaction by itself. The tax's shape decides that, and it is
   out.
-- **Out**: **the engine's file-set check** — it does not compare nullability, and after R2 it does not need to: the database's
-  own files agree by construction. **Whether the engine's check should compare it is the engine's behaviour and a later
-  increment's decision.**
+- **Out**: **the engine's file-set check** — it does not compare nullability, and **it does not have to**: the engine's
+  vocabulary has no nullability, and a file set whose files disagree about it reads correctly, which the test proves. Whether
+  the engine's check should compare it anyway is the engine's behaviour and a later increment's decision.
 - **Out**: **the engine's budget and its estimate** — the budget stays at **256 MiB** and the estimate is not changed. The
   streaming compaction fits by reading less at a time, and a budget that is raised to fit a query is a budget that no longer
   says anything.
@@ -171,13 +180,26 @@ because a caller that decides the schema must be able to say so, and the store d
 **And the bytes change** — an optional column that holds no NULL still writes its definition levels — so **the change is
 published**, old and new, with the reason named.
 
-### A3 — A file that disagrees with the table's schema is **refused**, and the refusal names the file and the column
+### A3 — The output agrees with **the table's schema**, and the disagreement is **repaired**, not refused
 
-**Why**: after A2 the database's own files agree by construction, so a disagreement can only come from a file written before
-the rule, or from outside the database. **And the compaction is the moment the disagreement would be inherited**: it is the
-moment the table's files become one file, and one file has one schema. **So the compaction checks each file against the
-table's schema — the nullability included — and refuses the table** rather than writing a file whose schema is not the
-table's.
+**Why**: this requirement first said that a file whose schema disagrees with the table's would be **refused, with the file
+and the column named**, and **that was wrong on two counts, and the experiment says so.**
 
-**And the refusal names the file and the column**, because a refusal that does not say which file is not a refusal an
-application can act on, and a compaction that failed without a reason is a defect with no record.
+**The first is that the database cannot see a file's nullability.** The engine's `SourceColumn` names a column's type and
+not its optionality, and the engine's vocabulary has no nullability in it at all — so a check would have needed the
+**engine's surface widened** to read a file's optionality, and the engine's surface is frozen.
+
+**The second is that the disagreement was never a hazard.** The house's rule is that a thing is not built before it is
+measured, and so the question — *what does the engine do with a file set whose files disagree about a column's optionality?*
+— was put to a test before anything was written
+([`crates/columnar-engine/tests/nullability.rs`](../../crates/columnar-engine/tests/nullability.rs)): **two files, the same
+column, one required and one optional, and the read is correct.** The engine's chunk is a dense array of values and a mask
+that says which of them are real, the mask is the file's own, and the first file's schema is the table's schema — so the
+optionality never reaches the answer. **So the engine's check's silence is not an oversight, and there is nothing to refuse.**
+
+**So the compaction's output is decided by the table's schema, and the disagreement is repaired by the compaction** — the
+output agrees with the table's schema whatever the files said, and a file written before the rule is fixed the next time the
+table is compacted. **And the database does not learn to read a file's nullability**, because it does not need to.
+
+**And the engine's file-set check stays as it is**, with the reason named here rather than left in a reader's head: **the
+engine's vocabulary has no nullability, and a column's optionality is not the engine's business.**

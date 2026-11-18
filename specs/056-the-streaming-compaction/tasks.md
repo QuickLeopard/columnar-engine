@@ -28,11 +28,14 @@ defect that is already published, and a defect that is published is a defect tha
 - [ ] **And the bytes change, and the change is published**: the old figure and the new one are both given, with the reason
       named.
 
-## The refusal
+## The output and the disagreement
 
-- [ ] The compaction checks each file's schema against **the table's schema** — **the nullability included**, which the
-      engine's own file-set check does not compare.
-- [ ] **And a file that disagrees is refused, and the refusal names the file and the column.**
+- [ ] The compaction writes **the table's schema**, so the table's files agree with it **by construction** — and the
+      compaction **repairs** the files written before the rule.
+- [ ] **And the engine's file-set check does not grow a nullability comparison**: a file set whose files disagree about a
+      column's optionality **reads correctly**, and the check's silence is published with the test that proves it
+      (`crates/columnar-engine/tests/nullability.rs`).
+- [ ] **And the database does not learn to read a file's nullability**, because it does not need to.
 
 ## The prices
 
