@@ -1,6 +1,7 @@
 # Spec 057 — The index
 
-**Status**: planned
+**Status**: done
+**Finished**: 2026-11-18
 **Started**: 2026-11-18
 **Predecessor**: [spec 056 — the streaming compaction](../056-the-streaming-compaction/spec.md)
 
@@ -137,7 +138,7 @@ with the correction recorded in the ADR.
 
 ### R7 — The closure
 
-- [ ] The spec's status is `done` with the date it finished, and CI is green.
+- [x] The spec's status is `done` with the date it finished, and CI is green.
 
 ## The scope
 

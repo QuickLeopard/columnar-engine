@@ -87,7 +87,7 @@ comes before the index, and an arm the experiment refuses is never built.
 
 ## The closure
 
-- [ ] The spec's status is `done` with the date it finished, and CI is green.
+- [x] The spec's status is `done` with the date it finished, and CI is green.
 
 ## What is not done
 
