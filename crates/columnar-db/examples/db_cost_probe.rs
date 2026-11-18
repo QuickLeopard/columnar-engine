@@ -76,12 +76,13 @@
 //!
 //! # The compaction's ceiling
 //!
-//! **The compaction reads the table's live rows in one piece**, so the
-//! engine's memory budget is the compaction's ceiling -- and the budget is
-//! **256 MiB** by default. **The probe measures that ceiling** rather than
-//! asserting it: it bisects for the row count where the compaction is
-//! refused, and the report says how many rows compacted and how many were
-//! refused.
+//! **The compaction reads a file at a time**, so the engine's memory budget is
+//! no longer the table's ceiling: the budget's verdict is about a file's rows
+//! and not about the table's, and the compaction is not refused where it used
+//! to be. **The probe measures that** rather than asserting it: it compacts
+//! the whole dataset, and if the compaction is refused it bisects for the row
+//! count where it is. **And the report says how many rows compacted and how
+//! many were refused** -- and a refusal of none is a refusal of zero rows.
 //!
 //! # The rows
 //!
@@ -680,7 +681,9 @@ fn measure_once(arguments: &Arguments, source: &Source, rows: usize) -> (Vec<Rea
 struct Ceiling {
     /// The largest row count whose compaction succeeded.
     ok: usize,
-    /// The smallest row count whose compaction was refused.
+    /// The smallest row count whose compaction was refused -- **and zero when
+    /// nothing was refused**, which is the answer the streaming compaction
+    /// gives.
     refused: usize,
     /// The reason the refusal gave.
     reason: String,
@@ -717,8 +720,9 @@ fn measure_ceiling(source: &Source, work_dir: &Path, lower: usize) -> Ceiling {
     }
     match compaction_of(source, work_dir, top) {
         Ok(()) => {
+            // **And nothing was refused**: the whole dataset compacted.
             ceiling.ok = top;
-            ceiling.refused = top;
+            ceiling.refused = 0;
             ceiling.steps = 1;
             return ceiling;
         }
@@ -907,10 +911,17 @@ fn print_summary(
     );
     println!("updated: {}, deleted: {}", counts.updated_rows, counts.deleted_rows);
     println!("\n--- the compaction's ceiling ---");
-    println!(
-        "compacted at {} rows, refused at {} rows, in {} steps",
-        ceiling.ok, ceiling.refused, ceiling.steps
-    );
+    if ceiling.refused == 0 {
+        println!(
+            "compacted at {} rows, and refused at no row count, in {} step",
+            ceiling.ok, ceiling.steps
+        );
+    } else {
+        println!(
+            "compacted at {} rows, refused at {} rows, in {} steps",
+            ceiling.ok, ceiling.refused, ceiling.steps
+        );
+    }
     if !ceiling.reason.is_empty() {
         println!("the reason: {}", ceiling.reason);
     }

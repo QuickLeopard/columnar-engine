@@ -372,7 +372,11 @@ fn a_compaction_crosses_the_grid() {
     {
         let mut table = database.table_mut("t").expect("the table is there");
         let compaction = table.compact().expect("the table is compacted");
-        assert_eq!(compaction.rows as usize, grid + 1_000 - 1, "the live rows are the ones that are left");
+        assert_eq!(
+            compaction.rows as usize,
+            grid + 1_000 - 1,
+            "the live rows are the ones that are left"
+        );
     }
 
     // **And the table holds one file now**, and it holds every live row.
@@ -388,10 +392,7 @@ fn a_compaction_crosses_the_grid() {
     assert_eq!(ids.first().copied(), Some(0), "the first version is 0");
     let last = i64::try_from(grid + 1_000 - 2).expect("the rows fit");
     assert_eq!(ids.last().copied(), Some(last), "and the last is the row before it");
-    assert!(
-        ids.windows(2).all(|pair| pair[1] == pair[0] + 1),
-        "the versions are consecutive"
-    );
+    assert!(ids.windows(2).all(|pair| pair[1] == pair[0] + 1), "the versions are consecutive");
 }
 
 #[test]
