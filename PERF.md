@@ -5753,6 +5753,63 @@ average is in every report. **And the machine was busier than the campaigns the 
 and **15.47** — which is why the two sets' ranges are given beside every figure that moved.
 
 
+### 3am. The index's shape, measured before it is built
+
+**The index's shape is decided by a figure, and the index is not built.** The rule is the database's own and it is
+written down: *a point lookup that a scan already answers more cheaply is not given an index, and the database says so*
+([ADR-0066](docs/adr/0066-the-databases-own-price.md)). **And the figure that decided the shape is published**: the point
+lookup costs **43.319 ms** as a scan in the engine's own read and **2.657 ms** over the one file an index would reach, so
+the scan is **17.20×** more expensive and **the most an index could save is 40.828 ms**. **And what is missing is the
+index's own price** — its build, its storage and its lookup — **because there is no index to measure**.
+
+**And the price that was missing is the price that decides the shape.** ADR-0066 chose *a map from the key to the file
+that holds it*, and it chose it for the **granularity** — the file, because that is where the floor was measured — **and
+not for the encoding**. **So the encoding is measured before anything is built**, over the table the database actually
+writes: **a million rows of the published lineitem file, on the store's grid, so sixteen files of 65,536 rows.**
+
+**And the key does not rise in the table's rows.** The table's key falls **499,701** times over its million rows — so the
+rows are in the file's order and not in the key's order — **and every one of the sixteen files holds a range that spans
+nearly the whole key space**: the reach of those ranges runs from **13** to **5,999,999**.
+
+| the shape | |
+|---|---|
+| the rows the table holds | **1,000,000** |
+| the files it holds | **16** — the grid's **65,536** rows a file |
+| **the times the key falls** | **499,701** |
+| **the range map's reach** | **13** to **5,999,999** |
+| **the distinct keys** | **921,129** |
+| the rows that repeat a key | **78,871** |
+
+**And so the range map saves nothing.** It names **all sixteen files**, for **every one** of the sixty-four sampled keys:
+the mean is **16.000** and the smallest and the largest are **16**. **And a map that names every file is not a map, so it
+is refused** — in both of its homes, the file's own statistics and the database's own range, **which name the same files
+because the file's own statistics are that range**.
+
+| the files each map names, over 64 keys | the range map | the per-key map |
+|---|---|---|
+| the mean | **16.000** | **1.156** |
+| the smallest | **16** | **1** |
+| the largest | **16** | **2** |
+
+**And the per-key map narrows**, so it is the index ADR-0066 decided: **1.156** files on average, **1** at the smallest
+and **2** at the largest — a key whose rows fall in two files. **And the map holds an entry a key**: **921,129** of them.
+
+**And the reason the range map fails is the data's order and not the map** — **and that is a condition of this section, so
+it is published as one**: the published lineitem file's rows are in the file's order and not in the key's order, so **a
+range cannot exclude a file on this data**. **On ordered data the range map would narrow, and it would be free** — the
+file's own statistics are already written — **so the range map is refused on this data, and not as a shape.**
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/index-shape-run1.json` and its two siblings, the instrument is
+`crates/columnar-db/examples/index_probe.rs`, and the decision is in
+[ADR-0068](docs/adr/0068-the-indexs-shape-and-its-price.md).
+
+**The conditions**: three campaigns, on one host, at a load average of **14.21**, **14.21** and **13.31**, and the load
+average is in every report. **And the counts are the counts** — the key's order, the ranges and the distinct keys are
+properties of the data and not of the machine — **so the three campaigns agree to the row**, and what they measure is the
+shape and not a time.
+
+
 ## 4. The defects the increments found
 
 Thirty-two, all found by measurement, all recorded with their before-and-after numbers in the ADRs

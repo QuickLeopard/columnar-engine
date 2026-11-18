@@ -32,6 +32,9 @@ comes before the index, and an arm the experiment refuses is never built.
       on ordered data the range map would narrow, and it would be free.
 - [x] **And the map's own size is measured**: **921,129** distinct keys over a million rows, and **78,871** rows that
       repeat a key — so the index holds **an entry a key**, and a key's entry can name **two** files.
+- [x] **Three campaigns**, with the raw reports **committed** to `bench-results/`, and the figures derived by
+      `scripts/medians.py`.
+- [x] **And the section publishes them** — **§3am** — **and the guard checks every one of them inside it**.
 
 ## The index — the price, on every axis
 

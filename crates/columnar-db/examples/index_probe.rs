@@ -313,6 +313,16 @@ fn sample_keys(keys: &[i64], samples: usize) -> Vec<i64> {
     keys.iter().step_by(step).take(samples).copied().collect()
 }
 
+/// The smallest of the files' minimums, and the largest of their maximums.
+///
+/// **The two are the range map's own reach**: a key between them is in every
+/// file's range, and a key outside them is in none.
+fn range_extremes(shapes: &[FileShape]) -> (i64, i64) {
+    let smallest = shapes.iter().map(|shape| shape.min).min().unwrap_or(0);
+    let largest = shapes.iter().map(|shape| shape.max).max().unwrap_or(0);
+    (smallest, largest)
+}
+
 /// The smallest and the largest of a set of counts.
 fn smallest_and_largest(counts: &[usize]) -> (usize, usize) {
     let Some(first) = counts.first() else {
@@ -392,6 +402,8 @@ fn main() {
     println!("distinct keys: {distinct}");
 
     println!("\n--- each file's own range ---");
+    let (smallest_minimum, largest_maximum) = range_extremes(&shapes);
+    println!("the range map's reach: {smallest_minimum}..{largest_maximum}");
     for (index, shape) in shapes.iter().enumerate() {
         println!("file {index:>3}: rows {:>7}, key {}..{}", shape.rows, shape.min, shape.max);
     }
@@ -413,8 +425,7 @@ fn main() {
         mean(&key_counts)
     );
 
-    let report = serde_json::json!({
-        "probe": "index-shape",
+    let report = serde_json::json!({        "probe": "index-shape",
         "data": arguments.data.display().to_string(),
         "commit": commit_sha(),
         "host_load_average": load_average(),
@@ -426,6 +437,8 @@ fn main() {
         "distinct_keys": distinct,
         "duplicate_key_rows": table_keys.len().saturating_sub(distinct),
         "samples": sample.len(),
+        "range_map_smallest_minimum": smallest_minimum,
+        "range_map_largest_maximum": largest_maximum,
         "range_map_files_named_mean": mean(&range_counts),
         "range_map_files_named_smallest": range_smallest,
         "range_map_files_named_largest": range_largest,

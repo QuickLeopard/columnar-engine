@@ -153,9 +153,12 @@ writer is alone.
 
 **What is here now** is the database, the persistent catalog, the schema, the typed write path, the snapshot read, the hidden
 row id, and the compaction that pays for the append-only model — **and the compaction reads a file at a time, so the table's
-size is not its ceiling**. **What is not here yet** is the index, whose shape the scan's figure decided and whose write cost
-is unmeasured because there is no index to measure.
+size is not its ceiling**. **What is not here yet** is the index, whose shape the scan's figure decided — **and whose
+encoding is now decided too, by a measurement**: the key does not rise in the table's rows, so every file holds a range that
+spans nearly the whole key space, and the range map names every file. **The per-key map is the index**, and its price is
+unmeasured because there is no index to measure.
 
 **And every price was measured before it was built.** The gap between the engine and the store was priced first, so that the
 index's shape is decided by a figure and not by an opinion — that is spec 055. **And the compaction's own ceiling was priced
-too**, and the price found it — that is spec 056.
+too**, and the price found it — that is spec 056. **And the index's encoding was priced before the index**, and the price
+refused an arm — that is spec 057.

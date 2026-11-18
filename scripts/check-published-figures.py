@@ -2009,6 +2009,36 @@ DB_COST_STREAM_COUNTS = (
     ("compaction_ceiling_refused_rows", "the ceiling: the rows refused"),
 )
 
+# Spec 057: the index's shape, measured before it is built. The probe
+# measures the key's order, each file's own range, the distinct keys, and the
+# files each of the maps would name -- and **every figure is checked inside
+# the section that publishes it**.
+INDEX_SHAPE_REPORTS = sorted((ROOT / "bench-results").glob("index-shape-run*.json"))
+INDEX_SHAPE_SECTION = "### 3am"
+
+# The counts the index's shape section publishes, and the places they are
+# written at.
+#
+# **The counts are the counts** -- the key's order and the files' ranges are
+# properties of the data and not of the machine -- so the three campaigns
+# agree to the row, and the median is the figure.
+INDEX_SHAPE_COUNTS = (
+    ("rows", "the rows the table holds", 0),
+    ("files", "the files it holds", 0),
+    ("grid_rows", "the grid's rows a file", 0),
+    ("key_descents", "the times the key falls", 0),
+    ("range_map_smallest_minimum", "the range map's reach, its lowest", 0),
+    ("range_map_largest_maximum", "the range map's reach, its highest", 0),
+    ("distinct_keys", "the distinct keys", 0),
+    ("duplicate_key_rows", "the rows that repeat a key", 0),
+    ("range_map_files_named_mean", "the range map's mean", 3),
+    ("range_map_files_named_smallest", "the range map's smallest", 0),
+    ("range_map_files_named_largest", "the range map's largest", 0),
+    ("key_map_files_named_mean", "the per-key map's mean", 3),
+    ("key_map_files_named_smallest", "the per-key map's smallest", 0),
+    ("key_map_files_named_largest", "the per-key map's largest", 0),
+)
+
 # The timings, the label each one is published under, and the places.
 #
 # **The figures are rendered with the thousands separator**, and so are the
@@ -7228,6 +7258,36 @@ def main() -> int:
             else:
                 print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
 
+    # Spec 057: the index's shape. The counts are the key's order, each
+    # file's own range, the distinct keys, and the files each of the maps
+    # would name -- and every one of them is looked for **inside** the
+    # section that publishes it.
+    index_shape_section = section_of(texts["PERF.md"], INDEX_SHAPE_SECTION)
+    if index_shape_section is None:
+        failures.append(
+            f"PERF.md: the section that publishes the index's shape "
+            f"({INDEX_SHAPE_SECTION}) is not in the document"
+        )
+    elif len(INDEX_SHAPE_REPORTS) < MIN_CAMPAIGNS:
+        failures.append(
+            f"the index's shape probe has {len(INDEX_SHAPE_REPORTS)} campaigns, "
+            f"and the method says {MIN_CAMPAIGNS}"
+        )
+    else:
+        _, _, index_shape_counts = _db_cost_figures(INDEX_SHAPE_REPORTS)
+        for key, label, places in INDEX_SHAPE_COUNTS:
+            values = index_shape_counts.get(key, [])
+            if not values:
+                continue
+            rendered = f"{statistics.median(values):,.{places}f}"
+            if not figure_in(index_shape_section, rendered):
+                failures.append(
+                    f"PERF.md: the index's shape's {label} is {rendered} by the reports "
+                    f"but that figure does not appear in the section that publishes it"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+
     if failures:
         print()
         for failure in failures:
@@ -7270,7 +7330,8 @@ def main() -> int:
         f"{len(SET_ROWS_BEFORE_REPORTS) and 7} of the set's rows before, "
         f"{len(DB_COST_TIMINGS) + len(DB_COST_DERIVED) + len(DB_COST_COUNTS)} of the database's own price, "
         f"{len(DB_COST_STREAM_TIMINGS) + len(DB_COST_STREAM_DERIVED) + len(DB_COST_STREAM_COUNTS)} "
-        f"of the streaming compaction"
+        f"of the streaming compaction, "
+        f"{len(INDEX_SHAPE_COUNTS)} of the index's shape"
     )
     return 0
 

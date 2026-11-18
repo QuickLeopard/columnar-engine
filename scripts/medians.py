@@ -1193,6 +1193,51 @@ def print_scan_cost(files: list[tuple[str, list[dict]]]) -> None:
     print(line)
 
 
+def print_index_shape(runs: list[dict]) -> None:
+    """Print the index's shape: what each map can narrow on the table the
+    database writes.
+
+    This is spec 057: the shape was decided by a figure -- the point lookup's
+    scan against the one file an index would reach -- and **the price that
+    decides the encoding was missing**. So the encoding is measured first: the
+    key's order, each file's own range, the distinct keys, and the files each
+    of the maps would name for a lookup.
+
+    **And the counts are the counts** -- the key's order and the files' ranges
+    are properties of the data and not of the machine -- so the campaigns
+    agree to the row.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE INDEX'S SHAPE ({len(runs)} campaigns) ===")
+    for key, heading in (
+        ("rows", "the rows the table holds"),
+        ("files", "the files it holds"),
+        ("grid_rows", "the grid's rows a file"),
+        ("key_descents", "the times the key falls"),
+        ("range_map_smallest_minimum", "the range map's reach, its lowest"),
+        ("range_map_largest_maximum", "the range map's reach, its highest"),
+        ("distinct_keys", "the distinct keys"),
+        ("duplicate_key_rows", "the rows that repeat a key"),
+        ("range_map_files_named_smallest", "the range map names, the smallest"),
+        ("range_map_files_named_largest", "the range map names, the largest"),
+        ("key_map_files_named_smallest", "the per-key map names, the smallest"),
+        ("key_map_files_named_largest", "the per-key map names, the largest"),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {median(values):>14,.0f}")
+    for key, heading in (
+        ("range_map_files_named_mean", "the range map names, the mean"),
+        ("key_map_files_named_mean", "the per-key map names, the mean"),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {median(values):>14.3f}")
+    loads = [run.get("host_load_average", 0.0) for run in runs]
+    print(f"   {'the host\'s load average':<44} {', '.join(f'{load:.2f}' for load in loads)}")
+
+
 def print_db_cost(runs: list[dict], title: str = "THE DATABASE'S OWN PRICE") -> None:
     """Print the database's own price: what the layer between the engine and
     the store costs.
@@ -4317,6 +4362,12 @@ def main() -> int:
         load(p) for p in sorted(Path("bench-results").glob("db-cost-stream-run*.json"))
     ]
     print_db_cost(stream_runs, "THE STREAMING COMPACTION")
+
+    # Spec 057: the index's shape, measured before the index is built.
+    index_shape_runs = [
+        load(p) for p in sorted(Path("bench-results").glob("index-shape-run*.json"))
+    ]
+    print_index_shape(index_shape_runs)
 
     return 0
 

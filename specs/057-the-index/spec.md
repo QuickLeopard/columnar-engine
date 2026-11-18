@@ -63,7 +63,7 @@ with the correction recorded in the ADR.
 - [x] An experiment over **the table the database writes**: **the key's order**, **each file's key range**, **the number of
       distinct keys**, and **the number of files each of the maps would name** for a lookup.
       **The instrument is `crates/columnar-db/examples/index_probe.rs`**, and the facts are in
-      [§3am](../../PERF.md#3am-the-index).
+      [§3am](../../PERF.md#3am-the-indexs-shape-measured-before-it-is-built).
 - [x] **And the maps are the ones the question has**: the **file's own statistics** — the range map, at the home the store
       already pays for — the **per-file key range the database keeps** — the range map, at the home a write pays for — and
       **the per-key map** the figure decided. **And the two range maps name the same files, because the file's own

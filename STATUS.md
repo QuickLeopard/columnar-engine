@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **55 specs**, **67 ADRs** and **32 defects** so far, and every one
+[`constitution.md`](constitution.md). **55 specs**, **68 ADRs** and **32 defects** so far, and every one
 of the specs but the two in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
@@ -888,9 +888,15 @@ ranges overlap — **and the space amplification did not move at all**, at **1.3
 - **The index itself.** The shape is decided by the scan's figure — **a map from the key to the files that hold
   it**, over the grid — and the index is not built: **its write cost is not measured, because there is no index
   to measure.** **And [spec 057](specs/057-the-index/spec.md) takes it on**: the shape's **granularity** is decided — the
-  file, because that is where the floor was measured — **and the encoding is not**, so the increment measures the three
-  maps that could serve the lookup — **the file's own statistics, the per-file key range, and the per-key map** — **before
-  any of them is built**, and an arm that cannot narrow the files on this data saves nothing and is not built.
+  file, because that is where the floor was measured — **and the encoding is not**, so the increment measures the maps
+  that could serve the lookup **before any of them is built**. **And the measurement refuses one of them**: the key falls
+  **499,701** times over the table's million rows, so **every one of the sixteen files holds a range that spans nearly the
+  whole key space**, and the range map **names all sixteen files, for every sampled key** — **so it is refused**, in both of
+  its homes. **And the per-key map is the index**: **1.156** files on average, **1** at the smallest and **2** at the
+  largest, over **921,129** distinct keys. **What is not measured yet**: the index's own price — its write cost, its
+  storage, its memory, the rebuild at an open — and **the break-even that decides it**.
+  [§3am](PERF.md#3am-the-indexs-shape-measured-before-it-is-built) has the figures, and
+  [ADR-0068](docs/adr/0068-the-indexs-shape-and-its-price.md) records it.
 - **The tombstone tax's shape.** A read still pays one predicate a retired version — **0.119 ns** a retired version
   a row, where it was **0.115 ns** when spec 055 measured it, and every read pays it and not only the compaction —
   **and the streaming compaction does not change that**: it makes the compaction able to run, and not the read cheaper.
