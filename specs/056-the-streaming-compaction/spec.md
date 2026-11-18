@@ -1,6 +1,7 @@
 # Spec 056 — The streaming compaction
 
-**Status**: planned
+**Status**: done
+**Finished**: 2026-11-18
 **Started**: 2026-11-18
 **Predecessor**: [spec 055 — the embedded database](../055-the-embedded-database/spec.md)
 
@@ -102,7 +103,7 @@ not after it** — a change to a published surface is a break in every embedder'
 
 ### R6 — The closure
 
-- [ ] The spec's status is `done` with the date it finished, and CI is green.
+- [x] The spec's status is `done` with the date it finished, and CI is green.
 
 ## The scope
 

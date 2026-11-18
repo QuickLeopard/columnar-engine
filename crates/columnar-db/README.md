@@ -104,13 +104,24 @@ window in which two rows could share an id.
 versions stop existing: the live rows are read, written into a new file, and the manifest is replaced by one that names it and
 nothing else.
 
+**And the compaction reads a file at a time, so the table's size is not its ceiling.** The live rows of each file come back
+in that file's own plan and are written as they arrive, so the rows in flight are a file's rows — and the engine's memory
+budget's verdict is about a file's rows and not about the table's. **6,000,000** rows compacted and **0** refused, where
+**5,375,000** compacted and **6,000,000** were refused. The price is in
+[`PERF.md` §3al](../../PERF.md#3al-the-compaction-reads-a-file-at-a-time), and the decision is in
+[ADR-0067](../../docs/adr/0067-the-compaction-reads-a-file-at-a-time.md).
+
 **And the tax has a price, and the price is the retired versions and the table's size together.** The engine's pushdown
 runs each comparison on a column as one pass, so the tax is one pass over the id column for every retired version:
-**0.115 ns** a retired version a row, measured on a million rows and again on a table fifteen times smaller, where it is
-**0.120 ns**. **And every read pays it, and not only the compaction**: a table of a million rows read in **44.446 ms**
-before a fifth of its key range changed, and in **13,515.470 ms** after. The prices are in
-[`PERF.md` §3ak](../../PERF.md#3ak-the-databases-own-price), and the decision is in
-[ADR-0066](../../docs/adr/0066-the-databases-own-price.md).
+**0.119 ns** a retired version a row, measured on a million rows and again on a table fifteen times smaller, where it is
+**0.132 ns** — where it was **0.115 ns** and **0.120 ns** when spec 055 measured it, and **the difference is the
+machine's**, which was busier in the second set of campaigns. **And every read pays it, and not only the compaction**: a
+table of a million rows read with the live filter alone in **44.401 ms** and with the full live filter in
+**13,942.178 ms**, where it was **44.637 ms** and **13,515.470 ms**. The prices are in
+[`PERF.md` §3ak](../../PERF.md#3ak-the-databases-own-price) and
+[`PERF.md` §3al](../../PERF.md#3al-the-compaction-reads-a-file-at-a-time), and the decisions are in
+[ADR-0066](../../docs/adr/0066-the-databases-own-price.md) and
+[ADR-0067](../../docs/adr/0067-the-compaction-reads-a-file-at-a-time.md).
 
 **And the old files go when no reader holds them.** A reader that pinned them still has to read them, so they stay until it is
 gone. The database owns the file naming — the highest index in the table's directory plus one — so a compaction does not reset
@@ -141,6 +152,10 @@ writer is alone.
 ## The increments
 
 **What is here now** is the database, the persistent catalog, the schema, the typed write path, the snapshot read, the hidden
-row id, and the compaction that pays for the append-only model. **What comes next** is the probe: the catalog's open, the write
-on the grid, the snapshot over one file and over many, the scan of a point lookup, the compaction, and the space amplification
-— measured, so that the index's shape is decided by a figure and not by an opinion. The whole of it is spec 055.
+row id, and the compaction that pays for the append-only model — **and the compaction reads a file at a time, so the table's
+size is not its ceiling**. **What is not here yet** is the index, whose shape the scan's figure decided and whose write cost
+is unmeasured because there is no index to measure.
+
+**And every price was measured before it was built.** The gap between the engine and the store was priced first, so that the
+index's shape is decided by a figure and not by an opinion — that is spec 055. **And the compaction's own ceiling was priced
+too**, and the price found it — that is spec 056.

@@ -1966,6 +1966,49 @@ FILE_SET_CLAIM = "reading a table that is many files costs nothing measurable"
 DB_COST_REPORTS = sorted((ROOT / "bench-results").glob("db-cost-run*.json"))
 DB_COST_SECTION = "### 3ak"
 
+# Spec 056: the streaming compaction's campaigns, and the section that
+# publishes them. **The same probe**, and the figures the compaction moved —
+# the ceiling, the compaction's own cost, the tax, the read's overhead and the
+# bytes. **The rest of the family is published where it was published**, in
+# section 3ak, against the campaigns it was measured in.
+DB_COST_STREAM_REPORTS = sorted((ROOT / "bench-results").glob("db-cost-stream-run*.json"))
+DB_COST_STREAM_SECTION = "### 3al"
+
+# The timings the streaming compaction's section publishes.
+DB_COST_STREAM_TIMINGS = (
+    ("compaction_clean", "the compaction, no retired versions", 3),
+    ("compaction_taxed", "the compaction, with its retired versions", 3),
+    ("read_many_files", "the snapshot's read, many files", 3),
+    ("read_many_files_engine", "the engine's own read, the same files", 3),
+)
+
+# The derived figures the streaming compaction's section publishes.
+DB_COST_STREAM_DERIVED = (
+    ("compaction_ns_per_row", "the compaction, per row", 0),
+    ("compaction_taxed_ns_per_row", "the compaction, taxed, per row", 0),
+    ("compaction_tax_ms", "the tax the compaction pays", 3),
+    ("read_tax_ms", "the tax the read pays", 3),
+    ("read_tax_ns_per_row_per_version", "the tax, per row per version", 3),
+    (
+        "read_tax_small_ns_per_row_per_version",
+        "the tax, the small table, per row per version",
+        3,
+    ),
+    ("database_read_overhead_ms", "the database's read overhead", 3),
+    ("space_amplification", "the space amplification", 3),
+    ("space_amplification_clean", "the space amplification, no changes", 3),
+)
+
+# The counts the streaming compaction's section publishes.
+DB_COST_STREAM_COUNTS = (
+    ("bytes_before_compaction", "the bytes before the compaction"),
+    ("bytes_after_compaction", "the bytes after the compaction"),
+    ("clean_bytes_before_compaction", "the clean table's bytes before"),
+    ("clean_bytes_after_compaction", "the clean table's bytes after"),
+    ("compaction_ceiling_ok_rows", "the ceiling: the rows that compacted"),
+    ("compaction_ceiling_refused_rows", "the ceiling: the rows refused"),
+)
+
 # The timings, the label each one is published under, and the places.
 #
 # **The figures are rendered with the thousands separator**, and so are the
@@ -7116,47 +7159,70 @@ def main() -> int:
     # lookup's scan against the floor an index would reach, the compaction's
     # own cost, the tombstone tax on top of it, and the space amplification.
     # Every figure is looked for **inside** the section that publishes it.
-    db_cost_section = section_of(texts["PERF.md"], DB_COST_SECTION)
-    if db_cost_section is None:
-        failures.append(
-            f"PERF.md: the section that publishes the database's own price "
-            f"({DB_COST_SECTION}) is not in the document"
-        )
-    elif len(DB_COST_REPORTS) < MIN_CAMPAIGNS:
-        failures.append(
-            f"the database's probe has {len(DB_COST_REPORTS)} campaigns, "
-            f"and the method says {MIN_CAMPAIGNS}"
-        )
-    else:
-        db_cost_timings, db_cost_derived, db_cost_counts = _db_cost_figures(DB_COST_REPORTS)
+    #
+    # **And spec 056 publishes the same family again**, from the campaigns the
+    # streaming compaction was measured in: the same probe, the same figures,
+    # and the compaction's ceiling among them — the figure that moved.
+    for family, reports, heading, timings, derived, counts in (
+        (
+            "the database's own price",
+            DB_COST_REPORTS,
+            DB_COST_SECTION,
+            DB_COST_TIMINGS,
+            DB_COST_DERIVED,
+            DB_COST_COUNTS,
+        ),
+        (
+            "the streaming compaction",
+            DB_COST_STREAM_REPORTS,
+            DB_COST_STREAM_SECTION,
+            DB_COST_STREAM_TIMINGS,
+            DB_COST_STREAM_DERIVED,
+            DB_COST_STREAM_COUNTS,
+        ),
+    ):
+        db_cost_section = section_of(texts["PERF.md"], heading)
+        if db_cost_section is None:
+            failures.append(
+                f"PERF.md: the section that publishes {family} "
+                f"({heading}) is not in the document"
+            )
+            continue
+        if len(reports) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the database's probe has {len(reports)} campaigns for {family}, "
+                f"and the method says {MIN_CAMPAIGNS}"
+            )
+            continue
+        db_cost_timings, db_cost_derived, db_cost_counts = _db_cost_figures(reports)
 
         def db_cost_wanted(label: str, figure: float, places: int) -> None:
             """One figure of the section, looked for inside it."""
             rendered = f"{figure:,.{places}f}"
             if not figure_in(db_cost_section, rendered):
                 failures.append(
-                    f"PERF.md: the database's {label} is {rendered} by the reports "
+                    f"PERF.md: {family}'s {label} is {rendered} by the reports "
                     f"but that figure does not appear in the section that publishes it"
                 )
             else:
                 print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
 
-        for key, label, places in DB_COST_TIMINGS:
+        for key, label, places in timings:
             values = db_cost_timings.get(key, [])
             if values:
                 db_cost_wanted(label, statistics.median(values), places)
-        for key, label, places in DB_COST_DERIVED:
+        for key, label, places in derived:
             values = db_cost_derived.get(key, [])
             if values:
                 db_cost_wanted(label, statistics.median(values), places)
-        for key, label in DB_COST_COUNTS:
+        for key, label in counts:
             values = db_cost_counts.get(key, [])
             if not values:
                 continue
             rendered = f"{statistics.median(values):,.0f}"
             if not figure_in(db_cost_section, rendered):
                 failures.append(
-                    f"PERF.md: the database's {label} is {rendered} by the reports "
+                    f"PERF.md: {family}'s {label} is {rendered} by the reports "
                     f"but that figure does not appear in the section that publishes it"
                 )
             else:
@@ -7202,7 +7268,9 @@ def main() -> int:
         f"{len(ENGINE_ROWS_COSTS) + len(ENGINE_ROWS_BYTES) + 3} of the engine's rows, "
         f"{len(SET_ROWS_COSTS) + len(SET_ROWS_FACTS) + 6 + 2} of the set's rows, "
         f"{len(SET_ROWS_BEFORE_REPORTS) and 7} of the set's rows before, "
-        f"{len(DB_COST_TIMINGS) + len(DB_COST_DERIVED) + len(DB_COST_COUNTS)} of the database's own price"
+        f"{len(DB_COST_TIMINGS) + len(DB_COST_DERIVED) + len(DB_COST_COUNTS)} of the database's own price, "
+        f"{len(DB_COST_STREAM_TIMINGS) + len(DB_COST_STREAM_DERIVED) + len(DB_COST_STREAM_COUNTS)} "
+        f"of the streaming compaction"
     )
     return 0
 

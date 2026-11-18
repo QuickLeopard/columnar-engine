@@ -14,8 +14,8 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **54 specs**, **66 ADRs** and **30 defects** so far, and every one
-of the specs but the two in flight is closed. **And the status has a page**:
+[`constitution.md`](constitution.md). **54 specs**, **67 ADRs** and **32 defects** so far, and every one
+of the specs but the one in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
 cannot go stale.
@@ -193,7 +193,7 @@ and the old code measures the same as the new one.
 
 ## What the increments found
 
-**30 defects**, all found by measurement, each recorded with its before-and-after numbers in the
+**32 defects**, all found by measurement, each recorded with its before-and-after numbers in the
 ADRs and in the commit history. The list is
 [`PERF.md` §4](PERF.md#4-the-defects-the-increments-found).
 
@@ -481,24 +481,32 @@ at **16 MiB**. **What would answer the rest of it:** the budget's number, measur
 the decode in place — **not** a smaller number chosen on a guess now.
 
 **7. The tombstone tax's shape — one predicate a retired version is a price no application can pay.** The tax
-is **0.115 ns** a retired version a row, and it is paid by **every** read and not only by the compaction: a
-table of a million rows with a fifth of its key range changed reads in **13,515.470 ms** where it read in
-**44.446 ms** before. **And the ways out are named, and none of them is built:** the database could filter the
+is **0.119 ns** a retired version a row — **0.115 ns** where spec 055 measured it, and the difference is the
+machine's — and it is paid by **every** read and not only by the compaction: a table of a million rows with a
+fifth of its key range changed reads in **13,942.178 ms** where it read in **44.401 ms** before. **And the ways
+out are named, and none of them is built:** the database could filter the
 retired versions itself, in one pass over the ids it has already read, and not through the engine's
 predicates; the engine could grow one predicate that means *"not one of these"*, which widens a frozen
 surface and is its own increment; or the compaction could run by itself, so the tax is bounded by the change
 rate and not by the history. **What would answer it:** the tax measured against a filter that is not one
 predicate a version.
 
-**8. The compaction's ceiling — the compaction reads the live rows in one piece.** The engine's memory
-budget is **256 MiB**, and the compaction is refused above **6,000,000** rows while **5,375,000** rows
-compact. **So the compaction must be streaming** — file by file, one output file — **and the files' Arrow
-schemas must agree**, which the engine's own file-set check does not settle: it compares the count, the
-names, the types and the storage, and not the nullability, while the store's writer derives the schema from
-the data. **And [spec 056](specs/056-the-streaming-compaction/spec.md) takes it on**: the compaction reads
-one file at a time, the output schema is **decided by the table's schema** and not derived from the data,
-and a file that disagrees is **refused with the file and the column named**. **What would answer it:** the
-compaction of a table whose files do not share a nullability — refused, named, and priced.
+**8. The compaction's ceiling — it is answered, and the compaction reads a file at a time.** The engine's
+memory budget is **256 MiB**, and the compaction used to read the table's live rows in one piece, so the
+budget's verdict was the table's size: **5,375,000** rows compacted and **6,000,000** were refused. **And
+[spec 056](specs/056-the-streaming-compaction/spec.md) took it on**, and the compaction reads **one file at a
+time** now — the rows are written as they arrive and the file goes — **so the ceiling is not there any more:
+6,000,000 rows compacted and 0 refused**, and refused at no row count.
+
+**And the files' Arrow schemas agree, because the optionality is decided and not derived.** The store's writer
+used to take a file's optionality from the rows in it, so two files of one table could disagree about the same
+column; **and the disagreement was never a hazard** — the engine's vocabulary has no nullability, and a file set
+whose files disagree reads correctly. **So the database's rule is its own row model's**: the application's
+columns are optional in every file, because a tombstone holds no value of them, and the hidden columns are
+required. **And the compaction costs what it cost** — **327** ns a row where it was **293**, and the two sets'
+ranges overlap — **and the space amplification did not move at all**, at **1.339**. **So the question is closed.**
+[§3al](PERF.md#3al-the-compaction-reads-a-file-at-a-time) has the tables, and
+[ADR-0067](docs/adr/0067-the-compaction-reads-a-file-at-a-time.md) records it.
 
 ### The work the project has not done
 
@@ -836,10 +844,10 @@ compaction of a table whose files do not share a nullability — refused, named,
   corrected where they were published**, in [§3ah](PERF.md#3ah-the-default-moved) and here.
   [§3ai](PERF.md#3ai-the-reader-owns-the-decode) has the tables, and
   [ADR-0064](docs/adr/0064-the-reader-does-not-own-the-decode.md) records it.
-- **The database is being built, and its price is now known.** The engine reads Parquet and the store writes it, and
+- **The database is built, and its price is now known.** The engine reads Parquet and the store writes it, and
   between them there was no database: the store says what it is not — *"No SQL. No transactions with rollback. No MVCC, no
   snapshot isolation. No concurrent writers. No row-level updates. No compaction. One writer."* — and the engine's catalog
-  is **in memory**, so it did not survive a restart. **Spec 055 builds it, as a new crate above the four**, and
+  is **in memory**, so it did not survive a restart. **Spec 055 built it, as a new crate above the four**, and
   `columnar-db` is there with a **persistent catalog** — written by a rename, so a reader sees the old one or the new one
   and never a half-written one — a **schema in the engine's own vocabulary** (three types wide: `Int64`, `Float64` and
   `Utf8`), and a **typed write path** whose rows are checked against the schema, buffered, and written in the store's
@@ -858,27 +866,30 @@ compaction of a table whose files do not share a nullability — refused, named,
   open is 0.242 ms**, **the write on the grid is 389.590 ms** — **2,566,802** rows a second — **the snapshot's read of
   sixteen files is 44.446 ms** against the engine's own **37.145 ms** on the same files, **and the compaction of a table
   with no retired versions costs 293 ns a row**. **And the tombstone tax is not what the prose said it was**: it is
-  **0.115 ns** a retired version a row — **0.120 ns** in a table fifteen times smaller, **the same price at two sizes** —
-  **so the tax is the retired versions and the table's size together, and every read pays it**: the table read in
-  **44.446 ms** before a fifth of its key range changed, and in **13,515.470 ms** after. **And the sentence that said
+  **0.119 ns** a retired version a row — **0.132 ns** in a table fifteen times smaller, **the same price at two sizes** —
+  where it was **0.115 ns** and **0.120 ns** when spec 055 measured it, **and the difference is the machine's** — **so the
+  tax is the retired versions and the table's size together, and every read pays it**: the table read in
+  **44.401 ms** before a fifth of its key range changed, and in **13,942.178 ms** after. **And the sentence that said
   otherwise is corrected where it was published.** **And the index is given, and its shape is a map from the key to the
   files that hold it**: the point lookup costs **43.319 ms** as a scan and **2.657 ms** over the one file an index would
   name — **17.20×** — and the open of the sixteen files is **0.461 ms** of it, so **the gap is the data and not the
   files**. **And the query language is decided: it is the engine's typed plan**, the
   `QueryPlan` the `PlanBuilder` builds, **and SQL is out of scope with the reason named** — SQL promises subqueries, CTEs,
-  window functions and arbitrary join graphs, and this engine refuses all four. **What is not built yet**: the index
-  itself — **and the compaction is refused above 6,000,000 rows**, by the engine's own 256 MiB budget.
-  [§3ak](PERF.md#3ak-the-databases-own-price) has the tables, and
-  [ADR-0066](docs/adr/0066-the-databases-own-price.md) records it.
+  window functions and arbitrary join graphs, and this engine refuses all four. **And the compaction reads a file at a
+  time now**, so the budget's verdict is about a file's rows and not about the table's: **6,000,000** rows compacted and
+  **0** refused, where **5,375,000** compacted and **6,000,000** were refused. **What is not built yet**: the index
+  itself — **and the tombstone tax's shape, which the streaming compaction does not change**: a read still pays one
+  predicate a retired version.
+  [§3ak](PERF.md#3ak-the-databases-own-price) and [§3al](PERF.md#3al-the-compaction-reads-a-file-at-a-time) have the tables, and
+  [ADR-0066](docs/adr/0066-the-databases-own-price.md) and
+  [ADR-0067](docs/adr/0067-the-compaction-reads-a-file-at-a-time.md) record them.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The index itself.** The shape is decided by the scan's figure — **a map from the key to the files that hold
   it**, over the grid — and the index is not built: **its write cost is not measured, because there is no index
   to measure.** The next increment that builds one measures it.
-- **The streaming compaction.** The compaction is refused above **6,000,000** rows by the engine's **256 MiB**
-  budget, so it has to read file by file and write one file — and the files' Arrow schemas have to agree, which
-  the engine's own file-set check does not settle. **[Spec 056](specs/056-the-streaming-compaction/spec.md)
-  takes it on**: the read is one file at a time, the output schema is decided by the table's schema, and the
-  file that disagrees is refused with the file and the column named.
+- **The tombstone tax's shape.** A read still pays one predicate a retired version — **0.119 ns** a retired version
+  a row, where it was **0.115 ns** when spec 055 measured it, and every read pays it and not only the compaction —
+  **and the streaming compaction does not change that**: it makes the compaction able to run, and not the read cheaper.
 - **The CI runners are contended.** The runs sit queued for a long time, and the account's Actions
   spending limit applies to every job — when it is exhausted, *every* job fails at once with a
   billing message rather than a test failure. The published figures are therefore taken on this

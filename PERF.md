@@ -5629,6 +5629,9 @@ compacted**, and **6,000,000 rows refused** with *"the engine refused: the estim
 query memory budget"*. **So the compaction must be streaming** — file by file, one output file, and the files' Arrow
 schemas must agree — and that is a later increment, and it is named in [STATUS.md](STATUS.md)'s open questions.
 
+**And spec 056 took it on**, and the compaction reads a file at a time now: **the ceiling is not there any more**, and
+[§3al](#3al-the-compaction-reads-a-file-at-a-time) has the price — the old figure and the new one, and the reason.
+
 **And the bytes.** The append-only model holds the retired versions and the new ones beside the live ones, and a
 compaction is what takes them away.
 
@@ -5658,9 +5661,101 @@ Every figure in this section is derived from the committed reports by `scripts/m
 the load average is in every report.
 
 
+### 3al. The compaction reads a file at a time
+
+**The compaction had a ceiling, and the ceiling was the database's size.** The section before this one published it: the
+compaction read the table's live rows in one piece, the engine's estimate of that one plan was the table's rows, and the
+plan was refused above **6,000,000** rows — **5,375,000** compacted and **6,000,000** refused, with the reason *"the
+engine refused: the estimated working set exceeds the query memory budget"*. **And a table past that size could never be
+compacted**, and the compaction is the only thing that pays the tombstone tax back, so its reads went on paying the tax for
+as long as the table lived.
+
+**And the compaction reads a file at a time now.** The live rows of each file come back in that file's own plan, the rows
+are written as they arrive, and the file goes — **so the rows in flight are a file's rows and not the table's**. The dead
+set is read a file at a time too, because it was a plan over the whole table as well. **And the output is still one file**,
+and its batches are still on the store's grid: the compaction gathers a grid's worth of rows and writes them, and the
+versions are numbered again across the files the rows came from.
+
+**And the ceiling is not there any more.**
+
+| the compaction's ceiling | before | after |
+|---|---|---|
+| the rows that compacted | **5,375,000** | **6,000,000** |
+| the rows refused | **6,000,000** | **0** — and refused at no row count |
+
+**And the compaction costs what it cost.** The clean compaction is **326.507 ms** for a million rows — **327** ns a row,
+where it was **293.293 ms** and **293** ns a row — and the taxed one is **13,609.080 ms**, where it was **12,431.089 ms**.
+**And the two sets' ranges overlap**: the clean compaction ran in **280.298–334.726 ms** across the three campaigns, where
+it ran in **286.1–325.3 ms** before. **So the streaming compaction is not slower than the one-shot one, and the
+difference in the medians is the machine's** — the write's throughput fell from **2,566,802** rows a second to
+**2,366,267**, and the campaigns were taken at a load average of **14.52**, **17.17** and **17.27** where the old ones were
+taken at **10.63**, **11.73** and **15.47**.
+
+| the compaction's own cost | before | after |
+|---|---|---|
+| the compaction, no retired versions | **293.293 ms** — **293** ns a row | **326.507 ms** — **327** ns a row |
+| the compaction, with its retired versions | **12,431.089 ms** — **13,088** ns a row | **13,609.080 ms** — **14,328** ns a row |
+| the tax the compaction pays | **12,091.424 ms** | **13,330.873 ms** |
+
+**And the prediction holds: the tax's total work did not change, and only the peak did.** The tax is the retired versions
+times the rows, and streaming changes neither — it changes how many rows are in flight at once. **And the measured price of
+the tax is the same**: **0.119** ns a retired version a row in the large table and **0.132** ns in the small one, where it
+was **0.115** ns and **0.120** ns, and the tax the read pays is **13,747.968 ms** where it was **13,282.677 ms** — the
+machine again, and not the shape.
+
+**And the read does not pay for it in a way a reader can see.** The database's own overhead on the read is **8.997 ms**
+where it was **6.777 ms**, and **the two sets' ranges overlap**: **4.844–13.560 ms** across the three campaigns against
+**5.133–8.099 ms** before. The dead set is read a file at a time now, and that is the read path's own work — and it is
+**not distinguishable from the machine's movement** in these three campaigns.
+
+| the read | before | after |
+|---|---|---|
+| the snapshot's read, many files | **44.446 ms** | **51.866 ms** |
+| the engine's own read, the same files | **37.145 ms** | **40.327 ms** |
+| **the database's overhead on the read** | **6.777 ms** | **8.997 ms** |
+
+**And the bytes move by almost nothing, because the optional column's definition levels are cheap.** The file's schema is
+decided now — the application's columns are optional and the hidden ones are required — and a column that may hold an
+absent value carries definition levels, and a definition level run of a million rows is a few bytes. **So the changed table
+grew by 2,091 bytes and the space amplification did not move at all.**
+
+| the bytes | before | after |
+|---|---|---|
+| the changed table before its compaction | **14,027,470** | **14,029,561** |
+| the changed table after its compaction | **10,477,372** | **10,478,597** |
+| the clean table before its compaction | **13,411,709** | **13,413,800** |
+| the clean table after its compaction | **11,388,633** | **11,389,899** |
+| **the space amplification** | **1.339** | **1.339** |
+| **the space amplification, with nothing changed** | **1.178** | **1.178** |
+
+**And the file's optionality is decided because a tombstone holds no value of the application's.** The store used to derive
+a file's schema from the rows in it — a column that held no NULL was written required and one that held one was written
+optional — **so the file's optionality was the rows' happenstance, and two files of one table could disagree about the same
+column**. The store's row-writing API takes the optionality now, as an explicit input, and the database's rule is its own
+row model's: **the application's columns are optional in every file, because a tombstone carries an absent value in them,
+and the hidden columns are required, because they never carry one**.
+
+**And the engine's own file-set check does not compare the nullability, and it does not have to.** The engine's vocabulary
+has no nullability in it — a chunk is a dense array of values and a mask that says which of them are real — **so a file set
+whose files disagree about a column's optionality reads correctly**, and the check's silence is the engine saying that a
+column's optionality is not its business
+([`crates/columnar-engine/tests/nullability.rs`](../crates/columnar-engine/tests/nullability.rs)). **So the database's files
+have to agree with each other and not with the engine's check, and the compaction repairs the ones that were written before
+the rule.**
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/db-cost-stream-run1.json` and its two siblings, the instrument is
+`crates/columnar-db/examples/db_cost_probe.rs`, and the decision is in
+[ADR-0067](docs/adr/0067-the-compaction-reads-a-file-at-a-time.md).
+
+**The conditions**: three campaigns, on one host, at a load average of **14.52**, **17.17** and **17.27**, and the load
+average is in every report. **And the machine was busier than the campaigns the before came from**, at **10.63**, **11.73**
+and **15.47** — which is why the two sets' ranges are given beside every figure that moved.
+
+
 ## 4. The defects the increments found
 
-Thirty, all found by measurement, all recorded with their before-and-after numbers in the ADRs
+Thirty-two, all found by measurement, all recorded with their before-and-after numbers in the ADRs
 and in the commit history.
 
 | | before | after | where |
@@ -5695,7 +5790,9 @@ and in the commit history.
 | The join's lookup consulted the **overflow map** once a probe row, for a case that does not happen: the map holds **nothing** for this data, because every key's count fits in its byte, and the lookup paid for it on every one of six million rows. The map's share was measured for the first time in spec 028, and it is **at or below the noise** | the map's share: **0.183 ms** of a **4.417 ms** remainder | no map to consult — **the map is not allocated at all** when nothing overflows | `columnar-engine/src/operators/join.rs` |
 | **The instrument measured two things that are not differences of the code.** The engine's lookup is a **private** method and the instrument is another crate, so across the boundary it was not inlined and the instrument paid a **call a probe row** that the engine's own query does not pay; and the candidate read a **warm** buffer while the engine's probe read one the reader had **just written**. Both were inside the remainder spec 028 published as the engine's cost | the remainder: **3.337 ms**, of which the crate boundary is **+1.332 ms** and the buffer **1.158 ms** | the remainder: **0.109 ms** — the engine's probe **8.395 ms** against the hand-written candidate's **8.315 ms** | `crates/columnar-engine/examples/join_cost_probe.rs` |
 | **The sort compared every key a row at a time, in Rust.** The comparison — one per key, six million of them — was a scalar loop, and it was **2.2 ms** of the operator's **3.2 ms**: the read was never the cost, the counting was. The same column, compared in blocks against the heap's own worst key, costs **0.96 ms** | the engine's bounded sort **3.23 ms** · the sort's stage **4.18 ms** | the engine's bounded sort **1.02 ms** · the sort's stage **1.10 ms** | `columnar-engine/src/operators/sort.rs` |
-| **The tombstone tax was published as the retired versions alone.** A read filters on `row_id != <retired id>` for every retired version, and the engine's pushdown runs each comparison on the column as one pass — so the tax is the retired versions **and** the table's size together, and every read pays it and not only the compaction | the tax was published as *"the retired versions and not the table's size"* | **0.115 ns** a retired version a row — **0.120 ns** in the small table, the same price at two sizes | `crates/columnar-db/src/versions.rs` |
+| **The compaction had a ceiling, and the ceiling was the database's size.** It read the table's live rows in one piece, so the engine's estimate of that one plan was the table's rows, and the plan was refused above **6,000,000** rows — **and a table past that size could never be compacted**, and the compaction is the only thing that pays the tombstone tax back | **5,375,000** rows compacted, **6,000,000** refused | **6,000,000** compacted, **0** refused — and refused at no row count | `crates/columnar-db/src/database.rs` |
+| **The file's optionality was the rows' happenstance.** The store derived a file's schema from the rows in it, so a column that held no NULL was written required and one that held one was written optional, and two files of one table could disagree about the same column | the schema was **derived from the rows** — required or optional, by what this batch happened to hold | **decided before the first row**: the application's columns optional, the hidden columns required | `crates/columnar-store/src/rows.rs` |
+| **The tombstone tax was published as the retired versions alone.** A read filters on `row_id != <retired id>` for every retired version, and the engine's pushdown runs each comparison on the column as one pass — so the tax is the retired versions **and** the table's size together, and every read pays it and not only the compaction | the tax was published as *"the retired versions and not the table's size"* | **0.115 ns** a retired version a row — **0.120 ns** in the small table, the same price at two sizes — **0.119 ns** and **0.132 ns** where spec 056's campaigns measured it | `crates/columnar-db/src/versions.rs` |
 
 The global aggregate is the one worth calling out from the first increment: the module
 documentation promised that `COUNT(*)` was an in-place fast path that reads no column, and it did

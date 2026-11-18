@@ -1193,7 +1193,7 @@ def print_scan_cost(files: list[tuple[str, list[dict]]]) -> None:
     print(line)
 
 
-def print_db_cost(runs: list[dict]) -> None:
+def print_db_cost(runs: list[dict], title: str = "THE DATABASE'S OWN PRICE") -> None:
     """Print the database's own price: what the layer between the engine and
     the store costs.
 
@@ -1203,10 +1203,14 @@ def print_db_cost(runs: list[dict]) -> None:
     snapshot's read over one file and over many, the point lookup's scan
     against the floor an index would reach, the compaction's own cost, the
     tombstone tax on top of it, and the space amplification.
+
+    **And spec 056 prints the same family again**, from the campaigns the
+    streaming compaction was measured in: the same probe, the same figures,
+    and the compaction's ceiling among them — which is the figure that moved.
     """
     if not runs:
         return
-    print(f"\n=== THE DATABASE'S OWN PRICE ({len(runs)} campaigns) ===")
+    print(f"\n=== {title} ({len(runs)} campaigns) ===")
     for name, heading in (
         ("open_catalog", "the catalog's open"),
         ("write", "the write on the grid"),
@@ -4308,7 +4312,11 @@ def main() -> int:
     # Spec 055: the database's own price -- the layer between the engine and
     # the store, measured on this host for the first time.
     db_cost_runs = [load(p) for p in sorted(Path("bench-results").glob("db-cost-run*.json"))]
-    print_db_cost(db_cost_runs)
+    print_db_cost(db_cost_runs, "THE DATABASE'S OWN PRICE")
+    stream_runs = [
+        load(p) for p in sorted(Path("bench-results").glob("db-cost-stream-run*.json"))
+    ]
+    print_db_cost(stream_runs, "THE STREAMING COMPACTION")
 
     return 0
 
