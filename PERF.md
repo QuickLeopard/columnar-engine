@@ -5859,7 +5859,8 @@ never reads the index.** **And the two arms take turns**, one campaign with the 
 other first, **because the first compaction in a process pays for the allocator's own growth and an order that never changed
 would put that cost on one arm every time.**
 
-**And the price on a compacted table is the price of nothing at all.** The compaction rewrites the table's live rows into
+**And the price on a compacted table is the price of the scan, because no index is built there.** The compaction rewrites the
+table's live rows into
 **one file** ([ADR-0067](docs/adr/0067-the-compaction-reads-a-file-at-a-time.md)), **and the index names files** — **so on a
 compacted table the index names the whole table, and it cannot narrow anything**:
 
@@ -5870,10 +5871,10 @@ compacted table the index names the whole table, and it cannot narrow anything**
 | the first lookup | **43.281 ms** |
 | the second lookup | **44.143 ms** |
 
-**And the first lookup costs the scan** — **43.281 ms** against the scan's **44.407 ms** — **because no index is built for a
-table the index cannot narrow.** **And that is the rule applied**: the index is used when it can narrow, and the lookup
+**And the first lookup costs the scan** — **43.281 ms**, against the warm scan's **44.407 ms**, **and the two are the same
+thing within the noise** — **because no index is built for a table the index cannot narrow.** **And that is the rule applied**: the index is used when it can narrow, and the lookup
 stays the scan when it cannot. **And the figure that refused it is published**: before the rule was applied, the compacted
-table's first lookup cost **181.172 ms** — **the index's build, **135.009 ms**, and the read** — **for a table the index
+table's first lookup cost **181.172 ms** — **the index's build — 135.009 ms — and the read** — **for a table the index
 could not narrow at all.**
 
 Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard

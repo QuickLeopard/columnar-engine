@@ -4,10 +4,10 @@
 //! change what is allocated, and it does not change how much: the same layout
 //! goes to the system allocator.
 //!
-//! **It is in an example, not in the engine.** Every crate here denies
+//! **It is in an example, not in the database.** Every crate here denies
 //! `unsafe_code`, and a `GlobalAlloc` implementation needs `unsafe`. **An
 //! example is its own crate**, so the counting allocator is the diagnostic's
-//! and the engine's own memory behaviour is untouched by it.
+//! and the database's own memory behaviour is untouched by it.
 //!
 //! **And a time measured beside it is not the engine's time.** A counting
 //! allocator counts **every** allocation, and that is not free -- so the

@@ -213,6 +213,9 @@ By kind:
 - **An instrument that measured the wrong thing.** The engine's lookup is a private method and the
   instrument is another crate, so it was not inlined there; the instrument paid a call a probe row
   that the query does not pay.
+- **Work done for a shape the problem does not have.** The compaction collapsed the table into one
+  file, and the index's build was paid by every snapshot that asked a compacted table for a row —
+  **181.172 ms**, where the lookup answers in **43.281 ms**.
 
 And the ones the measurement **refused** — the direct-addressed table's own shape, the probe's hash,
 owning the Parquet decode, expanding the predicate's column, a bitmap in front of the table, and a
