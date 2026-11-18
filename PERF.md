@@ -5825,9 +5825,9 @@ build, the write, the compaction, the lookup, and the break-even.
 | with no index alive | **27.333 ms** |
 | with the index alive | **29.122 ms** |
 
-**And the difference is inside the spread** — the first write's spread is **24.2–31.0 ms** and the second's is **26.8–37.6
-ms** — **so the write pays nothing for the index, and the code says why: the index is the snapshot's, and the write path
-never reads it.**
+**And the difference is inside the spread** — the first write's spread is **26.7–33.9 ms** and the second's is
+**26.1–77.4 ms** — **so the write pays nothing for the index, and the code says why: the index is the snapshot's, and the
+write path never reads it.**
 
 **And the lookup's price is what the index is for:**
 
@@ -5854,7 +5854,7 @@ not the index's.**
 | with no index alive | **285.976 ms** |
 | with the index alive | **298.622 ms** |
 
-**And the difference is inside the spread** — **273.9–319.8 ms** against **285.7–326.2 ms** — **because the compaction
+**And the difference is inside the spread** — **267.7–347.0 ms** against **269.9–342.2 ms** — **because the compaction
 never reads the index.** **And the two arms take turns**, one campaign with the index's arm first and the next with the
 other first, **because the first compaction in a process pays for the allocator's own growth and an order that never changed
 would put that cost on one arm every time.**
