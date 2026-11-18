@@ -51,12 +51,17 @@ with the correction recorded in the ADR.
 
 ### R1 — The lookup exists, and the schema names the key
 
-- [ ] The table's schema names **the key column** — one column, and the database refuses a schema that names a key
-      column which **may hold a NULL**, because a key that may be absent cannot be looked up.
-- [ ] **And the database has a point lookup**: a table and a key, and **the rows that hold the key**. **And it is the
-      database's own** — the snapshot's, so a lookup sees one version of the table.
-- [ ] **And the lookup's answer is the rows that hold the key, whichever map serves it** — and that is a **test**, and
-      not a sentence in a document.
+- [x] The table's schema names **the key column** — one column, and the database refuses a schema that names a key
+      column which **may hold a NULL**, because a key that may be absent cannot be looked up. **And the rules hold
+      wherever a schema comes from**: a schema that is read out of a catalog is checked the same way a schema that is
+      written is, **so a catalog that says two columns are keys, or that a key may hold a NULL, is refused rather than
+      read** — and a catalog written before the key existed names no key, and is still read.
+- [x] **And the database has a point lookup**: a table and a key, and **the rows that hold the key**. **And it is the
+      database's own** — the snapshot's, so a lookup sees one version of the table, and the rows it answers with are the
+      **live** ones.
+- [x] **And the lookup's answer is the rows that hold the key, whichever map serves it** — and that is a **test**, and
+      not a sentence in a document: the lookup and the plan that asks the same question answer the same rows, and a
+      deleted row is not a row.
 
 ### R2 — The shape is **measured before it is built**
 

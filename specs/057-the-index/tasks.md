@@ -10,11 +10,14 @@ comes before the index, and an arm the experiment refuses is never built.
 
 ## The lookup
 
-- [ ] The table's schema names **the key column**, and **a key column that may hold a NULL is refused** — a key that may
+- [x] The table's schema names **the key column**, and **a key column that may hold a NULL is refused** — a key that may
       be absent cannot be looked up.
-- [ ] **And the database has a point lookup**: a table and a key, and the rows that hold the key — on the snapshot, so a
-      lookup sees one version of the table.
-- [ ] **And the lookup's answer is the rows that hold the key, whichever map serves it** — a test, and not a sentence.
+- [x] **And the rules hold wherever a schema comes from**: a catalog that says two columns are keys, or that a key may
+      hold a NULL, is **refused rather than read** — and a catalog written before the key existed is still read.
+- [x] **And the database has a point lookup**: a table and a key, and the rows that hold the key — on the snapshot, so a
+      lookup sees one version of the table, and the rows it answers with are the **live** ones.
+- [x] **And the lookup's answer is the rows that hold the key, whichever map serves it** — a test, and not a sentence:
+      the lookup and the plan that asks the same question answer the same rows, and a deleted row is not a row.
 
 ## The experiment — the shape measured before it is built
 

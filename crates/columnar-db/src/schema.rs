@@ -45,7 +45,19 @@ const UTF8: &str = "utf8";
 /// optionality is decided before the first row is written and not derived from
 /// the rows, so a file does not say something different because this batch
 /// happened to hold a `NULL` and the last one did not.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// # The key, and the rules it brings
+///
+/// **A table may name one of its columns the key** — the column the table is
+/// looked up by — **and the rules are the schema's**: **at most one column is
+/// the key**, and **a key may not hold a `NULL`**, because a key that may be
+/// absent cannot be looked up.
+///
+/// **And the rules hold wherever a schema comes from.** A schema that is read
+/// out of a catalog is checked the same way a schema that is written is, so a
+/// catalog that says two columns are keys, or that a key may hold a `NULL`,
+/// is refused rather than read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Schema {
     columns: Vec<Column>,
 }
@@ -56,12 +68,14 @@ impl Schema {
     /// # Errors
     ///
     /// Returns [`Error::Schema`] when the schema has no columns, when a
-    /// column's name is empty, or when two columns share a name.
+    /// column's name is empty, when two columns share a name, when two
+    /// columns are the key, or when the key may hold a `NULL`.
     pub fn new(columns: Vec<Column>) -> Result<Self> {
         if columns.is_empty() {
             return Err(Error::Schema { reason: "a table has no columns".to_owned() });
         }
         let mut names: Vec<&str> = Vec::with_capacity(columns.len());
+        let mut key: Option<&str> = None;
         for column in &columns {
             if column.name.is_empty() {
                 return Err(Error::Schema { reason: "a column has no name".to_owned() });
@@ -72,8 +86,31 @@ impl Schema {
                 });
             }
             names.push(column.name.as_str());
+            if !column.key {
+                continue;
+            }
+            if column.nullable {
+                return Err(Error::Schema {
+                    reason: format!("the key column {} may hold a NULL", column.name),
+                });
+            }
+            if let Some(other) = key {
+                return Err(Error::Schema {
+                    reason: format!("two columns are the key: {other} and {}", column.name),
+                });
+            }
+            key = Some(column.name.as_str());
         }
         Ok(Self { columns })
+    }
+
+    /// The schema's key column, if it has one.
+    ///
+    /// **The key is the column the table is looked up by**, and a schema
+    /// without one has no point lookup.
+    #[must_use]
+    pub fn key(&self) -> Option<&Column> {
+        self.columns.iter().find(|column| column.key)
     }
 
     /// The schema's columns, in order.
@@ -107,19 +144,31 @@ impl Schema {
     }
 }
 
-/// A column: its name, its type, and whether it may hold a `NULL`.
+/// A column: its name, its type, whether it may hold a `NULL`, and whether it
+/// is the key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Column {
     name: String,
     data_type: DataType,
     nullable: bool,
+    key: bool,
 }
 
 impl Column {
     /// A column with that name, that type, and that nullability.
     #[must_use]
     pub fn new(name: impl Into<String>, data_type: DataType, nullable: bool) -> Self {
-        Self { name: name.into(), data_type, nullable }
+        Self { name: name.into(), data_type, nullable, key: false }
+    }
+
+    /// The key column: the column the table is looked up by.
+    ///
+    /// **And it may not hold a `NULL`** — a key that may be absent cannot be
+    /// looked up — **so the column is not nullable**, and a schema that names
+    /// a nullable key is refused.
+    #[must_use]
+    pub fn key(name: impl Into<String>, data_type: DataType) -> Self {
+        Self { name: name.into(), data_type, nullable: false, key: true }
     }
 
     /// The column's name.
@@ -139,6 +188,12 @@ impl Column {
     pub fn is_nullable(&self) -> bool {
         self.nullable
     }
+
+    /// Whether the column is the table's key.
+    #[must_use]
+    pub fn is_key(&self) -> bool {
+        self.key
+    }
 }
 
 /// The column as it is written: the type is the engine's stable name.
@@ -153,16 +208,20 @@ impl Serialize for Column {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("Column", 3)?;
+        let mut state = serializer.serialize_struct("Column", 4)?;
         state.serialize_field("name", &self.name)?;
         state.serialize_field("type", self.data_type.name())?;
         state.serialize_field("nullable", &self.nullable)?;
+        state.serialize_field("key", &self.key)?;
         state.end()
     }
 }
 
 /// The column as it is read: the type is the engine's stable name, and a name
 /// the engine does not have is a catalog this database cannot read.
+///
+/// **And a key that may hold a `NULL` is refused here**, because that is the
+/// column's own rule and it does not depend on the schema around it.
 impl<'de> Deserialize<'de> for Column {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -172,7 +231,10 @@ impl<'de> Deserialize<'de> for Column {
         let data_type = data_type_from_name(&raw.data_type).ok_or_else(|| {
             D::Error::custom(format!("the type {} is not one the engine has", raw.data_type))
         })?;
-        Ok(Self { name: raw.name, data_type, nullable: raw.nullable })
+        if raw.key && raw.nullable {
+            return Err(D::Error::custom(format!("the key column {} may hold a NULL", raw.name)));
+        }
+        Ok(Self { name: raw.name, data_type, nullable: raw.nullable, key: raw.key })
     }
 }
 
@@ -183,6 +245,29 @@ struct RawColumn {
     #[serde(rename = "type")]
     data_type: String,
     nullable: bool,
+    /// **The key is optional in the JSON**: a catalog written before the key
+    /// existed names no key, and a table without a key has no point lookup.
+    #[serde(default)]
+    key: bool,
+}
+
+/// The schema as it is read: **and the schema's own rules run**, so a catalog
+/// that says two columns are the key, or that a key may hold a `NULL`, or
+/// that two columns share a name, is refused rather than read.
+impl<'de> Deserialize<'de> for Schema {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawSchema::deserialize(deserializer)?;
+        Schema::new(raw.columns).map_err(|error| D::Error::custom(error.to_string()))
+    }
+}
+
+/// The schema as it sits in the JSON.
+#[derive(Debug, Deserialize)]
+struct RawSchema {
+    columns: Vec<Column>,
 }
 
 /// The engine's type by its stable name.

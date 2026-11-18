@@ -119,6 +119,13 @@ pub enum Error {
         column: String,
     },
 
+    /// The table has no key column, so it has no point lookup.
+    #[error("the table {name} has no key column, and so it has no point lookup")]
+    NoKey {
+        /// The table's name.
+        name: String,
+    },
+
     /// The table has more rows than an id can name.
     #[error("the table has {rows} rows, and an id cannot name them all")]
     Rows {

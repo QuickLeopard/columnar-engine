@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use columnar_engine::{
-    Aggregate, AggregateResult, Catalog, Dataset, ExecOptions, FileSetSource, PlanBuilder,
-    QueryPlan,
+    col, Aggregate, AggregateResult, Catalog, Dataset, ExecOptions, FileSetSource, PlanBuilder,
+    QueryPlan, ScalarValue,
 };
 
 use crate::error::{Error, Result};
@@ -315,6 +315,43 @@ impl SnapshotTable<'_> {
         }
         let dataset = self.execute_rows(plan, options)?;
         Rows::of(&dataset)
+    }
+
+    /// The rows that hold a key.
+    ///
+    /// **And the lookup is the database's own**: the snapshot's, so it sees one
+    /// version of the table and not a mixture — and the rows that come back
+    /// are the **live** ones, because the plan carries the live filter and not
+    /// only the key's.
+    ///
+    /// **And the key is the schema's own**: the column the table is looked up
+    /// by, and a table whose schema names no key has no point lookup, and the
+    /// lookup says so rather than guessing a column.
+    ///
+    /// **And the lookup is a scan today.** The rows are found by filtering the
+    /// table, and the map that will make the lookup cheap is measured before
+    /// it is built
+    /// ([PERF.md §3am](../../PERF.md#3am-the-indexs-shape-measured-before-it-is-built)).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoKey`] when the table's schema names no key column,
+    /// [`Error::ValueType`] when the key's value is not the key column's type,
+    /// and the errors of [`Self::rows`].
+    pub fn lookup(&self, key: impl Into<ScalarValue>) -> Result<Rows> {
+        let Some(key_column) = self.schema().key() else {
+            return Err(Error::NoKey { name: self.name.clone() });
+        };
+        let key = key.into();
+        if key.data_type() != key_column.data_type() {
+            return Err(Error::ValueType {
+                column: key_column.name().to_owned(),
+                expected: key_column.data_type().name().to_owned(),
+                got: key.data_type().name().to_owned(),
+            });
+        }
+        let plan = self.plan().filter(col(key_column.name()).eq(key)).build()?;
+        self.rows(&plan, &ExecOptions::default())
     }
 
     /// The source the table's files are read through.

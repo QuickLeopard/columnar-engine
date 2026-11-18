@@ -111,6 +111,14 @@ budget's verdict is about a file's rows and not about the table's. **6,000,000**
 [`PERF.md` §3al](../../PERF.md#3al-the-compaction-reads-a-file-at-a-time), and the decision is in
 [ADR-0067](../../docs/adr/0067-the-compaction-reads-a-file-at-a-time.md).
 
+**And the table can be looked up by its key.** The schema names one of its columns the key — **and a key that may hold a
+`NULL` is refused**, because a key that may be absent cannot be looked up — and the snapshot answers a point lookup with
+the rows that hold it. **And the lookup is a scan today**: the rows are found by filtering the table, and the map that
+will make it cheap was **measured before it was built** — the per-key map, and not the free one, because the free one
+names every file on this data. The price is in
+[`PERF.md` §3am](../../PERF.md#3am-the-indexs-shape-measured-before-it-is-built), and the decision is in
+[ADR-0068](../../docs/adr/0068-the-indexs-shape-and-its-price.md).
+
 **And the tax has a price, and the price is the retired versions and the table's size together.** The engine's pushdown
 runs each comparison on a column as one pass, so the tax is one pass over the id column for every retired version:
 **0.119 ns** a retired version a row, measured on a million rows and again on a table fifteen times smaller, where it is
