@@ -2039,6 +2039,56 @@ INDEX_SHAPE_COUNTS = (
     ("key_map_files_named_largest", "the per-key map's largest", 0),
 )
 
+# Spec 057: the index's price, measured on every axis. The probe measures the
+# scan the index replaces, the floor, the first and the second lookup, the
+# write's own cost with an index alive and without one, the compaction's own
+# cost in the same two arms, and the compacted table's three lookups -- and
+# **every figure is checked inside the section that publishes it**.
+INDEX_COST_REPORTS = sorted((ROOT / "bench-results").glob("index-cost-run*.json"))
+INDEX_COST_SECTION = "### 3an"
+
+# The timings, the label each one is published under, and the places.
+INDEX_COST_TIMINGS = (
+    ("write_no_index", "the write: no index alive", 3),
+    ("write_with_index", "the write: the index alive", 3),
+    ("lookup_scan", "the scan the index replaces, cold", 3),
+    ("lookup_scan_again", "the scan again, warm", 3),
+    ("lookup_one_file", "the floor: one file, the engine's own", 3),
+    ("lookup_first", "the first lookup: the build and the read", 3),
+    ("lookup_indexed", "the second lookup: the read, the index built", 3),
+    ("compaction_without_index", "the compaction: no index alive", 3),
+    ("compaction_with_index", "the compaction: the index alive", 3),
+    ("compacted_scan", "the compacted table's scan, cold", 3),
+    ("compacted_scan_again", "the compacted table's scan again, warm", 3),
+    ("compacted_first", "the compacted table's first lookup", 3),
+    ("compacted_indexed", "the compacted table's second lookup", 3),
+)
+
+# The derived figures, the label each one is published under, and the places.
+INDEX_COST_DERIVED = (
+    ("lookup_build_ms", "the index's build", 3),
+    ("lookup_saving_ms", "the saving, a lookup", 3),
+    ("lookup_break_even", "the break-even: the lookups it takes", 3),
+)
+
+# Spec 057: the index's memory, measured with a counting allocator in a probe
+# of its own. The figures are a property of the map and of the data -- **so
+# the campaigns agree to the byte** -- and they are checked inside the section
+# that publishes them.
+INDEX_MEMORY_REPORTS = sorted((ROOT / "bench-results").glob("index-memory-run*.json"))
+INDEX_MEMORY_SECTION = "### 3ao"
+
+# The memory's figures, the label each one is published under, and the places.
+INDEX_MEMORY_FIGURES = (
+    ("rows", "the rows the table holds", 0),
+    ("index_entries", "the entries the index holds", 0),
+    ("index_bytes", "the bytes it holds", 0),
+    ("index_peak_bytes", "the bytes it held at its peak", 0),
+    ("index_bytes_per_entry", "the bytes an entry", 1),
+    ("ceiling_under_rows", "the ceiling: the rows under the budget", 0),
+    ("ceiling_over_rows", "the ceiling: the rows over the budget", 0),
+)
+
 # The timings, the label each one is published under, and the places.
 #
 # **The figures are rendered with the thousands separator**, and so are the
@@ -7288,6 +7338,57 @@ def main() -> int:
             else:
                 print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
 
+    # Spec 057: the index's price, and the index's memory. Every figure is
+    # looked for **inside** the section that publishes it.
+    for heading, family, reports, timings, derived in (
+        (
+            INDEX_COST_SECTION,
+            "the index's price",
+            INDEX_COST_REPORTS,
+            INDEX_COST_TIMINGS,
+            INDEX_COST_DERIVED,
+        ),
+        (INDEX_MEMORY_SECTION, "the index's memory", INDEX_MEMORY_REPORTS, (), ()),
+    ):
+        section = section_of(texts["PERF.md"], heading)
+        if section is None:
+            failures.append(
+                f"PERF.md: the section that publishes {family} ({heading}) is not in the document"
+            )
+            continue
+        if len(reports) < MIN_CAMPAIGNS:
+            failures.append(
+                f"the index's probe has {len(reports)} campaigns for {family}, "
+                f"and the method says {MIN_CAMPAIGNS}"
+            )
+            continue
+        index_timings, index_derived, index_counts = _db_cost_figures(reports)
+
+        def index_wanted(label: str, figure: float, places: int) -> None:
+            """One figure of the section, looked for inside it."""
+            rendered = f"{figure:,.{places}f}"
+            if not figure_in(section, rendered):
+                failures.append(
+                    f"PERF.md: {family}'s {label} is {rendered} by the reports "
+                    f"but that figure does not appear in the section that publishes it"
+                )
+            else:
+                print(f"ok  {'PERF.md':<10} {label:<60} {rendered}")
+
+        for key, label, places in timings:
+            values = index_timings.get(key, [])
+            if values:
+                index_wanted(label, statistics.median(values), places)
+        for key, label, places in derived:
+            values = index_derived.get(key, [])
+            if values:
+                index_wanted(label, statistics.median(values), places)
+        if family == "the index's memory":
+            for key, label, places in INDEX_MEMORY_FIGURES:
+                values = index_counts.get(key, [])
+                if values:
+                    index_wanted(label, statistics.median(values), places)
+
     if failures:
         print()
         for failure in failures:
@@ -7331,7 +7432,9 @@ def main() -> int:
         f"{len(DB_COST_TIMINGS) + len(DB_COST_DERIVED) + len(DB_COST_COUNTS)} of the database's own price, "
         f"{len(DB_COST_STREAM_TIMINGS) + len(DB_COST_STREAM_DERIVED) + len(DB_COST_STREAM_COUNTS)} "
         f"of the streaming compaction, "
-        f"{len(INDEX_SHAPE_COUNTS)} of the index's shape"
+        f"{len(INDEX_SHAPE_COUNTS)} of the index's shape, "
+        f"{len(INDEX_COST_TIMINGS) + len(INDEX_COST_DERIVED)} of the index's price, "
+        f"{len(INDEX_MEMORY_FIGURES)} of the index's memory"
     )
     return 0
 

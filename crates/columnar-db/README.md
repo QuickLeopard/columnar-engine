@@ -113,11 +113,15 @@ budget's verdict is about a file's rows and not about the table's. **6,000,000**
 
 **And the table can be looked up by its key.** The schema names one of its columns the key — **and a key that may hold a
 `NULL` is refused**, because a key that may be absent cannot be looked up — and the snapshot answers a point lookup with
-the rows that hold it. **And the lookup is a scan today**: the rows are found by filtering the table, and the map that
-will make it cheap was **measured before it was built** — the per-key map, and not the free one, because the free one
-names every file on this data. The price is in
-[`PERF.md` §3am](../../PERF.md#3am-the-indexs-shape-measured-before-it-is-built), and the decision is in
-[ADR-0068](../../docs/adr/0068-the-indexs-shape-and-its-price.md).
+the rows that hold it. **And the lookup reads the files that hold the key**: the index is a map from the key to the files
+that hold it, and **it is the snapshot's** — so a write that lands after the snapshot cannot change what the lookup
+answers, and the write path pays nothing for it. **And a table the index cannot narrow is read whole**: the index names
+files, and a compacted table is one file, so **no index is built for it and the lookup is the scan**. The prices are in
+[`PERF.md` §3am](../../PERF.md#3am-the-indexs-shape-measured-before-it-is-built),
+[`PERF.md` §3an](../../PERF.md#3an-the-indexs-price-measured-on-every-axis) and
+[`PERF.md` §3ao](../../PERF.md#3ao-the-indexs-memory-and-the-row-count-at-which-it-passes-the-budget), and the decisions
+are in [ADR-0068](../../docs/adr/0068-the-indexs-shape-and-its-price.md) and
+[ADR-0069](../../docs/adr/0069-the-index-is-used-when-it-can-narrow.md).
 
 **And the tax has a price, and the price is the retired versions and the table's size together.** The engine's pushdown
 runs each comparison on a column as one pass, so the tax is one pass over the id column for every retired version:
@@ -160,11 +164,14 @@ writer is alone.
 ## The increments
 
 **What is here now** is the database, the persistent catalog, the schema, the typed write path, the snapshot read, the hidden
-row id, and the compaction that pays for the append-only model — **and the compaction reads a file at a time, so the table's
-size is not its ceiling**. **What is not here yet** is the index, whose shape the scan's figure decided — **and whose
-encoding is now decided too, by a measurement**: the key does not rise in the table's rows, so every file holds a range that
-spans nearly the whole key space, and the range map names every file. **The per-key map is the index**, and its price is
-unmeasured because there is no index to measure.
+row id, the compaction that pays for the append-only model — **and the compaction reads a file at a time, so the table's
+size is not its ceiling** — **and the point lookup, with its index**. **And the index's shape was measured before it was
+built**: the key does not rise in the table's rows, so every file holds a range that spans nearly the whole key space, and
+the range map names every file. **The per-key map is the index**, and it is **the snapshot's**, and the rule decides when
+it is built — **a table the index cannot narrow is read whole**. **What is not here yet**: **the index's memory is not
+refused** — it holds **126.1 MiB** over a million rows and passes the engine's own 256 MiB budget between **2,379,393** and
+**2,381,835** rows — **and the cheaper encodings are not measured**: the build costs **125.889 ms** against the
+**45.689 ms** scan it replaces.
 
 **And every price was measured before it was built.** The gap between the engine and the store was priced first, so that the
 index's shape is decided by a figure and not by an opinion — that is spec 055. **And the compaction's own ceiling was priced

@@ -84,6 +84,25 @@ fn database_with_rows(scratch: &Scratch) -> Database {
     database
 }
 
+/// A database with a table of ten rows in **two files**, keyed by `id`.
+///
+/// **And two files is the shape the index can narrow**: a commit writes a
+/// file, so two commits write two.
+fn database_with_two_files(scratch: &Scratch) -> Database {
+    let mut database = Database::open(scratch.path()).expect("the database opens");
+    {
+        let mut table = database.create_table("items", schema()).expect("the table is created");
+        table.insert(&rows(1..=5)).expect("the rows are accepted");
+        table.commit().expect("the rows are written");
+    }
+    {
+        let mut table = database.table_mut("items").expect("the table is there");
+        table.insert(&rows(6..=10)).expect("the rows are accepted");
+        table.commit().expect("the rows are written");
+    }
+    database
+}
+
 #[test]
 fn a_lookup_answers_the_rows_that_hold_the_key() {
     let scratch = Scratch::new("answer");
@@ -320,4 +339,56 @@ fn the_lookup_reads_the_files_the_table_has() {
     // not in the answer, and the columns are named.
     let found = table.lookup(5i64).expect("the lookup answers");
     assert_eq!(found.columns(), ["id", "name"]);
+}
+
+#[test]
+fn a_table_of_many_files_is_indexed() {
+    let scratch = Scratch::new("indexed");
+    let database = database_with_two_files(&scratch);
+
+    let snapshot = database.snapshot().expect("the snapshot is taken");
+    let table = snapshot.table("items").expect("the table is there");
+    assert_eq!(table.files().len(), 2, "the table holds two files");
+
+    // **The lookup answers**, and the index is built for the table.
+    let found = table.lookup(7i64).expect("the lookup answers");
+    assert_eq!(ids_of(&found), vec![7]);
+    assert!(table.is_indexed(), "a table of many files is indexed");
+}
+
+#[test]
+fn a_table_of_one_file_is_not_indexed() {
+    let scratch = Scratch::new("one-file");
+    let database = database_with_rows(&scratch);
+
+    let snapshot = database.snapshot().expect("the snapshot is taken");
+    let table = snapshot.table("items").expect("the table is there");
+    assert_eq!(table.files().len(), 1, "the table holds one file");
+
+    // **The lookup answers** — with the scan, and not with an index.
+    let found = table.lookup(3i64).expect("the lookup answers");
+    assert_eq!(ids_of(&found), vec![3]);
+    assert!(!table.is_indexed(), "a table of one file is not indexed");
+}
+
+#[test]
+fn a_compacted_table_is_not_indexed() {
+    let scratch = Scratch::new("compacted");
+    let mut database = database_with_two_files(&scratch);
+
+    // **The compaction rewrites the table's live rows into one file.**
+    {
+        let mut table = database.table_mut("items").expect("the table is there");
+        table.compact().expect("the table is compacted");
+    }
+
+    let snapshot = database.snapshot().expect("the snapshot is taken");
+    let table = snapshot.table("items").expect("the table is there");
+    assert_eq!(table.files().len(), 1, "the compaction leaves one file");
+
+    // **And the lookup answers the same rows it answered before** — the scan,
+    // and not an index the table cannot use.
+    let found = table.lookup(7i64).expect("the lookup answers");
+    assert_eq!(ids_of(&found), vec![7]);
+    assert!(!table.is_indexed(), "a compacted table is not indexed");
 }

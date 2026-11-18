@@ -83,38 +83,57 @@ with the correction recorded in the ADR.
 - [x] The map that survives the experiment is built, and **it is the snapshot's**: the write path maintains nothing, and
       the **reader** pays — once, at the snapshot's first lookup — because **a snapshot pins an older file set, and an
       index the writer maintained would name a file the snapshot does not have**.
-- [ ] **And its price is measured whole**: the **build's cost**, the **storage** it holds, its **peak memory**, and **the
+- [x] **And its price is measured whole**: the **build's cost**, the **storage** it holds, its **peak memory**, and **the
       lookup's own time** — back to back, on the same table, at the same moment. **And the write's cost is measured too**,
-      and it is **nothing**: the index is derived and the write path does not touch it.
-- [ ] **And the index's memory grows with the table's keys**, which is **the same shape of defect as the compaction's
+      and it is **nothing**: **27.333 ms** with no index alive and **29.122 ms** with one, **and the difference is inside
+      the spread** — the index is derived and the write path does not touch it.
+- [x] **And the index's memory grows with the table's keys**, which is **the same shape of defect as the compaction's
       ceiling** — where the database's own memory was the table's size and the budget's verdict was the table's size
       ([spec 056](../056-the-streaming-compaction/spec.md)). **So the row count at which the index's own memory exceeds
-      the engine's 256 MiB budget is measured**, if it does.
-- [ ] **And the index's price is counted whole**: the write path maintains it, and an open rebuilds it, and **both are
-      part of the price** — not one of them and not the other.
+      the engine's 256 MiB budget is measured**, if it does. **And it does**: the index holds **132,237,778** bytes over a
+      million rows — **126.1 MiB**, **143.6** bytes an entry — **and it passes the budget between 2,379,393 and 2,381,835
+      rows**, which is **lower than the compaction's old ceiling**.
+- [x] **And the index's price is counted whole**: **the write path maintains nothing** — and that is measured, not
+      asserted — **and the rebuild is the reader's**: the index is derived from the files the snapshot pinned, so it is
+      built at the snapshot's **first lookup**, and **a snapshot that is never asked for a row pays nothing for it**.
+      **And the price is the build, the memory and the lookup** — all three of them — and not the build alone.
 
 ### R4 — The compaction and the index are **one thing**
 
-- [ ] The compaction rewrites the files, so **the index is rewritten with them** — and **the compaction's cost with the
+- [x] The compaction rewrites the files, so **the index is rewritten with them** — and **the compaction's cost with the
       index is measured against the compaction's cost without it**, back to back, on the same table, at the same moment.
-- [ ] **And the index is measured on the compacted table too**, because a table that has been compacted is the table the
-      index will live in most of the time.
+      **And it does not move**: **285.976 ms** without the index and **298.622 ms** with it, **and the difference is inside
+      the spread** — **because the compaction never reads the index** — **and the two arms take turns**, because the first
+      compaction in a process pays for the allocator's own growth.
+- [x] **And the index is measured on the compacted table too**, because a table that has been compacted is the table the
+      index will live in most of the time. **And the compaction writes one file**, so **the compacted table is one file** —
+      **and the index names files**, so **it cannot narrow a compacted table at all**: the compacted table's first lookup
+      cost **181.172 ms** — the index's build, **135.009 ms**, and the read — **for nothing**. **And the rule is applied**:
+      **no index is built for a table of one file, and the lookup is the scan** — **43.281 ms**.
 
 ### R5 — The rule is applied, and **the answer is published either way**
 
-- [ ] The **break-even**: **the number of reads after which the index has paid for itself** — the index's whole price
-      against the saving one lookup makes.
-- [ ] **And if no map pays for itself, the database says so** — the lookup stays the scan, the index is not built, and
-      **that sentence is published** with the figures that refused it.
-- [ ] **And if the answer is not the shape ADR-0066 decided, that sentence is corrected where it was published** — in
-      the ADR and in the status file — and the correction is recorded in the ADR.
+- [x] The **break-even**: **the number of reads after which the index has paid for itself** — the index's whole price
+      against the saving one lookup makes. **And it is 2.935 lookups**: the build is **125.889 ms**, the saving is
+      **42.898 ms** a lookup.
+- [x] **And if no map pays for itself, the database says so** — the lookup stays the scan, the index is not built, and
+      **that sentence is published** with the figures that refused it. **And it is published twice**: on a table of many
+      files the map pays, and on a **compacted** table it does not — the compacted table's lookup costs **43.281 ms**,
+      which is the scan — **and the database says so by building no index**.
+- [x] **And if the answer is not the shape ADR-0066 decided, that sentence is corrected where it was published** — in
+      the ADR and in the status file — and the correction is recorded in the ADR. **And the answer is the shape ADR-0066
+      decided** — a map from the key to the file that holds it — **so there is nothing to correct, and the sentence that
+      decided it stands on a figure** ([ADR-0068](../../docs/adr/0068-the-indexs-shape-and-its-price.md)).
 
 ### R6 — The record
 
-- [ ] A **new section** in `PERF.md` — **§3am** — the decision in an **ADR** (**0068**), the defect table's row if the
-      measurement finds one, and the crate's own README.
-- [ ] **And `STATUS.md` moves** — the index's bullet, the counts, and the open question if the measurement opens one.
-- [ ] **And the guard checks the published figures inside the section that publishes them.**
+- [x] A **new section** in `PERF.md` — **§3am** for the shape, **§3an** for the price and **§3ao** for the memory — the
+      decision in an **ADR** (**0068** for the shape, **0069** for the verdict), **the defect table's row** — the
+      compaction collapsed the table into one file and the index's value went with it — and the crate's own README.
+- [x] **And `STATUS.md` moves** — the index's bullet, the counts (**69 ADRs**, **33 defects**), and **two open questions**:
+      the index's memory is not refused, and the cheaper encodings are not measured.
+- [x] **And the guard checks the published figures inside the section that publishes them** — **16** of the index's price
+      and **7** of the index's memory.
 
 ### R7 — The closure
 
@@ -136,15 +155,19 @@ with the correction recorded in the ADR.
   between them. **An indexed lookup does not change the tax either**: it reads one file, and that file's retired
   versions still cost a predicate each.
 - **Out**: **an automatic compaction** — nothing here triggers a compaction by itself, and the tax's shape decides that.
-- **Out**: **the index's own durability across a restart** — the index is **derived from the files** (A3), so it is
-  rebuilt at an open and the rebuild's price is measured. **Writing it** would be a second thing to keep consistent with
-  the files, and that is a later increment's question.
+- **Out**: **the index's own durability across a restart** — the index is **derived from the files** (A3), so it is built
+  at the snapshot's **first lookup** and its price is the build's price. **Writing it** would be a second thing to keep
+  consistent with the files, and that is a later increment's question.
 
 ## The instrument
 
-**`crates/columnar-db/examples/index_cost_probe.rs`** — a new probe, beside the one that measured the scan: the lookup
-through each map, the scan beside it, and the one-file floor beside that; the write's cost with and without the index;
-the index's own bytes and its peak memory; the rebuild's cost at an open; and the break-even.
+**`crates/columnar-db/examples/index_probe.rs`** — the probe that measured the shape, and that measures the price beside
+it: the scan, the one-file floor, the first and the second lookup, the write's own cost with an index alive and without
+one, the compaction's own cost in the same two arms, and the compacted table's three lookups.
+
+**And `crates/columnar-db/examples/index_memory_probe.rs`** — a second probe, with a counting global allocator in it: the
+index's own bytes, its peak, and the row count at which it passes the engine's budget. **And the time is not measured
+there**: a time measured beside a counting allocator is not the engine's time.
 
 **And the committed reports** — three campaigns, interleaved, in `bench-results/`, and the figures derived from them by
 `scripts/medians.py` and checked by `scripts/check-published-figures.py` **inside the section that publishes them**.

@@ -5809,10 +5809,140 @@ average is in every report. **And the counts are the counts** — the key's orde
 properties of the data and not of the machine — **so the three campaigns agree to the row**, and what they measure is the
 shape and not a time.
 
+### 3an. The index's price, measured on every axis
+
+**The shape was measured, and the price was the figure that was missing.** [ADR-0066](docs/adr/0066-the-databases-own-price.md)
+wrote the rule down — *a point lookup that a scan already answers more cheaply is not given an index, and the database says
+so* — **and [§3am](#3am-the-indexs-shape-measured-before-it-is-built) decided the shape**: the range map names every file and
+is refused, and the per-key map narrows to **1.156** files. **And now the map is built, and the price is measured** — the
+build, the write, the compaction, the lookup, and the break-even.
+
+**And the price is paid by the reader, and by nobody else.** The index is **the snapshot's**
+([ADR-0068](docs/adr/0068-the-indexs-shape-and-its-price.md)), so the write path never touches it:
+
+| the write's own cost | |
+|---|---|
+| with no index alive | **27.333 ms** |
+| with the index alive | **29.122 ms** |
+
+**And the difference is inside the spread** — the first write's spread is **24.2–31.0 ms** and the second's is **26.8–37.6
+ms** — **so the write pays nothing for the index, and the code says why: the index is the snapshot's, and the write path
+never reads it.**
+
+**And the lookup's price is what the index is for:**
+
+| the lookup | |
+|---|---|
+| the scan the index replaces, cold | **53.239 ms** |
+| the scan again, warm | **45.689 ms** |
+| the floor: one file, the engine's own | **2.784 ms** |
+| the first lookup: the index's build and the read | **128.679 ms** |
+| the second lookup: the read, the index built | **2.791 ms** |
+| **the index's build** | **125.889 ms** |
+| **the saving, a lookup** | **42.898 ms** |
+| **the break-even: the lookups it takes** | **2.935 lookups** |
+
+**And the break-even is the figure the rule turns on**: a snapshot has to serve **2.935** lookups for the index to have paid
+for itself. **And the saving is measured against the warm scan**, because the first read of a file pays for the file's own
+bytes and the second does not — **and a difference between a cold scan and a warm lookup would be the cold scan's figure and
+not the index's.**
+
+**And the compaction's cost does not move:**
+
+| the compaction's own cost | |
+|---|---|
+| with no index alive | **285.976 ms** |
+| with the index alive | **298.622 ms** |
+
+**And the difference is inside the spread** — **273.9–319.8 ms** against **285.7–326.2 ms** — **because the compaction
+never reads the index.** **And the two arms take turns**, one campaign with the index's arm first and the next with the
+other first, **because the first compaction in a process pays for the allocator's own growth and an order that never changed
+would put that cost on one arm every time.**
+
+**And the price on a compacted table is the price of nothing at all.** The compaction rewrites the table's live rows into
+**one file** ([ADR-0067](docs/adr/0067-the-compaction-reads-a-file-at-a-time.md)), **and the index names files** — **so on a
+compacted table the index names the whole table, and it cannot narrow anything**:
+
+| the compacted table | |
+|---|---|
+| the scan, cold | **50.375 ms** |
+| the scan again, warm | **44.407 ms** |
+| the first lookup | **43.281 ms** |
+| the second lookup | **44.143 ms** |
+
+**And the first lookup costs the scan** — **43.281 ms** against the scan's **44.407 ms** — **because no index is built for a
+table the index cannot narrow.** **And that is the rule applied**: the index is used when it can narrow, and the lookup
+stays the scan when it cannot. **And the figure that refused it is published**: before the rule was applied, the compacted
+table's first lookup cost **181.172 ms** — **the index's build, **135.009 ms**, and the read** — **for a table the index
+could not narrow at all.**
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/index-cost-run1.json` and its two siblings, the instrument is
+`crates/columnar-db/examples/index_probe.rs`, and the verdict is in
+[ADR-0069](docs/adr/0069-the-index-is-used-when-it-can-narrow.md). **And the set that measured the defect is committed
+too** — `bench-results/index-cost-before-run1.json` and its two siblings — **and the two sets were taken back to back, the
+arms interleaved, so the machine's movement cannot land on one side of the difference.**
+
+**The conditions**: three campaigns, on one host, at a load average of **11.68**, **10.10** and **10.39**, and the load
+average is in every report. **And the machine was busy** — the load average was between **9.64** and **11.85** across the six
+campaigns — **so the spreads are published with the figures, and the medians are the medians of three campaigns.**
+
+### 3ao. The index's memory, and the row count at which it passes the budget
+
+**The price has a second axis, and the axis is the table's keys.** The index is a map from the key to the files that hold it,
+so **it holds an entry a key** — **921,129** of them over the million rows the database writes — **and the map lives as long
+as the snapshot, and the snapshot outlives the read.** **So the memory is the index's own, and it is not the engine's read's
+memory** — **and it is bounded by nothing at all.**
+
+**And the memory is measured with a counting allocator, in a probe of its own.**
+[`crates/columnar-db/examples/index_memory_probe.rs`](crates/columnar-db/examples/index_memory_probe.rs) counts every
+allocation the process makes, and **the bytes the index holds are the difference between what the process holds before the
+lookup and what it holds after it** — because the index is kept by the snapshot. **And the time is measured elsewhere**: the
+times are in `index_probe.rs`, which has no allocator in it, **because a time measured beside a counting allocator is not the
+engine's time.**
+
+| the index's memory | |
+|---|---|
+| the rows the table holds | **1,000,000** |
+| the entries the index holds | **921,129** |
+| **the bytes it holds** | **132,237,778** — **126.1 MiB** |
+| **the bytes it held at its peak** | **183,907,984** — **175.4 MiB** |
+| the bytes an entry | **143.6** |
+
+**And the figure is a fact about the map and the data, and not about the machine**: the three campaigns agree **to the
+byte** — **132,237,778** bytes in each of them, and the same **183,907,984** peak, and the same **143.6** bytes an entry.
+
+**And the row count at which the index's memory passes the engine's budget is measured, and it is lower than the compaction's
+old ceiling was.** The budget is the engine's own — **256 MiB**, taken from `MemoryBudget::default()` and not copied — and
+the ceiling is found by bisection, with **both bounds measured**:
+
+| the ceiling | |
+|---|---|
+| the rows whose index holds **less** than the budget | **2,379,393** |
+| the rows whose index holds **more** than the budget | **2,381,835** |
+
+**And that is a ceiling of the same shape as the compaction's** — where the database's own memory was the table's size, and
+the budget's verdict was the table's size ([§3ak](#3ak-the-databases-own-price)) — **and it is lower**: the compaction
+compacted **5,375,000** rows and refused **6,000,000**, and **the index passes the same budget at 2,381,835 rows.**
+
+**And the index's memory is not refused, and that is published as an open question.** The engine refuses a read whose
+estimate does not fit the budget, **and the database does not refuse an index whose memory does not fit it** — so a snapshot
+over a table of three million rows holds more memory than the engine's budget allows a whole read. **What the database does
+about that is a later increment's question, and the figure that asks it is published here.**
+
+Every figure in this section is derived from the committed reports by `scripts/medians.py` and checked by the guard
+**inside this section**. The reports are `bench-results/index-memory-run1.json` and its two siblings, and the instrument is
+[`crates/columnar-db/examples/index_memory_probe.rs`](crates/columnar-db/examples/index_memory_probe.rs).
+
+**The conditions**: three campaigns, on one host, at a load average of **25.46**, **24.88** and **24.15**, and the load
+average is in every report. **And the machine was busy** — and **it does not matter here**: the bytes an index holds are a
+property of the map and of the data, **so the three campaigns agree to the byte, and what they measure is the memory and
+not a time.**
+
 
 ## 4. The defects the increments found
 
-Thirty-two, all found by measurement, all recorded with their before-and-after numbers in the ADRs
+Thirty-three, all found by measurement, all recorded with their before-and-after numbers in the ADRs
 and in the commit history.
 
 | | before | after | where |
@@ -5850,6 +5980,7 @@ and in the commit history.
 | **The compaction had a ceiling, and the ceiling was the database's size.** It read the table's live rows in one piece, so the engine's estimate of that one plan was the table's rows, and the plan was refused above **6,000,000** rows — **and a table past that size could never be compacted**, and the compaction is the only thing that pays the tombstone tax back | **5,375,000** rows compacted, **6,000,000** refused | **6,000,000** compacted, **0** refused — and refused at no row count | `crates/columnar-db/src/database.rs` |
 | **The file's optionality was the rows' happenstance.** The store derived a file's schema from the rows in it, so a column that held no NULL was written required and one that held one was written optional, and two files of one table could disagree about the same column | the schema was **derived from the rows** — required or optional, by what this batch happened to hold | **decided before the first row**: the application's columns optional, the hidden columns required | `crates/columnar-store/src/rows.rs` |
 | **The tombstone tax was published as the retired versions alone.** A read filters on `row_id != <retired id>` for every retired version, and the engine's pushdown runs each comparison on the column as one pass — so the tax is the retired versions **and** the table's size together, and every read pays it and not only the compaction | the tax was published as *"the retired versions and not the table's size"* | **0.115 ns** a retired version a row — **0.120 ns** in the small table, the same price at two sizes — **0.119 ns** and **0.132 ns** where spec 056's campaigns measured it | `crates/columnar-db/src/versions.rs` |
+| **The compaction collapsed the table into one file, and the index's value went with it.** The index names files, and the compaction writes **one file** — so on a compacted table the index named the whole table, could narrow nothing, and **its build was paid by every snapshot that asked for a row** | the compacted table's first lookup: **181.172 ms** — the index's build, **135.009 ms**, and the read | the compacted table's first lookup: **43.281 ms** — **the scan, and no index at all** | `crates/columnar-db/src/snapshot.rs` |
 
 The global aggregate is the one worth calling out from the first increment: the module
 documentation promised that `COUNT(*)` was an in-place fast path that reads no column, and it did

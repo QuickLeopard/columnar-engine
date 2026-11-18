@@ -184,16 +184,26 @@ impl Snapshot {
     ///
     /// **And it is built once**, because the files are pinned and the answer
     /// cannot change.
-    fn index_of(&self, table: &PinnedTable) -> Result<Rc<Index>> {
+    ///
+    /// **And a table of one file has no index.** The index names files, and a
+    /// table of one file cannot be narrowed: the scan reads the file the
+    /// index would name, so the index would pay its build and save nothing.
+    /// **And the compaction is what makes a table one file** — it rewrites the
+    /// table's live rows into one — **so this is the shape a compacted table
+    /// has, and the lookup there stays the scan.**
+    fn index_of(&self, table: &PinnedTable) -> Result<Option<Rc<Index>>> {
         if let Some(index) = self.indexes.borrow().get(&table.name) {
-            return Ok(Rc::clone(index));
+            return Ok(Some(Rc::clone(index)));
         }
         let Some(key_column) = table.schema.key() else {
             return Err(Error::NoKey { name: table.name.clone() });
         };
+        if table.files.len() < 2 {
+            return Ok(None);
+        }
         let index = Rc::new(Index::build(&table.files, key_column.name())?);
         self.indexes.borrow_mut().insert(table.name.clone(), Rc::clone(&index));
-        Ok(index)
+        Ok(Some(index))
     }
 }
 
@@ -370,6 +380,11 @@ impl SnapshotTable<'_> {
     /// alone — so the answer is the rows the scan would answer, and the files
     /// read are a fraction of the table's.
     ///
+    /// **And a table the index cannot narrow is read whole.** A table of one
+    /// file is the shape a compaction leaves behind, and the index would name
+    /// the file the scan reads anyway — **so no index is built, and the
+    /// lookup is the scan.**
+    ///
     /// # Errors
     ///
     /// Returns [`Error::NoKey`] when the table's schema names no key column,
@@ -389,11 +404,14 @@ impl SnapshotTable<'_> {
         }
         let index = self.snapshot.index_of(self.table)?;
         let index_key = Key::of(&key, key_column.name())?;
-        let files: Vec<PathBuf> = index
-            .files_of(&index_key)
-            .iter()
-            .filter_map(|position| self.table.files.get(*position).cloned())
-            .collect();
+        let files: Vec<PathBuf> = match &index {
+            Some(index) => index
+                .files_of(&index_key)
+                .iter()
+                .filter_map(|position| self.table.files.get(*position).cloned())
+                .collect(),
+            None => self.table.files.clone(),
+        };
         if files.is_empty() {
             return Ok(Rows::empty(self.schema()));
         }
@@ -402,6 +420,17 @@ impl SnapshotTable<'_> {
         let source = FileSetSource::open(&files)?;
         let dataset = source.execute_rows(&plan, &ExecOptions::default())?;
         Rows::of(&dataset)
+    }
+
+    /// Whether this snapshot has built the index for the table.
+    ///
+    /// **And it is false for a table the index cannot narrow**: a table of one
+    /// file is read whole by the scan, so an index would name every file the
+    /// scan reads and would save nothing — **and the database says so rather
+    /// than building an index it cannot use.**
+    #[must_use]
+    pub fn is_indexed(&self) -> bool {
+        self.snapshot.indexes.borrow().contains_key(&self.name)
     }
 
     /// The source the table's files are read through.

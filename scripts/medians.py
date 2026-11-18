@@ -1193,6 +1193,106 @@ def print_scan_cost(files: list[tuple[str, list[dict]]]) -> None:
     print(line)
 
 
+def print_index_cost(runs: list[dict]) -> None:
+    """Print the index's price: what the lookup costs with it, what it costs
+    without it, and the break-even.
+
+    This is spec 057's second half: the shape was measured first, and the
+    per-key map is the only map that narrows on this data -- so the index is
+    built and priced. The probe measures the **scan** the index replaces (cold
+    and warm), the **floor** the engine's own read of one file reaches, the
+    **first lookup** (the index's build and the read) and the **second lookup**
+    (the read, with the index built), the **write's own cost** with an index
+    alive and without one, the **compaction's own cost** in the same two
+    arms, and the **compacted table's** three lookups.
+
+    **And every difference is a difference of two measurements taken back to
+    back**, so the machine's movement cannot land on one side of it.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE INDEX'S PRICE ({len(runs)} campaigns) ===")
+    for name, heading in (
+        ("write_no_index", "the write: no index alive"),
+        ("write_with_index", "the write: the index alive"),
+        ("lookup_scan", "the scan the index replaces, cold"),
+        ("lookup_scan_again", "the scan again, warm"),
+        ("lookup_one_file", "the floor: one file, the engine's own"),
+        ("lookup_first", "the first lookup: the build and the read"),
+        ("lookup_indexed", "the second lookup: the read, the index built"),
+        ("compaction_without_index", "the compaction: no index alive"),
+        ("compaction_with_index", "the compaction: the index alive"),
+        ("compacted_scan", "the compacted table's scan, cold"),
+        ("compacted_scan_again", "the compacted table's scan again, warm"),
+        ("compacted_first", "the compacted table's first lookup"),
+        ("compacted_indexed", "the compacted table's second lookup"),
+    ):
+        values = [
+            run["measurements_ms"][name]
+            for run in runs
+            if name in run.get("measurements_ms", {})
+        ]
+        if values:
+            print(
+                f"   {heading:<44} {median(values):10.3f} ms"
+                f"   ({min(values):.3f}-{max(values):.3f})"
+            )
+    for key, heading, places in (
+        ("lookup_build_ms", "the index's build", 3),
+        ("lookup_saving_ms", "the saving, a lookup", 3),
+        ("lookup_break_even", "the break-even: the lookups it takes", 3),
+        ("lookup_indexed_ratio", "the scan, over the indexed lookup", 3),
+        ("write_tax_ms", "the write's tax", 3),
+        ("compaction_tax_ms", "the compaction's tax", 3),
+        ("compacted_build_ms", "the compacted table's build", 3),
+        ("compacted_saving_ms", "the compacted table's saving", 3),
+        ("compacted_break_even", "the compacted table's break-even", 3),
+    ):
+        values = [
+            run["derived"][key]
+            for run in runs
+            if key in run.get("derived", {})
+        ]
+        if values:
+            print(
+                f"   {heading:<44} {median(values):10.{places}f}"
+                f"   ({min(values):.3f}-{max(values):.3f})"
+            )
+
+
+def print_index_memory(runs: list[dict]) -> None:
+    """Print the index's memory: what it holds, what it held at its peak, and
+    the row count at which it passes the engine's budget.
+
+    This is spec 057's third half: the index's price has a memory axis, and
+    the axis is the table's keys -- **and the axis is not the read's memory**,
+    because the index lives as long as the snapshot and the snapshot outlives
+    the read.
+
+    **And the figures are the figures**: the bytes an index holds are a
+    property of the map and of the data, and not of the machine -- so the
+    campaigns agree to the byte.
+    """
+    if not runs:
+        return
+    print(f"\n=== THE INDEX'S MEMORY ({len(runs)} campaigns) ===")
+    for key, heading, places in (
+        ("rows", "the rows the table holds", 0),
+        ("index_entries", "the entries the index holds", 0),
+        ("index_bytes", "the bytes it holds", 0),
+        ("index_peak_bytes", "the bytes it held at its peak", 0),
+        ("index_bytes_per_entry", "the bytes an entry", 1),
+        ("ceiling_under_rows", "the ceiling: the rows under the budget", 0),
+        ("ceiling_over_rows", "the ceiling: the rows over the budget", 0),
+    ):
+        values = [run[key] for run in runs if key in run]
+        if values:
+            print(f"   {heading:<44} {median(values):>18,.{places}f}")
+    budget = runs[0].get("budget_bytes")
+    if budget:
+        print(f"   {'the engine\'s own budget':<44} {budget:>18,.0f} bytes")
+
+
 def print_index_shape(runs: list[dict]) -> None:
     """Print the index's shape: what each map can narrow on the table the
     database writes.
@@ -4368,6 +4468,18 @@ def main() -> int:
         load(p) for p in sorted(Path("bench-results").glob("index-shape-run*.json"))
     ]
     print_index_shape(index_shape_runs)
+
+    # Spec 057: the index's price -- what the lookup costs with it.
+    index_cost_runs = [
+        load(p) for p in sorted(Path("bench-results").glob("index-cost-run*.json"))
+    ]
+    print_index_cost(index_cost_runs)
+
+    # Spec 057: the index's memory -- the axis the price has beside its time.
+    index_memory_runs = [
+        load(p) for p in sorted(Path("bench-results").glob("index-memory-run*.json"))
+    ]
+    print_index_memory(index_memory_runs)
 
     return 0
 

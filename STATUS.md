@@ -14,7 +14,7 @@ without the gate failing.
 Every increment is a **spec** under [`specs/`](specs/), with its requirements (R1…Rn), its tasks and
 the decision it took; the decisions are kept as **ADRs** under [`docs/adr/`](docs/adr/). The method
 is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and the rules the method answers to are in
-[`constitution.md`](constitution.md). **55 specs**, **68 ADRs** and **32 defects** so far, and every one
+[`constitution.md`](constitution.md). **55 specs**, **69 ADRs** and **33 defects** so far, and every one
 of the specs but the two in flight is closed. **And the status has a page**:
 [`docs/status.html`](docs/status.html) is this file rendered as one screen — the headline, the tree's
 shape, the gates, the increments and the open questions — and it is **generated** and **gated**, so it
@@ -193,7 +193,7 @@ and the old code measures the same as the new one.
 
 ## What the increments found
 
-**32 defects**, all found by measurement, each recorded with its before-and-after numbers in the
+**33 defects**, all found by measurement, each recorded with its before-and-after numbers in the
 ADRs and in the commit history. The list is
 [`PERF.md` §4](PERF.md#4-the-defects-the-increments-found).
 
@@ -507,6 +507,27 @@ required. **And the compaction costs what it cost** — **327** ns a row where i
 ranges overlap — **and the space amplification did not move at all**, at **1.339**. **So the question is closed.**
 [§3al](PERF.md#3al-the-compaction-reads-a-file-at-a-time) has the tables, and
 [ADR-0067](docs/adr/0067-the-compaction-reads-a-file-at-a-time.md) records it.
+
+**9. The index's memory — it is measured, and nothing refuses it.** The index holds **132,237,778** bytes over a
+million rows — **126.1 MiB**, **143.6** bytes an entry — **and it grows with the table's keys**, **so the row count
+at which it passes the engine's own 256 MiB budget is between 2,379,393 and 2,381,835 rows**, **which is lower than
+the compaction's old ceiling was**: the compaction compacted **5,375,000** rows and refused **6,000,000**. **And the
+engine refuses a read whose estimate does not fit its budget, and the database does not refuse an index whose memory
+does not fit it** — so a snapshot over a table of three million rows holds more memory than the engine's budget allows
+a whole read. **What would answer it:** a refusal, and the estimate it would be made from — **and the estimate is the
+second thing to get wrong**, because the cheaper encoding may change the figure it is made from.
+[§3ao](PERF.md#3ao-the-indexs-memory-and-the-row-count-at-which-it-passes-the-budget) has the figures, and
+[ADR-0069](docs/adr/0069-the-index-is-used-when-it-can-narrow.md) records them.
+
+**10. The index's build — it costs more than the scan it replaces.** The build is **125.889 ms** and the scan it
+replaces is **45.689 ms** warm — **so the index costs more to build than one scan costs to run**, and it needs
+**2.935** lookups to pay that back. **And the map's own shape is the shape of the cost**: it holds a `Vec` a key,
+**921,129** little allocations over a million rows. **And the cheaper encodings are not measured** — a sorted vector of
+keys, a file id with a fallback, a per-file key set — **so what the build would cost with them is not a number this
+repository has.** **What would answer it:** the same table, the same keys, and the three encodings measured against
+each other.
+[§3an](PERF.md#3an-the-indexs-price-measured-on-every-axis) has the figures, and
+[ADR-0069](docs/adr/0069-the-index-is-used-when-it-can-narrow.md) records them.
 
 ### The work the project has not done
 
@@ -877,26 +898,36 @@ ranges overlap — **and the space amplification did not move at all**, at **1.3
   `QueryPlan` the `PlanBuilder` builds, **and SQL is out of scope with the reason named** — SQL promises subqueries, CTEs,
   window functions and arbitrary join graphs, and this engine refuses all four. **And the compaction reads a file at a
   time now**, so the budget's verdict is about a file's rows and not about the table's: **6,000,000** rows compacted and
-  **0** refused, where **5,375,000** compacted and **6,000,000** were refused. **What is not built yet**: the index
-  itself — **and the tombstone tax's shape, which the streaming compaction does not change**: a read still pays one
-  predicate a retired version. **And [spec 057](specs/057-the-index/spec.md) takes the index on**: the lookup becomes the
-  database's own, and the three maps that could serve it are measured before any of them is built.
+  **0** refused, where **5,375,000** compacted and **6,000,000** were refused. **And the index is built now**:
+  the lookup is the database's own, it reads the files that hold the key, and **the index is the snapshot's** — so the
+  write path pays nothing for it. **What is not built yet**: **the tombstone tax's shape, which the streaming
+  compaction does not change**: a read still pays one predicate a retired version.
   [§3ak](PERF.md#3ak-the-databases-own-price) and [§3al](PERF.md#3al-the-compaction-reads-a-file-at-a-time) have the tables, and
   [ADR-0066](docs/adr/0066-the-databases-own-price.md) and
   [ADR-0067](docs/adr/0067-the-compaction-reads-a-file-at-a-time.md) record them.
 - **The x86-64 absolute figures** need a pinned x86-64 runner. The job is wired and has not run.
 - **The index itself.** The shape is decided by the scan's figure — **a map from the key to the files that hold
-  it**, over the grid — and the index is not built: **its write cost is not measured, because there is no index
-  to measure.** **And [spec 057](specs/057-the-index/spec.md) takes it on**: the shape's **granularity** is decided — the
-  file, because that is where the floor was measured — **and the encoding is not**, so the increment measures the maps
-  that could serve the lookup **before any of them is built**. **And the measurement refuses one of them**: the key falls
+  it**, over the grid — **and [spec 057](specs/057-the-index/spec.md) built it**: the shape's **granularity** is the file,
+  because that is where the floor was measured, **and the encoding was measured before anything was built** — the key falls
   **499,701** times over the table's million rows, so **every one of the sixteen files holds a range that spans nearly the
   whole key space**, and the range map **names all sixteen files, for every sampled key** — **so it is refused**, in both of
   its homes. **And the per-key map is the index**: **1.156** files on average, **1** at the smallest and **2** at the
-  largest, over **921,129** distinct keys. **What is not measured yet**: the index's own price — its write cost, its
-  storage, its memory, the rebuild at an open — and **the break-even that decides it**.
-  [§3am](PERF.md#3am-the-indexs-shape-measured-before-it-is-built) has the figures, and
-  [ADR-0068](docs/adr/0068-the-indexs-shape-and-its-price.md) records it.
+  largest, over **921,129** distinct keys. **And the price is measured now, on every axis**: the build is **125.889 ms**,
+  the lookup it replaces is **45.689 ms** warm, the saving is **42.898 ms** a lookup, **so the break-even is 2.935
+  lookups**. **And the write path pays nothing** — **27.333 ms** with no index alive and **29.122 ms** with one, **and the
+  difference is inside the spread** — **and so does the compaction**: **285.976 ms** against **298.622 ms**, **and the
+  difference is inside the spread**. **And the memory is the price's second axis**: **132,237,778** bytes over a million rows
+  — **126.1 MiB**, **143.6** bytes an entry — **and it passes the engine's own 256 MiB budget between 2,379,393 and
+  2,381,835 rows**, which is **lower than the compaction's old ceiling**. **And the rule is applied**: the index is used
+  when it can narrow, **and a compacted table cannot be narrowed** — the compaction writes one file — **so the lookup there
+  is the scan and the index's build is not paid**: the compacted table's first lookup costs **43.281 ms**, where it cost
+  **181.172 ms**. **What is not measured yet**: **the index's memory is not refused**, and **the cheaper encodings** — the
+  build costs more than the scan it replaces.
+  [§3am](PERF.md#3am-the-indexs-shape-measured-before-it-is-built),
+  [§3an](PERF.md#3an-the-indexs-price-measured-on-every-axis) and
+  [§3ao](PERF.md#3ao-the-indexs-memory-and-the-row-count-at-which-it-passes-the-budget) have the figures, and
+  [ADR-0068](docs/adr/0068-the-indexs-shape-and-its-price.md) and
+  [ADR-0069](docs/adr/0069-the-index-is-used-when-it-can-narrow.md) record them.
 - **The tombstone tax's shape.** A read still pays one predicate a retired version — **0.119 ns** a retired version
   a row, where it was **0.115 ns** when spec 055 measured it, and every read pays it and not only the compaction —
   **and the streaming compaction does not change that**: it makes the compaction able to run, and not the read cheaper.
